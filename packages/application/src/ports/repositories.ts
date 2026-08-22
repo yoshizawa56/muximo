@@ -31,7 +31,13 @@ export interface AgentSessionRepository {
   list(workspaceId?: WorkspaceId): Promise<AgentSessionRecord[]>;
   insert(record: AgentSessionRecord): Promise<void>;
   update(record: AgentSessionRecord): Promise<void>;
-  claimExecution(id: AgentSessionId, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean>;
+  claimExecution(
+    id: AgentSessionId,
+    expectedExecutionPid: number | null,
+    executionId: string,
+    executionPid: number,
+    executionStartedAt: string,
+  ): Promise<boolean>;
   setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean>;
   delete(id: AgentSessionId): Promise<void>;
 }

@@ -1,5 +1,5 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { Database } from "bun:sqlite";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentDrizzleDatabase } from "./database-types.js";
 
 export type SqliteTransactionScope = {
@@ -22,9 +22,6 @@ export function ambientSqlite(root: Database): Database {
   return storage.getStore()?.sqlite ?? root;
 }
 
-export function runWithSqliteTransaction<T>(
-  scope: SqliteTransactionScope,
-  operation: () => Promise<T>,
-): Promise<T> {
+export function runWithSqliteTransaction<T>(scope: SqliteTransactionScope, operation: () => Promise<T>): Promise<T> {
   return storage.run(scope, operation);
 }

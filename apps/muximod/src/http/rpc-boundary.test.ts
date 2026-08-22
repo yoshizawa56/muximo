@@ -1,20 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { Workspace, WorkspaceId } from "@muximo/domain";
 import type { MuximodApplication } from "@muximo/application";
-import { createHttpTestClient } from "./test-client.js";
+import { type AuthInfo, muximodHealthSchema } from "@muximo/contract";
+import { Workspace, WorkspaceId } from "@muximo/domain";
 import {
-  hasError,
-  hasObserved,
-  returns,
-  runOperationTable,
   type Assertion,
   type FixtureHandle,
+  hasError,
+  hasObserved,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { muximodHealthSchema, type AuthInfo } from "@muximo/contract";
+import { describe, expect, it } from "vitest";
 import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
+import { createHttpTestClient } from "./test-client.js";
 
 const authContext = {
   sessionId: "session-http-test-00000000",
@@ -70,7 +70,11 @@ type HttpInput = { operation: "health" | "unknown" | "hook" | "preflight" };
 type RpcInput = { operation: "info" | "authorized-sessions" | "unauthorized-sessions" };
 type RpcContext = {};
 
-const responseMatches = (status: number, expectedBody?: unknown, schema?: { safeParse(value: unknown): { success: boolean } }): Assertion<HttpContext, HttpResult> => ({
+const responseMatches = (
+  status: number,
+  expectedBody?: unknown,
+  schema?: { safeParse(value: unknown): { success: boolean } },
+): Assertion<HttpContext, HttpResult> => ({
   name: `returns HTTP ${status}`,
   check: (_context, result) => {
     expect(result).toEqual({ ok: true, value: expect.objectContaining({ status }) });
@@ -80,25 +84,29 @@ const responseMatches = (status: number, expectedBody?: unknown, schema?: { safe
   },
 });
 
-const appFixture = (ready: boolean): (() => FixtureHandle<AppFixture>) => () => {
-  const events: Array<{ event: string; client: string }> = [];
-  const originalFetch = globalThis.fetch;
-  const app = createMuximodApp({
-    auth: testAuth,
-    application: createTestApplication(events),
-    isReady: () => ready,
-    corsOrigin: "http://web.example",
-    hookToken: "test-token",
-  });
-  globalThis.fetch = (async (input, init) => {
-    const response = await app.fetch(new Request(input, init));
-    return response ?? new Response(null, { status: 101 });
-  }) as typeof globalThis.fetch;
-  return {
-    fixture: { app, events, originalFetch },
-    cleanup: () => { globalThis.fetch = originalFetch; },
+const appFixture =
+  (ready: boolean): (() => FixtureHandle<AppFixture>) =>
+  () => {
+    const events: Array<{ event: string; client: string }> = [];
+    const originalFetch = globalThis.fetch;
+    const app = createMuximodApp({
+      auth: testAuth,
+      application: createTestApplication(events),
+      isReady: () => ready,
+      corsOrigin: "http://web.example",
+      hookToken: "test-token",
+    });
+    globalThis.fetch = (async (input, init) => {
+      const response = await app.fetch(new Request(input, init));
+      return response ?? new Response(null, { status: 101 });
+    }) as typeof globalThis.fetch;
+    return {
+      fixture: { app, events, originalFetch },
+      cleanup: () => {
+        globalThis.fetch = originalFetch;
+      },
+    };
   };
-};
 
 const httpCases = [
   {
@@ -129,7 +137,10 @@ const httpCases = [
   {
     name: "forwards a signed tmux hook to the application port",
     input: { operation: "hook" },
-    assert: [responseMatches(204), hasObserved<HttpContext, HttpResult>("events", [{ event: "client-active", client: "/dev/desktop" }])],
+    assert: [
+      responseMatches(204),
+      hasObserved<HttpContext, HttpResult>("events", [{ event: "client-active", client: "/dev/desktop" }]),
+    ],
   },
   {
     name: "answers RPC preflight requests at the transport boundary",
@@ -152,20 +163,21 @@ const httpTable: OperationTable<AppFixture, "default" | "not-ready", HttpInput, 
   fixtures: { default: appFixture(true), "not-ready": appFixture(false) },
   cases: httpCases,
   execute: async (fixture, input) => {
-    const request = input.operation === "health"
-      ? new Request("http://muximod.local/health")
-      : input.operation === "unknown"
-        ? new Request("http://muximod.local/legacy/sessions")
-        : input.operation === "hook"
-          ? new Request("http://muximod.local/internal/tmux-hook", {
-            method: "POST",
-            headers: { "x-muximod-hook-token": "test-token", "content-type": "application/x-www-form-urlencoded" },
-            body: "event=client-active&client=%2Fdev%2Fdesktop",
-          })
-          : new Request("http://muximod.local/rpc/sessions/list", {
-            method: "OPTIONS",
-            headers: { origin: "http://web.example", "access-control-request-method": "POST" },
-          });
+    const request =
+      input.operation === "health"
+        ? new Request("http://muximod.local/health")
+        : input.operation === "unknown"
+          ? new Request("http://muximod.local/legacy/sessions")
+          : input.operation === "hook"
+            ? new Request("http://muximod.local/internal/tmux-hook", {
+                method: "POST",
+                headers: { "x-muximod-hook-token": "test-token", "content-type": "application/x-www-form-urlencoded" },
+                body: "event=client-active&client=%2Fdev%2Fdesktop",
+              })
+            : new Request("http://muximod.local/rpc/sessions/list", {
+                method: "OPTIONS",
+                headers: { origin: "http://web.example", "access-control-request-method": "POST" },
+              });
     const response = await fixture.app.request(request);
     return {
       status: response.status,
@@ -207,12 +219,10 @@ const rpcCases = [
 const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcContext> = {
   defaultFixture: appFixture(true),
   cases: rpcCases,
-  execute: async (fixture, input) => {
+  execute: async (_fixture, input) => {
     const connection = {
       httpBaseUrl: "http://muximod.local",
-      ...(input.operation === "authorized-sessions"
-        ? { auth: { getAccessToken: async () => "test-token" } }
-        : {}),
+      ...(input.operation === "authorized-sessions" ? { auth: { getAccessToken: async () => "test-token" } } : {}),
     };
     const client = createHttpTestClient(connection);
     if (input.operation === "info") return client.authInfo();
@@ -229,18 +239,38 @@ describe("muximod transport boundary", () => {
 
 const testAuth: MuximodAuthPort = {
   serverId: authContext.serverId,
-  authenticateAccessToken: (token) => token === "test-token" ? authContext : null,
-  claimPairing: () => { throw new Error("not used"); },
-  pairingStatus: () => { throw new Error("not used"); },
-  createChallenge: () => { throw new Error("not used"); },
-  createSession: () => { throw new Error("not used"); },
-  issueWebSocketTicket: () => { throw new Error("not used"); },
+  authenticateAccessToken: (token) => (token === "test-token" ? authContext : null),
+  claimPairing: () => {
+    throw new Error("not used");
+  },
+  pairingStatus: () => {
+    throw new Error("not used");
+  },
+  createChallenge: () => {
+    throw new Error("not used");
+  },
+  createSession: () => {
+    throw new Error("not used");
+  },
+  issueWebSocketTicket: () => {
+    throw new Error("not used");
+  },
   consumeWebSocketTicket: () => null,
 };
 
 function createTestApplication(events: Array<{ event: string; client: string }>): MuximodApplication {
   return {
-    terminal: { get: async () => ({ id: "terminal", name: "terminal", host: "host", tailnetIp: "100.64.0.1", state: "online", detail: "test", lastSeen: "now" }) },
+    terminal: {
+      get: async () => ({
+        id: "terminal",
+        name: "terminal",
+        host: "host",
+        tailnetIp: "100.64.0.1",
+        state: "online",
+        detail: "test",
+        lastSeen: "now",
+      }),
+    },
     workspaces: {
       list: async () => [workspace],
       browse: async () => [workspace],
@@ -251,7 +281,12 @@ function createTestApplication(events: Array<{ event: string; client: string }>)
       resolveSelection: async () => workspaceRecord,
     },
     sessions: { list: async () => [session], create: async () => session },
-    panes: { list: async () => [], create: async () => { throw new Error("not used"); } },
+    panes: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
     hooks: { handleTmux: (event, client) => events.push({ event, client }) },
   };
 }

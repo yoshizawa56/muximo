@@ -1,14 +1,8 @@
-import {
-  clearPatch,
-  Workspace,
-  WorkspaceUpdateEmptyError,
-  type Patch,
-  type WorkspaceRecord,
-} from "@muximo/domain";
+import { clearPatch, type Patch, Workspace, type WorkspaceRecord, WorkspaceUpdateEmptyError } from "@muximo/domain";
 import type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "../../models/workspace.js";
+import type { WorkspaceRepository } from "../../ports/repositories.js";
 import type { TransactionManager } from "../../ports/transactions.js";
 import type { WorkspaceAuditPort, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "../../ports/workspace.js";
-import type { WorkspaceRepository } from "../../ports/repositories.js";
 
 export class WorkspaceUseCaseError extends Error {
   public constructor(
@@ -23,11 +17,10 @@ export class WorkspaceUseCaseError extends Error {
 
 export class WorkspaceAlreadyRegisteredError extends WorkspaceUseCaseError {
   public constructor(workspace: WorkspaceDirectoryInfo) {
-    super(
-      "workspace_already_registered",
-      `workspace is already registered: ${workspace.rootPath}`,
-      { workspaceId: workspace.id, directory: workspace.rootPath },
-    );
+    super("workspace_already_registered", `workspace is already registered: ${workspace.rootPath}`, {
+      workspaceId: workspace.id,
+      directory: workspace.rootPath,
+    });
     this.name = "WorkspaceAlreadyRegisteredError";
   }
 }
@@ -200,12 +193,14 @@ function withTransaction<Result>(
 }
 
 function hasWorkspaceUpdate(input: UpdateWorkspaceInput): boolean {
-  return input.name !== undefined
-    || input.setupHook !== undefined
-    || input.cleanupHook !== undefined
-    || input.worktreeCopyPatterns !== undefined
-    || (input.appendCopyPatterns?.length ?? 0) > 0
-    || input.clearCopyPatterns === true;
+  return (
+    input.name !== undefined ||
+    input.setupHook !== undefined ||
+    input.cleanupHook !== undefined ||
+    input.worktreeCopyPatterns !== undefined ||
+    (input.appendCopyPatterns?.length ?? 0) > 0 ||
+    input.clearCopyPatterns === true
+  );
 }
 
 async function findWorkspace(
@@ -227,14 +222,20 @@ async function findWorkspace(
     // a fallback for path selectors, so expected path failures are ignored.
   }
   if (resolved) {
-    const byPath = records.find((workspace) => workspace.id === resolved!.id || workspace.rootPath === resolved!.rootPath);
+    const byPath = records.find(
+      (workspace) => workspace.id === resolved?.id || workspace.rootPath === resolved?.rootPath,
+    );
     if (byPath) return byPath;
   }
 
   const byName = records.filter((workspace) => workspace.name === reference);
   if (byName.length === 1) return byName[0]!;
   if (byName.length > 1) {
-    throw new WorkspaceUseCaseError("workspace_name_ambiguous", `workspace name is ambiguous; use its ID: ${reference}`, { selector: reference });
+    throw new WorkspaceUseCaseError(
+      "workspace_name_ambiguous",
+      `workspace name is ambiguous; use its ID: ${reference}`,
+      { selector: reference },
+    );
   }
   throw new WorkspaceNotFoundError(reference);
 }

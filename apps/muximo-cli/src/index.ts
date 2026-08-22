@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 import { createLogger } from "@muximo/infrastructure";
-import { parseGlobalOptions } from "./global-options.js";
 import { runMuximoCli } from "./entrypoint.js";
+import { parseGlobalOptions } from "./global-options.js";
 
-export { parseGlobalOptions } from "./global-options.js";
 export type { ParsedGlobalOptions } from "./global-options.js";
+export { parseGlobalOptions } from "./global-options.js";
 
 const parsed = parseGlobalOptions(process.argv.slice(2));
 const logger = createLogger({

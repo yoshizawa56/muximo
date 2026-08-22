@@ -35,8 +35,10 @@ export function readManagedAgentObservation(
  */
 export function inferUnmanagedAgentState(output: string, fallback: PaneState): PaneState {
   const recent = stripAnsi(output).slice(-8_000).toLowerCase();
-  if (/waiting\s+(for\s+)?(approval|permission)|approve|allow this|apply this|do you want/.test(recent)) return "waiting_approval";
-  if (/waiting\s+(for\s+)?input|continue with|press (enter|return)|what should i do|\?\s*[▌_>]?\s*$/.test(recent)) return "waiting_input";
+  if (/waiting\s+(for\s+)?(approval|permission)|approve|allow this|apply this|do you want/.test(recent))
+    return "waiting_approval";
+  if (/waiting\s+(for\s+)?input|continue with|press (enter|return)|what should i do|\?\s*[▌_>]?\s*$/.test(recent))
+    return "waiting_input";
   return recent ? "running" : fallback;
 }
 
@@ -45,9 +47,10 @@ export function normalizeAgentStatusObservation(observation: AgentStatusObservat
   if (!recentOutput) return { state: observation.state };
   return {
     state: observation.state,
-    recentOutput: recentOutput.length <= recentAgentOutputLimits.maxCharacters
-      ? recentOutput
-      : `…${recentOutput.slice(-(recentAgentOutputLimits.maxCharacters - 1))}`,
+    recentOutput:
+      recentOutput.length <= recentAgentOutputLimits.maxCharacters
+        ? recentOutput
+        : `…${recentOutput.slice(-(recentAgentOutputLimits.maxCharacters - 1))}`,
   };
 }
 

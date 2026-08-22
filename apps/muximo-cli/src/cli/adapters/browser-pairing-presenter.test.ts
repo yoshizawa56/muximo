@@ -2,23 +2,26 @@ import { existsSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { describe, it } from "vitest";
 import type { PairingClaim, PairingOffer } from "@muximo/application";
 import {
+  type FixtureHandle,
   hasObserved,
   noFixture,
-  returns,
-  runOperationTable,
-  type FixtureHandle,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { BrowserPairingPresenter, browserLaunchSpec, type BrowserLaunchSpec } from "./browser-pairing-presenter.js";
+import { describe, it } from "vitest";
+import { type BrowserLaunchSpec, BrowserPairingPresenter, browserLaunchSpec } from "./browser-pairing-presenter.js";
 
 class CaptureOutput extends Writable {
   public value = "";
-  public _write(chunk: Buffer | string, _encoding: string, callback: (error?: Error) => void): void { this.value += chunk.toString(); callback(); }
+  public _write(chunk: Buffer | string, _encoding: string, callback: (error?: Error) => void): void {
+    this.value += chunk.toString();
+    callback();
+  }
 }
 
 const offer: PairingOffer = {
@@ -117,7 +120,9 @@ const presenterTable: OperationTable<PresenterFixture, "default", PresenterInput
   },
   observe: (fixture) => ({
     received: fixture.received,
-    output: fixture.out.value.includes("Opened pairing QR in the default browser") && fixture.out.value.includes("Approve this device?"),
+    output:
+      fixture.out.value.includes("Opened pairing QR in the default browser") &&
+      fixture.out.value.includes("Approve this device?"),
     pageHasQr: fixture.openedContent?.includes('<svg data-test="qr" />') ?? false,
     temporaryPageRemoved: fixture.openedPath ? !existsSync(fixture.openedPath) : false,
   }),
@@ -142,15 +147,26 @@ const browserLaunchCases = [
   {
     name: "uses start through cmd on Windows",
     input: { filePath: "C:\\Temp\\qr page.html", platform: "win32" },
-    assert: [returns<BrowserLaunchSpec, BrowserLaunchSpec>({ command: "cmd.exe", args: ["/d", "/s", "/c", 'start "" "C:\\Temp\\qr page.html"'] })],
+    assert: [
+      returns<BrowserLaunchSpec, BrowserLaunchSpec>({
+        command: "cmd.exe",
+        args: ["/d", "/s", "/c", 'start "" "C:\\Temp\\qr page.html"'],
+      }),
+    ],
   },
 ] satisfies readonly OperationCase<"default", BrowserLaunchInput, BrowserLaunchSpec, BrowserLaunchSpec>[];
 
-const browserLaunchTable: OperationTable<undefined, "default", BrowserLaunchInput, BrowserLaunchSpec, BrowserLaunchSpec> = {
+const browserLaunchTable: OperationTable<
+  undefined,
+  "default",
+  BrowserLaunchInput,
+  BrowserLaunchSpec,
+  BrowserLaunchSpec
+> = {
   defaultFixture: noFixture(),
   cases: browserLaunchCases,
   execute: (_fixture, input) => browserLaunchSpec(input.filePath, input.platform),
-  observe: (_fixture, result) => result.ok ? result.value : { command: "", args: [] },
+  observe: (_fixture, result) => (result.ok ? result.value : { command: "", args: [] }),
 };
 
 describe("browser pairing presenter", () => {

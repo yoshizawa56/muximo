@@ -8,7 +8,7 @@
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync, renameSync } from "node:fs";
+import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer, type Server } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -39,7 +39,11 @@ export type ProcessSignaller = {
 export type OpenCodeServerManagerOptions = {
   registryFile: string;
   executable?: string;
-  spawn?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; detached: boolean; logFile: string }) => SpawnedChild;
+  spawn?: (
+    command: string,
+    args: string[],
+    options: { cwd: string; env: NodeJS.ProcessEnv; detached: boolean; logFile: string },
+  ) => SpawnedChild;
   request?: OpenCodeRequest;
   allocatePort?: () => Promise<number>;
   probePort?: (port: number) => Promise<boolean>;
@@ -213,16 +217,14 @@ export class OpenCodeServerManager {
 
   private spawnServer(workspaceRoot: string, port: number): SpawnedChild {
     const logFile = join(this.logFileDirectory, `opencode-${hashPath(workspaceRoot)}.log`);
-    const child = this.spawn!(
-      this.executable,
-      ["serve", "--hostname", "127.0.0.1", "--port", String(port)],
-      {
-        cwd: workspaceRoot,
-        env: process.env,
-        detached: true,
-        logFile,
-      },
-    );
+    const spawn = this.spawn;
+    if (!spawn) throw new Error("opencode server cannot start without a spawn function");
+    const child = spawn(this.executable, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+      cwd: workspaceRoot,
+      env: process.env,
+      detached: true,
+      logFile,
+    });
     this.onLog?.("debug", "opencode.server_started", { pid: child.pid, port, workspaceRoot });
     child.unref?.();
     this.children.add(child);
@@ -241,7 +243,9 @@ export class OpenCodeServerManager {
       const health = await this.isHealthy(port);
       if (health) return { healthy: true, version: await this.readVersion(port) };
       if (Date.now() >= deadline) {
-        throw new Error(`opencode serve did not become healthy within ${this.startupTimeoutMs}ms (${this.executable} serve --port ${port})`);
+        throw new Error(
+          `opencode serve did not become healthy within ${this.startupTimeoutMs}ms (${this.executable} serve --port ${port})`,
+        );
       }
       await sleep(this.healthPollIntervalMs);
     }
@@ -271,7 +275,10 @@ export class OpenCodeServerManager {
    * the recorded one is taken by another process. Returns undefined when the
    * replacement never becomes healthy.
    */
-  private async restartOnPort(workspaceRoot: string, entry: OpenCodeServerEntry): Promise<OpenCodeServerEntry | undefined> {
+  private async restartOnPort(
+    workspaceRoot: string,
+    entry: OpenCodeServerEntry,
+  ): Promise<OpenCodeServerEntry | undefined> {
     this.onLog?.("debug", "opencode.server_refreshing", { workspaceRoot, pid: entry.pid, port: entry.port });
     await this.signalAndWaitExit(entry.pid);
     const port = await this.allocatePreferredPort(entry.port);
@@ -300,7 +307,7 @@ export class OpenCodeServerManager {
     if (!this.isAlive(pid)) return;
     try {
       this.signaller.kill(pid, "SIGTERM");
-    } catch (error) {
+    } catch (_error) {
       // EPERM means the process belongs to another user; never force-stop a
       // server Muximo does not own.
       this.onLog?.("warn", "opencode.server_not_owned", { pid });
@@ -407,9 +414,8 @@ function spawnServe(
   } catch {
     // Logging is best effort; the server still runs.
   }
-  const stdio: Array<"ignore" | number> = logFd === undefined
-    ? ["ignore", "ignore", "ignore"]
-    : ["ignore", logFd, logFd];
+  const stdio: Array<"ignore" | number> =
+    logFd === undefined ? ["ignore", "ignore", "ignore"] : ["ignore", logFd, logFd];
   const child = nodeSpawn(command, args, {
     cwd: options.cwd,
     env: options.env,

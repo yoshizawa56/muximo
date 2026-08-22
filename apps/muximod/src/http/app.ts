@@ -1,6 +1,3 @@
-import { ORPCError, implement } from "@orpc/server";
-import { RPCHandler } from "@orpc/server/fetch";
-import { muximodContract } from "@muximo/contract";
 import type {
   AuthPairingClaimRequest as ApplicationAuthPairingClaimRequest,
   CreatePaneInput,
@@ -11,28 +8,30 @@ import type {
   RegisterWorkspaceCommand,
   UpdateWorkspaceCommand,
 } from "@muximo/application";
-import type { MuximodAuthContext } from "@muximo/application";
-import { clearPatch, type Patch } from "@muximo/domain";
 import {
   authInfoSchema,
+  type CreatePaneRequest,
   muximodCapabilitiesSchema,
+  muximodContract,
   muximodHealthSchema,
-  pairingClaimRequestSchema,
+  type pairingClaimRequestSchema,
   pairingStatusSchema,
   paneSummarySchema,
-  type CreatePaneRequest,
   type RegisterWorkspaceRequest,
   type UpdateWorkspaceRequest,
 } from "@muximo/contract";
-import { z } from "zod";
+import { clearPatch, type Patch } from "@muximo/domain";
 import { BunSocketAdapter } from "@muximo/infrastructure";
+import { implement, ORPCError } from "@orpc/server";
+import { RPCHandler } from "@orpc/server/fetch";
+import type { WebSocketHandler } from "bun";
+import { z } from "zod";
 import type {
   MuximodAuthContext as HttpAuthContext,
+  MuximodHookEvent,
   MuximodHttpDependencies,
   MuximodHttpStatus,
-  MuximodHookEvent,
 } from "./types.js";
-import type { ServerWebSocket, WebSocketHandler } from "bun";
 
 export class MuximodHttpError extends Error {
   public constructor(
@@ -103,9 +102,15 @@ export function createMuximodApp(deps: MuximodHttpDependencies): MuximodFetchApp
 }
 
 export type MuximodApp = ReturnType<typeof createMuximodApp>;
-export type { MuximodAuthContext, MuximodAuthPort, MuximodHttpDependencies, MuximodHttpStatus, MuximodHookEvent } from "./types.js";
-export { muximodSocketReadyState, BunSocketAdapter } from "@muximo/infrastructure";
 export type { MuximodSocket, MuximodSocketData } from "@muximo/application";
+export { BunSocketAdapter, muximodSocketReadyState } from "@muximo/infrastructure";
+export type {
+  MuximodAuthContext,
+  MuximodAuthPort,
+  MuximodHookEvent,
+  MuximodHttpDependencies,
+  MuximodHttpStatus,
+} from "./types.js";
 
 async function handleRequest(
   request: Request,
@@ -122,7 +127,10 @@ async function handleRequest(
   if (url.pathname === "/health") {
     if (request.method === "OPTIONS") return corsResponse(undefined, deps.corsOrigin, 204);
     if (deps.isReady && !deps.isReady()) {
-      return jsonResponse(errorBody(new MuximodHttpError(503, "muximod_unavailable", "muximod is still starting")), 503);
+      return jsonResponse(
+        errorBody(new MuximodHttpError(503, "muximod_unavailable", "muximod is still starting")),
+        503,
+      );
     }
     return jsonResponse(muximodHealthSchema.parse({ ok: true, service: "muximod", protocolVersion: 1 }));
   }
@@ -147,16 +155,18 @@ function createMuximodRouter(deps: MuximodHttpDependencies) {
   const os = implement(muximodContract).$context<MuximodRpcContext>();
 
   return os.router({
-    health: os.health.handler(() => safeCall(() => {
-      if (deps.isReady && !deps.isReady()) {
-        throw new MuximodHttpError(503, "muximod_unavailable", "muximod is still starting");
-      }
-      return muximodHealthSchema.parse({
-        ok: true,
-        service: "muximod",
-        protocolVersion: 1,
-      });
-    })),
+    health: os.health.handler(() =>
+      safeCall(() => {
+        if (deps.isReady && !deps.isReady()) {
+          throw new MuximodHttpError(503, "muximod_unavailable", "muximod is still starting");
+        }
+        return muximodHealthSchema.parse({
+          ok: true,
+          service: "muximod",
+          protocolVersion: 1,
+        });
+      }),
+    ),
     capabilities: os.capabilities.handler(({ context }) => {
       requireAuth(context);
       return muximodCapabilitiesSchema.parse({
@@ -170,78 +180,142 @@ function createMuximodRouter(deps: MuximodHttpDependencies) {
       });
     }),
     auth: {
-      info: os.auth.info.handler(() => authInfoSchema.parse({
-        protocolVersion: 1,
-        serverId: deps.auth.serverId,
-        serverTime: new Date().toISOString(),
-      })),
-      claimPairing: os.auth.claimPairing.handler(({ input }) => safeCall(() => {
-        const response = deps.auth.claimPairing(input.pairingId, toApplicationPairingClaim(input.request));
-        return response;
-      })),
-      pairingStatus: os.auth.pairingStatus.handler(({ input, context }) => safeCall(() => {
-        const claimToken = context.pairingToken;
-        if (!claimToken) throw new MuximodHttpError(401, "claim_token_required", "Pairing authorization is required");
-        return pairingStatusSchema.parse(deps.auth.pairingStatus(input.pairingId, claimToken));
-      })),
-      createChallenge: os.auth.createChallenge.handler(({ input }) => safeCall(() => deps.auth.createChallenge(input.deviceId))),
-      createSession: os.auth.createSession.handler(({ input }) => safeCall(() => deps.auth.createSession({
-        deviceId: input.deviceId,
-        challengeId: input.challengeId,
-        signature: input.signature,
-      }))),
-      issueWebSocketTicket: os.auth.issueWebSocketTicket.handler(({ input, context }) => safeCall(() => {
-        return deps.auth.issueWebSocketTicket(requireAuth(context), input.endpoint);
-      })),
+      info: os.auth.info.handler(() =>
+        authInfoSchema.parse({
+          protocolVersion: 1,
+          serverId: deps.auth.serverId,
+          serverTime: new Date().toISOString(),
+        }),
+      ),
+      claimPairing: os.auth.claimPairing.handler(({ input }) =>
+        safeCall(() => {
+          const response = deps.auth.claimPairing(input.pairingId, toApplicationPairingClaim(input.request));
+          return response;
+        }),
+      ),
+      pairingStatus: os.auth.pairingStatus.handler(({ input, context }) =>
+        safeCall(() => {
+          const claimToken = context.pairingToken;
+          if (!claimToken) throw new MuximodHttpError(401, "claim_token_required", "Pairing authorization is required");
+          return pairingStatusSchema.parse(deps.auth.pairingStatus(input.pairingId, claimToken));
+        }),
+      ),
+      createChallenge: os.auth.createChallenge.handler(({ input }) =>
+        safeCall(() => deps.auth.createChallenge(input.deviceId)),
+      ),
+      createSession: os.auth.createSession.handler(({ input }) =>
+        safeCall(() =>
+          deps.auth.createSession({
+            deviceId: input.deviceId,
+            challengeId: input.challengeId,
+            signature: input.signature,
+          }),
+        ),
+      ),
+      issueWebSocketTicket: os.auth.issueWebSocketTicket.handler(({ input, context }) =>
+        safeCall(() => {
+          return deps.auth.issueWebSocketTicket(requireAuth(context), input.endpoint);
+        }),
+      ),
     },
     workspaces: {
-      list: os.workspaces.list.handler(({ context }) => safeAsyncCall(async () => ({
-        workspaces: (await deps.application.workspaces.list()).map(toProtocolWorkspaceDirectory),
-      }), context)),
-      browse: os.workspaces.browse.handler(({ input, context }) => safeAsyncCall(async () => ({
-        directories: (await deps.application.workspaces.browse(input.path)).map(toProtocolWorkspaceDirectory),
-      }), context)),
-      register: os.workspaces.register.handler(({ input, context }) => safeAsyncCall(async () => ({
-        workspace: toProtocolWorkspaceDirectory(await deps.application.workspaces.register(toApplicationRegisterWorkspace(input))),
-      }), context)),
-      update: os.workspaces.update.handler(({ input, context }) => safeAsyncCall(async () => ({
-        workspace: toProtocolWorkspaceDirectory(await deps.application.workspaces.update(input.workspaceId, toApplicationUpdateWorkspace(input.input))),
-      }), context)),
-      delete: os.workspaces.delete.handler(({ input, context }) => safeAsyncCall(async () => {
-        await deps.application.workspaces.delete(input.workspaceId);
-        return {};
-      }, context)),
+      list: os.workspaces.list.handler(({ context }) =>
+        safeAsyncCall(
+          async () => ({
+            workspaces: (await deps.application.workspaces.list()).map(toProtocolWorkspaceDirectory),
+          }),
+          context,
+        ),
+      ),
+      browse: os.workspaces.browse.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () => ({
+            directories: (await deps.application.workspaces.browse(input.path)).map(toProtocolWorkspaceDirectory),
+          }),
+          context,
+        ),
+      ),
+      register: os.workspaces.register.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () => ({
+            workspace: toProtocolWorkspaceDirectory(
+              await deps.application.workspaces.register(toApplicationRegisterWorkspace(input)),
+            ),
+          }),
+          context,
+        ),
+      ),
+      update: os.workspaces.update.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () => ({
+            workspace: toProtocolWorkspaceDirectory(
+              await deps.application.workspaces.update(input.workspaceId, toApplicationUpdateWorkspace(input.input)),
+            ),
+          }),
+          context,
+        ),
+      ),
+      delete: os.workspaces.delete.handler(({ input, context }) =>
+        safeAsyncCall(async () => {
+          await deps.application.workspaces.delete(input.workspaceId);
+          return {};
+        }, context),
+      ),
     },
     terminals: {
-      list: os.terminals.list.handler(({ context }) => safeAsyncCall(async () => ({
-        terminals: [toProtocolTerminal(await deps.application.terminal.get())],
-      }), context)),
+      list: os.terminals.list.handler(({ context }) =>
+        safeAsyncCall(
+          async () => ({
+            terminals: [toProtocolTerminal(await deps.application.terminal.get())],
+          }),
+          context,
+        ),
+      ),
     },
     sessions: {
-      list: os.sessions.list.handler(({ context }) => safeAsyncCall(async () => ({
-        sessions: (await deps.application.sessions.list()).map(toProtocolSession),
-      }), context)),
-      create: os.sessions.create.handler(({ input, context }) => safeAsyncCall(async () => {
-        const workspace = input.workspaceId ? await deps.application.workspaces.resolveDirectory(input.workspaceId) : undefined;
-        const session = await deps.application.sessions.create({
-          name: input.name,
-          initialCwd: workspace?.rootPath ?? input.cwd!,
-        });
-        return { session: toProtocolSession(session) };
-      }, context)),
+      list: os.sessions.list.handler(({ context }) =>
+        safeAsyncCall(
+          async () => ({
+            sessions: (await deps.application.sessions.list()).map(toProtocolSession),
+          }),
+          context,
+        ),
+      ),
+      create: os.sessions.create.handler(({ input, context }) =>
+        safeAsyncCall(async () => {
+          const workspace = input.workspaceId
+            ? await deps.application.workspaces.resolveDirectory(input.workspaceId)
+            : undefined;
+          const session = await deps.application.sessions.create({
+            name: input.name,
+            initialCwd: workspace?.rootPath ?? input.cwd!,
+          });
+          return { session: toProtocolSession(session) };
+        }, context),
+      ),
     },
     panes: {
-      list: os.panes.list.handler(({ input, context }) => safeAsyncCall(async () => ({
-        panes: (await deps.application.panes.list(input.session)).map(toProtocolPane),
-      }), context)),
-      create: os.panes.create.handler(({ input, context }) => safeAsyncCall(async () => {
-        const workspace = input.workspaceId
-          ? await deps.application.workspaces.resolveSelection({ workspaceId: input.workspaceId, mode: input.useWorktree ? "worktree" : "workspace" })
-          : undefined;
-        return {
-          pane: toProtocolPane(await deps.application.panes.create(toApplicationCreatePane(input), workspace)),
-        };
-      }, context)),
+      list: os.panes.list.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () => ({
+            panes: (await deps.application.panes.list(input.session)).map(toProtocolPane),
+          }),
+          context,
+        ),
+      ),
+      create: os.panes.create.handler(({ input, context }) =>
+        safeAsyncCall(async () => {
+          const workspace = input.workspaceId
+            ? await deps.application.workspaces.resolveSelection({
+                workspaceId: input.workspaceId,
+                mode: input.useWorktree ? "worktree" : "workspace",
+              })
+            : undefined;
+          return {
+            pane: toProtocolPane(await deps.application.panes.create(toApplicationCreatePane(input), workspace)),
+          };
+        }, context),
+      ),
     },
     events: {
       subscribe: os.events.subscribe.handler(({ signal, context }) => {
@@ -253,7 +327,9 @@ function createMuximodRouter(deps: MuximodHttpDependencies) {
   });
 }
 
-function createWebSocketHandler(deps: MuximodHttpDependencies): WebSocketHandler<MuximodWebSocketData> & { idleTimeout: number } {
+function createWebSocketHandler(
+  deps: MuximodHttpDependencies,
+): WebSocketHandler<MuximodWebSocketData> & { idleTimeout: number } {
   return {
     data: {} as MuximodWebSocketData,
     idleTimeout: 0,
@@ -271,15 +347,29 @@ function createWebSocketHandler(deps: MuximodHttpDependencies): WebSocketHandler
   };
 }
 
-async function handleTerminalUpgrade(request: Request, server: UpgradeServer | undefined, deps: MuximodHttpDependencies): Promise<Response | undefined> {
+async function handleTerminalUpgrade(
+  request: Request,
+  server: UpgradeServer | undefined,
+  deps: MuximodHttpDependencies,
+): Promise<Response | undefined> {
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
     return corsResponse({ error: "upgrade_required", message: "WebSocket upgrade is required" }, deps.corsOrigin, 426);
   }
-  if (!server) return corsResponse({ error: "server_unavailable", message: "WebSocket server is unavailable" }, deps.corsOrigin, 503);
+  if (!server)
+    return corsResponse(
+      { error: "server_unavailable", message: "WebSocket server is unavailable" },
+      deps.corsOrigin,
+      503,
+    );
 
   const ticket = new URL(request.url).searchParams.get("ticket") ?? undefined;
   const context = deps.auth.consumeWebSocketTicket(ticket, "terminal");
-  if (!context) return corsResponse({ error: "unauthorized", message: "WebSocket authentication is required" }, deps.corsOrigin, 401);
+  if (!context)
+    return corsResponse(
+      { error: "unauthorized", message: "WebSocket authentication is required" },
+      deps.corsOrigin,
+      401,
+    );
 
   if (server.upgrade(request, { data: { endpoint: "terminal", context } })) return undefined;
   return corsResponse({ error: "upgrade_failed", message: "WebSocket upgrade failed" }, deps.corsOrigin, 500);
@@ -288,14 +378,22 @@ async function handleTerminalUpgrade(request: Request, server: UpgradeServer | u
 async function handleTmuxHook(request: Request, deps: MuximodHttpDependencies): Promise<Response> {
   if (request.method !== "POST") return corsResponse(undefined, deps.corsOrigin, 405);
   if (request.headers.get("x-muximod-hook-token") !== deps.hookToken) {
-    return corsResponse(errorBody(new MuximodHttpError(401, "unauthorized", "Invalid tmux hook token")), deps.corsOrigin, 401);
+    return corsResponse(
+      errorBody(new MuximodHttpError(401, "unauthorized", "Invalid tmux hook token")),
+      deps.corsOrigin,
+      401,
+    );
   }
   const form = await request.formData();
-  const parsed = z.object({
-    event: z.enum(["client-attached", "client-active", "client-resized", "client-focus-in", "client-detached"]),
-    client: z.string().trim().min(1).max(256),
-  }).strict().safeParse({ event: form.get("event"), client: form.get("client") });
-  if (!parsed.success) return corsResponse({ error: "invalid_request", message: "Request validation failed" }, deps.corsOrigin, 400);
+  const parsed = z
+    .object({
+      event: z.enum(["client-attached", "client-active", "client-resized", "client-focus-in", "client-detached"]),
+      client: z.string().trim().min(1).max(256),
+    })
+    .strict()
+    .safeParse({ event: form.get("event"), client: form.get("client") });
+  if (!parsed.success)
+    return corsResponse({ error: "invalid_request", message: "Request validation failed" }, deps.corsOrigin, 400);
   deps.application.hooks.handleTmux(parsed.data.event as MuximodHookEvent, parsed.data.client);
   return corsResponse(undefined, deps.corsOrigin, 204);
 }
@@ -332,7 +430,8 @@ async function safeAsyncCall<T>(operation: () => Promise<T>, context: MuximodRpc
 }
 
 function toRpcError(error: unknown): ORPCError<string, { code: string; details?: Record<string, unknown> }> {
-  if (error instanceof ORPCError) return error as ORPCError<string, { code: string; details?: Record<string, unknown> }>;
+  if (error instanceof ORPCError)
+    return error as ORPCError<string, { code: string; details?: Record<string, unknown> }>;
   const mapped = mapError(error);
   return new ORPCError(rpcCode(mapped.status), {
     message: mapped.message,
@@ -340,7 +439,16 @@ function toRpcError(error: unknown): ORPCError<string, { code: string; details?:
   });
 }
 
-function rpcCode(status: MuximodHttpStatus): "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "TOO_MANY_REQUESTS" | "SERVICE_UNAVAILABLE" {
+function rpcCode(
+  status: MuximodHttpStatus,
+):
+  | "BAD_REQUEST"
+  | "UNAUTHORIZED"
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "TOO_MANY_REQUESTS"
+  | "SERVICE_UNAVAILABLE" {
   if (status === 401) return "UNAUTHORIZED";
   if (status === 403) return "FORBIDDEN";
   if (status === 404) return "NOT_FOUND";
@@ -364,7 +472,9 @@ function toApplicationCreatePane(input: CreatePaneRequest): CreatePaneInput {
   };
 }
 
-function toApplicationPairingClaim(input: z.infer<typeof pairingClaimRequestSchema>): ApplicationAuthPairingClaimRequest {
+function toApplicationPairingClaim(
+  input: z.infer<typeof pairingClaimRequestSchema>,
+): ApplicationAuthPairingClaimRequest {
   return {
     pairingSecret: input.pairingSecret,
     publicKey: input.publicKey,
@@ -382,7 +492,9 @@ function toApplicationRegisterWorkspace(input: RegisterWorkspaceRequest): Regist
     directory: input.directory,
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.setupScriptPath === undefined ? {} : { setupScriptPath: toApplicationPatch(input.setupScriptPath) }),
-    ...(input.cleanupScriptPath === undefined ? {} : { cleanupScriptPath: toApplicationPatch(input.cleanupScriptPath) }),
+    ...(input.cleanupScriptPath === undefined
+      ? {}
+      : { cleanupScriptPath: toApplicationPatch(input.cleanupScriptPath) }),
     ...(input.worktreeCopyPatterns === undefined ? {} : { worktreeCopyPatterns: input.worktreeCopyPatterns }),
   };
 }
@@ -391,10 +503,16 @@ function toApplicationUpdateWorkspace(input: UpdateWorkspaceRequest): UpdateWork
   return {
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.setupScriptPath === undefined ? {} : { setupScriptPath: toApplicationPatch(input.setupScriptPath) }),
-    ...(input.cleanupScriptPath === undefined ? {} : { cleanupScriptPath: toApplicationPatch(input.cleanupScriptPath) }),
+    ...(input.cleanupScriptPath === undefined
+      ? {}
+      : { cleanupScriptPath: toApplicationPatch(input.cleanupScriptPath) }),
     ...(input.worktreeCopyPatterns === undefined ? {} : { worktreeCopyPatterns: input.worktreeCopyPatterns }),
-    ...(input.appendWorktreeCopyPatterns === undefined ? {} : { appendWorktreeCopyPatterns: input.appendWorktreeCopyPatterns }),
-    ...(input.clearWorktreeCopyPatterns === undefined ? {} : { clearWorktreeCopyPatterns: input.clearWorktreeCopyPatterns }),
+    ...(input.appendWorktreeCopyPatterns === undefined
+      ? {}
+      : { appendWorktreeCopyPatterns: input.appendWorktreeCopyPatterns }),
+    ...(input.clearWorktreeCopyPatterns === undefined
+      ? {}
+      : { clearWorktreeCopyPatterns: input.clearWorktreeCopyPatterns }),
   };
 }
 
@@ -456,15 +574,41 @@ function errorStatus(code: string, status: unknown): MuximodHttpStatus {
   if (isMuximodHttpStatus(status)) return status;
   if (code === "pairing_not_found" || code === "workspace_not_found") return 404;
   if (code === "pairing_expired" || code === "claim_token_expired") return 410;
-  if (code === "pairing_unavailable" || code === "pairing_not_awaiting_approval" || code === "pairing_not_rejectable" || code === "session_exists" || code === "workspace_already_registered" || code === "workspace_name_ambiguous") return 409;
-  if (code === "claim_token_invalid" || code === "claim_signature_invalid" || code === "session_signature_invalid" || code === "challenge_invalid" || code === "device_inactive") return 401;
+  if (
+    code === "pairing_unavailable" ||
+    code === "pairing_not_awaiting_approval" ||
+    code === "pairing_not_rejectable" ||
+    code === "session_exists" ||
+    code === "workspace_already_registered" ||
+    code === "workspace_name_ambiguous"
+  )
+    return 409;
+  if (
+    code === "claim_token_invalid" ||
+    code === "claim_signature_invalid" ||
+    code === "session_signature_invalid" ||
+    code === "challenge_invalid" ||
+    code === "device_inactive"
+  )
+    return 401;
   if (code === "challenge_rate_limited") return 429;
   if (code === "session_not_visible" || code === "pane_not_visible" || code === "tmux_unavailable") return 503;
   return 400;
 }
 
 function isMuximodHttpStatus(value: unknown): value is MuximodHttpStatus {
-  return value === 400 || value === 401 || value === 403 || value === 404 || value === 409 || value === 410 || value === 426 || value === 429 || value === 500 || value === 503;
+  return (
+    value === 400 ||
+    value === 401 ||
+    value === 403 ||
+    value === 404 ||
+    value === 409 ||
+    value === 410 ||
+    value === 426 ||
+    value === 429 ||
+    value === 500 ||
+    value === 503
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -489,9 +633,10 @@ function corsResponse(body: unknown, origin: string, status = 200): Response {
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
-  const response = body === undefined
-    ? new Response(null, { status })
-    : new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const response =
+    body === undefined
+      ? new Response(null, { status })
+      : new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   return response;
 }
 
@@ -499,7 +644,10 @@ function withCors(response: Response, origin: string): Response {
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", origin);
   headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
-  headers.set("access-control-allow-headers", "content-type, authorization, x-muximod-pairing-token, x-muximod-hook-token");
+  headers.set(
+    "access-control-allow-headers",
+    "content-type, authorization, x-muximod-pairing-token, x-muximod-hook-token",
+  );
   headers.set("vary", "Origin");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

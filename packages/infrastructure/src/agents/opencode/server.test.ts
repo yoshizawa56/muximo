@@ -1,20 +1,16 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "vitest";
 import {
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import {
-  OpenCodeServerManager,
-  type OpenCodeServerEntry,
-  type SpawnedChild,
-} from "./server.js";
+import { describe, it } from "vitest";
+import { type OpenCodeServerEntry, OpenCodeServerManager, type SpawnedChild } from "./server.js";
 
 type SpawnRecord = {
   command: string;
@@ -138,13 +134,22 @@ const cases = [
   {
     name: "starts an owned server and records the entry",
     input: { operation: "ensure" as const },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"], cwd: "/ws", pid: 1_000 }],
-      killed: [],
-      registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
+        spawned: [
+          {
+            command: "opencode",
+            args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"],
+            cwd: "/ws",
+            pid: 1_000,
+          },
+        ],
+        killed: [],
+        registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "reuses a healthy registered server without spawning",
@@ -154,13 +159,15 @@ const cases = [
       seededAlive: true,
       seededHealthy: true,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: { workspaceRoot: "/ws", pid: 42, port: 7_000, version: "1.2.3" },
-      spawned: [],
-      killed: [],
-      registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: { workspaceRoot: "/ws", pid: 42, port: 7_000, version: "1.2.3" },
+        spawned: [],
+        killed: [],
+        registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "restarts on the registered port when the registered process is gone",
@@ -170,13 +177,17 @@ const cases = [
       seededAlive: false,
       seededHealthy: false,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: { workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" },
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
-      killed: [],
-      registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: { workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" },
+        spawned: [
+          { command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 },
+        ],
+        killed: [],
+        registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "restarts on the registered port when the registered server is unhealthy",
@@ -186,13 +197,17 @@ const cases = [
       seededAlive: true,
       seededHealthy: false,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: { workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" },
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
-      killed: [{ pid: 42, signal: "SIGTERM" }],
-      registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: { workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" },
+        spawned: [
+          { command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 },
+        ],
+        killed: [{ pid: 42, signal: "SIGTERM" }],
+        registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "falls back to a fresh port when the registered port is occupied",
@@ -203,13 +218,22 @@ const cases = [
       seededHealthy: false,
       seededPortAvailable: false,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"], cwd: "/ws", pid: 1_000 }],
-      killed: [],
-      registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
+        spawned: [
+          {
+            command: "opencode",
+            args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"],
+            cwd: "/ws",
+            pid: 1_000,
+          },
+        ],
+        killed: [],
+        registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "dispose stops the owned server and forgets the entry",
@@ -219,13 +243,15 @@ const cases = [
       seededAlive: true,
       seededHealthy: true,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: undefined,
-      spawned: [],
-      killed: [{ pid: 42, signal: "SIGTERM" }],
-      registry: {},
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [{ pid: 42, signal: "SIGTERM" }],
+        registry: {},
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "dispose does not signal a server it does not own",
@@ -236,18 +262,22 @@ const cases = [
       seededHealthy: true,
       unownedKillThrows: true,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: undefined,
-      spawned: [],
-      killed: [],
-      registry: {},
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [],
+        registry: {},
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "dispose of an unknown root is a no-op",
     input: { operation: "dispose-missing" as const },
-    assert: [returns<EmptyContext, ServerResult>({ entry: undefined, spawned: [], killed: [], registry: {}, failure: "none" })],
+    assert: [
+      returns<EmptyContext, ServerResult>({ entry: undefined, spawned: [], killed: [], registry: {}, failure: "none" }),
+    ],
   },
   {
     name: "fails with a diagnostic when the server never becomes healthy",
@@ -257,13 +287,22 @@ const cases = [
       startupTimeoutMs: 60,
       healthPollIntervalMs: 10,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: undefined,
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"], cwd: "/ws", pid: 1_000 }],
-      killed: [],
-      registry: {},
-      failure: "health_timeout",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [
+          {
+            command: "opencode",
+            args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"],
+            cwd: "/ws",
+            pid: 1_000,
+          },
+        ],
+        killed: [],
+        registry: {},
+        failure: "health_timeout",
+      }),
+    ],
   },
   {
     name: "fails when the server exits before becoming healthy",
@@ -273,13 +312,22 @@ const cases = [
       startupTimeoutMs: 100,
       healthPollIntervalMs: 10,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: undefined,
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"], cwd: "/ws", pid: 1_000 }],
-      killed: [],
-      registry: {},
-      failure: "server_exited",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [
+          {
+            command: "opencode",
+            args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"],
+            cwd: "/ws",
+            pid: 1_000,
+          },
+        ],
+        killed: [],
+        registry: {},
+        failure: "server_exited",
+      }),
+    ],
   },
   {
     name: "proceeds when a stale lock is left behind",
@@ -287,13 +335,22 @@ const cases = [
       operation: "ensure" as const,
       staleLock: true,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"], cwd: "/ws", pid: 1_000 }],
-      killed: [],
-      registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
+        spawned: [
+          {
+            command: "opencode",
+            args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"],
+            cwd: "/ws",
+            pid: 1_000,
+          },
+        ],
+        killed: [],
+        registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "refreshAll restarts every owned server on its registered port",
@@ -303,14 +360,18 @@ const cases = [
       seededAlive: true,
       seededHealthy: true,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: undefined,
-      entries: [{ workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" }],
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
-      killed: [{ pid: 42, signal: "SIGTERM" }],
-      registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        entries: [{ workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" }],
+        spawned: [
+          { command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 },
+        ],
+        killed: [{ pid: 42, signal: "SIGTERM" }],
+        registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "refreshAll respawns a server whose process is already gone",
@@ -320,14 +381,18 @@ const cases = [
       seededAlive: false,
       seededHealthy: false,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: undefined,
-      entries: [{ workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" }],
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
-      killed: [],
-      registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        entries: [{ workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" }],
+        spawned: [
+          { command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 },
+        ],
+        killed: [],
+        registry: { "/ws": { pid: 1_000, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
   },
   {
     name: "refreshAll drops a root whose replacement server never becomes healthy",
@@ -340,14 +405,18 @@ const cases = [
       startupTimeoutMs: 60,
       healthPollIntervalMs: 10,
     },
-    assert: [returns<EmptyContext, ServerResult>({
-      entry: undefined,
-      entries: [],
-      spawned: [{ command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 }],
-      killed: [{ pid: 42, signal: "SIGTERM" }],
-      registry: {},
-      failure: "none",
-    })],
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        entries: [],
+        spawned: [
+          { command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"], cwd: "/ws", pid: 1_000 },
+        ],
+        killed: [{ pid: 42, signal: "SIGTERM" }],
+        registry: {},
+        failure: "none",
+      }),
+    ],
   },
 ] satisfies readonly OperationCase<"default", ServerInput, ServerResult, EmptyContext>[];
 
@@ -360,14 +429,17 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
       if (input.staleLock) writeFileSync(`${harness.registryFile}.lock`, "999999\n");
       if (input.seededEntry) {
         const root = input.seededEntry.root ?? "/ws";
-        writeFileSync(harness.registryFile, JSON.stringify({
-          [root]: {
-            pid: input.seededEntry.pid,
-            port: input.seededEntry.port,
-            version: "1.2.3",
-            startedAt: "2026-08-15T00:00:00.000Z",
-          },
-        }));
+        writeFileSync(
+          harness.registryFile,
+          JSON.stringify({
+            [root]: {
+              pid: input.seededEntry.pid,
+              port: input.seededEntry.port,
+              version: "1.2.3",
+              startedAt: "2026-08-15T00:00:00.000Z",
+            },
+          }),
+        );
         if (input.seededAlive) harness.alivePids.add(input.seededEntry.pid);
         if (input.seededHealthy) harness.healthyPorts.add(input.seededEntry.port);
         if (input.seededPortAvailable !== false) harness.availablePorts.add(input.seededEntry.port);
@@ -396,11 +468,13 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         failure = message.includes("exited before") ? "server_exited" : "health_timeout";
       }
       const registry = existsSync(harness.registryFile)
-        ? JSON.parse(readFileSync(harness.registryFile, "utf8")) as Record<string, unknown>
+        ? (JSON.parse(readFileSync(harness.registryFile, "utf8")) as Record<string, unknown>)
         : {};
       const normalizedRegistry = normalizeRegistry(registry);
       const result: ServerResult = {
-        entry: entry ? { workspaceRoot: entry.workspaceRoot, pid: entry.pid, port: entry.port, version: entry.version } : undefined,
+        entry: entry
+          ? { workspaceRoot: entry.workspaceRoot, pid: entry.pid, port: entry.port, version: entry.version }
+          : undefined,
         spawned: harness.spawnRecords,
         killed: harness.killed,
         registry: normalizedRegistry,

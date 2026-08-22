@@ -1,5 +1,5 @@
-import { createServeConnection, type MuximodConnection } from "./muximod-client.js";
 import { createBrowserMuximodAuth } from "./browser-auth";
+import { createServeConnection, type MuximodConnection } from "./muximod-client.js";
 
 export type BrowserConnectionProfile = {
   id: string;
@@ -11,7 +11,9 @@ export type BrowserConnectionProfile = {
 
 const storageKey = "muximo.connection-profile.v1";
 
-export function readBrowserConnectionProfile(storage: Storage | undefined = getStorage()): BrowserConnectionProfile | null {
+export function readBrowserConnectionProfile(
+  storage: Storage | undefined = getStorage(),
+): BrowserConnectionProfile | null {
   if (!storage) return null;
   try {
     const raw = storage.getItem(storageKey);
@@ -24,7 +26,8 @@ export function readBrowserConnectionProfile(storage: Storage | undefined = getS
 }
 
 export function saveBrowserConnectionProfile(
-  input: Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl"> & Pick<Partial<BrowserConnectionProfile>, "serverId">,
+  input: Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl"> &
+    Pick<Partial<BrowserConnectionProfile>, "serverId">,
   storage: Storage | undefined = getStorage(),
 ): BrowserConnectionProfile {
   const profile: BrowserConnectionProfile = {
@@ -64,10 +67,18 @@ export function normalizeMuximodBaseUrl(value: string): string {
 function parseProfile(value: unknown): BrowserConnectionProfile {
   if (!value || typeof value !== "object") throw new Error("Invalid connection profile");
   const candidate = value as Record<string, unknown>;
-  const muximodBaseUrl = typeof candidate.muximodBaseUrl === "string"
-    ? candidate.muximodBaseUrl
-    : typeof candidate.serveUrl === "string" ? candidate.serveUrl : undefined;
-  if (typeof candidate.id !== "string" || typeof candidate.name !== "string" || !muximodBaseUrl || typeof candidate.updatedAt !== "string") {
+  const muximodBaseUrl =
+    typeof candidate.muximodBaseUrl === "string"
+      ? candidate.muximodBaseUrl
+      : typeof candidate.serveUrl === "string"
+        ? candidate.serveUrl
+        : undefined;
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.name !== "string" ||
+    !muximodBaseUrl ||
+    typeof candidate.updatedAt !== "string"
+  ) {
     throw new Error("Invalid connection profile");
   }
   return {

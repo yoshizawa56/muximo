@@ -1,14 +1,13 @@
-import { describe, expect, it } from "vitest";
 import {
   hasError,
   noFixture,
-  returns,
-  runOperationTable,
-  type Assertion,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, expect, it } from "vitest";
 import {
   buildServeArgs,
   buildServeHttpUrl,
@@ -51,7 +50,10 @@ const invocationCases = [
       executablePaths: [],
       expected: {
         command: "/bin/zsh",
-        invocationArgs: ["-ic", "printf '%s\\n' '__muximo_tailscale_stdout_begin__'; tailscale 'serve' '--set-path=/agent'\\''s' 'http://127.0.0.1:4317'; status=$?; printf '%s\\n' '__muximo_tailscale_stdout_end__'; exit \"$status\""],
+        invocationArgs: [
+          "-ic",
+          "printf '%s\\n' '__muximo_tailscale_stdout_begin__'; tailscale 'serve' '--set-path=/agent'\\''s' 'http://127.0.0.1:4317'; status=$?; printf '%s\\n' '__muximo_tailscale_stdout_end__'; exit \"$status\"",
+        ],
         path: "/usr/bin:/Applications/Tailscale.app/Contents/MacOS:/Users/tester/Applications/Tailscale.app/Contents/MacOS",
         cliMode: "1",
         shellFallback: true,
@@ -77,7 +79,13 @@ const invocationCases = [
       platform: "darwin",
       executablePaths: [],
       allowShellFallback: false,
-      expected: { command: "/opt/tailscale/Tailscale", invocationArgs: ["status", "--json"], path: "/usr/bin", cliMode: "0", shellFallback: false },
+      expected: {
+        command: "/opt/tailscale/Tailscale",
+        invocationArgs: ["status", "--json"],
+        path: "/usr/bin",
+        cliMode: "0",
+        shellFallback: false,
+      },
     },
     assert: [
       {
@@ -98,7 +106,13 @@ const invocationCases = [
       environment: { PATH: "/usr/bin" },
       platform: "darwin",
       executablePaths: ["/usr/bin/tailscale"],
-      expected: { command: "tailscale", invocationArgs: ["serve", "--bg"], path: "/usr/bin", cliMode: "1", shellFallback: false },
+      expected: {
+        command: "tailscale",
+        invocationArgs: ["serve", "--bg"],
+        path: "/usr/bin",
+        cliMode: "1",
+        shellFallback: false,
+      },
     },
     assert: [
       {
@@ -119,7 +133,13 @@ const invocationCases = [
       environment: { HOME: "/Users/tester", PATH: "/usr/bin", SHELL: "/bin/zsh" },
       platform: "darwin",
       executablePaths: ["/Applications/Tailscale.app/Contents/MacOS/Tailscale"],
-      expected: { command: "/Applications/Tailscale.app/Contents/MacOS/Tailscale", invocationArgs: ["status", "--json"], path: "/usr/bin", cliMode: "1", shellFallback: false },
+      expected: {
+        command: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        invocationArgs: ["status", "--json"],
+        path: "/usr/bin",
+        cliMode: "1",
+        shellFallback: false,
+      },
     },
     assert: [
       {
@@ -141,7 +161,13 @@ const invocationCases = [
       platform: "darwin",
       executablePaths: [],
       allowShellFallback: false,
-      expected: { command: "tailscale", invocationArgs: ["ip", "-4"], path: "/usr/bin", cliMode: "1", shellFallback: false },
+      expected: {
+        command: "tailscale",
+        invocationArgs: ["ip", "-4"],
+        path: "/usr/bin",
+        cliMode: "1",
+        shellFallback: false,
+      },
     },
     assert: [
       {
@@ -159,16 +185,11 @@ const invocationCases = [
 const invocationTable: OperationTable<undefined, "default", InvocationInput, TailscaleInvocation, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: invocationCases,
-  execute: (_fixture, input) => buildTailscaleInvocation(
-    input.binary,
-    [...input.args],
-    input.environment,
-    input.platform,
-    {
+  execute: (_fixture, input) =>
+    buildTailscaleInvocation(input.binary, [...input.args], input.environment, input.platform, {
       isExecutable: (path) => input.executablePaths.includes(path),
       ...(input.allowShellFallback === undefined ? {} : { allowShellFallback: input.allowShellFallback }),
-    },
-  ),
+    }),
   observe: () => ({}),
 };
 
@@ -185,10 +206,10 @@ const stdoutCases = [
   {
     name: "extracts command output between shell markers",
     input: {
-      stdout: "zsh startup message\n__muximo_tailscale_stdout_begin__\n{\"Self\":{}}\n__muximo_tailscale_stdout_end__\n",
-      expected: "{\"Self\":{}}\n",
+      stdout: 'zsh startup message\n__muximo_tailscale_stdout_begin__\n{"Self":{}}\n__muximo_tailscale_stdout_end__\n',
+      expected: '{"Self":{}}\n',
     },
-    assert: [returns<EmptyContext, string>("{\"Self\":{}}\n")],
+    assert: [returns<EmptyContext, string>('{"Self":{}}\n')],
   },
   {
     name: "preserves output when the shell did not reach the marker",
@@ -210,9 +231,30 @@ const stdoutTable: OperationTable<undefined, "default", StdoutInput, string, Emp
 };
 
 const argsCases = [
-  { name: "builds a persistent HTTPS command", input: { localPort: 4317, externalPort: 443 }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=443", "--yes", "http://127.0.0.1:4317"])] },
-  { name: "builds a command for a custom external port", input: { localPort: 1, externalPort: 8449 }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=8449", "--yes", "http://127.0.0.1:1"])] },
-  { name: "builds a path-mounted command", input: { localPort: 4317, externalPort: 443, path: "muximod" }, assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=443", "--yes", "--set-path=/muximod", "http://127.0.0.1:4317"])] },
+  {
+    name: "builds a persistent HTTPS command",
+    input: { localPort: 4317, externalPort: 443 },
+    assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=443", "--yes", "http://127.0.0.1:4317"])],
+  },
+  {
+    name: "builds a command for a custom external port",
+    input: { localPort: 1, externalPort: 8449 },
+    assert: [returns<EmptyContext, string[]>(["serve", "--bg", "--https=8449", "--yes", "http://127.0.0.1:1"])],
+  },
+  {
+    name: "builds a path-mounted command",
+    input: { localPort: 4317, externalPort: 443, path: "muximod" },
+    assert: [
+      returns<EmptyContext, string[]>([
+        "serve",
+        "--bg",
+        "--https=443",
+        "--yes",
+        "--set-path=/muximod",
+        "http://127.0.0.1:4317",
+      ]),
+    ],
+  },
 ] satisfies readonly OperationCase<"default", TailscaleServeConfig, string[], EmptyContext>[];
 
 const argsTable: OperationTable<undefined, "default", TailscaleServeConfig, string[], EmptyContext> = {
@@ -226,21 +268,42 @@ type UrlInput =
   | { kind: "http"; hostname: string; port: number }
   | { kind: "websocket"; hostname: string; path: string };
 const urlCases = [
-  { name: "builds a websocket URL", input: { hostname: "host.tailnet.ts.net", path: "agent", kind: "websocket" }, assert: [returns<EmptyContext, string>("wss://host.tailnet.ts.net/agent")] },
-  { name: "builds HTTPS without a port for 443", input: { hostname: "host.tailnet.ts.net", port: 443, kind: "http" }, assert: [returns<EmptyContext, string>("https://host.tailnet.ts.net/")] },
-  { name: "includes a non-default HTTPS port", input: { hostname: "host.tailnet.ts.net", port: 8449, kind: "http" }, assert: [returns<EmptyContext, string>("https://host.tailnet.ts.net:8449/")] },
+  {
+    name: "builds a websocket URL",
+    input: { hostname: "host.tailnet.ts.net", path: "agent", kind: "websocket" },
+    assert: [returns<EmptyContext, string>("wss://host.tailnet.ts.net/agent")],
+  },
+  {
+    name: "builds HTTPS without a port for 443",
+    input: { hostname: "host.tailnet.ts.net", port: 443, kind: "http" },
+    assert: [returns<EmptyContext, string>("https://host.tailnet.ts.net/")],
+  },
+  {
+    name: "includes a non-default HTTPS port",
+    input: { hostname: "host.tailnet.ts.net", port: 8449, kind: "http" },
+    assert: [returns<EmptyContext, string>("https://host.tailnet.ts.net:8449/")],
+  },
 ] satisfies readonly OperationCase<"default", UrlInput, string, EmptyContext>[];
 
 const urlTable: OperationTable<undefined, "default", UrlInput, string, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: urlCases,
-  execute: (_fixture, input) => input.kind === "http" ? buildServeHttpUrl(input.hostname, input.port) : buildServeUrl(input.hostname, input.path),
+  execute: (_fixture, input) =>
+    input.kind === "http" ? buildServeHttpUrl(input.hostname, input.port) : buildServeUrl(input.hostname, input.path),
   observe: () => ({}),
 };
 
 const hostnameCases = [
-  { name: "reads and normalizes the current DNS name", input: JSON.stringify({ Self: { DNSName: "host.tailnet.ts.net." } }), assert: [returns<EmptyContext, string | undefined>("host.tailnet.ts.net")] },
-  { name: "returns undefined for malformed status JSON", input: "not json", assert: [returns<EmptyContext, string | undefined>(undefined)] },
+  {
+    name: "reads and normalizes the current DNS name",
+    input: JSON.stringify({ Self: { DNSName: "host.tailnet.ts.net." } }),
+    assert: [returns<EmptyContext, string | undefined>("host.tailnet.ts.net")],
+  },
+  {
+    name: "returns undefined for malformed status JSON",
+    input: "not json",
+    assert: [returns<EmptyContext, string | undefined>(undefined)],
+  },
 ] satisfies readonly OperationCase<"default", string, string | undefined, EmptyContext>[];
 
 const hostnameTable: OperationTable<undefined, "default", string, string | undefined, EmptyContext> = {
@@ -252,8 +315,16 @@ const hostnameTable: OperationTable<undefined, "default", string, string | undef
 
 type InvalidInput = { kind: "local" | "external"; localPort: number; externalPort: number };
 const invalidCases = [
-  { name: "rejects an invalid local port", input: { kind: "local", localPort: 65_536, externalPort: 443 }, assert: [hasError<EmptyContext, string[]>({ message: /^Invalid Tailscale Serve port/ })] },
-  { name: "rejects an invalid external port", input: { kind: "external", localPort: 4317, externalPort: 65_536 }, assert: [hasError<EmptyContext, string[]>({ message: /^Invalid Tailscale Serve external port/ })] },
+  {
+    name: "rejects an invalid local port",
+    input: { kind: "local", localPort: 65_536, externalPort: 443 },
+    assert: [hasError<EmptyContext, string[]>({ message: /^Invalid Tailscale Serve port/ })],
+  },
+  {
+    name: "rejects an invalid external port",
+    input: { kind: "external", localPort: 4317, externalPort: 65_536 },
+    assert: [hasError<EmptyContext, string[]>({ message: /^Invalid Tailscale Serve external port/ })],
+  },
 ] satisfies readonly OperationCase<"default", InvalidInput, string[], EmptyContext>[];
 
 const invalidTable: OperationTable<undefined, "default", InvalidInput, string[], EmptyContext> = {

@@ -1,5 +1,3 @@
-import type { MuximodSocket } from "../../ports/socket.js";
-import { AuthStoreError } from "./auth-errors.js";
 import type {
   AuthChallengeResponse,
   AuthDeviceRecord,
@@ -14,6 +12,8 @@ import type {
   WsTicketResponse,
 } from "../../models/auth.js";
 import type { AuthCryptoPort, AuthStorePort, MuximodAuthPort } from "../../ports/auth.js";
+import type { MuximodSocket } from "../../ports/socket.js";
+import { AuthStoreError } from "./auth-errors.js";
 
 const PAIRING_TTL_MS = 5 * 60_000;
 const CLAIM_TTL_MS = 10 * 60_000;
@@ -96,7 +96,7 @@ export class AuthService implements MuximodAuthPort {
 
     const claimToken = this.options.crypto.randomOpaque(32);
     const claimExpiresAt = this.future(CLAIM_TTL_MS).toISOString();
-    const result = this.options.store.claimPairing({
+    const _result = this.options.store.claimPairing({
       pairingId,
       secretHash,
       claimToken,
@@ -148,7 +148,8 @@ export class AuthService implements MuximodAuthPort {
     if (!window || now - window.startedAt >= 60_000) {
       this.challengeWindows.set(deviceId, { startedAt: now, count: 1 });
     } else {
-      if (window.count >= 10) throw new AuthStoreError("challenge_rate_limited", "too many authentication challenges requested");
+      if (window.count >= 10)
+        throw new AuthStoreError("challenge_rate_limited", "too many authentication challenges requested");
       window.count += 1;
     }
     this.removeExpiredChallenges();
@@ -173,7 +174,13 @@ export class AuthService implements MuximodAuthPort {
       challengeNonce: challenge.nonce,
       expiresAt: challenge.expiresAt,
     });
-    if (!this.options.crypto.verifyPublicKeySignature(this.options.crypto.parsePublicKey(device.publicKeyJwk), message, input.signature)) {
+    if (
+      !this.options.crypto.verifyPublicKeySignature(
+        this.options.crypto.parsePublicKey(device.publicKeyJwk),
+        message,
+        input.signature,
+      )
+    ) {
       throw new AuthStoreError("session_signature_invalid", "session signature is invalid");
     }
 
@@ -253,7 +260,7 @@ export class AuthService implements MuximodAuthPort {
 
   private contextForSession(session: AuthSessionRecord): MuximodAuthContext | null {
     const device = this.options.store.findDevice(session.deviceId);
-    if (!device || device.status !== "active") return null;
+    if (device?.status !== "active") return null;
     return { ...session, device };
   }
 

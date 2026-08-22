@@ -1,13 +1,13 @@
-import { describe, it } from "vitest";
 import {
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { OpenCodeClient, OpenCodeStreamClosedError, type OpenCodeEvent } from "./client.js";
+import { describe, it } from "vitest";
+import { OpenCodeClient, type OpenCodeEvent, OpenCodeStreamClosedError } from "./client.js";
 
 type SseInput = {
   sseText: string;
@@ -32,90 +32,87 @@ const sseCases = [
         "",
       ].join("\n"),
     },
-    assert: [returns<EmptyContext, SseResult>({
-      events: [{
-        type: "session.status",
-        properties: { sessionID: "s1", status: { type: "busy" } },
-        directory: "/ws",
-      }],
-      endedWithStreamClosed: true,
-    })],
+    assert: [
+      returns<EmptyContext, SseResult>({
+        events: [
+          {
+            type: "session.status",
+            properties: { sessionID: "s1", status: { type: "busy" } },
+            directory: "/ws",
+          },
+        ],
+        endedWithStreamClosed: true,
+      }),
+    ],
   },
   {
     name: "parses named events with a bare payload",
     input: {
-      sseText: [
-        "event: session.idle",
-        'data: {"sessionID":"s1"}',
-        "",
-        "",
-      ].join("\n"),
+      sseText: ["event: session.idle", 'data: {"sessionID":"s1"}', "", ""].join("\n"),
     },
-    assert: [returns<EmptyContext, SseResult>({
-      events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
-      endedWithStreamClosed: true,
-    })],
+    assert: [
+      returns<EmptyContext, SseResult>({
+        events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
+        endedWithStreamClosed: true,
+      }),
+    ],
   },
   {
     name: "skips malformed JSON and keeps valid events",
     input: {
-      sseText: [
-        "data: {not json",
-        "",
-        'data: {"type":"session.idle","properties":{"sessionID":"s1"}}',
-        "",
-        "",
-      ].join("\n"),
+      sseText: ["data: {not json", "", 'data: {"type":"session.idle","properties":{"sessionID":"s1"}}', "", ""].join(
+        "\n",
+      ),
     },
-    assert: [returns<EmptyContext, SseResult>({
-      events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
-      endedWithStreamClosed: true,
-    })],
+    assert: [
+      returns<EmptyContext, SseResult>({
+        events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
+        endedWithStreamClosed: true,
+      }),
+    ],
   },
   {
     name: "ignores comment keepalive blocks",
     input: {
-      sseText: [
-        ": ping",
-        "",
-        'data: {"type":"session.idle","properties":{"sessionID":"s1"}}',
-        "",
-        "",
-      ].join("\n"),
+      sseText: [": ping", "", 'data: {"type":"session.idle","properties":{"sessionID":"s1"}}', "", ""].join("\n"),
     },
-    assert: [returns<EmptyContext, SseResult>({
-      events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
-      endedWithStreamClosed: true,
-    })],
+    assert: [
+      returns<EmptyContext, SseResult>({
+        events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
+        endedWithStreamClosed: true,
+      }),
+    ],
   },
   {
     name: "handles CRLF block separators",
     input: {
       sseText: 'data: {"type":"session.idle","properties":{"sessionID":"s1"}}\r\n\r\n',
     },
-    assert: [returns<EmptyContext, SseResult>({
-      events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
-      endedWithStreamClosed: true,
-    })],
+    assert: [
+      returns<EmptyContext, SseResult>({
+        events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
+        endedWithStreamClosed: true,
+      }),
+    ],
   },
   {
     name: "joins multi-line data payloads",
     input: {
-      sseText: [
-        "event: session.status",
-        "data: {\"sessionID\":\"s1\",",
-        'data: "status":{"type":"idle"}}',
-        "",
-        "",
-      ].join("\n"),
+      sseText: ["event: session.status", 'data: {"sessionID":"s1",', 'data: "status":{"type":"idle"}}', "", ""].join(
+        "\n",
+      ),
     },
-    assert: [returns<EmptyContext, SseResult>({
-      events: [{
-        type: "session.status",
-        properties: { sessionID: "s1", status: { type: "idle" } },
-      }],
-      endedWithStreamClosed: true,
-    })],
+    assert: [
+      returns<EmptyContext, SseResult>({
+        events: [
+          {
+            type: "session.status",
+            properties: { sessionID: "s1", status: { type: "idle" } },
+          },
+        ],
+        endedWithStreamClosed: true,
+      }),
+    ],
   },
   {
     name: "reports a non-200 event stream response",
@@ -129,7 +126,7 @@ const sseTable: OperationTable<undefined, "default", SseInput, SseResult, EmptyC
   cases: sseCases,
   execute: async (_fixture, input) => {
     const client = new OpenCodeClient("http://127.0.0.1:4096", {
-      request: async (url) => {
+      request: async (_url) => {
         if (input.status !== undefined) return new Response("unavailable", { status: input.status });
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
@@ -148,7 +145,9 @@ const sseTable: OperationTable<undefined, "default", SseInput, SseResult, EmptyC
     } catch (error) {
       if (error instanceof OpenCodeStreamClosedError) {
         endedWithStreamClosed = true;
-        errorStatus = error.message.includes("returned") ? Number.parseInt(error.message.match(/(\d+)/)?.[1] ?? "0", 10) : undefined;
+        errorStatus = error.message.includes("returned")
+          ? Number.parseInt(error.message.match(/(\d+)/)?.[1] ?? "0", 10)
+          : undefined;
       } else {
         throw error;
       }
@@ -178,74 +177,116 @@ const endpointCases = [
   {
     name: "health returns the server version",
     input: { kind: "health" as const, responseBody: { healthy: true, version: "1.2.3" } },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: { healthy: true, version: "1.2.3" },
-      calls: [{ url: "http://127.0.0.1:4096/global/health", method: "GET", body: undefined }],
-    })],
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: { healthy: true, version: "1.2.3" },
+        calls: [{ url: "http://127.0.0.1:4096/global/health", method: "GET", body: undefined }],
+      }),
+    ],
   },
   {
     name: "create session posts an empty body and returns the session id",
     input: { kind: "create" as const, responseBody: { id: "session-new" } },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: "session-new",
-      calls: [{ url: "http://127.0.0.1:4096/session", method: "POST", body: "{}" }],
-    })],
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: "session-new",
+        calls: [{ url: "http://127.0.0.1:4096/session", method: "POST", body: "{}" }],
+      }),
+    ],
   },
   {
     name: "create session posts the requested title",
     input: { kind: "create" as const, title: "review", responseBody: { id: "session-new" } },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: "session-new",
-      calls: [{ url: "http://127.0.0.1:4096/session", method: "POST", body: JSON.stringify({ title: "review" }) }],
-    })],
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: "session-new",
+        calls: [{ url: "http://127.0.0.1:4096/session", method: "POST", body: JSON.stringify({ title: "review" }) }],
+      }),
+    ],
   },
   {
     name: "update session title patches the session title",
     input: { kind: "title" as const, sessionId: "session-1", title: "review", responseBody: true },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: true,
-      calls: [{ url: "http://127.0.0.1:4096/session/session-1", method: "PATCH", body: JSON.stringify({ title: "review" }) }],
-    })],
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: true,
+        calls: [
+          {
+            url: "http://127.0.0.1:4096/session/session-1",
+            method: "PATCH",
+            body: JSON.stringify({ title: "review" }),
+          },
+        ],
+      }),
+    ],
   },
   {
     name: "reports a rejected session title update",
-    input: { kind: "title" as const, sessionId: "session-1", title: "review", responseBody: { error: "unsupported" }, responseStatus: 400 },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: false,
-      calls: [{ url: "http://127.0.0.1:4096/session/session-1", method: "PATCH", body: JSON.stringify({ title: "review" }) }],
-    })],
+    input: {
+      kind: "title" as const,
+      sessionId: "session-1",
+      title: "review",
+      responseBody: { error: "unsupported" },
+      responseStatus: 400,
+    },
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: false,
+        calls: [
+          {
+            url: "http://127.0.0.1:4096/session/session-1",
+            method: "PATCH",
+            body: JSON.stringify({ title: "review" }),
+          },
+        ],
+      }),
+    ],
   },
   {
     name: "abort posts to the session abort endpoint",
     input: { kind: "abort" as const, sessionId: "session-1", responseBody: true },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: true,
-      calls: [{ url: "http://127.0.0.1:4096/session/session-1/abort", method: "POST", body: undefined }],
-    })],
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: true,
+        calls: [{ url: "http://127.0.0.1:4096/session/session-1/abort", method: "POST", body: undefined }],
+      }),
+    ],
   },
   {
     name: "permission reply posts response and remember",
     input: { kind: "permission" as const, sessionId: "session-1", permissionId: "permission-9", responseBody: true },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: true,
-      calls: [{ url: "http://127.0.0.1:4096/session/session-1/permissions/permission-9", method: "POST", body: JSON.stringify({ response: "allow", remember: true }) }],
-    })],
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: true,
+        calls: [
+          {
+            url: "http://127.0.0.1:4096/session/session-1/permissions/permission-9",
+            method: "POST",
+            body: JSON.stringify({ response: "allow", remember: true }),
+          },
+        ],
+      }),
+    ],
   },
   {
     name: "fork posts to the session fork endpoint",
     input: { kind: "fork" as const, sessionId: "session-1", responseBody: { id: "session-fork" } },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: "session-fork",
-      calls: [{ url: "http://127.0.0.1:4096/session/session-1/fork", method: "POST", body: "{}" }],
-    })],
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: "session-fork",
+        calls: [{ url: "http://127.0.0.1:4096/session/session-1/fork", method: "POST", body: "{}" }],
+      }),
+    ],
   },
   {
     name: "session status is read from the status map",
     input: { kind: "status" as const, sessionId: "session-1", responseBody: { "session-1": { type: "busy" } } },
-    assert: [returns<EmptyContext, EndpointResult>({
-      value: "busy",
-      calls: [{ url: "http://127.0.0.1:4096/session/status", method: "GET", body: undefined }],
-    })],
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: "busy",
+        calls: [{ url: "http://127.0.0.1:4096/session/status", method: "GET", body: undefined }],
+      }),
+    ],
   },
 ] satisfies readonly OperationCase<"default", EndpointInput, EndpointResult, EmptyContext>[];
 
@@ -257,7 +298,10 @@ const endpointTable: OperationTable<undefined, "default", EndpointInput, Endpoin
     const client = new OpenCodeClient("http://127.0.0.1:4096", {
       request: async (url, init) => {
         calls.push({ url: String(url), init });
-        return new Response(JSON.stringify(input.responseBody), { status: input.responseStatus ?? 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify(input.responseBody), {
+          status: input.responseStatus ?? 200,
+          headers: { "content-type": "application/json" },
+        });
       },
     });
     let value: unknown;

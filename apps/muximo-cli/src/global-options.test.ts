@@ -1,11 +1,11 @@
-import { describe, it } from "vitest";
 import {
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 import { parseGlobalOptions } from "./global-options.js";
 
 type Input = { args: string[] };

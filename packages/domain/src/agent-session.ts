@@ -24,43 +24,46 @@ export const agentSessionNameLimits = {
   maxUtf8Bytes: 240,
 } as const;
 
-const agentSessionNameSchema = z.string().min(1).max(agentSessionNameLimits.maxLength).refine(
-  (value) => !/[\u0000\r\n]/.test(value),
-  "agent session name contains a control character",
-);
+const agentSessionNameSchema = z
+  .string()
+  .min(1)
+  .max(agentSessionNameLimits.maxLength)
+  .refine((value) => !/[\u0000\r\n]/.test(value), "agent session name contains a control character");
 
 const optionalPathSchema = z.string().min(1).optional();
-const agentSessionSchema = z.object({
-  id: AgentSessionId.schema,
-  name: agentSessionNameSchema,
-  backend: agentBackendSchema,
-  status: agentSessionStateSchema,
-  workspaceId: WorkspaceId.schema,
-  workspaceRoot: z.string().min(1),
-  workspaceName: z.string().min(1),
-  worktreeRoot: optionalPathSchema,
-  worktreePath: optionalPathSchema,
-  branch: z.string().min(1).optional(),
-  baseCommit: z.string().min(1).optional(),
-  useWorktree: z.boolean(),
-  setupHook: optionalPathSchema,
-  cleanupHook: optionalPathSchema,
-  setupOutputFile: optionalPathSchema,
-  cleanupOutputFile: optionalPathSchema,
-  backendSessionId: z.string().min(1).optional(),
-  codexProfile: z.string().min(1).optional(),
-  codexRemote: z.string().optional(),
-  setupRan: z.boolean(),
-  resuming: z.boolean(),
-  baselineStatus: z.string().optional(),
-  codexSessionBaseline: z.string().optional(),
-  lastExitStatus: z.number().int().optional(),
-  executionId: z.string().min(1).optional(),
-  executionPid: z.number().int().positive().optional(),
-  executionStartedAt: z.string().min(1).optional(),
-  createdAt: z.string().min(1),
-  updatedAt: z.string().min(1),
-}).strict();
+const agentSessionSchema = z
+  .object({
+    id: AgentSessionId.schema,
+    name: agentSessionNameSchema,
+    backend: agentBackendSchema,
+    status: agentSessionStateSchema,
+    workspaceId: WorkspaceId.schema,
+    workspaceRoot: z.string().min(1),
+    workspaceName: z.string().min(1),
+    worktreeRoot: optionalPathSchema,
+    worktreePath: optionalPathSchema,
+    branch: z.string().min(1).optional(),
+    baseCommit: z.string().min(1).optional(),
+    useWorktree: z.boolean(),
+    setupHook: optionalPathSchema,
+    cleanupHook: optionalPathSchema,
+    setupOutputFile: optionalPathSchema,
+    cleanupOutputFile: optionalPathSchema,
+    backendSessionId: z.string().min(1).optional(),
+    codexProfile: z.string().min(1).optional(),
+    codexRemote: z.string().optional(),
+    setupRan: z.boolean(),
+    resuming: z.boolean(),
+    baselineStatus: z.string().optional(),
+    codexSessionBaseline: z.string().optional(),
+    lastExitStatus: z.number().int().optional(),
+    executionId: z.string().min(1).optional(),
+    executionPid: z.number().int().positive().optional(),
+    executionStartedAt: z.string().min(1).optional(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
 
 export type AgentSession = z.infer<typeof agentSessionSchema>;
 export type AgentSessionRecord = AgentSession;
@@ -75,29 +78,32 @@ export class InvalidAgentSessionNameError extends Error {
   }
 }
 
+const parseAgentSession = (input: unknown): AgentSession => agentSessionSchema.parse(input);
+
 export const AgentSession = {
   schema: agentSessionSchema,
 
-  validate(input: unknown): AgentSession {
-    return agentSessionSchema.parse(input);
+  /** Rehydrates a persisted agent session. This is the only re-entry point for raw data. */
+  restore(input: unknown): AgentSession {
+    return parseAgentSession(input);
   },
 
   create(input: Omit<AgentSession, "name"> & { name: string }): AgentSession {
-    return AgentSession.validate({ ...input, name: normalizeAgentSessionName(input.name) });
+    return parseAgentSession({ ...input, name: normalizeAgentSessionName(input.name) });
   },
 
   update(entity: AgentSession, input: AgentSessionUpdateInput): AgentSession {
-    const current = AgentSession.validate(entity);
+    const current = parseAgentSession(entity);
     const next = applyObjectPatch(current, input);
     if (input.name !== undefined && typeof input.name === "string") {
       next.name = normalizeAgentSessionName(input.name);
     }
-    return AgentSession.validate(next);
+    return parseAgentSession(next);
   },
 
   normalizeName: normalizeAgentSessionName,
   hasActiveExecution(entity: AgentSession): boolean {
-    const current = AgentSession.validate(entity);
+    const current = parseAgentSession(entity);
     return (current.status === "running" || current.status === "resuming") && current.executionPid !== undefined;
   },
 } as const;

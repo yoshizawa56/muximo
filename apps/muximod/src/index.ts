@@ -10,12 +10,8 @@ const args = process.argv.slice(2);
 // daemon module.
 try {
   if (
-    args.length === 0
-    || (
-      !args.includes("-h")
-      && !args.includes("--help")
-      && (args[0] === "start" || args[0]?.startsWith("-"))
-    )
+    args.length === 0 ||
+    (!args.includes("-h") && !args.includes("--help") && (args[0] === "start" || args[0]?.startsWith("-")))
   ) {
     await startMuximod(args);
   } else {

@@ -1,15 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { AuthService } from "@muximo/application";
+import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 import {
+  type FixtureHandle,
   hasObserved,
   runScenarioTable,
-  type FixtureHandle,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
-import { createAgentDatabase, AuthStore } from "../persistence/index.js";
-import { AuthService } from "./service.js";
+import { describe, expect, it } from "vitest";
+import { AuthStore, createAgentDatabase } from "../persistence/index.js";
+import { nodeAuthCrypto } from "./crypto.js";
 
 type AuthFixture = {
   database: ReturnType<typeof createAgentDatabase>;
@@ -37,11 +38,26 @@ type AuthStep =
   | { type: "approve" }
   | { type: "create-session" }
   | { type: "consume-ticket" };
-type AuthContext = Pick<AuthFixture, "keyFingerprint" | "contextDeviceId" | "claimStatus" | "approvedStatus" | "deviceId" | "deviceKeyFingerprint" | "sessionId" | "ticketSessionId" | "ticketSecondUse">;
+type AuthContext = Pick<
+  AuthFixture,
+  | "keyFingerprint"
+  | "contextDeviceId"
+  | "claimStatus"
+  | "approvedStatus"
+  | "deviceId"
+  | "deviceKeyFingerprint"
+  | "sessionId"
+  | "ticketSessionId"
+  | "ticketSecondUse"
+>;
 
 const authFixture = async (): Promise<FixtureHandle<AuthFixture>> => {
   const database = createAgentDatabase();
-  const auth = new AuthService({ store: new AuthStore(database.db, database.sqlite), muximodBaseUrl: "http://127.0.0.1:4317" });
+  const auth = new AuthService({
+    store: new AuthStore(database.db, database.sqlite),
+    crypto: nodeAuthCrypto,
+    muximodBaseUrl: "http://127.0.0.1:4317",
+  });
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const exported = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   const publicKey = { kty: "EC" as const, crv: "P-256" as const, x: exported.x!, y: exported.y! };
@@ -107,8 +123,26 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
         const payload = fixture.payload!;
         const clientNonce = "client-nonce-123456";
         const pairingSecretHash = await sha256Hex(payload.pairingSecret);
-        const claimSignature = await signEcdsa(fixture.keyPair.privateKey, pairingClaimMessage({ serverId: payload.serverId, pairingId: payload.pairingId, pairingSecretHash, keyFingerprint: fixture.keyFingerprint, clientNonce }));
-        fixture.claim = fixture.auth.claimPairing(payload.pairingId, { pairingSecret: payload.pairingSecret, publicKey: fixture.publicKey, deviceName: "Test browser", deviceType: "browser", platform: "test", clientVersion: "test", clientNonce, signature: claimSignature });
+        const claimSignature = await signEcdsa(
+          fixture.keyPair.privateKey,
+          pairingClaimMessage({
+            serverId: payload.serverId,
+            pairingId: payload.pairingId,
+            pairingSecretHash,
+            keyFingerprint: fixture.keyFingerprint,
+            clientNonce,
+          }),
+        );
+        fixture.claim = fixture.auth.claimPairing(payload.pairingId, {
+          pairingSecret: payload.pairingSecret,
+          publicKey: fixture.publicKey,
+          deviceName: "Test browser",
+          deviceType: "browser",
+          platform: "test",
+          clientVersion: "test",
+          clientNonce,
+          signature: claimSignature,
+        });
         fixture.claimStatus = fixture.auth.pairingStatus(payload.pairingId, fixture.claim.claimToken).status;
         continue;
       }
@@ -124,8 +158,21 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
         const device = fixture.device!;
         fixture.challenge = fixture.auth.createChallenge(device.deviceId);
         const challenge = fixture.challenge;
-        const signature = await signEcdsa(fixture.keyPair.privateKey, sessionMessage({ serverId: challenge.serverId, deviceId: challenge.deviceId, challengeId: challenge.challengeId, challengeNonce: challenge.nonce, expiresAt: challenge.expiresAt }));
-        fixture.session = fixture.auth.createSession({ deviceId: device.deviceId, challengeId: challenge.challengeId, signature });
+        const signature = await signEcdsa(
+          fixture.keyPair.privateKey,
+          sessionMessage({
+            serverId: challenge.serverId,
+            deviceId: challenge.deviceId,
+            challengeId: challenge.challengeId,
+            challengeNonce: challenge.nonce,
+            expiresAt: challenge.expiresAt,
+          }),
+        );
+        fixture.session = fixture.auth.createSession({
+          deviceId: device.deviceId,
+          challengeId: challenge.challengeId,
+          signature,
+        });
         fixture.sessionId = fixture.session.sessionId;
         const context = fixture.auth.authenticateAccessToken(fixture.session.accessToken);
         fixture.contextDeviceId = context?.deviceId ?? null;
@@ -139,7 +186,17 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
       }
     }
   },
-  observe: (fixture) => ({ keyFingerprint: fixture.keyFingerprint, contextDeviceId: fixture.contextDeviceId, claimStatus: fixture.claimStatus, approvedStatus: fixture.approvedStatus, deviceId: fixture.deviceId, deviceKeyFingerprint: fixture.deviceKeyFingerprint, sessionId: fixture.sessionId, ticketSessionId: fixture.ticketSessionId, ticketSecondUse: fixture.ticketSecondUse }),
+  observe: (fixture) => ({
+    keyFingerprint: fixture.keyFingerprint,
+    contextDeviceId: fixture.contextDeviceId,
+    claimStatus: fixture.claimStatus,
+    approvedStatus: fixture.approvedStatus,
+    deviceId: fixture.deviceId,
+    deviceKeyFingerprint: fixture.deviceKeyFingerprint,
+    sessionId: fixture.sessionId,
+    ticketSessionId: fixture.ticketSessionId,
+    ticketSecondUse: fixture.ticketSecondUse,
+  }),
 };
 
 describe("muximod device authentication", () => {

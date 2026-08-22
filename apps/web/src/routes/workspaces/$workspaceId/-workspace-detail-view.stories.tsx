@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useMemo, useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { WorkspaceDetailView } from "./-workspace-detail-view";
-import type { WorkspaceDetailViewModel } from "../-workspaces-viewmodel";
 import { storyWorkspaces } from "../../terminals/-story-fixtures";
+import type { WorkspaceDetailViewModel } from "../-workspaces-viewmodel";
+import { WorkspaceDetailView } from "./-workspace-detail-view";
 
 function buildViewModel(overrides: Partial<WorkspaceDetailViewModel> = {}): WorkspaceDetailViewModel {
   const workspace = storyWorkspaces[0];
@@ -46,7 +46,11 @@ function InteractiveWorkspaceDetail() {
   return (
     <>
       <WorkspaceDetailView viewModel={viewModel} />
-      {saved ? <p role="status" className="fixed bottom-5 left-5 rounded bg-lime px-3 py-2 text-xs text-black">Workspace saved</p> : null}
+      {saved ? (
+        <p role="status" className="fixed bottom-5 left-5 rounded bg-lime px-3 py-2 text-xs text-black">
+          Workspace saved
+        </p>
+      ) : null}
     </>
   );
 }
@@ -85,5 +89,7 @@ export const Saving: Story = {
 };
 
 export const SaveFailed: Story = {
-  args: { viewModel: buildViewModel({ saveError: "Workspace name cannot be empty or exceed 120 characters", canSave: false }) },
+  args: {
+    viewModel: buildViewModel({ saveError: "Workspace name cannot be empty or exceed 120 characters", canSave: false }),
+  },
 };

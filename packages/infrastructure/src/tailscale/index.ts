@@ -130,7 +130,10 @@ export function buildServeHttpUrl(hostname: string, externalPort: number, path =
     throw new Error(`Invalid Tailscale Serve external port: ${externalPort}`);
   }
 
-  const normalizedHost = hostname.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  const normalizedHost = hostname
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
   if (!normalizedHost) throw new Error("Tailscale Serve hostname is required");
   const url = new URL(`https://${normalizedHost}`);
   if (externalPort !== 443) url.port = String(externalPort);
@@ -150,7 +153,10 @@ export function parseTailscaleHostname(statusJson: string): string | undefined {
 }
 
 export function buildServeUrl(hostname: string, path = "/"): string {
-  const normalizedHost = hostname.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const normalizedHost = hostname
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/$/, "");
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `wss://${normalizedHost}${normalizedPath}`;
 }
@@ -165,12 +171,22 @@ function isShellCommandName(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(value);
 }
 
-function hasExecutableOnPath(binary: string, path: string | undefined, platform: NodeJS.Platform, isExecutable: (path: string) => boolean): boolean {
+function hasExecutableOnPath(
+  binary: string,
+  path: string | undefined,
+  platform: NodeJS.Platform,
+  isExecutable: (path: string) => boolean,
+): boolean {
   const separator = platform === "win32" ? ";" : ":";
   return (path ?? "").split(separator).some((directory) => isExecutable(join(directory || ".", binary)));
 }
 
-function bundledTailscaleBinary(binary: string, home: string | undefined, platform: NodeJS.Platform, isExecutable: (path: string) => boolean): string | undefined {
+function bundledTailscaleBinary(
+  binary: string,
+  home: string | undefined,
+  platform: NodeJS.Platform,
+  isExecutable: (path: string) => boolean,
+): string | undefined {
   if (platform !== "darwin" || binary !== "tailscale") return undefined;
   const candidates = [
     "/Applications/Tailscale.app/Contents/MacOS/Tailscale",

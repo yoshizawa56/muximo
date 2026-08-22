@@ -1,5 +1,5 @@
+import type { MuximodEvent, muximodContract } from "@muximo/contract";
 import type { QueryClient } from "@tanstack/react-query";
-import { muximodContract, type MuximodEvent } from "@muximo/contract";
 import type { MuximodQueryUtils } from "./orpc-utils.js";
 
 /**
@@ -19,10 +19,12 @@ export type ResourceGroup = Exclude<keyof ContractRoot, "auth" | "events" | "hea
 const resourceGroups = ["workspaces", "terminals", "sessions", "panes"] as const satisfies readonly ResourceGroup[];
 
 type UnhandledResourceGroup = Exclude<ResourceGroup, (typeof resourceGroups)[number]>;
-const _everyResourceGroupIsHandled: UnhandledResourceGroup extends never ? true : ["unhandled resource groups:", UnhandledResourceGroup] = true;
+const _everyResourceGroupIsHandled: UnhandledResourceGroup extends never
+  ? true
+  : ["unhandled resource groups:", UnhandledResourceGroup] = true;
 
 interface GroupNode {
-  key(options?: { type?: "query"; input?: Record<string, unknown> }): unknown;
+  key(options?: { type?: "query"; input?: Record<string, unknown> }): readonly unknown[];
 }
 
 function invalidateGroups(queryClient: QueryClient, utils: MuximodQueryUtils, groups: readonly ResourceGroup[]): void {
@@ -38,7 +40,11 @@ function invalidateGroups(queryClient: QueryClient, utils: MuximodQueryUtils, gr
  * workspaces and terminals are only changed by their own mutations and are
  * therefore cleared there instead.
  */
-export function invalidateOnMuximodEvent(queryClient: QueryClient, utils: MuximodQueryUtils, _event: MuximodEvent): void {
+export function invalidateOnMuximodEvent(
+  queryClient: QueryClient,
+  utils: MuximodQueryUtils,
+  _event: MuximodEvent,
+): void {
   invalidateSessionData(queryClient, utils);
 }
 
@@ -69,7 +75,11 @@ export function invalidateOnReconnect(queryClient: QueryClient, utils: MuximodQu
 }
 
 /** Invalidates one whole resource group. Mutation handlers call this. */
-export function invalidateResourceGroup(queryClient: QueryClient, utils: MuximodQueryUtils, group: ResourceGroup): void {
+export function invalidateResourceGroup(
+  queryClient: QueryClient,
+  utils: MuximodQueryUtils,
+  group: ResourceGroup,
+): void {
   invalidateGroups(queryClient, utils, [group]);
 }
 

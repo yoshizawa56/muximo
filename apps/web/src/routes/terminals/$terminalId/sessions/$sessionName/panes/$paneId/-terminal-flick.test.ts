@@ -1,23 +1,23 @@
-import { describe, it, vi } from "vitest";
 import {
+  type FixtureHandle,
   hasObserved,
   noFixture,
+  type OperationCase,
+  type OperationTable,
   returns,
   runOperationTable,
   runScenarioTable,
-  type FixtureHandle,
-  type OperationCase,
-  type OperationTable,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it, vi } from "vitest";
 import {
   classifyTerminalFlick,
   installTerminalFlickInput,
-  terminalMouseWheelInput,
-  terminalInputForFlick,
   type TerminalFlickDirection,
+  terminalInputForFlick,
+  terminalMouseWheelInput,
 } from "./-terminal-flick";
 
 type EmptyContext = {};
@@ -25,13 +25,41 @@ type FlickMetrics = { dx: number; dy: number; durationMs: number };
 type FlickResult = { direction: TerminalFlickDirection; input: string } | null;
 
 const flickCases = [
-  { name: "maps a fast right flick", input: { dx: 72, dy: 3, durationMs: 180 }, assert: [returns<EmptyContext, FlickResult>({ direction: "right", input: "\u001b[C" })] },
-  { name: "maps a fast left flick", input: { dx: -72, dy: 3, durationMs: 180 }, assert: [returns<EmptyContext, FlickResult>({ direction: "left", input: "\u001b[D" })] },
-  { name: "maps a fast up flick", input: { dx: 2, dy: -72, durationMs: 180 }, assert: [returns<EmptyContext, FlickResult>({ direction: "up", input: "\u001b[A" })] },
-  { name: "maps a fast down flick", input: { dx: 2, dy: 72, durationMs: 180 }, assert: [returns<EmptyContext, FlickResult>({ direction: "down", input: "\u001b[B" })] },
-  { name: "rejects a short drag", input: { dx: 12, dy: 0, durationMs: 120 }, assert: [returns<EmptyContext, FlickResult>(null)] },
-  { name: "rejects a slow drag", input: { dx: 72, dy: 0, durationMs: 800 }, assert: [returns<EmptyContext, FlickResult>(null)] },
-  { name: "rejects a low velocity drag", input: { dx: 28, dy: 0, durationMs: 240 }, assert: [returns<EmptyContext, FlickResult>(null)] },
+  {
+    name: "maps a fast right flick",
+    input: { dx: 72, dy: 3, durationMs: 180 },
+    assert: [returns<EmptyContext, FlickResult>({ direction: "right", input: "\u001b[C" })],
+  },
+  {
+    name: "maps a fast left flick",
+    input: { dx: -72, dy: 3, durationMs: 180 },
+    assert: [returns<EmptyContext, FlickResult>({ direction: "left", input: "\u001b[D" })],
+  },
+  {
+    name: "maps a fast up flick",
+    input: { dx: 2, dy: -72, durationMs: 180 },
+    assert: [returns<EmptyContext, FlickResult>({ direction: "up", input: "\u001b[A" })],
+  },
+  {
+    name: "maps a fast down flick",
+    input: { dx: 2, dy: 72, durationMs: 180 },
+    assert: [returns<EmptyContext, FlickResult>({ direction: "down", input: "\u001b[B" })],
+  },
+  {
+    name: "rejects a short drag",
+    input: { dx: 12, dy: 0, durationMs: 120 },
+    assert: [returns<EmptyContext, FlickResult>(null)],
+  },
+  {
+    name: "rejects a slow drag",
+    input: { dx: 72, dy: 0, durationMs: 800 },
+    assert: [returns<EmptyContext, FlickResult>(null)],
+  },
+  {
+    name: "rejects a low velocity drag",
+    input: { dx: 28, dy: 0, durationMs: 240 },
+    assert: [returns<EmptyContext, FlickResult>(null)],
+  },
 ] satisfies readonly OperationCase<"default", FlickMetrics, FlickResult, EmptyContext>[];
 
 const flickTable: OperationTable<undefined, "default", FlickMetrics, FlickResult, EmptyContext> = {
@@ -46,9 +74,21 @@ const flickTable: OperationTable<undefined, "default", FlickMetrics, FlickResult
 
 type MouseWheelInput = { direction: "up" | "down"; column: number; row: number };
 const mouseWheelCases = [
-  { name: "encodes tmux wheel up input", input: { direction: "up", column: 12, row: 4 }, assert: [returns<EmptyContext, string>("\u001b[<64;12;4M")] },
-  { name: "encodes tmux wheel down input", input: { direction: "down", column: 3, row: 18 }, assert: [returns<EmptyContext, string>("\u001b[<65;3;18M")] },
-  { name: "clamps mouse coordinates to the terminal origin", input: { direction: "up", column: 0, row: -2 }, assert: [returns<EmptyContext, string>("\u001b[<64;1;1M")] },
+  {
+    name: "encodes tmux wheel up input",
+    input: { direction: "up", column: 12, row: 4 },
+    assert: [returns<EmptyContext, string>("\u001b[<64;12;4M")],
+  },
+  {
+    name: "encodes tmux wheel down input",
+    input: { direction: "down", column: 3, row: 18 },
+    assert: [returns<EmptyContext, string>("\u001b[<65;3;18M")],
+  },
+  {
+    name: "clamps mouse coordinates to the terminal origin",
+    input: { direction: "up", column: 0, row: -2 },
+    assert: [returns<EmptyContext, string>("\u001b[<64;1;1M")],
+  },
 ] satisfies readonly OperationCase<"default", MouseWheelInput, string, EmptyContext>[];
 
 const mouseWheelTable: OperationTable<undefined, "default", MouseWheelInput, string, EmptyContext> = {
@@ -59,7 +99,11 @@ const mouseWheelTable: OperationTable<undefined, "default", MouseWheelInput, str
 };
 
 type PointerValues = { pointerId: number; clientX: number; clientY: number };
-type FlickStep = { type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel"; now: number; values: PointerValues };
+type FlickStep = {
+  type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel";
+  now: number;
+  values: PointerValues;
+};
 type FlickContext = { inputs: readonly string[]; scrollDeltas: readonly number[] };
 type FlickFixture = {
   container: HTMLElement;
@@ -78,7 +122,14 @@ const flickFixture = (): FixtureHandle<FlickFixture> => {
     onScroll: (deltaY) => scrollDeltas.push(deltaY),
   });
   return {
-    fixture: { container, inputs, scrollDeltas, setNow: (value) => { now = value; } },
+    fixture: {
+      container,
+      inputs,
+      scrollDeltas,
+      setNow: (value) => {
+        now = value;
+      },
+    },
     cleanup: () => {
       cleanupInput();
       clock.mockRestore();
@@ -94,7 +145,10 @@ const gestureCases = [
       { type: "pointermove", now: 90, values: { pointerId: 1, clientX: 120, clientY: 48 } },
       { type: "pointercancel", now: 90, values: { pointerId: 1, clientX: 120, clientY: 48 } },
     ],
-    assert: [hasObserved<FlickContext, undefined>("inputs", []), hasObserved<FlickContext, undefined>("scrollDeltas", [])],
+    assert: [
+      hasObserved<FlickContext, undefined>("inputs", []),
+      hasObserved<FlickContext, undefined>("scrollDeltas", []),
+    ],
   },
   {
     name: "scrolls a deliberate vertical drag",
@@ -104,7 +158,10 @@ const gestureCases = [
       { type: "pointermove", now: 420, values: { pointerId: 1, clientX: 120, clientY: 174 } },
       { type: "pointerup", now: 500, values: { pointerId: 1, clientX: 120, clientY: 174 } },
     ],
-    assert: [hasObserved<FlickContext, undefined>("scrollDeltas", [30, 24]), hasObserved<FlickContext, undefined>("inputs", [])],
+    assert: [
+      hasObserved<FlickContext, undefined>("scrollDeltas", [30, 24]),
+      hasObserved<FlickContext, undefined>("inputs", []),
+    ],
   },
   {
     name: "forwards a fast vertical gesture as scrolling",
@@ -112,7 +169,10 @@ const gestureCases = [
       { type: "pointerdown", now: 0, values: { pointerId: 1, clientX: 120, clientY: 120 } },
       { type: "pointerup", now: 180, values: { pointerId: 1, clientX: 120, clientY: 48 } },
     ],
-    assert: [hasObserved<FlickContext, undefined>("scrollDeltas", [-72]), hasObserved<FlickContext, undefined>("inputs", [])],
+    assert: [
+      hasObserved<FlickContext, undefined>("scrollDeltas", [-72]),
+      hasObserved<FlickContext, undefined>("inputs", []),
+    ],
   },
   {
     name: "discards a gesture when a second touch joins it",

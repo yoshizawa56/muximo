@@ -1,17 +1,13 @@
-import { describe, it } from "vitest";
 import {
+  type FixtureHandle,
   hasObserved,
   runScenarioTable,
-  type FixtureHandle,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import {
-  createTerminalInputBatcher,
-  createTerminalOutputScheduler,
-  type TerminalData,
-} from "./-terminal-scheduler";
+import { describe, it } from "vitest";
+import { createTerminalInputBatcher, createTerminalOutputScheduler, type TerminalData } from "./-terminal-scheduler";
 
 type ScheduledCallback = { id: number; callback: () => void; delayMs?: number };
 
@@ -119,10 +115,7 @@ type InputFixture = {
   batcher: ReturnType<typeof createTerminalInputBatcher>;
 };
 
-type InputStep =
-  | { type: "enqueue"; data: string }
-  | { type: "flush" }
-  | { type: "run-frame" };
+type InputStep = { type: "enqueue"; data: string } | { type: "flush" } | { type: "run-frame" };
 
 type InputContext = {
   inputs: readonly string[];
@@ -143,11 +136,7 @@ const inputCases = [
   },
   {
     name: "sends coalesced wheel input in order on the animation frame",
-    steps: [
-      { type: "enqueue", data: "wheel-up" },
-      { type: "enqueue", data: "wheel-down" },
-      { type: "run-frame" },
-    ],
+    steps: [{ type: "enqueue", data: "wheel-up" }, { type: "enqueue", data: "wheel-down" }, { type: "run-frame" }],
     assert: [
       hasObserved<InputContext, undefined>("inputs", ["wheel-upwheel-down"]),
       hasObserved<InputContext, undefined>("pendingFrameCount", 0),
@@ -155,10 +144,7 @@ const inputCases = [
   },
   {
     name: "flushes pending wheel input before an interactive input",
-    steps: [
-      { type: "enqueue", data: "wheel-up" },
-      { type: "flush" },
-    ],
+    steps: [{ type: "enqueue", data: "wheel-up" }, { type: "flush" }],
     assert: [
       hasObserved<InputContext, undefined>("inputs", ["wheel-up"]),
       hasObserved<InputContext, undefined>("pendingFrameCount", 0),

@@ -1,12 +1,12 @@
-import { describe, it } from "vitest";
 import {
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 import { hasPaneGeometry, isOverlayBackdropTarget, paneLayoutNeedsCompactTargets } from "./-pane-layout-overlay-view";
 
 type Geometry = {
@@ -111,8 +111,7 @@ const compactCases = [
 const compactTable: OperationTable<undefined, "default", CompactInput, boolean, Context> = {
   defaultFixture: noFixture(),
   cases: compactCases,
-  execute: (_fixture, input) =>
-    paneLayoutNeedsCompactTargets(input.panes, input.windowWidth, input.windowHeight),
+  execute: (_fixture, input) => paneLayoutNeedsCompactTargets(input.panes, input.windowWidth, input.windowHeight),
   observe: () => ({}),
 };
 

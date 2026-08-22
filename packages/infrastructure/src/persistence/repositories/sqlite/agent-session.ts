@@ -1,8 +1,8 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
-import { AgentSession, AgentSessionId, WorkspaceId, type AgentSessionRecord } from "@muximo/domain";
 import type { AgentSessionRepository } from "@muximo/application";
+import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { AgentDrizzleDatabase } from "../../database-types.js";
-import { agentSessions, type AgentSessionRow } from "../../schema.js";
+import { type AgentSessionRow, agentSessions } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
 export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase implements AgentSessionRepository {
@@ -26,7 +26,12 @@ export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase impleme
 
   public async list(workspaceId?: WorkspaceId): Promise<AgentSessionRecord[]> {
     const rows = workspaceId
-      ? this.db().select().from(agentSessions).where(eq(agentSessions.workspaceId, workspaceId)).orderBy(asc(agentSessions.name)).all()
+      ? this.db()
+          .select()
+          .from(agentSessions)
+          .where(eq(agentSessions.workspaceId, workspaceId))
+          .orderBy(asc(agentSessions.name))
+          .all()
       : this.db().select().from(agentSessions).orderBy(asc(agentSessions.workspaceName), asc(agentSessions.name)).all();
     return rows.map(toAgentSessionRecord);
   }
@@ -39,20 +44,30 @@ export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase impleme
   public async update(record: AgentSessionRecord): Promise<void> {
     const now = new Date().toISOString();
     const row = toAgentSessionRow(record, now);
-    this.db()
-      .update(agentSessions)
-      .set(row)
-      .where(eq(agentSessions.id, record.id))
-      .run();
+    this.db().update(agentSessions).set(row).where(eq(agentSessions.id, record.id)).run();
   }
 
-  public async claimExecution(id: AgentSessionId, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean> {
-    const predicate = expectedExecutionPid === null
-      ? and(eq(agentSessions.id, id), isNull(agentSessions.executionPid))
-      : and(eq(agentSessions.id, id), eq(agentSessions.executionPid, expectedExecutionPid));
+  public async claimExecution(
+    id: AgentSessionId,
+    expectedExecutionPid: number | null,
+    executionId: string,
+    executionPid: number,
+    executionStartedAt: string,
+  ): Promise<boolean> {
+    const predicate =
+      expectedExecutionPid === null
+        ? and(eq(agentSessions.id, id), isNull(agentSessions.executionPid))
+        : and(eq(agentSessions.id, id), eq(agentSessions.executionPid, expectedExecutionPid));
     const result = this.db()
       .update(agentSessions)
-      .set({ executionId, executionPid, executionStartedAt, status: "resuming", resuming: true, updatedAt: new Date().toISOString() })
+      .set({
+        executionId,
+        executionPid,
+        executionStartedAt,
+        status: "resuming",
+        resuming: true,
+        updatedAt: new Date().toISOString(),
+      })
       .where(predicate)
       .returning({ id: agentSessions.id })
       .all();
@@ -75,7 +90,7 @@ export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase impleme
 }
 
 function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agentSessions.$inferInsert {
-  const session = AgentSession.validate(record);
+  const session = AgentSession.restore(record);
   return {
     id: session.id,
     name: session.name,
@@ -110,7 +125,7 @@ function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agen
 }
 
 function toAgentSessionRecord(row: AgentSessionRow): AgentSessionRecord {
-  return AgentSession.validate({
+  return AgentSession.restore({
     id: AgentSessionId.create(row.id),
     name: row.name,
     backend: row.backend,

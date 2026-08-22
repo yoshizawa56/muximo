@@ -16,7 +16,15 @@ const ARROW_INPUT: Record<TerminalFlickDirection, string> = {
   left: "\u001b[D",
 };
 
-export function classifyTerminalFlick({ dx, dy, durationMs }: { dx: number; dy: number; durationMs: number }): TerminalFlickDirection | null {
+export function classifyTerminalFlick({
+  dx,
+  dy,
+  durationMs,
+}: {
+  dx: number;
+  dy: number;
+  durationMs: number;
+}): TerminalFlickDirection | null {
   const distance = Math.hypot(dx, dy);
   const duration = Math.max(durationMs, 1);
   const velocity = distance / duration;
@@ -65,7 +73,13 @@ export function installTerminalFlickInput(
     }
   };
 
-  const sendFlickIfApplicable = (state: NonNullable<typeof gesture>, x: number, y: number, durationMs: number, event?: Event) => {
+  const sendFlickIfApplicable = (
+    state: NonNullable<typeof gesture>,
+    x: number,
+    y: number,
+    durationMs: number,
+    event?: Event,
+  ) => {
     if (state.didScroll) return;
     const direction = classifyTerminalFlick({
       dx: x - state.x,

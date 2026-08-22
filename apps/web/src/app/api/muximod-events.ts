@@ -1,10 +1,11 @@
-import { useEffect, useMemo } from "react";
 import { consumeEventIterator } from "@orpc/client";
 import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+import { isMockMode } from "../../mock/mock-data";
+import { invalidateOnMuximodEvent, invalidateOnReconnect } from "./invalidation.js";
 import type { MuximodConnection } from "./muximod-client.js";
 import { openMuximodEvents } from "./muximod-client.js";
-import { invalidateOnMuximodEvent, invalidateOnReconnect } from "./invalidation.js";
-import { isMockMode } from "../../mock/mock-data";
+import { muximodQueryUtils } from "./orpc-utils.js";
 
 export function useMuximodEvents(connection: MuximodConnection | undefined): void {
   const queryClient = useQueryClient();

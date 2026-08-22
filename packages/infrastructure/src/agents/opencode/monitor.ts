@@ -10,19 +10,14 @@
  * Child sessions, other directories, and sessionless events are ignored.
  */
 
-import type {
-  ActionDescriptor,
-  AgentMonitor,
-  AgentObservation,
-  AgentObservationSink,
-} from "../index.js";
+import type { ActionDescriptor, AgentMonitor, AgentObservation, AgentObservationSink } from "../index.js";
 import {
-  OpenCodeClient,
-  OpenCodeStreamClosedError,
+  type OpenCodeClient,
   type OpenCodeEvent,
   type OpenCodeLog,
   type OpenCodePermission,
   type OpenCodeSessionStatus,
+  OpenCodeStreamClosedError,
 } from "./client.js";
 
 export type OpenCodeMonitorClient = Pick<
@@ -50,9 +45,11 @@ export const openCodeMonitorActions = {
   fork: { id: "fork", label: "Fork session" },
 } as const;
 
-const terminalStates = new Set<AgentObservation & { type: "state_changed" } extends never ? never : Extract<AgentObservation, { type: "state_changed" }>["state"]>(
-  ["failed", "completed", "stopped"],
-);
+const terminalStates = new Set<
+  AgentObservation & { type: "state_changed" } extends never
+    ? never
+    : Extract<AgentObservation, { type: "state_changed" }>["state"]
+>(["failed", "completed", "stopped"]);
 
 type MonitorState = Extract<AgentObservation, { type: "state_changed" }>["state"];
 
@@ -64,11 +61,12 @@ export class OpenCodeMonitor implements AgentMonitor {
   private readonly reconnectDelayMs: (attempt: number) => number;
   private sink: AgentObservationSink | undefined;
   private stopped = true;
-  private stream: AsyncGenerator<OpenCodeEvent> | undefined;
   private lastState: MonitorState | undefined;
   private aborted = false;
   private reconnectAttempt = 0;
   private abortController: AbortController | undefined;
+  /** Last opened event stream, kept for diagnostics and lifecycle assertions. */
+  private stream: AsyncGenerator<OpenCodeEvent> | undefined;
 
   public constructor(private readonly options: OpenCodeMonitorOptions) {
     this.reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelay;
@@ -287,13 +285,15 @@ export class OpenCodeMonitor implements AgentMonitor {
 }
 
 function sessionStatusValue(value: unknown): OpenCodeSessionStatus | undefined {
-  const entry = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  const entry =
+    value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
   const type = stringValue(entry?.type);
   return type === "idle" || type === "retry" || type === "busy" ? type : undefined;
 }
 
 function errorName(value: unknown): string | undefined {
-  const entry = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  const entry =
+    value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
   return stringValue(entry?.name) ?? stringValue(entry?.message);
 }
 

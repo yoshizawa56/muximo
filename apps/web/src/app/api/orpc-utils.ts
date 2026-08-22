@@ -1,5 +1,5 @@
 import { createTanstackQueryUtils, type RouterUtils } from "@orpc/tanstack-query";
-import { muximodConnectionKey, muximodRpc, type MuximodConnection, type MuximodRpcClient } from "./muximod-client.js";
+import { type MuximodConnection, type MuximodRpcClient, muximodConnectionKey, muximodRpc } from "./muximod-client.js";
 
 /**
  * Contract-shaped TanStack Query utilities. Query keys are derived from the

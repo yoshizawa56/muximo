@@ -1,11 +1,11 @@
 import type { MuximodSocket, MuximodSocketData } from "@muximo/application";
 
-export { muximodSocketReadyState } from "@muximo/application";
 export type { MuximodSocket, MuximodSocketData } from "@muximo/application";
+export { muximodSocketReadyState } from "@muximo/application";
 
 type BunSocketContext = {
   readonly readyState: number;
-  send(data: string | Uint8Array): number | void;
+  send(data: string | Uint8Array): number | undefined;
   close(code?: number, reason?: string): void;
 };
 

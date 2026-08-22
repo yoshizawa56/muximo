@@ -33,18 +33,27 @@ export function resolveMuximodPaths(
   const configuredInstanceDirectory = nonEmptyPath(env.MUXIMOD_INSTANCE_DIR);
   const hasConfiguredInstanceDirectory = Boolean(configuredInstanceDirectory);
   const instanceDirectory = resolve(configuredInstanceDirectory ?? defaultMuximodInstanceDirectory(env));
-  const configuredDatabaseFile = nonEmptyPath(overrides.databaseFile) ?? nonEmptyPath(env.MUXIMOD_DB_FILE) ?? nonEmptyPath(env.MUXIMO_DATABASE_FILE);
+  const configuredDatabaseFile =
+    nonEmptyPath(overrides.databaseFile) ?? nonEmptyPath(env.MUXIMOD_DB_FILE) ?? nonEmptyPath(env.MUXIMO_DATABASE_FILE);
   const databaseFile = resolveDatabaseFile(configuredDatabaseFile ?? join(instanceDirectory, "muximod.sqlite"));
-  const hookOutputDirectory = resolvePath(nonEmptyPath(overrides.hookOutputDirectory) ?? nonEmptyPath(env.MUXIMO_HOOK_OUTPUT_DIR) ?? join(instanceDirectory, "hooks"));
+  const hookOutputDirectory = resolvePath(
+    nonEmptyPath(overrides.hookOutputDirectory) ??
+      nonEmptyPath(env.MUXIMO_HOOK_OUTPUT_DIR) ??
+      join(instanceDirectory, "hooks"),
+  );
   const pidFile = resolvePath(
-    nonEmptyPath(overrides.pidFile)
-      ?? nonEmptyPath(env.MUXIMOD_PID_FILE)
-      ?? (hasConfiguredInstanceDirectory ? defaultPidFile(instanceDirectory, databaseFile) : legacyPidFile(databaseFile, instanceDirectory)),
+    nonEmptyPath(overrides.pidFile) ??
+      nonEmptyPath(env.MUXIMOD_PID_FILE) ??
+      (hasConfiguredInstanceDirectory
+        ? defaultPidFile(instanceDirectory, databaseFile)
+        : legacyPidFile(databaseFile, instanceDirectory)),
   );
   const controlSocket = resolvePath(
-    nonEmptyPath(overrides.controlSocket)
-      ?? nonEmptyPath(env.MUXIMOD_CONTROL_SOCKET)
-      ?? (hasConfiguredInstanceDirectory ? defaultControlSocket(instanceDirectory) : legacyControlSocket(databaseFile, instanceDirectory)),
+    nonEmptyPath(overrides.controlSocket) ??
+      nonEmptyPath(env.MUXIMOD_CONTROL_SOCKET) ??
+      (hasConfiguredInstanceDirectory
+        ? defaultControlSocket(instanceDirectory)
+        : legacyControlSocket(databaseFile, instanceDirectory)),
   );
 
   return { instanceDirectory, databaseFile, hookOutputDirectory, pidFile, controlSocket };
@@ -57,12 +66,16 @@ export function defaultMuximodInstanceDirectory(env: NodeJS.ProcessEnv = process
 export function validateMuximodControlSocketPath(path: string): void {
   const bytes = Buffer.byteLength(path);
   if (bytes > muximodControlSocketMaxBytes) {
-    throw new Error(`muximod control socket path is too long (${bytes} bytes; maximum ${muximodControlSocketMaxBytes}): ${path}`);
+    throw new Error(
+      `muximod control socket path is too long (${bytes} bytes; maximum ${muximodControlSocketMaxBytes}): ${path}`,
+    );
   }
 }
 
 function defaultPidFile(instanceDirectory: string, databaseFile: string): string {
-  return databaseFile === ":memory:" ? join(instanceDirectory, "muximod.pid") : join(instanceDirectory, "muximod.sqlite.pid");
+  return databaseFile === ":memory:"
+    ? join(instanceDirectory, "muximod.pid")
+    : join(instanceDirectory, "muximod.sqlite.pid");
 }
 
 function defaultControlSocket(instanceDirectory: string): string {

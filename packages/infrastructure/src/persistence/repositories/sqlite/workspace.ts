@@ -1,8 +1,8 @@
-import { asc, eq } from "drizzle-orm";
-import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
 import type { WorkspaceRepository } from "@muximo/application";
+import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
+import { asc, eq } from "drizzle-orm";
 import type { AgentDrizzleDatabase } from "../../database-types.js";
-import { workspaces, type WorkspaceRow } from "../../schema.js";
+import { type WorkspaceRow, workspaces } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
 export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements WorkspaceRepository {
@@ -56,7 +56,7 @@ export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements
 }
 
 function toWorkspaceRow(record: WorkspaceRecord, now: string): typeof workspaces.$inferInsert {
-  const workspace = Workspace.validate(record);
+  const workspace = Workspace.restore(record);
   return {
     id: workspace.id,
     rootPath: workspace.rootPath,
@@ -71,7 +71,7 @@ function toWorkspaceRow(record: WorkspaceRecord, now: string): typeof workspaces
 }
 
 function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
-  return Workspace.validate({
+  return Workspace.restore({
     id: WorkspaceId.create(row.id),
     rootPath: row.rootPath,
     name: row.name,

@@ -26,7 +26,9 @@ export async function resolvePairMuximodBaseUrl(
 
   const result = await ensureTailscaleServe(options, dependencies, input.environment);
   if (!result.url) {
-    throw new Error("could not determine the Tailscale Serve URL; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_PAIRING_BASE_URL");
+    throw new Error(
+      "could not determine the Tailscale Serve URL; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_PAIRING_BASE_URL",
+    );
   }
   return result.url;
 }

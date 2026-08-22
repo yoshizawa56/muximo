@@ -46,8 +46,20 @@ export interface AuthCryptoPort {
   randomOpaque(bytes: number): string;
   hashOpaque(value: string): string;
   fingerprint(publicKey: PublicKeyJwk): string;
-  pairingClaimMessage(input: { serverId: string; pairingId: string; pairingSecretHash: string; keyFingerprint: string; clientNonce: string }): string;
-  sessionMessage(input: { serverId: string; deviceId: string; challengeId: string; challengeNonce: string; expiresAt: string }): string;
+  pairingClaimMessage(input: {
+    serverId: string;
+    pairingId: string;
+    pairingSecretHash: string;
+    keyFingerprint: string;
+    clientNonce: string;
+  }): string;
+  sessionMessage(input: {
+    serverId: string;
+    deviceId: string;
+    challengeId: string;
+    challengeNonce: string;
+    expiresAt: string;
+  }): string;
   verifyPublicKeySignature(publicKey: PublicKeyJwk, message: string, signature: string): boolean;
   parsePublicKey(value: string): PublicKeyJwk;
 }

@@ -1,8 +1,12 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { pairBrowserFromQr, parsePairingQrPayload } from "../../app/api/browser-auth";
-import { clearBrowserConnectionProfile, readBrowserConnectionProfile, saveBrowserConnectionProfile } from "../../app/api/connection-profile-store";
-import { muximoBridge, muximoFallbackAppInfo, type MuximoAppInfo } from "../../platform/muximo-bridge";
+import {
+  clearBrowserConnectionProfile,
+  readBrowserConnectionProfile,
+  saveBrowserConnectionProfile,
+} from "../../app/api/connection-profile-store";
+import { type MuximoAppInfo, muximoBridge, muximoFallbackAppInfo } from "../../platform/muximo-bridge";
 
 export type SettingsViewModel = {
   appInfo: MuximoAppInfo;
@@ -29,9 +33,12 @@ export function useSettingsViewModel(): SettingsViewModel {
 
   useEffect(() => {
     let disposed = false;
-    void muximoBridge.getAppInfo().then((nextAppInfo) => {
-      if (!disposed) setAppInfo(nextAppInfo);
-    }).catch(() => undefined);
+    void muximoBridge
+      .getAppInfo()
+      .then((nextAppInfo) => {
+        if (!disposed) setAppInfo(nextAppInfo);
+      })
+      .catch(() => undefined);
     return () => {
       disposed = true;
     };

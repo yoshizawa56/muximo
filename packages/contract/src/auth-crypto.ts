@@ -1,5 +1,11 @@
-import { pairingCodePayloadSchema, pairingQrPayloadSchema, type PairingCodePayload, type PairingQrPayload, type PublicKeyJwk } from "./protocol.js";
-import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
+import { canonicalPublicJwk } from "@muximo/domain";
+import {
+  type PairingCodePayload,
+  type PairingQrPayload,
+  type PublicKeyJwk,
+  pairingCodePayloadSchema,
+  pairingQrPayloadSchema,
+} from "./protocol.js";
 
 export { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 
@@ -56,12 +62,13 @@ export function decodeJsonBase64Url<T>(value: string): T {
 }
 
 export function encodePairingCode(payload: PairingQrPayload | PairingCodePayload): string {
-  const fields = [
-    normalizePairingEndpoint(payload.muximodBaseUrl),
-    payload.pairingId,
-    payload.pairingSecret,
-  ].map((value) => new TextEncoder().encode(value));
-  const byteLength = fields.reduce((total, field) => total + field.length, (fields.length - 1) * pairingCodeLengthBytes);
+  const fields = [normalizePairingEndpoint(payload.muximodBaseUrl), payload.pairingId, payload.pairingSecret].map(
+    (value) => new TextEncoder().encode(value),
+  );
+  const byteLength = fields.reduce(
+    (total, field) => total + field.length,
+    (fields.length - 1) * pairingCodeLengthBytes,
+  );
   if (byteLength > 0xffff_ffff) throw new Error("pairing code is too large");
   const bytes = new Uint8Array(byteLength);
   const view = new DataView(bytes.buffer);
@@ -80,7 +87,9 @@ export function encodePairingCode(payload: PairingQrPayload | PairingCodePayload
 export function decodePairingCode(value: string): PairingCodePayload {
   const trimmed = value.trim();
   if (trimmed.startsWith(legacyPairingCodePrefix)) {
-    const legacy = pairingQrPayloadSchema.parse(decodeJsonBase64Url<PairingQrPayload>(trimmed.slice(legacyPairingCodePrefix.length)));
+    const legacy = pairingQrPayloadSchema.parse(
+      decodeJsonBase64Url<PairingQrPayload>(trimmed.slice(legacyPairingCodePrefix.length)),
+    );
     return pairingCodePayloadSchema.parse({
       muximodBaseUrl: normalizePairingEndpoint(legacy.muximodBaseUrl),
       pairingId: legacy.pairingId,

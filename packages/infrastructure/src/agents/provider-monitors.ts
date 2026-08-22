@@ -1,22 +1,12 @@
-import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import type {
-  AgentMonitor,
-  AgentMonitorContext,
-  AgentObservation,
-  AgentObservationSink,
-} from "./index.js";
+import type { AgentMonitor, AgentMonitorContext, AgentObservation, AgentObservationSink } from "./index.js";
 
 const monitorPollIntervalMs = 200;
 const discoveryRetryIntervalMs = 500;
 const recentOutputLimit = 1_200;
-const supportedCodexOriginators = new Set([
-  "codex-tui",
-  "codex_cli_rs",
-  "codex_exec",
-  "codex_chatgpt_ios_remote",
-]);
+const supportedCodexOriginators = new Set(["codex-tui", "codex_cli_rs", "codex_exec", "codex_chatgpt_ios_remote"]);
 
 export function createCodexMonitor(context: AgentMonitorContext): AgentMonitor {
   return new JsonlAgentMonitor(context, "codex");
@@ -42,11 +32,18 @@ class JsonlAgentMonitor implements AgentMonitor {
   private lastState: Extract<AgentObservation, { type: "state_changed" }>["state"] | undefined;
   private lastOutput: string | undefined;
 
-  public constructor(private readonly context: AgentMonitorContext, private readonly provider: Provider) {
+  public constructor(
+    private readonly context: AgentMonitorContext,
+    private readonly provider: Provider,
+  ) {
     this.startedAtMs = Date.parse(context.startedAt);
-    this.providerRoot = provider === "codex"
-      ? join(context.environment.CODEX_HOME ?? join(context.environment.HOME ?? homedir(), ".codex"), "sessions")
-      : join(context.environment.CLAUDE_CONFIG_DIR ?? join(context.environment.HOME ?? homedir(), ".claude"), "projects");
+    this.providerRoot =
+      provider === "codex"
+        ? join(context.environment.CODEX_HOME ?? join(context.environment.HOME ?? homedir(), ".codex"), "sessions")
+        : join(
+            context.environment.CLAUDE_CONFIG_DIR ?? join(context.environment.HOME ?? homedir(), ".claude"),
+            "projects",
+          );
   }
 
   public async start(sink: AgentObservationSink): Promise<void> {
@@ -153,7 +150,11 @@ class JsonlAgentMonitor implements AgentMonitor {
       await this.emit("running", extractOutput(payload), eventType);
       return;
     }
-    if (normalizedType === "task_complete" || normalizedType === "turn_complete" || normalizedType === "turn_completed") {
+    if (
+      normalizedType === "task_complete" ||
+      normalizedType === "turn_complete" ||
+      normalizedType === "turn_completed"
+    ) {
       await this.emit("waiting_input", extractOutput(payload), eventType);
       return;
     }
@@ -264,9 +265,9 @@ function codexHeaderMatches(header: string, cwd: string): boolean {
     const recordCwd = stringValue(payload.cwd);
     const originator = stringValue(payload.originator);
     const threadSource = stringValue(payload.thread_source);
-    return recordCwd === cwd
-      && threadSource !== "subagent"
-      && (!originator || supportedCodexOriginators.has(originator));
+    return (
+      recordCwd === cwd && threadSource !== "subagent" && (!originator || supportedCodexOriginators.has(originator))
+    );
   }
   return false;
 }
@@ -285,11 +286,12 @@ function claudeHeaderMatches(header: string, cwd: string, sessionId: string | nu
 
 function extractOutput(value: JsonObject | undefined): string | undefined {
   if (!value) return undefined;
-  const direct = stringValue(value.last_agent_message)
-    ?? stringValue(value.result)
-    ?? stringValue(value.text)
-    ?? stringValue(value.message)
-    ?? stringValue(value.summary);
+  const direct =
+    stringValue(value.last_agent_message) ??
+    stringValue(value.result) ??
+    stringValue(value.text) ??
+    stringValue(value.message) ??
+    stringValue(value.summary);
   if (direct) return direct;
   const message = objectValue(value.message);
   const content = message?.content ?? value.content;
@@ -323,7 +325,7 @@ function parseObject(value: string): JsonObject | undefined {
 }
 
 function objectValue(value: unknown): JsonObject | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : undefined;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : undefined;
 }
 
 function stringValue(value: unknown): string | undefined {

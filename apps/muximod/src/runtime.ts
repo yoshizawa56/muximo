@@ -1,3 +1,4 @@
+export type { MuximodCliOptions } from "./daemon.js";
 export {
   buildDaemonSpawnArgs,
   consumeRestartMarker,
@@ -10,6 +11,5 @@ export {
   startMuximod,
   writeRestartMarker,
 } from "./daemon.js";
-export { createMuximodServer } from "./server.js";
-export type { MuximodCliOptions } from "./daemon.js";
 export type { MuximodOptions, MuximodServer } from "./server.js";
+export { createMuximodServer } from "./server.js";

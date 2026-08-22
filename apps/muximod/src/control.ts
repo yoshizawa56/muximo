@@ -1,7 +1,6 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { validateMuximodControlSocketPath } from "@muximo/infrastructure";
 import type { AuthPairingClaimNotification, MuximodAuthControlPort } from "@muximo/application";
 import {
   decodeMuximodControlRequest,
@@ -10,12 +9,19 @@ import {
   type MuximodControlResponse,
 } from "@muximo/contract";
 import type { PaneState } from "@muximo/domain";
+import { validateMuximodControlSocketPath } from "@muximo/infrastructure";
 
 export type MuximodControlServerOptions = {
   socketPath: string;
   auth: MuximodAuthControlPort;
   adoptAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
-  observeAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: PaneState; recentOutput?: string }) => Promise<void>;
+  observeAgentSession?: (request: {
+    agentSessionId: string;
+    tmuxPaneId: string;
+    executionId: string;
+    state: PaneState;
+    recentOutput?: string;
+  }) => Promise<void>;
   releaseAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
 };
 
@@ -99,7 +105,11 @@ export class MuximodControlServer {
   private handleRequest(socket: Socket, line: string): void {
     const parsedRequest = decodeMuximodControlRequest(line);
     if (!parsedRequest.ok) {
-      this.send(socket, { type: "error", code: "invalid_request", message: `control request ${parsedRequest.message}` });
+      this.send(socket, {
+        type: "error",
+        code: "invalid_request",
+        message: `control request ${parsedRequest.message}`,
+      });
       return;
     }
     const request = parsedRequest.value;
@@ -108,12 +118,22 @@ export class MuximodControlServer {
       if (request.type === "create_pairing") {
         const payload = this.options.auth.createPairing({ muximodBaseUrl: request.muximodBaseUrl });
         this.pairingOwners.set(payload.pairingId, socket);
-        this.send(socket, { type: "pairing_created", pairingId: payload.pairingId, pairingCode: pairingPayloadCode(payload), payload });
+        this.send(socket, {
+          type: "pairing_created",
+          pairingId: payload.pairingId,
+          pairingCode: pairingPayloadCode(payload),
+          payload,
+        });
         return;
       }
       if (request.type === "approve_pairing") {
         const device = this.options.auth.approvePairing(request.pairingId);
-        this.send(socket, { type: "pairing_result", pairingId: request.pairingId, status: "approved", deviceId: device.deviceId });
+        this.send(socket, {
+          type: "pairing_result",
+          pairingId: request.pairingId,
+          status: "approved",
+          deviceId: device.deviceId,
+        });
         return;
       }
       if (request.type === "reject_pairing") {
@@ -122,29 +142,65 @@ export class MuximodControlServer {
         return;
       }
       if (request.type === "adopt_agent_session") {
-        if (!this.options.adoptAgentSession) throw controlError("agent_session_adoption_unavailable", "agent session adoption is unavailable");
-        void this.options.adoptAgentSession(request)
+        if (!this.options.adoptAgentSession)
+          throw controlError("agent_session_adoption_unavailable", "agent session adoption is unavailable");
+        void this.options
+          .adoptAgentSession(request)
           .then(() => this.send(socket, { ...request, type: "agent_session_adopted" }))
-          .catch((error) => this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }));
+          .catch((error) =>
+            this.send(socket, {
+              type: "error",
+              code: errorCode(error),
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
         return;
       }
       if (request.type === "release_agent_session") {
-        if (!this.options.releaseAgentSession) throw controlError("agent_session_release_unavailable", "agent session release is unavailable");
-        void this.options.releaseAgentSession(request)
+        if (!this.options.releaseAgentSession)
+          throw controlError("agent_session_release_unavailable", "agent session release is unavailable");
+        void this.options
+          .releaseAgentSession(request)
           .then(() => this.send(socket, { ...request, type: "agent_session_released" }))
-          .catch((error) => this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }));
+          .catch((error) =>
+            this.send(socket, {
+              type: "error",
+              code: errorCode(error),
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
         return;
       }
       if (request.type === "observe_agent_session") {
-        if (!this.options.observeAgentSession) throw controlError("agent_session_observation_unavailable", "agent session observation is unavailable");
-        void this.options.observeAgentSession(request)
-          .then(() => this.send(socket, { type: "agent_session_observed", agentSessionId: request.agentSessionId, tmuxPaneId: request.tmuxPaneId, executionId: request.executionId, state: request.state }))
-          .catch((error) => this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }));
+        if (!this.options.observeAgentSession)
+          throw controlError("agent_session_observation_unavailable", "agent session observation is unavailable");
+        void this.options
+          .observeAgentSession(request)
+          .then(() =>
+            this.send(socket, {
+              type: "agent_session_observed",
+              agentSessionId: request.agentSessionId,
+              tmuxPaneId: request.tmuxPaneId,
+              executionId: request.executionId,
+              state: request.state,
+            }),
+          )
+          .catch((error) =>
+            this.send(socket, {
+              type: "error",
+              code: errorCode(error),
+              message: error instanceof Error ? error.message : String(error),
+            }),
+          );
         return;
       }
       this.send(socket, { type: "error", code: "unknown_request", message: "unknown control request" });
     } catch (error) {
-      this.send(socket, { type: "error", code: errorCode(error), message: error instanceof Error ? error.message : String(error) });
+      this.send(socket, {
+        type: "error",
+        code: errorCode(error),
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -165,7 +221,8 @@ function pairingPayloadCode(payload: Parameters<typeof encodePairingCode>[0]): s
 function ensureSocketPathIsSafe(path: string): void {
   validateMuximodControlSocketPath(path);
   if (!path || path === "/" || path.endsWith("/")) throw new Error(`invalid muximod control socket path: ${path}`);
-  if (existsSync(path) && !lstatSync(path).isSocket()) throw new Error(`muximod control socket path is not a socket: ${path}`);
+  if (existsSync(path) && !lstatSync(path).isSocket())
+    throw new Error(`muximod control socket path is not a socket: ${path}`);
 }
 
 function errorCode(error: unknown): string {

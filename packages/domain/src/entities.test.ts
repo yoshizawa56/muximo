@@ -1,24 +1,24 @@
-import { describe, it } from "vitest";
 import {
   hasError,
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 import {
   AgentSession,
   AgentSessionId,
+  type AgentSessionRecord,
   clearPatch,
   Pane,
   PaneId,
-  Workspace,
-  WorkspaceId,
-  type AgentSessionRecord,
   type PaneRecord,
+  Workspace,
   type WorkspaceCreateInput,
+  WorkspaceId,
   type WorkspaceRecord,
 } from "./index.js";
 
@@ -87,11 +87,13 @@ const workspaceCases = [
   {
     name: "creates a normalized and validated workspace",
     input: { kind: "create", input: workspaceInput },
-    assert: [returns<EmptyContext, WorkspaceRecord>({
-      ...workspace,
-      name: "Project",
-      worktreeCopyPatterns: [".env", "config/*.local.json"],
-    })],
+    assert: [
+      returns<EmptyContext, WorkspaceRecord>({
+        ...workspace,
+        name: "Project",
+        worktreeCopyPatterns: [".env", "config/*.local.json"],
+      }),
+    ],
   },
   {
     name: "updates a workspace through a validated clear patch",
@@ -116,10 +118,7 @@ const workspaceTable: OperationTable<undefined, "default", WorkspaceOperation, W
   observe: () => ({}),
 };
 
-type PaneOperation =
-  | { kind: "create" }
-  | { kind: "clear-title" }
-  | { kind: "reject-invalid-current" };
+type PaneOperation = { kind: "create" } | { kind: "clear-title" } | { kind: "reject-invalid-current" };
 
 const paneCases = [
   {
@@ -150,10 +149,7 @@ const paneTable: OperationTable<undefined, "default", PaneOperation, PaneRecord,
   observe: () => ({}),
 };
 
-type AgentSessionOperation =
-  | { kind: "create" }
-  | { kind: "update-name" }
-  | { kind: "reject-invalid-current" };
+type AgentSessionOperation = { kind: "create" } | { kind: "update-name" } | { kind: "reject-invalid-current" };
 
 const agentSessionCases = [
   {
@@ -173,16 +169,17 @@ const agentSessionCases = [
   },
 ] satisfies readonly OperationCase<"default", AgentSessionOperation, AgentSessionRecord, EmptyContext>[];
 
-const agentSessionTable: OperationTable<undefined, "default", AgentSessionOperation, AgentSessionRecord, EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases: agentSessionCases,
-  execute: (_fixture, input) => {
-    if (input.kind === "create") return AgentSession.create({ ...agentSession, name: "Review" });
-    if (input.kind === "update-name") return AgentSession.update(agentSession, { name: " API review " });
-    return AgentSession.update({ ...agentSession, name: "" } as AgentSessionRecord, { status: "running" });
-  },
-  observe: () => ({}),
-};
+const agentSessionTable: OperationTable<undefined, "default", AgentSessionOperation, AgentSessionRecord, EmptyContext> =
+  {
+    defaultFixture: noFixture(),
+    cases: agentSessionCases,
+    execute: (_fixture, input) => {
+      if (input.kind === "create") return AgentSession.create({ ...agentSession, name: "Review" });
+      if (input.kind === "update-name") return AgentSession.update(agentSession, { name: " API review " });
+      return AgentSession.update({ ...agentSession, name: "" } as AgentSessionRecord, { status: "running" });
+    },
+    observe: () => ({}),
+  };
 
 describe("domain entities", () => {
   const register = it as unknown as TestRegistrar;

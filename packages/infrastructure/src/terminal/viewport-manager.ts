@@ -1,6 +1,7 @@
 // Viewport policy is kept beside its tmux I/O because both are one terminal adapter boundary.
-import { randomInt } from "node:crypto";
+
 import { spawnSync } from "node:child_process";
+import { randomInt } from "node:crypto";
 import { TmuxAdapter, type TmuxClient, type TmuxPaneRef, type TmuxWindowSnapshot } from "./tmux.js";
 
 export type ViewportOwner = "mobile" | "desktop";
@@ -173,7 +174,13 @@ export class TmuxViewportManager {
       return;
     }
 
-    if (event !== "client-attached" && event !== "client-active" && event !== "client-resized" && event !== "client-focus-in") return;
+    if (
+      event !== "client-attached" &&
+      event !== "client-active" &&
+      event !== "client-resized" &&
+      event !== "client-focus-in"
+    )
+      return;
 
     let client: TmuxClient;
     try {
@@ -216,7 +223,13 @@ export class TmuxViewportManager {
     if (!curl) return;
 
     const index = this.nextHookIndex();
-    const names: TmuxHookEvent[] = ["client-attached", "client-active", "client-resized", "client-focus-in", "client-detached"];
+    const names: TmuxHookEvent[] = [
+      "client-attached",
+      "client-active",
+      "client-resized",
+      "client-focus-in",
+      "client-detached",
+    ];
     try {
       for (const name of names) {
         const command = [
@@ -546,7 +559,11 @@ export class TmuxViewportManager {
             }
           }
           if (focusChanged || sizeChanged || layoutChanged) {
-            this.claimDesktop(record, desktop, sizeChanged ? "desktop_resize" : layoutChanged ? "desktop_activity" : "desktop_focus");
+            this.claimDesktop(
+              record,
+              desktop,
+              sizeChanged ? "desktop_resize" : layoutChanged ? "desktop_activity" : "desktop_focus",
+            );
           }
         } else if (
           record.latestDesktop?.name === desktop.name &&
@@ -583,12 +600,14 @@ export class TmuxViewportManager {
 
   private protectDesktopClients(record: LeaseRecord): void {
     try {
-      const clients = this.adapter.listClients().filter(
-        (client) =>
-          client.name !== record.mobileClient?.name &&
-          client.windowId === record.pane.windowId &&
-          client.sessionName === record.pane.sessionName,
-      );
+      const clients = this.adapter
+        .listClients()
+        .filter(
+          (client) =>
+            client.name !== record.mobileClient?.name &&
+            client.windowId === record.pane.windowId &&
+            client.sessionName === record.pane.sessionName,
+        );
       for (const client of clients) {
         if (!record.desktopClientFlags.has(client.name)) {
           record.desktopClientFlags.set(client.name, client.flags);
@@ -671,7 +690,12 @@ function clampViewportSize(cols: number, rows: number): { cols: number; rows: nu
 }
 
 function isValidClientSize(client: TmuxClient): boolean {
-  return Number.isInteger(client.width) && Number.isInteger(client.height)
-    && client.width >= 20 && client.width <= 500
-    && client.height >= 5 && client.height <= 300;
+  return (
+    Number.isInteger(client.width) &&
+    Number.isInteger(client.height) &&
+    client.width >= 20 &&
+    client.width <= 500 &&
+    client.height >= 5 &&
+    client.height <= 300
+  );
 }

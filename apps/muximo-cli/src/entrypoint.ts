@@ -1,20 +1,27 @@
 import { PairDevice } from "@muximo/application";
-import { createDefaultAgentPluginRegistry, errorFields, errorMessage, resolveMuximodPaths, validateMuximodControlSocketPath, type Logger } from "@muximo/infrastructure";
+import {
+  createDefaultAgentPluginRegistry,
+  errorFields,
+  errorMessage,
+  type Logger,
+  resolveMuximodPaths,
+  validateMuximodControlSocketPath,
+} from "@muximo/infrastructure";
+import {
+  BrowserPairingPresenter,
+  PairCommand,
+  PairCommandError,
+  type PairCommandIo,
+  type PairDeviceRuntime,
+  type ResolvedPairCommandOptions,
+  TerminalPairingPresenter,
+} from "./cli/adapters/index.js";
 import {
   MuximoCommand,
   MuximoCommandError,
   MuximodPairingControlAdapter,
   resolvePairMuximodBaseUrl,
 } from "./cli/host/index.js";
-import {
-  BrowserPairingPresenter,
-  PairCommand,
-  PairCommandError,
-  TerminalPairingPresenter,
-  type PairCommandIo,
-  type PairDeviceRuntime,
-  type ResolvedPairCommandOptions,
-} from "./cli/adapters/index.js";
 
 export async function runMuximoCli(args: string[], logger: Logger): Promise<void> {
   const commandName = args[0] ?? "help";
@@ -48,7 +55,13 @@ export async function runMuximoCli(args: string[], logger: Logger): Promise<void
         logger.debug("pair.command_finished", { status: process.exitCode, durationMs: Date.now() - pairStartedAt });
       } catch (error) {
         logger.debug("pair.command_failed", { durationMs: Date.now() - pairStartedAt, ...errorFields(error) });
-        reportError(logger, "muximo pair", error, error instanceof PairCommandError ? 2 : 1, !(error instanceof PairCommandError));
+        reportError(
+          logger,
+          "muximo pair",
+          error,
+          error instanceof PairCommandError ? 2 : 1,
+          !(error instanceof PairCommandError),
+        );
       }
     } else if (args[0] === "serve") {
       try {
@@ -72,13 +85,23 @@ export async function runMuximoCli(args: string[], logger: Logger): Promise<void
       try {
         process.exitCode = await command.execute(args);
       } catch (error) {
-        reportError(logger, "muximo", error, error instanceof MuximoCommandError ? 2 : 1, !(error instanceof MuximoCommandError));
+        reportError(
+          logger,
+          "muximo",
+          error,
+          error instanceof MuximoCommandError ? 2 : 1,
+          !(error instanceof MuximoCommandError),
+        );
       } finally {
         command.close();
       }
     }
   } finally {
-    logger.debug("cli.command_finished", { command: commandName, status: process.exitCode ?? 0, durationMs: Date.now() - startedAt });
+    logger.debug("cli.command_finished", {
+      command: commandName,
+      status: process.exitCode ?? 0,
+      durationMs: Date.now() - startedAt,
+    });
     logger.close();
   }
 }
@@ -95,10 +118,7 @@ async function createPairDeviceRuntime(
     logger?.debug("pair.control_connected", { durationMs: Date.now() - startedAt });
     if (options.display === "terminal") {
       return {
-        useCase: new PairDevice(
-          control,
-          new TerminalPairingPresenter({ out: io.out, input: io.input }),
-        ),
+        useCase: new PairDevice(control, new TerminalPairingPresenter({ out: io.out, input: io.input })),
         close: () => control.close(),
       };
     }

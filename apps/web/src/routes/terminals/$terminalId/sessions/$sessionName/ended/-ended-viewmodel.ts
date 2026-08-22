@@ -1,5 +1,5 @@
-import { useNavigate, useParams } from "@tanstack/react-router";
 import type { TmuxSession } from "@muximo/contract";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import type { TerminalEndpoint } from "../../../../-connection-flow-viewmodel";
 import { useTerminalResources } from "../../../../-terminal-resources";
 
@@ -18,7 +18,10 @@ export function useEndedViewModel(): EndedViewModel {
     selectedTerminal,
     selectedSession,
     onReconnect: () => {
-      void navigate({ to: "/terminals/$terminalId/sessions/$sessionName/connecting", params: { terminalId, sessionName } });
+      void navigate({
+        to: "/terminals/$terminalId/sessions/$sessionName/connecting",
+        params: { terminalId, sessionName },
+      });
     },
     onChooseTerminal: () => {
       void navigate({ to: "/terminals" });

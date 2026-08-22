@@ -1,9 +1,8 @@
 import type {
+  MuximodHookEvent as ApplicationHookEvent,
   MuximodApplication,
   MuximodAuthContext,
-  MuximodAuthDevice,
   MuximodAuthPort,
-  MuximodHookEvent as ApplicationHookEvent,
   MuximodSocket,
 } from "@muximo/application";
 import type { MuximodEvent } from "@muximo/contract";

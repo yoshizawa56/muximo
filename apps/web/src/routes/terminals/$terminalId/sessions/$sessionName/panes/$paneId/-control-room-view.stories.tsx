@@ -1,10 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { storyPanes } from "../../../../../-story-fixtures";
 import { ControlRoomView } from "./-control-room-view";
 import type { ControlRoomViewModel } from "./-control-room-viewmodel";
 import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
 import type { PaneViewModel } from "./-terminal-viewmodel";
-import { storyPanes } from "../../../../../-story-fixtures";
 
 function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlRoomViewModel {
   const close = fn();

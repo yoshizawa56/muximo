@@ -4,17 +4,23 @@ import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 import type { ConnectionFlowViewModel, TerminalEndpoint } from "./-connection-flow-viewmodel";
 
-export type TerminalsViewModel = Pick<ConnectionFlowViewModel, "terminals" | "status" | "errorMessage" | "onSelectTerminal" | "onOpenSettings" | "onOpenWorkspaces">;
+export type TerminalsViewModel = Pick<
+  ConnectionFlowViewModel,
+  "terminals" | "status" | "errorMessage" | "onSelectTerminal" | "onOpenSettings" | "onOpenWorkspaces"
+>;
 
 export function useTerminalsViewModel(): TerminalsViewModel {
   const navigate = useNavigate();
   const { connection, utils } = useMuximodConnection();
   useMuximodEvents(connection);
-  const terminalsQuery = useQuery(utils.terminals.list.queryOptions({
-    staleTime: 5_000,
-    retry: 1,
-    enabled: Boolean(connection),
-  }));
+  const terminalsQuery = useQuery(
+    utils.terminals.list.queryOptions({
+      input: {},
+      staleTime: 5_000,
+      retry: 1,
+      enabled: Boolean(connection),
+    }),
+  );
   const terminals = terminalsQuery.data?.terminals ?? [];
 
   return {

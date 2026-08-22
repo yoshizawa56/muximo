@@ -1,5 +1,5 @@
-import { useNavigate, useParams } from "@tanstack/react-router";
 import type { TmuxSession } from "@muximo/contract";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import type { TerminalEndpoint } from "../../-connection-flow-viewmodel";
 import { useTerminalResources } from "../../-terminal-resources";
 
@@ -28,7 +28,10 @@ export function useSessionsViewModel(): SessionsViewModel {
     status: resources.sessionsStatus,
     errorMessage: resources.sessionsError,
     onSelectSession: (session) => {
-      void navigate({ to: "/terminals/$terminalId/sessions/$sessionName/connecting", params: { terminalId, sessionName: session.name } });
+      void navigate({
+        to: "/terminals/$terminalId/sessions/$sessionName/connecting",
+        params: { terminalId, sessionName: session.name },
+      });
     },
     onCreateSession: () => {
       void navigate({ to: "/terminals/$terminalId/sessions/new", params: { terminalId } });

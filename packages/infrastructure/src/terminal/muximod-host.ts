@@ -6,7 +6,7 @@ import {
   buildMuximoShellCommand,
   configureManagedTmuxSession,
   resolveMuximoCommand,
-  TmuxAdapter,
+  type TmuxAdapter,
   type TmuxPaneRef,
 } from "./tmux.js";
 
@@ -29,10 +29,14 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     const binary = resolveMuximoCommand(this.environment);
     let created = false;
     try {
-      this.adapter.createSession(target, cwd, buildMuximoShellCommand(binary, {
-        MUXIMOD_MANAGED_SESSION_ID: managedSessionId,
-        MUXIMOD_MANAGED_SESSION_NAME: target,
-      }));
+      this.adapter.createSession(
+        target,
+        cwd,
+        buildMuximoShellCommand(binary, {
+          MUXIMOD_MANAGED_SESSION_ID: managedSessionId,
+          MUXIMOD_MANAGED_SESSION_NAME: target,
+        }),
+      );
       created = true;
       configureManagedTmuxSession(this.adapter, target, managedSessionId, binary);
       return managedSessionId;
@@ -56,7 +60,11 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     return this.adapter.attachSession(target);
   }
 
-  public createManagedPane(input: CreatePaneInput, workspace: WorkspaceRecord | undefined, cwd: string | undefined): string {
+  public createManagedPane(
+    input: CreatePaneInput,
+    workspace: WorkspaceRecord | undefined,
+    cwd: string | undefined,
+  ): string {
     const paneName = input.name;
     const command = buildMuximoShellCommand(
       resolveMuximoCommand(this.environment),
@@ -71,7 +79,8 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     );
 
     if (input.placement === "window") return this.adapter.newWindow(input.sessionName, cwd, command);
-    if (!input.targetPaneId) throw new ApplicationError("target_pane_required", "targetPaneId is required for a split pane");
+    if (!input.targetPaneId)
+      throw new ApplicationError("target_pane_required", "targetPaneId is required for a split pane");
 
     const target = this.adapter.resolvePane(input.targetPaneId);
     if (target.sessionName !== input.sessionName) {
@@ -89,7 +98,12 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     return this.adapter.snapshotWindow(pane).zoomed;
   }
 
-  public splitPane(command: string | undefined, placement: "right" | "bottom", targetPaneId: string, zoomed: boolean): string {
+  public splitPane(
+    command: string | undefined,
+    placement: "right" | "bottom",
+    targetPaneId: string,
+    zoomed: boolean,
+  ): string {
     return this.adapter.splitWindow(command, placement, targetPaneId, zoomed);
   }
 
@@ -97,7 +111,11 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     return this.adapter.listPanesSnapshot();
   }
 
-  public setAgentPaneMetadata(paneId: string, field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id", value: string): void {
+  public setAgentPaneMetadata(
+    paneId: string,
+    field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id",
+    value: string,
+  ): void {
     this.adapter.setAgentPaneMetadata(paneId, field, value);
   }
 
@@ -121,11 +139,13 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     const executable = executableName(command);
     const configuredMuximo = executableName(this.environment.MUXIMOD_MUXIMO_COMMAND ?? "muximo");
     const resolvedMuximo = executableName(resolveMuximoCommand(this.environment));
-    return executable === "muximo"
-      || executable === configuredMuximo
-      || executable === resolvedMuximo
-      || executable === backend
-      || (resolveMuximoCommand(this.environment).endsWith(".ts") && executable === "bun");
+    return (
+      executable === "muximo" ||
+      executable === configuredMuximo ||
+      executable === resolvedMuximo ||
+      executable === backend ||
+      (resolveMuximoCommand(this.environment).endsWith(".ts") && executable === "bun")
+    );
   }
 
   public isProcessAlive(pid: number): boolean {

@@ -18,12 +18,7 @@ export class AppErrorBoundary extends Component<PropsWithChildren, AppErrorBound
 
   render() {
     if (this.state.error) {
-      return (
-        <AppErrorView
-          error={this.state.error}
-          onRetry={() => window.location.reload()}
-        />
-      );
+      return <AppErrorView error={this.state.error} onRetry={() => window.location.reload()} />;
     }
 
     return this.props.children;

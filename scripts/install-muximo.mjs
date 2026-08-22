@@ -1,6 +1,16 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { arch, homedir, platform, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -46,7 +56,9 @@ try {
   installCommandLink();
   process.stdout.write(`Installed production binary: ${installBinary}\n`);
   process.stdout.write(`Installed production command: ${commandPath}\n`);
-  process.stdout.write("Use 'muximo' for the production binary. Run 'bun dev' directly in a linked worktree for source-based development.\n");
+  process.stdout.write(
+    "Use 'muximo' for the production binary. Run 'bun dev' directly in a linked worktree for source-based development.\n",
+  );
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true });
 }

@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { storyPanes, storySession, storyTerminal } from "../../../-story-fixtures";
 import { SessionView } from "./-session-view";
 import type { SessionOverviewViewModel } from "./-session-viewmodel";
-import { storyPanes, storySession, storyTerminal } from "../../../-story-fixtures";
 
 function buildViewModel(overrides: Partial<SessionOverviewViewModel> = {}): SessionOverviewViewModel {
   return {

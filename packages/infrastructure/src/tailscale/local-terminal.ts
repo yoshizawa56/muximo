@@ -24,9 +24,15 @@ export async function getLocalTerminal(): Promise<MuximodTerminalEndpoint> {
 }
 
 function readTailscaleIpv4(): string | undefined {
-  const invocation = buildTailscaleInvocation(process.env.TAILSCALE_BIN ?? "tailscale", ["ip", "-4"], process.env, process.platform, {
-    allowShellFallback: false,
-  });
+  const invocation = buildTailscaleInvocation(
+    process.env.TAILSCALE_BIN ?? "tailscale",
+    ["ip", "-4"],
+    process.env,
+    process.platform,
+    {
+      allowShellFallback: false,
+    },
+  );
   const result = spawnSync(invocation.command, invocation.args, {
     encoding: "utf8",
     env: invocation.environment,

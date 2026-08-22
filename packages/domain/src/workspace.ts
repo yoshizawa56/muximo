@@ -39,27 +39,31 @@ export const workspaceSelectionModes = ["workspace", "worktree"] as const;
 export const workspaceSelectionModeSchema = z.enum(workspaceSelectionModes);
 export type WorkspaceSelectionMode = z.infer<typeof workspaceSelectionModeSchema>;
 
-const workspaceNameSchema = z.string().min(1).max(workspaceNameMaxLength).refine(
-  (value) => !/[\u0000\r\n\t]/.test(value),
-  "workspace name contains a control character",
-);
+const workspaceNameSchema = z
+  .string()
+  .min(1)
+  .max(workspaceNameMaxLength)
+  .refine((value) => !/[\u0000\r\n\t]/.test(value), "workspace name contains a control character");
 const workspacePathSchema = z.string().min(1);
-const worktreeCopyPatternSchema = z.string().min(1).max(worktreeCopyPatternLimits.maxPatternLength).refine(
-  isValidWorktreeCopyPattern,
-  "invalid worktree copy pattern",
-);
+const worktreeCopyPatternSchema = z
+  .string()
+  .min(1)
+  .max(worktreeCopyPatternLimits.maxPatternLength)
+  .refine(isValidWorktreeCopyPattern, "invalid worktree copy pattern");
 
-const workspaceSchema = z.object({
-  id: WorkspaceId.schema,
-  rootPath: workspacePathSchema,
-  name: workspaceNameSchema,
-  isGit: z.boolean(),
-  setupScriptPath: workspacePathSchema.optional(),
-  cleanupScriptPath: workspacePathSchema.optional(),
-  worktreeCopyPatterns: z.array(worktreeCopyPatternSchema).max(worktreeCopyPatternLimits.maxPatterns),
-  createdAt: z.string().min(1),
-  updatedAt: z.string().min(1),
-}).strict();
+const workspaceSchema = z
+  .object({
+    id: WorkspaceId.schema,
+    rootPath: workspacePathSchema,
+    name: workspaceNameSchema,
+    isGit: z.boolean(),
+    setupScriptPath: workspacePathSchema.optional(),
+    cleanupScriptPath: workspacePathSchema.optional(),
+    worktreeCopyPatterns: z.array(worktreeCopyPatternSchema).max(worktreeCopyPatternLimits.maxPatterns),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
 
 export type Workspace = z.infer<typeof workspaceSchema>;
 export type WorkspaceRecord = Workspace;
@@ -84,16 +88,18 @@ export type WorkspaceUpdateInput = {
   appendWorktreeCopyPatterns?: readonly string[];
   clearWorktreeCopyPatterns?: boolean;
 };
+const parseWorkspace = (input: unknown): Workspace => workspaceSchema.parse(input);
 
 export const Workspace = {
   schema: workspaceSchema,
 
-  validate(input: unknown): Workspace {
-    return workspaceSchema.parse(input);
+  /** Rehydrates a persisted workspace. This is the only re-entry point for raw data. */
+  restore(input: unknown): Workspace {
+    return parseWorkspace(input);
   },
 
   create(input: WorkspaceCreateInput): Workspace {
-    return Workspace.validate({
+    return parseWorkspace({
       ...input,
       name: validateWorkspaceName(input.name),
       worktreeCopyPatterns: validateWorktreeCopyPatterns(input.worktreeCopyPatterns ?? []),
@@ -101,19 +107,18 @@ export const Workspace = {
   },
 
   update(entity: Workspace, input: WorkspaceUpdateInput): Workspace {
-    const current = Workspace.validate(entity);
+    const current = parseWorkspace(entity);
     if (!hasWorkspaceUpdate(input)) throw new WorkspaceUpdateEmptyError();
     if (input.worktreeCopyPatterns !== undefined && input.clearWorktreeCopyPatterns) {
       throw new WorkspaceUpdateConflictError("cannot clear and replace worktree copy patterns in the same update");
     }
 
-    let patterns = input.worktreeCopyPatterns === undefined
-      ? [...current.worktreeCopyPatterns]
-      : [...input.worktreeCopyPatterns];
+    let patterns =
+      input.worktreeCopyPatterns === undefined ? [...current.worktreeCopyPatterns] : [...input.worktreeCopyPatterns];
     if (input.clearWorktreeCopyPatterns) patterns = [];
     patterns = normalizeWorktreeCopyPatterns([...patterns, ...(input.appendWorktreeCopyPatterns ?? [])]);
 
-    return Workspace.validate({
+    return parseWorkspace({
       ...current,
       name: input.name === undefined ? current.name : validateWorkspaceName(input.name),
       setupScriptPath: applyPatch(current.setupScriptPath, input.setupScriptPath),
@@ -157,9 +162,7 @@ export type WorkspaceSelection = {
   mode: WorkspaceSelectionMode;
 };
 
-export type WorkspaceSelectionErrorCode =
-  | "workspace_not_found"
-  | "worktree_not_supported";
+export type WorkspaceSelectionErrorCode = "workspace_not_found" | "worktree_not_supported";
 
 export class WorkspaceSelectionError extends Error {
   public constructor(
@@ -229,12 +232,14 @@ export function validateWorktreeCopyPatterns(values: readonly string[]): string[
 }
 
 function hasWorkspaceUpdate(input: WorkspaceUpdateInput): boolean {
-  return input.name !== undefined
-    || input.setupScriptPath !== undefined
-    || input.cleanupScriptPath !== undefined
-    || input.worktreeCopyPatterns !== undefined
-    || (input.appendWorktreeCopyPatterns?.length ?? 0) > 0
-    || input.clearWorktreeCopyPatterns === true;
+  return (
+    input.name !== undefined ||
+    input.setupScriptPath !== undefined ||
+    input.cleanupScriptPath !== undefined ||
+    input.worktreeCopyPatterns !== undefined ||
+    (input.appendWorktreeCopyPatterns?.length ?? 0) > 0 ||
+    input.clearWorktreeCopyPatterns === true
+  );
 }
 
 function invalidWorkspaceNameMessage(value: string): string {

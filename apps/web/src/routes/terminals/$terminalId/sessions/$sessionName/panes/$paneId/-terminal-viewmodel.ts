@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefCallback } from "react";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
 import {
-  serverControlMessageSchema,
-  terminalProtocolVersion,
   type ClientControlMessage,
   type ServerControlMessage,
+  serverControlMessageSchema,
+  terminalProtocolVersion,
 } from "@muximo/contract";
-import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
+import { type RefCallback, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { openMuximodTerminal } from "../../../../../../../app/api/muximod-client";
+import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
 import { isMockMode, mockTerminalOutputForTarget } from "../../../../../../../mock/mock-data";
 import { muximoBridge } from "../../../../../../../platform/muximo-bridge";
 import { installTerminalFlickInput, terminalMouseWheelInput } from "./-terminal-flick";
@@ -39,7 +39,13 @@ export type PaneViewModel = {
   pasteImage: (file: File) => void;
 };
 
-export function usePaneViewModel({ target, connection }: { target: string; connection?: MuximodConnection }): PaneViewModel {
+export function usePaneViewModel({
+  target,
+  connection,
+}: {
+  target: string;
+  connection?: MuximodConnection;
+}): PaneViewModel {
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const terminalContainerRef = useCallback<RefCallback<HTMLDivElement>>((node) => {
     setTerminalContainer(node);
@@ -63,9 +69,12 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     currentTargetRef.current = target;
   }, [target]);
 
-  useEffect(() => () => {
-    if (pasteResetTimerRef.current !== null) window.clearTimeout(pasteResetTimerRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (pasteResetTimerRef.current !== null) window.clearTimeout(pasteResetTimerRef.current);
+    },
+    [],
+  );
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current === null) return;
@@ -100,38 +109,48 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
     }, PASTE_NOTICE_DURATION_MS);
   }, []);
 
-  const pasteImage = useCallback((file: File) => {
-    void (async () => {
-      if (isMockMode()) {
-        setPasteState("pasted");
+  const pasteImage = useCallback(
+    (file: File) => {
+      void (async () => {
+        if (isMockMode()) {
+          setPasteState("pasted");
+          schedulePasteReset();
+          return;
+        }
+        const socket = socketRef.current;
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          setPasteState("failed");
+          schedulePasteReset();
+          return;
+        }
+        try {
+          setPasteState("pasting");
+          const data = await fileToBase64(file);
+          sendControl(
+            socket,
+            createPasteImageMessage({
+              name: file.name || "image",
+              mimeType: file.type || undefined,
+              data,
+            }),
+          );
+          setPasteState("pasted");
+        } catch {
+          setPasteState("failed");
+        }
         schedulePasteReset();
-        return;
-      }
-      const socket = socketRef.current;
-      if (!socket || socket.readyState !== WebSocket.OPEN) {
-        setPasteState("failed");
-        schedulePasteReset();
-        return;
-      }
-      try {
-        setPasteState("pasting");
-        const data = await fileToBase64(file);
-        sendControl(socket, createPasteImageMessage({
-          name: file.name || "image",
-          mimeType: file.type || undefined,
-          data,
-        }));
-        setPasteState("pasted");
-      } catch {
-        setPasteState("failed");
-      }
-      schedulePasteReset();
-    })();
-  }, [schedulePasteReset]);
+      })();
+    },
+    [schedulePasteReset],
+  );
 
-  useEffect(() => muximoBridge.onAppStateChange((state) => {
-    if (state === "active" && !terminalClosedRef.current) reconnect();
-  }), [reconnect]);
+  useEffect(
+    () =>
+      muximoBridge.onAppStateChange((state) => {
+        if (state === "active" && !terminalClosedRef.current) reconnect();
+      }),
+    [reconnect],
+  );
 
   useEffect(() => {
     // The terminal surface is mounted by the control-room route. The hook lives
@@ -232,7 +251,10 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       if (!connection) return;
 
       const previousSocket = socketRef.current;
-      if (previousSocket && (previousSocket.readyState === WebSocket.OPEN || previousSocket.readyState === WebSocket.CONNECTING)) {
+      if (
+        previousSocket &&
+        (previousSocket.readyState === WebSocket.OPEN || previousSocket.readyState === WebSocket.CONNECTING)
+      ) {
         socketRef.current = null;
         closeNetworkSocket(previousSocket);
       }
@@ -329,7 +351,9 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       });
     };
 
-    connectRef.current = () => { void connect(); };
+    connectRef.current = () => {
+      void connect();
+    };
     detachRef.current = () => {
       const socket = socketRef.current;
       resumeRef.current = null;
@@ -371,7 +395,9 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       const column = Math.min(terminal.cols, Math.max(1, Math.floor((clientX - rect.left) / cellWidth) + 1));
       const row = Math.min(terminal.rows, Math.max(1, Math.floor((clientY - rect.top) / cellHeight) + 1));
       const direction = lineDelta > 0 ? "down" : "up";
-      const wheelInput = Array.from({ length: Math.abs(lineDelta) }, () => terminalMouseWheelInput(direction, column, row)).join("");
+      const wheelInput = Array.from({ length: Math.abs(lineDelta) }, () =>
+        terminalMouseWheelInput(direction, column, row),
+      ).join("");
       scrollInputBatcher.enqueue(wheelInput);
     };
     const flickOptions = {
@@ -390,9 +416,13 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       resizeObserver.observe(container);
       window.addEventListener("resize", sendResize);
       sendResize();
-      const flickCleanup = installTerminalFlickInput(container, () => {
-        // The mock is intentionally read-only. Real input is wired to muximod below.
-      }, flickOptions);
+      const flickCleanup = installTerminalFlickInput(
+        container,
+        () => {
+          // The mock is intentionally read-only. Real input is wired to muximod below.
+        },
+        flickOptions,
+      );
       const inputDisposable = terminal.onData(() => {
         // The mock is intentionally read-only.
       });
@@ -579,17 +609,26 @@ export function handleControlMessage(
   try {
     const parsed = serverControlMessageSchema.safeParse(JSON.parse(rawMessage));
     if (!parsed.success) {
-      handlers.onError({ code: "invalid_control_frame", message: "Invalid control frame from muximod", retryable: false });
+      handlers.onError({
+        code: "invalid_control_frame",
+        message: "Invalid control frame from muximod",
+        retryable: false,
+      });
       return;
     }
 
     const message = parsed.data;
     if (message.type === "ready") handlers.onReady(message);
     if (message.type === "closed") handlers.onClosed(message);
-    if (message.type === "error") handlers.onError({ code: message.code, message: message.message, retryable: message.retryable ?? false });
+    if (message.type === "error")
+      handlers.onError({ code: message.code, message: message.message, retryable: message.retryable ?? false });
     if (message.type === "viewport") handlers.onViewport(message.owner, message.reason);
   } catch {
-    handlers.onError({ code: "invalid_control_frame", message: "Invalid control frame from muximod", retryable: false });
+    handlers.onError({
+      code: "invalid_control_frame",
+      message: "Invalid control frame from muximod",
+      retryable: false,
+    });
   }
 }
 
@@ -696,9 +735,14 @@ function clearTerminalResumeState(storageKey: string): void {
 
 function isResumeState(value: unknown): value is PaneResumeState {
   if (typeof value !== "object" || value === null) return false;
-  return "sessionId" in value && typeof value.sessionId === "string"
-    && "resumeToken" in value && typeof value.resumeToken === "string"
-    && "target" in value && typeof value.target === "string";
+  return (
+    "sessionId" in value &&
+    typeof value.sessionId === "string" &&
+    "resumeToken" in value &&
+    typeof value.resumeToken === "string" &&
+    "target" in value &&
+    typeof value.target === "string"
+  );
 }
 
 function terminalFontSize(): number {

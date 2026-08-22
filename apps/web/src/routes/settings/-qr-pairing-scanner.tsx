@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
 import { BrowserQRCodeReader } from "@zxing/browser";
+import { useEffect, useRef, useState } from "react";
 
 type ScannerControls = { stop: () => void };
 
@@ -19,17 +19,24 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
 
       const stream = video?.srcObject;
       if (stream && "getTracks" in stream && typeof stream.getTracks === "function") {
-        stream.getTracks().forEach((track) => track.stop());
+        stream.getTracks().forEach((track) => {
+          track.stop();
+        });
       }
       if (video) video.srcObject = null;
     };
 
     const setCameraError = (cause: unknown) => {
-      const name = cause && typeof cause === "object" && "name" in cause && typeof cause.name === "string" ? cause.name : "";
+      const name =
+        cause && typeof cause === "object" && "name" in cause && typeof cause.name === "string" ? cause.name : "";
 
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
         const secureContext = typeof window !== "undefined" && window.isSecureContext;
-        setError(secureContext ? "Camera access is unavailable in this environment." : "Camera access requires HTTPS or localhost.");
+        setError(
+          secureContext
+            ? "Camera access is unavailable in this environment."
+            : "Camera access requires HTTPS or localhost.",
+        );
         return;
       }
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
@@ -85,8 +92,16 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
         <video className="block size-full object-cover" ref={videoRef} autoPlay muted playsInline />
         <span className="pointer-events-none absolute inset-[16%] rounded-[0.7rem] border-2 border-white/80 shadow-[0_0_0_999px_rgb(0_0_0_/_20%)]" />
       </div>
-      <p className="m-0 text-[0.82rem] text-[#638f6b]">{error ?? "Scan the QR code shown by muximo pair in this app."}</p>
-      <button className="flex min-h-[37px] w-full items-center justify-center rounded-[9px] border border-[#214d2b] bg-transparent text-[0.63rem] text-[#78a77f] transition-colors hover:border-[#3c8248] hover:text-[#b6eabd] max-[920px]:min-h-11" type="button" onClick={onClose}>Close camera</button>
+      <p className="m-0 text-[0.82rem] text-[#638f6b]">
+        {error ?? "Scan the QR code shown by muximo pair in this app."}
+      </p>
+      <button
+        className="flex min-h-[37px] w-full items-center justify-center rounded-[9px] border border-[#214d2b] bg-transparent text-[0.63rem] text-[#78a77f] transition-colors hover:border-[#3c8248] hover:text-[#b6eabd] max-[920px]:min-h-11"
+        type="button"
+        onClick={onClose}
+      >
+        Close camera
+      </button>
     </section>
   );
 }

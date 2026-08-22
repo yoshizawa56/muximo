@@ -9,7 +9,11 @@ export type PinchDirection = "in" | "out";
  * Returns the direction only after the pinch has moved far enough to be a
  * deliberate gesture. A positive distance delta is a pinch-out/zoom-in.
  */
-export function classifyPinchDirection(initialDistance: number, currentDistance: number, threshold = PINCH_THRESHOLD_PX): PinchDirection | null {
+export function classifyPinchDirection(
+  initialDistance: number,
+  currentDistance: number,
+  threshold = PINCH_THRESHOLD_PX,
+): PinchDirection | null {
   const delta = currentDistance - initialDistance;
   if (Math.abs(delta) < threshold) return null;
   return delta > 0 ? "out" : "in";
@@ -32,7 +36,7 @@ export function isZoomInKey(event: Pick<KeyboardEvent, "key">): boolean {
 export function isEditableGestureTarget(target: EventTarget | null): boolean {
   if (typeof Element === "undefined" || !(target instanceof Element)) return false;
   if (target.closest(".xterm")) return false;
-  return Boolean(target.closest("input, textarea, select, [contenteditable=\"true\"]"));
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
 }
 
 export function useWindowMapGesture(onOpen: () => void): (node: HTMLElement | null) => void {

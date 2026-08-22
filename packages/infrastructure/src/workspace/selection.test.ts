@@ -1,33 +1,46 @@
 // Tests for workspace discovery stay co-located with its adapter.
-import { chmodSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+
 import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
 import {
+  type Assertion,
+  type FixtureHandle,
   hasError,
   hasObserved,
   noFixture,
+  type OperationCase,
+  type OperationTable,
   returns,
   runOperationTable,
   runScenarioTable,
-  type Assertion,
-  type FixtureHandle,
-  type OperationCase,
-  type OperationTable,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
-import { AllowedRootPolicy, WorkspaceSelectionCatalog, allowedRootsFromEnvironment } from "./selection.js";
+import { describe, expect, it } from "vitest";
+import { AllowedRootPolicy, allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./selection.js";
 
 type EmptyContext = {};
 type RootsInput = { env: NodeJS.ProcessEnv; fallback: string };
 const rootsCases = [
-  { name: "reads the documented workspace roots variable", input: { env: { MUXIMOD_WORKSPACE_ROOTS: "/work:/projects" }, fallback: "/muximod" }, assert: [returns<EmptyContext, string[]>(["/work", "/projects"])] },
-  { name: "supports the compatibility roots variable", input: { env: { MUXIMOD_ALLOWED_ROOTS: "/scratch" }, fallback: "/muximod" }, assert: [returns<EmptyContext, string[]>(["/scratch"])] },
-  { name: "falls back to the daemon working directory", input: { env: {}, fallback: "/muximod" }, assert: [returns<EmptyContext, string[]>(["/muximod"])] },
+  {
+    name: "reads the documented workspace roots variable",
+    input: { env: { MUXIMOD_WORKSPACE_ROOTS: "/work:/projects" }, fallback: "/muximod" },
+    assert: [returns<EmptyContext, string[]>(["/work", "/projects"])],
+  },
+  {
+    name: "supports the compatibility roots variable",
+    input: { env: { MUXIMOD_ALLOWED_ROOTS: "/scratch" }, fallback: "/muximod" },
+    assert: [returns<EmptyContext, string[]>(["/scratch"])],
+  },
+  {
+    name: "falls back to the daemon working directory",
+    input: { env: {}, fallback: "/muximod" },
+    assert: [returns<EmptyContext, string[]>(["/muximod"])],
+  },
 ] satisfies readonly OperationCase<"default", RootsInput, string[], EmptyContext>[];
 
 const rootsTable: OperationTable<undefined, "default", RootsInput, string[], EmptyContext> = {
@@ -37,7 +50,14 @@ const rootsTable: OperationTable<undefined, "default", RootsInput, string[], Emp
   observe: () => ({}),
 };
 
-type PolicyFixture = { root: string; outside: string; file: string; policy: AllowedRootPolicy; actualPath: string | null; expectedPath: string | null };
+type PolicyFixture = {
+  root: string;
+  outside: string;
+  file: string;
+  policy: AllowedRootPolicy;
+  actualPath: string | null;
+  expectedPath: string | null;
+};
 type PolicyInput = { candidate: "root" | "child" | "outside" | "missing" | "file" };
 const policyFixture = (): FixtureHandle<PolicyFixture> => {
   const root = mkdtempSync(join(tmpdir(), "muximo-policy-"));
@@ -46,15 +66,33 @@ const policyFixture = (): FixtureHandle<PolicyFixture> => {
   mkdirSync(child);
   const file = join(root, "README");
   writeFileSync(file, "fixture\n");
-  return { fixture: { root, outside, file, policy: new AllowedRootPolicy([root]), actualPath: null, expectedPath: null }, cleanup: () => { rmSync(root, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); } };
+  return {
+    fixture: { root, outside, file, policy: new AllowedRootPolicy([root]), actualPath: null, expectedPath: null },
+    cleanup: () => {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    },
+  };
 };
 
 const policyCases = [
   { name: "accepts the configured root", input: { candidate: "root" }, assert: [hasResolvedPath()] },
   { name: "accepts a directory below the configured root", input: { candidate: "child" }, assert: [hasResolvedPath()] },
-  { name: "rejects a path outside the configured root", input: { candidate: "outside" }, assert: [hasError<PolicyContext, string>({ code: "invalid_directory", reason: "outside_allowed_root" })] },
-  { name: "rejects a missing directory", input: { candidate: "missing" }, assert: [hasError<PolicyContext, string>({ code: "invalid_directory", reason: "not_found" })] },
-  { name: "rejects a regular file", input: { candidate: "file" }, assert: [hasError<PolicyContext, string>({ code: "invalid_directory", reason: "not_directory" })] },
+  {
+    name: "rejects a path outside the configured root",
+    input: { candidate: "outside" },
+    assert: [hasError<PolicyContext, string>({ code: "invalid_directory", reason: "outside_allowed_root" })],
+  },
+  {
+    name: "rejects a missing directory",
+    input: { candidate: "missing" },
+    assert: [hasError<PolicyContext, string>({ code: "invalid_directory", reason: "not_found" })],
+  },
+  {
+    name: "rejects a regular file",
+    input: { candidate: "file" },
+    assert: [hasError<PolicyContext, string>({ code: "invalid_directory", reason: "not_directory" })],
+  },
 ] satisfies readonly OperationCase<"default", PolicyInput, string, PolicyContext>[];
 
 type PolicyContext = { actualPath: string | null; expectedPath: string | null };
@@ -72,7 +110,16 @@ const policyTable: OperationTable<PolicyFixture, "default", PolicyInput, string,
   defaultFixture: policyFixture,
   cases: policyCases,
   execute: (fixture, input) => {
-    const candidate = input.candidate === "root" ? fixture.root : input.candidate === "child" ? join(fixture.root, "project") : input.candidate === "outside" ? fixture.outside : input.candidate === "file" ? fixture.file : join(fixture.root, "missing");
+    const candidate =
+      input.candidate === "root"
+        ? fixture.root
+        : input.candidate === "child"
+          ? join(fixture.root, "project")
+          : input.candidate === "outside"
+            ? fixture.outside
+            : input.candidate === "file"
+              ? fixture.file
+              : join(fixture.root, "missing");
     fixture.expectedPath = input.candidate === "root" || input.candidate === "child" ? realpathSync(candidate) : null;
     fixture.actualPath = fixture.policy.assertDirectory(candidate);
     return fixture.actualPath;
@@ -107,14 +154,27 @@ const catalogFixture = (): FixtureHandle<CatalogFixture> => {
   const setup = join(root, "setup");
   writeFileSync(setup, "#!/bin/sh\n");
   chmodSync(setup, 0o755);
-  return { fixture: { root, repository, setup, catalog: new WorkspaceSelectionCatalog([root]), browseGit: false, resolvedId: null }, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    fixture: {
+      root,
+      repository,
+      setup,
+      catalog: new WorkspaceSelectionCatalog([root]),
+      browseGit: false,
+      resolvedId: null,
+    },
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
 };
 
 const catalogCases = [
   {
     name: "browses directories, registers a workspace, and resolves a worktree",
     steps: [{ type: "browse" }, { type: "register" }, { type: "resolve" }],
-    assert: [hasObserved<CatalogContext, undefined>("browseGit", true), hasObserved<CatalogContext, undefined>("resolvedId", "registered")],
+    assert: [
+      hasObserved<CatalogContext, undefined>("browseGit", true),
+      hasObserved<CatalogContext, undefined>("resolvedId", "registered"),
+    ],
   },
   {
     name: "rejects an unknown registered workspace id",
@@ -169,10 +229,17 @@ const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefi
       }
       if (step.type === "resolve") {
         const registered = fixture.registered!;
-        const resolved = await fixture.catalog.resolveSelection({ workspaceId: registered.id, mode: "worktree" }, async () => registered);
+        const resolved = await fixture.catalog.resolveSelection(
+          { workspaceId: registered.id, mode: "worktree" },
+          async () => registered,
+        );
         fixture.resolvedId = resolved.id === registered.id ? "registered" : resolved.id;
       }
-      if (step.type === "resolve-missing") await fixture.catalog.resolveSelection({ workspaceId: WorkspaceId.create("missing"), mode: "workspace" }, async () => undefined);
+      if (step.type === "resolve-missing")
+        await fixture.catalog.resolveSelection(
+          { workspaceId: WorkspaceId.create("missing"), mode: "workspace" },
+          async () => undefined,
+        );
       if (step.type === "invalid-hook") {
         const hook = join(fixture.root, "not-executable");
         writeFileSync(hook, "#!/bin/sh\n");

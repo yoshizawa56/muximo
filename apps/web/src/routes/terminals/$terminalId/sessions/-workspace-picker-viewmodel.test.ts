@@ -1,23 +1,35 @@
-import { describe, expect, it } from "vitest";
 import {
-  hasObserved,
-  noFixture,
-  returns,
-  runOperationTable,
   type Assertion,
+  noFixture,
   type OperationCase,
   type OperationTable,
-  type ScenarioCase,
-  type ScenarioTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
-  type FixtureHandle,
 } from "@muximo/test-support";
+import { describe, expect, it } from "vitest";
 import type { WorkspacePickerInput, WorkspacePickerState } from "./-workspace-picker-viewmodel";
-import { workspacePickerState, workspacePickerErrorMessage } from "./-workspace-picker-viewmodel";
+import { workspacePickerErrorMessage, workspacePickerState } from "./-workspace-picker-viewmodel";
 
 const workspaces = [
-  { id: "workspace-1", name: "muximo", directory: "~/work/muximo", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] },
-  { id: "workspace-2", name: "scratch", directory: "~/tmp/scratch", isGit: false, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] },
+  {
+    id: "workspace-1",
+    name: "muximo",
+    directory: "~/work/muximo",
+    isGit: true,
+    setupScriptPath: null,
+    cleanupScriptPath: null,
+    worktreeCopyPatterns: [],
+  },
+  {
+    id: "workspace-2",
+    name: "scratch",
+    directory: "~/tmp/scratch",
+    isGit: false,
+    setupScriptPath: null,
+    cleanupScriptPath: null,
+    worktreeCopyPatterns: [],
+  },
 ];
 
 const baseInput: Omit<WorkspacePickerInput, "workspaces" | "workspaceId" | "mode" | "workspaceStatus"> = {
@@ -81,8 +93,16 @@ const pickerTable: OperationTable<undefined, "default", WorkspacePickerInput, Wo
 
 type ErrorInput = { value: unknown };
 const errorCases = [
-  { name: "formats Error instances", input: { value: new Error("workspace service unavailable") }, assert: [returns<{}, string | null>("workspace service unavailable")] },
-  { name: "formats error-like objects", input: { value: { message: "Directory is outside the allowed workspace roots" } }, assert: [returns<{}, string | null>("Directory is outside the allowed workspace roots")] },
+  {
+    name: "formats Error instances",
+    input: { value: new Error("workspace service unavailable") },
+    assert: [returns<{}, string | null>("workspace service unavailable")],
+  },
+  {
+    name: "formats error-like objects",
+    input: { value: { message: "Directory is outside the allowed workspace roots" } },
+    assert: [returns<{}, string | null>("Directory is outside the allowed workspace roots")],
+  },
   { name: "ignores null errors", input: { value: null }, assert: [returns<{}, string | null>(null)] },
 ] satisfies readonly OperationCase<"default", ErrorInput, string | null, {}>[];
 

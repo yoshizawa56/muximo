@@ -30,7 +30,10 @@ const packageRules = new Map([
   ["@muximo/domain", []],
   ["@muximo/infrastructure", ["@muximo/application", "@muximo/domain"]],
   ["@muximo/test-support", []],
-  ["@muximo/muximo-cli", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure", "@muximo/muximod"]],
+  [
+    "@muximo/muximo-cli",
+    ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure", "@muximo/muximod"],
+  ],
   ["@muximo/muximod", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure"]],
   ["@muximo/web", ["@muximo/contract"]],
 ]);
@@ -59,14 +62,20 @@ const forbiddenImports = [
 
 const webQueryKeyRules = {
   root: "apps/web/src",
-  allowedFiles: new Set([
-    "apps/web/src/app/api/orpc-utils.ts",
-    "apps/web/src/app/api/invalidation.ts",
-  ]),
+  allowedFiles: new Set(["apps/web/src/app/api/orpc-utils.ts", "apps/web/src/app/api/invalidation.ts"]),
   patterns: [
     { name: "raw query key array", regex: /\bqueryKey\s*:\s*\[/ },
     { name: "raw setQueryData key array", regex: /\.setQueryData(?:<[^>(]*)?\(\s*\[/ },
   ],
+};
+
+// Domain entities are constructed only through their namespace API
+// (create/restore/update). validate was removed on purpose so raw objects
+// cannot be legitimized after the fact, and schema parsing outside the domain
+// (plus contract derivation) is banned to keep rehydration on .restore().
+const entityRules = {
+  entityNames: "(?:Workspace|Pane|AgentSession)",
+  schemaParseAllowedRoots: ["packages/domain/src/", "packages/contract/src/"],
 };
 
 for (const [packageName, packageInfo] of workspacePackages) {
@@ -121,12 +130,37 @@ function inspectSource(path, relativePath) {
     if (sourcePackage && dependency && dependency !== sourcePackage) {
       const packageInfo = workspacePackages.get(sourcePackage);
       if (packageInfo && !packageInfo.dependencies.has(dependency)) {
-        errors.push(`${relativePath}:${line}: ${dependency} is imported but is not a production dependency of ${sourcePackage}`);
+        errors.push(
+          `${relativePath}:${line}: ${dependency} is imported but is not a production dependency of ${sourcePackage}`,
+        );
       }
     }
   }
 
   inspectWebQueryKeys(source, relativePath);
+  inspectEntityUsage(source, relativePath);
+}
+
+function inspectEntityUsage(source, relativePath) {
+  const entityCall = new RegExp(`\\b${entityRules.entityNames}\\.validate\\s*\\(`);
+  const match = entityCall.exec(source);
+  if (match) {
+    const line = source.slice(0, match.index).split("\n").length;
+    errors.push(
+      `${relativePath}:${line}: entity .validate() was removed; construct through create/restore/update so raw objects cannot be legitimized after the fact`,
+    );
+  }
+
+  if (!entityRules.schemaParseAllowedRoots.some((allowed) => relativePath.startsWith(allowed))) {
+    const schemaParse = new RegExp(`\\b${entityRules.entityNames}\\.schema\\.(?:parse|safeParse)\\b`);
+    const schemaMatch = schemaParse.exec(source);
+    if (schemaMatch) {
+      const line = source.slice(0, schemaMatch.index).split("\n").length;
+      errors.push(
+        `${relativePath}:${line}: parse domain entities through their namespace API (create/restore/update), not ${entityRules.entityNames}.schema.parse`,
+      );
+    }
+  }
 }
 
 function inspectWebQueryKeys(source, relativePath) {
@@ -137,7 +171,9 @@ function inspectWebQueryKeys(source, relativePath) {
     const match = pattern.regex.exec(source);
     if (!match) continue;
     const line = source.slice(0, match.index).split("\n").length;
-    errors.push(`${relativePath}:${line}: ${pattern.name}; derive keys through app/api/orpc-utils.ts and invalidate through app/api/invalidation.ts`);
+    errors.push(
+      `${relativePath}:${line}: ${pattern.name}; derive keys through app/api/orpc-utils.ts and invalidate through app/api/invalidation.ts`,
+    );
   }
 }
 

@@ -1,16 +1,16 @@
-import { describe, expect, it } from "vitest";
 import {
+  type FixtureHandle,
   hasError,
   hasObserved,
-  returns,
-  runOperationTable,
-  type FixtureHandle,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { ServeCommandOptions } from "./serve-command.js";
+import { describe, expect, it } from "vitest";
 import { resolvePairMuximodBaseUrl } from "./pair-route.js";
+import type { ServeCommandOptions } from "./serve-command.js";
 
 type PairRouteFixture = {
   ensured: ServeCommandOptions[];
@@ -36,7 +36,9 @@ const pairRouteCases = [
     input: { withoutServe: false, environment: { MUXIMOD_PORT: "4391", MUXIMO_SERVE_PORT: "8444" } },
     assert: [
       returns<PairRouteContext, PairRouteResult>("https://muximo-host.tailnet.ts.net:8444/"),
-      hasObserved<PairRouteContext, PairRouteResult>("ensured", [expect.objectContaining({ muximodPort: 4391, externalPort: 8444 })]),
+      hasObserved<PairRouteContext, PairRouteResult>("ensured", [
+        expect.objectContaining({ muximodPort: 4391, externalPort: 8444 }),
+      ]),
       hasObserved<PairRouteContext, PairRouteResult>("calls", [
         { command: "tailscale", args: ["serve", "--bg", "--https=8444", "--yes", "http://127.0.0.1:4391"] },
         { command: "tailscale", args: ["status", "--json"] },
@@ -62,15 +64,23 @@ const pairRouteCases = [
 const pairRouteTable: OperationTable<PairRouteFixture, "default", PairRouteInput, PairRouteResult, PairRouteContext> = {
   defaultFixture: pairRouteFixture,
   cases: pairRouteCases,
-  execute: async (fixture, input) => resolvePairMuximodBaseUrl(input, {
-    ensureMuximod: async (options) => { fixture.ensured.push({ ...options }); },
-    runCommand: async (command, args) => {
-      fixture.calls.push({ command, args });
-      return args[0] === "status"
-        ? { stdout: input.environment.TEST_EMPTY_TAILSCALE_STATUS ? "{}" : JSON.stringify({ Self: { DNSName: "muximo-host.tailnet.ts.net." } }), stderr: "" }
-        : { stdout: "", stderr: "" };
-    },
-  }),
+  execute: async (fixture, input) =>
+    resolvePairMuximodBaseUrl(input, {
+      ensureMuximod: async (options) => {
+        fixture.ensured.push({ ...options });
+      },
+      runCommand: async (command, args) => {
+        fixture.calls.push({ command, args });
+        return args[0] === "status"
+          ? {
+              stdout: input.environment.TEST_EMPTY_TAILSCALE_STATUS
+                ? "{}"
+                : JSON.stringify({ Self: { DNSName: "muximo-host.tailnet.ts.net." } }),
+              stderr: "",
+            }
+          : { stdout: "", stderr: "" };
+      },
+    }),
   observe: (fixture) => ({ ensured: [...fixture.ensured], calls: [...fixture.calls] }),
 };
 

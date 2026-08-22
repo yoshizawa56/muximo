@@ -1,9 +1,4 @@
-import type {
-  ApprovedDevice,
-  PairDeviceInput,
-  PairingClaim,
-  PairingOffer,
-} from "../models/pairing.js";
+import type { ApprovedDevice, PairDeviceInput, PairingClaim, PairingOffer } from "../models/pairing.js";
 
 export interface PairingControlPort {
   createPairing(input: PairDeviceInput): Promise<PairingOffer>;

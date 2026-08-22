@@ -1,12 +1,12 @@
-import { describe, it } from "vitest";
 import {
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 
 type Input = { env: string | undefined };
 type Context = {};
@@ -27,8 +27,7 @@ const cases = [
 const table: OperationTable<undefined, "default", Input, string, Context> = {
   defaultFixture: noFixture(),
   cases,
-  execute: (_fixture, input) =>
-    (input.env ?? "http://127.0.0.1:4317").replace(/\/$/, ""),
+  execute: (_fixture, input) => (input.env ?? "http://127.0.0.1:4317").replace(/\/$/, ""),
   observe: () => ({}),
 };
 

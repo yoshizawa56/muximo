@@ -1,5 +1,5 @@
+import { type MuximodEvent, muximodEventSchema } from "@muximo/contract";
 import { EventPublisher } from "@orpc/server";
-import { muximodEventSchema, type MuximodEvent } from "@muximo/contract";
 
 /**
  * Publishes small, non-authoritative invalidation events to SSE subscribers.

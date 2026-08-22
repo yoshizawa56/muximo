@@ -1,21 +1,19 @@
-import { describe, it } from "vitest";
 import {
+  type Assertion,
   hasError,
   noFixture,
-  returns,
-  runOperationTable,
-  type Assertion,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { PairingCodePayload, PairingQrPayload } from "./protocol.js";
+import { describe, it } from "vitest";
 import { decodePairingCode, encodeJsonBase64Url, encodePairingCode } from "./auth-crypto.js";
+import type { PairingCodePayload, PairingQrPayload } from "./protocol.js";
 
 type EmptyContext = {};
-type PairingCodeInput =
-  | { type: "encode"; payload: PairingQrPayload }
-  | { type: "decode"; value: string };
+type PairingCodeInput = { type: "encode"; payload: PairingQrPayload } | { type: "decode"; value: string };
 type PairingCodeResult = string | PairingCodePayload;
 
 const payload: PairingQrPayload = {
@@ -38,8 +36,10 @@ const hasRawPairingCodeShape = (): Assertion<EmptyContext, PairingCodeResult> =>
     if (!result.ok) throw result.error;
     if (typeof result.value !== "string") throw new Error("expected an encoded pairing code");
     if (!/^ma3:[A-Za-z0-9_-]+$/.test(result.value)) throw new Error("pairing code is not a compact raw ma3 payload");
-    if (result.value.length >= `ma2:${encodeJsonBase64Url(payload)}`.length) throw new Error("pairing code was not shortened");
-    if (result.value.includes("/settings") || result.value.includes("http")) throw new Error("pairing code contains a web navigation target");
+    if (result.value.length >= `ma2:${encodeJsonBase64Url(payload)}`.length)
+      throw new Error("pairing code was not shortened");
+    if (result.value.includes("/settings") || result.value.includes("http"))
+      throw new Error("pairing code contains a web navigation target");
   },
 });
 
@@ -69,7 +69,8 @@ const pairingCodeCases = [
 const pairingCodeTable: OperationTable<undefined, "default", PairingCodeInput, PairingCodeResult, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: pairingCodeCases,
-  execute: (_fixture, input) => input.type === "encode" ? encodePairingCode(input.payload) : decodePairingCode(input.value),
+  execute: (_fixture, input) =>
+    input.type === "encode" ? encodePairingCode(input.payload) : decodePairingCode(input.value),
   observe: () => ({}),
 };
 

@@ -1,12 +1,12 @@
-import { describe, it } from "vitest";
 import {
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 import { TERMINAL_FONT_FAMILY, TERMINAL_SYMBOL_FONT_FAMILY } from "./-terminal-font";
 
 type Context = {};
@@ -18,7 +18,8 @@ const cases = [
     input: {},
     assert: [
       returns<Context, Result>({
-        family: '"Symbols Nerd Font Mono", "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, ui-monospace, monospace',
+        family:
+          '"Symbols Nerd Font Mono", "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, ui-monospace, monospace',
         startsWithSymbols: true,
       }),
     ],

@@ -1,16 +1,22 @@
 import { randomBytes } from "node:crypto";
-import { muximodSocketReadyState, type MuximodSocket, type MuximodSocketData } from "@muximo/application";
-import { spawnPty, TmuxViewportManager, type PreparedViewport, type PtyProcess, type ViewportLease } from "@muximo/infrastructure";
+import { type MuximodSocket, type MuximodSocketData, muximodSocketReadyState } from "@muximo/application";
 import {
+  type ClientControlMessage,
   decodeBase64,
   decodeClientControlFrame,
   encodeServerControlFrame,
   maxPasteImageBytes,
-  terminalProtocolVersion,
-  type ClientControlMessage,
   type ServerControlMessage,
+  terminalProtocolVersion,
 } from "@muximo/contract";
 import type { ImagePasteInput, ImagePasteResult } from "@muximo/infrastructure";
+import {
+  type PreparedViewport,
+  type PtyProcess,
+  spawnPty,
+  type TmuxViewportManager,
+  type ViewportLease,
+} from "@muximo/infrastructure";
 
 type TerminalViewportManager = {
   prepare: (target: string, cwd: string, cols?: number, rows?: number) => PreparedViewport;
@@ -326,24 +332,24 @@ export class TerminalSession {
       try {
         prepared = this.options.viewportManager.prepare(target, this.options.cwd, message.cols, message.rows);
       } catch (error) {
-        if (!isViewportLeaseConflict(error) || !this.registry.releaseParkedForDifferentTarget(target, this.options.authDeviceId)) throw error;
+        if (
+          !isViewportLeaseConflict(error) ||
+          !this.registry.releaseParkedForDifferentTarget(target, this.options.authDeviceId)
+        )
+          throw error;
         prepared = this.options.viewportManager.prepare(target, this.options.cwd, message.cols, message.rows);
       }
       const spawn = this.options.spawnPty ?? spawnPty;
-      pty = spawn(
-        "tmux",
-        this.options.viewportManager.tmux.attachArgs(prepared.pane.paneId),
-        {
-          name: "xterm-256color",
-          cols: message.cols,
-          rows: message.rows,
-          cwd: this.options.cwd,
-          env: {
-            ...stringEnvironment(process.env),
-            TERM: "xterm-256color",
-          },
+      pty = spawn("tmux", this.options.viewportManager.tmux.attachArgs(prepared.pane.paneId), {
+        name: "xterm-256color",
+        cols: message.cols,
+        rows: message.rows,
+        cwd: this.options.cwd,
+        env: {
+          ...stringEnvironment(process.env),
+          TERM: "xterm-256color",
         },
-      );
+      });
 
       this.pty = pty;
       pty.onData((output) => this.sendBinary(Buffer.from(output, "utf8")));
@@ -462,7 +468,11 @@ export class TerminalSession {
     this.socket.send(data);
   }
 
-  private sendClosed(reason: "detached" | "terminal_exit" | "network_timeout" | "server_shutdown", code: number | null, signal: string | null): void {
+  private sendClosed(
+    reason: "detached" | "terminal_exit" | "network_timeout" | "server_shutdown",
+    code: number | null,
+    signal: string | null,
+  ): void {
     this.send({
       type: "closed",
       version: terminalProtocolVersion,

@@ -193,17 +193,12 @@
       "indexes": {
         "agent_sessions_workspace_name_index": {
           "name": "agent_sessions_workspace_name_index",
-          "columns": [
-            "workspace_id",
-            "name"
-          ],
+          "columns": ["workspace_id", "name"],
           "isUnique": true
         },
         "agent_sessions_workspace_index": {
           "name": "agent_sessions_workspace_index",
-          "columns": [
-            "workspace_id"
-          ],
+          "columns": ["workspace_id"],
           "isUnique": false
         }
       },
@@ -369,9 +364,7 @@
       "indexes": {
         "panes_tmux_pane_id_index": {
           "name": "panes_tmux_pane_id_index",
-          "columns": [
-            "tmux_pane_id"
-          ],
+          "columns": ["tmux_pane_id"],
           "isUnique": true
         }
       },

@@ -1,7 +1,7 @@
-import { ORPCError, createORPCClient } from "@orpc/client";
+import type { MuximodEvent, muximodContract } from "@muximo/contract";
+import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
-import { muximodContract, type MuximodEvent } from "@muximo/contract";
 
 export type MuximodRouteKind = "serve" | "same-origin" | "lan" | "ssh";
 
@@ -98,31 +98,50 @@ function createRawRpcClient(connection: MuximodConnection): MuximodRpcClient {
 }
 
 /**
- * Wraps every callable in the client tree so rejections surface as
- * {@link MuximodApiError}. Router nodes stay plain proxies with stable
- * identity; leaf calls only normalize rejected promises.
+ * Wraps every node in the client tree so rejections surface as
+ * {@link MuximodApiError}. oRPC client nodes are simultaneously callables and
+ * namespaces, so both the `apply` and `get` traps must be intercepted while
+ * preserving stable identity per underlying node.
  */
+/**
+ * Property reads on oRPC client nodes extend their RPC path, so these
+ * well-known function methods must never be forwarded into the underlying
+ * chain; native implementations are served from Function.prototype instead.
+ */
+const rpcNodeMethodKeys = new Set(["then", "bind", "call", "apply", "toString", "valueOf", "toJSON"]);
+
 function normalizeRpcErrors<T>(value: T): T {
   const cache = new WeakMap<object, unknown>();
   const wrap = function wrapNode<V>(child: V): V {
-    if (typeof child === "function") {
-      const call = child as (...args: unknown[]) => unknown;
-      return ((...args: unknown[]) =>
-        Promise.resolve(call(...args)).catch((error: unknown) => {
-          throw toMuximodApiError(error);
-        })) as V;
-    }
-    if (!isRecord(child)) return child;
+    if (typeof child !== "function" && !isRecord(child)) return child;
     const existing = cache.get(child);
     if (existing) return existing as V;
-    const proxied = new Proxy(child, {
-      get(target, property) {
-        if (typeof property === "symbol") return Reflect.get(target, property);
-        return wrap(Reflect.get(target, property));
+    const target: object = child;
+    const proxied = new Proxy(target, {
+      apply(applyTarget: (...args: unknown[]) => unknown, thisArg: unknown, argumentsList: unknown[]): unknown {
+        try {
+          // Reflect.apply invokes [[Call]] without reading properties; method
+          // access (.apply/.bind/...) would extend the oRPC procedure path.
+          const result = Reflect.apply(applyTarget, thisArg, argumentsList);
+          return result instanceof Promise
+            ? result.catch((error: unknown) => {
+                throw toMuximodApiError(error);
+              })
+            : result;
+        } catch (error: unknown) {
+          throw toMuximodApiError(error);
+        }
       },
-    });
+      get(getTarget: object, property: string | symbol): unknown {
+        if (typeof property === "symbol") return Reflect.get(getTarget, property);
+        if (rpcNodeMethodKeys.has(property) && typeof child === "function") {
+          return (Function.prototype as unknown as Record<string, unknown>)[property];
+        }
+        return wrap(Reflect.get(getTarget, property));
+      },
+    }) as V;
     cache.set(child, proxied);
-    return proxied as V;
+    return proxied;
   };
   return wrap(value);
 }
@@ -131,12 +150,7 @@ function toMuximodApiError(error: unknown): unknown {
   if (!(error instanceof ORPCError)) return error;
   const data = isRecord(error.data) ? error.data : {};
   const details = isRecord(data.details) ? data.details : null;
-  return new MuximodApiError(
-    error.message,
-    error.status,
-    typeof data.code === "string" ? data.code : null,
-    details,
-  );
+  return new MuximodApiError(error.message, error.status, typeof data.code === "string" ? data.code : null, details);
 }
 
 export async function openMuximodTerminal(connection: MuximodConnection): Promise<WebSocket> {
@@ -157,6 +171,19 @@ export function openMuximodEvents(connection: MuximodConnection): Promise<AsyncI
 function ensureTrailingSlash(value: string): string {
   if (!value) return "/";
   return value.endsWith("/") ? value : `${value}/`;
+}
+
+function createUrlConnection(baseUrl: string, route: MuximodRouteKind): MuximodConnection {
+  const url = new URL(baseUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`muximod URL must use http or https: ${baseUrl}`);
+  }
+
+  const normalizedPath = url.pathname.replace(/\/+$/, "");
+  const httpBaseUrl = `${url.origin}${normalizedPath}`;
+  const websocketProtocol = url.protocol === "https:" ? "wss:" : "ws:";
+  const websocketUrl = `${websocketProtocol}//${url.host}${normalizedPath}/terminal`;
+  return { httpBaseUrl, websocketUrl, route };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

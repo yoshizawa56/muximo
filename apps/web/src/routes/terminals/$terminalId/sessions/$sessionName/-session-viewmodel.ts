@@ -1,6 +1,6 @@
-import { useNavigate, useParams } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import type { PaneSummary } from "@muximo/contract";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import type { TerminalEndpoint, TmuxSession } from "../../../-connection-flow-viewmodel";
 import { fallbackSession, fallbackTerminal, useTerminalResources } from "../../../-terminal-resources";
 
@@ -21,13 +21,15 @@ export function useSessionViewModel(): SessionOverviewViewModel {
   const { terminalId, sessionName } = useParams({ from: "/terminals/$terminalId/sessions/$sessionName/" });
   const resources = useTerminalResources({ terminalId, sessionName });
   const scopedSessionName = resources.selectedSession?.name ?? sessionName;
-  const panesQuery = useQuery(resources.utils.panes.list.queryOptions({
-    input: scopedSessionName ? { session: scopedSessionName } : {},
-    enabled: Boolean(resources.connection) && Boolean(sessionName),
-    staleTime: 1_000,
-    refetchInterval: 3_000,
-    retry: 1,
-  }));
+  const panesQuery = useQuery(
+    resources.utils.panes.list.queryOptions({
+      input: scopedSessionName ? { session: scopedSessionName } : {},
+      enabled: Boolean(resources.connection) && Boolean(sessionName),
+      staleTime: 1_000,
+      refetchInterval: 3_000,
+      retry: 1,
+    }),
+  );
   const panes = panesQuery.data?.panes ?? [];
 
   return {
@@ -35,18 +37,28 @@ export function useSessionViewModel(): SessionOverviewViewModel {
     session: resources.selectedSession ?? fallbackSession,
     panes,
     status: panesQuery.isPending ? "loading" : panesQuery.isError ? "error" : "ready",
-    errorMessage: panesQuery.error instanceof Error ? panesQuery.error.message : panesQuery.isError ? "Unable to load panes" : null,
+    errorMessage:
+      panesQuery.error instanceof Error ? panesQuery.error.message : panesQuery.isError ? "Unable to load panes" : null,
     onSelectPane: (pane) => {
-      void navigate({ to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId", params: { terminalId, sessionName, paneId: pane.id } });
+      void navigate({
+        to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId",
+        params: { terminalId, sessionName, paneId: pane.id },
+      });
     },
     onCreatePane: () => {
-      void navigate({ to: "/terminals/$terminalId/sessions/$sessionName/panes/new", params: { terminalId, sessionName } });
+      void navigate({
+        to: "/terminals/$terminalId/sessions/$sessionName/panes/new",
+        params: { terminalId, sessionName },
+      });
     },
     onBack: () => {
       void navigate({ to: "/terminals/$terminalId/sessions", params: { terminalId } });
     },
     onDisconnect: () => {
-      void navigate({ to: "/terminals/$terminalId/sessions/$sessionName/disconnected", params: { terminalId, sessionName } });
+      void navigate({
+        to: "/terminals/$terminalId/sessions/$sessionName/disconnected",
+        params: { terminalId, sessionName },
+      });
     },
   };
 }

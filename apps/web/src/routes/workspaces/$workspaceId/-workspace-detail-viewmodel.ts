@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMuximodEvents } from "../../../app/api/muximod-events";
 import { useMuximodConnection } from "../../../app/api/use-muximod-connection";
-import { parseWorktreeCopyPatterns, workspaceDetailCanSave, type WorkspaceDetailViewModel } from "../-workspaces-viewmodel";
+import {
+  parseWorktreeCopyPatterns,
+  type WorkspaceDetailViewModel,
+  workspaceDetailCanSave,
+} from "../-workspaces-viewmodel";
 
 export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetailViewModel {
   const navigate = useNavigate();
@@ -11,12 +15,18 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
   const { connection: muximodConnection, utils } = useMuximodConnection();
   useMuximodEvents(muximodConnection);
 
-  const workspacesQuery = useQuery(utils.workspaces.list.queryOptions({
-    staleTime: 5_000,
-    enabled: Boolean(muximodConnection),
-  }));
+  const workspacesQuery = useQuery(
+    utils.workspaces.list.queryOptions({
+      input: {},
+      staleTime: 5_000,
+      enabled: Boolean(muximodConnection),
+    }),
+  );
 
-  const workspace = useMemo(() => (workspacesQuery.data ?? []).find((w) => w.id === workspaceId) ?? null, [workspacesQuery.data, workspaceId]);
+  const workspace = useMemo(
+    () => (workspacesQuery.data?.workspaces ?? []).find((w) => w.id === workspaceId) ?? null,
+    [workspacesQuery.data, workspaceId],
+  );
 
   const [name, setName] = useState("");
   const [setupScriptPath, setSetupScriptPath] = useState("");
@@ -36,28 +46,28 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
   const updateMutation = useMutation({
     mutationFn: () => {
       if (!muximodConnection) throw new Error("Connection profile is not configured");
-      return utils.workspaces.update.call({
-        workspaceId,
-        input: {
-          name: name.trim() || undefined,
-          setupScriptPath: setupScriptPath.trim() ? setupScriptPath.trim() : null,
-          cleanupScriptPath: cleanupScriptPath.trim() ? cleanupScriptPath.trim() : null,
-          worktreeCopyPatterns: parseWorktreeCopyPatterns(worktreeCopyPatterns),
+      return utils.workspaces.update.call(
+        {
+          workspaceId,
+          input: {
+            name: name.trim() || undefined,
+            setupScriptPath: setupScriptPath.trim() ? setupScriptPath.trim() : null,
+            cleanupScriptPath: cleanupScriptPath.trim() ? cleanupScriptPath.trim() : null,
+            worktreeCopyPatterns: parseWorktreeCopyPatterns(worktreeCopyPatterns),
+          },
         },
-      }, {});
+        {},
+      );
     },
     onSuccess: (response) => {
       const updated = response.workspace;
-      queryClient.setQueryData(
-        utils.workspaces.list.queryKey({ input: {} }),
-        (current) => {
-          if (!current) return current;
-          const workspaces = current.workspaces
-            .map((w) => w.id === updated.id ? updated : w)
-            .sort((a, b) => a.name.localeCompare(b.name));
-          return { ...current, workspaces };
-        },
-      );
+      queryClient.setQueryData(utils.workspaces.list.queryKey({ input: {} }), (current) => {
+        if (!current) return current;
+        const workspaces = current.workspaces
+          .map((w) => (w.id === updated.id ? updated : w))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        return { ...current, workspaces };
+      });
       setSaveError(null);
     },
     onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
@@ -69,13 +79,10 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
       return utils.workspaces.delete.call({ workspaceId }, {});
     },
     onSuccess: () => {
-      queryClient.setQueryData(
-        utils.workspaces.list.queryKey({ input: {} }),
-        (current) => {
-          if (!current) return current;
-          return { ...current, workspaces: current.workspaces.filter((w) => w.id !== workspaceId) };
-        },
-      );
+      queryClient.setQueryData(utils.workspaces.list.queryKey({ input: {} }), (current) => {
+        if (!current) return current;
+        return { ...current, workspaces: current.workspaces.filter((w) => w.id !== workspaceId) };
+      });
       void navigate({ to: "/workspaces" });
     },
     onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
@@ -90,7 +97,8 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
   }, [name, updateMutation]);
 
   const onDelete = useCallback(() => {
-    if (!window.confirm(`Unregister workspace "${workspace?.name ?? workspaceId}"? Directory will not be deleted.`)) return;
+    if (!window.confirm(`Unregister workspace "${workspace?.name ?? workspaceId}"? Directory will not be deleted.`))
+      return;
     deleteMutation.mutate();
   }, [workspace, workspaceId, deleteMutation]);
 
@@ -108,7 +116,12 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
     worktreeCopyPatterns,
     isSaving: updateMutation.isPending,
     isDeleting: deleteMutation.isPending,
-    errorMessage: workspacesQuery.error instanceof Error ? workspacesQuery.error.message : workspacesQuery.error ? String(workspacesQuery.error) : null,
+    errorMessage:
+      workspacesQuery.error instanceof Error
+        ? workspacesQuery.error.message
+        : workspacesQuery.error
+          ? String(workspacesQuery.error)
+          : null,
     saveError,
     canSave: workspaceDetailCanSave(name),
     onNameChange: setName,

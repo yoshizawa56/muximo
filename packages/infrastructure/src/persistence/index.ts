@@ -1,31 +1,17 @@
 import { Database } from "bun:sqlite";
-import { drizzle } from "drizzle-orm/bun-sqlite";
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { readMigrationFiles } from "drizzle-orm/migrator";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveMuximodPaths } from "./paths.js";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import type { AgentDrizzleDatabase } from "./database-types.js";
-import { configureSqliteConnection, defaultSqliteBusyTimeoutMs } from "./sqlite.js";
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
+import { resolveMuximodPaths } from "./paths.js";
+import { configureSqliteConnection, defaultSqliteBusyTimeoutMs } from "./sqlite.js";
 
-export { agentSessions, auditEvents, panes, workspaces } from "./schema.js";
-export { SqliteTransactionManager, isRetryableSqliteBusy, runSqliteTransaction } from "./transaction.js";
-export type { SqliteRetryOptions } from "./transaction.js";
-export {
-  DrizzleAgentSessionRepository,
-  DrizzlePaneRepository,
-  DrizzleRepositoryBase,
-  DrizzleWorkspaceRepository,
-  recordAuditEvent,
-} from "./repositories/sqlite/index.js";
-export { muximodControlSocketMaxBytes, defaultMuximodInstanceDirectory, resolveMuximodPaths, validateMuximodControlSocketPath } from "./paths.js";
-export type { MuximodInstancePaths, MuximodPathOverrides } from "./paths.js";
-export { AuthStore } from "./repositories/sqlite/auth.js";
-export { AuthStoreError } from "@muximo/application";
 export type {
   AuthDeviceRecord,
   AuthDeviceStatus,
@@ -38,6 +24,25 @@ export type {
   CreatePairingInput,
   CreatePairingResult,
 } from "@muximo/application";
+export { AuthStoreError } from "@muximo/application";
+export type { MuximodInstancePaths, MuximodPathOverrides } from "./paths.js";
+export {
+  defaultMuximodInstanceDirectory,
+  muximodControlSocketMaxBytes,
+  resolveMuximodPaths,
+  validateMuximodControlSocketPath,
+} from "./paths.js";
+export { AuthStore } from "./repositories/sqlite/auth.js";
+export {
+  DrizzleAgentSessionRepository,
+  DrizzlePaneRepository,
+  DrizzleRepositoryBase,
+  DrizzleWorkspaceRepository,
+  recordAuditEvent,
+} from "./repositories/sqlite/index.js";
+export { agentSessions, auditEvents, panes, workspaces } from "./schema.js";
+export type { SqliteRetryOptions } from "./transaction.js";
+export { isRetryableSqliteBusy, runSqliteTransaction, SqliteTransactionManager } from "./transaction.js";
 
 export type AgentDatabase = {
   databaseFile: string;
@@ -57,12 +62,16 @@ export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): 
   return resolveMuximodPaths(env).databaseFile;
 }
 
-export function createAgentDatabase(file: string | undefined = undefined, options: AgentDatabaseOptions = {}): AgentDatabase {
+export function createAgentDatabase(
+  file: string | undefined = undefined,
+  options: AgentDatabaseOptions = {},
+): AgentDatabase {
   const databaseFile = file ?? defaultCreateDatabaseFile(process.env);
   const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
-  const configuredInstanceDirectory = file === undefined && process.env.MUXIMOD_INSTANCE_DIR?.trim()
-    ? resolveMuximodPaths(process.env).instanceDirectory
-    : undefined;
+  const configuredInstanceDirectory =
+    file === undefined && process.env.MUXIMOD_INSTANCE_DIR?.trim()
+      ? resolveMuximodPaths(process.env).instanceDirectory
+      : undefined;
   const instanceDirectory = options.instanceDirectory ?? configuredInstanceDirectory;
   if (databasePath !== ":memory:") {
     if (instanceDirectory) {
@@ -82,7 +91,9 @@ export function createAgentDatabase(file: string | undefined = undefined, option
     migrate(db, { migrationsFolder });
   } catch (error) {
     sqlite.close();
-    throw new Error(`database migration failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new Error(`database migration failed: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    });
   }
   ensureAuthSchema(sqlite);
   secureDatabaseFiles(databasePath);
@@ -108,7 +119,9 @@ function secureDatabaseFiles(databasePath: string): void {
 }
 
 function defaultCreateDatabaseFile(env: NodeJS.ProcessEnv): string {
-  const configured = [env.MUXIMOD_INSTANCE_DIR, env.MUXIMOD_DB_FILE, env.MUXIMO_DATABASE_FILE].some((value) => Boolean(value?.trim()));
+  const configured = [env.MUXIMOD_INSTANCE_DIR, env.MUXIMOD_DB_FILE, env.MUXIMO_DATABASE_FILE].some((value) =>
+    Boolean(value?.trim()),
+  );
   if (!configured) return ":memory:";
   return resolveMuximodPaths(env).databaseFile;
 }
@@ -118,14 +131,18 @@ export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.en
   if (!folder) {
     const moduleDirectory = dirname(fileURLToPath(import.meta.url));
     const executableDirectory = dirname(process.execPath);
-    throw new Error(`database migration files not found; set MUXIMOD_MIGRATIONS_DIR (searched: ${[
-      env.MUXIMOD_MIGRATIONS_DIR ? resolve(process.cwd(), env.MUXIMOD_MIGRATIONS_DIR) : undefined,
-      env.MUXIMO_MIGRATIONS_DIR ? resolve(process.cwd(), env.MUXIMO_MIGRATIONS_DIR) : undefined,
-      join(moduleDirectory, "../drizzle"),
-      join(executableDirectory, "migrations"),
-      join(process.cwd(), "packages/infrastructure/drizzle"),
-      join(process.cwd(), "drizzle"),
-    ].filter((candidate): candidate is string => Boolean(candidate)).join(", ")})`);
+    throw new Error(
+      `database migration files not found; set MUXIMOD_MIGRATIONS_DIR (searched: ${[
+        env.MUXIMOD_MIGRATIONS_DIR ? resolve(process.cwd(), env.MUXIMOD_MIGRATIONS_DIR) : undefined,
+        env.MUXIMO_MIGRATIONS_DIR ? resolve(process.cwd(), env.MUXIMO_MIGRATIONS_DIR) : undefined,
+        join(moduleDirectory, "../drizzle"),
+        join(executableDirectory, "migrations"),
+        join(process.cwd(), "packages/infrastructure/drizzle"),
+        join(process.cwd(), "drizzle"),
+      ]
+        .filter((candidate): candidate is string => Boolean(candidate))
+        .join(", ")})`,
+    );
   }
   return folder;
 }
@@ -255,5 +272,6 @@ function ensureAuthSchema(sqlite: Database): void {
 
 function ensureColumn(sqlite: Database, table: string, column: string, definition: string): void {
   const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!columns.some((entry) => entry.name === column)) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  if (!columns.some((entry) => entry.name === column))
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }

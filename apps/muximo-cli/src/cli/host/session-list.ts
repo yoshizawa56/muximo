@@ -6,19 +6,9 @@ export const sessionListPolicy = {
   longRunningThresholdMs: 30 * 24 * 60 * 60 * 1_000,
 } as const;
 
-export type SessionWorktreeState =
-  | "not_applicable"
-  | "available"
-  | "missing"
-  | "unregistered"
-  | "unknown";
+export type SessionWorktreeState = "not_applicable" | "available" | "missing" | "unregistered" | "unknown";
 
-export type SessionExecutionHealth =
-  | "inactive"
-  | "active"
-  | "long_running"
-  | "stale"
-  | "unknown";
+export type SessionExecutionHealth = "inactive" | "active" | "long_running" | "stale" | "unknown";
 
 export type SessionResumeState = "available" | "unavailable" | "unknown";
 
@@ -57,7 +47,10 @@ export function projectAgentSession(
   const executionHealth = classifyExecutionHealth(session, observation);
   const resume = classifyResumeState(session, executionHealth, observation.worktreeState);
   const hiddenWorktreeState = observation.worktreeState === "missing" || observation.worktreeState === "unregistered";
-  const visibleByDefault = !(hiddenWorktreeState && (resumableStates.has(session.status) || session.status === "exited"));
+  const visibleByDefault = !(
+    hiddenWorktreeState &&
+    (resumableStates.has(session.status) || session.status === "exited")
+  );
 
   return {
     session,
@@ -72,7 +65,7 @@ export function projectAgentSession(
 export function shouldCheckSessionWorktree(session: AgentSessionRecord, now: number): boolean {
   if (!session.useWorktree) return false;
   const reference = activeStates.has(session.status)
-    ? session.executionStartedAt ?? session.updatedAt
+    ? (session.executionStartedAt ?? session.updatedAt)
     : session.updatedAt;
   const age = ageMs(reference, now);
   return age === null || age >= sessionListPolicy.worktreeCheckGraceMs;
@@ -115,7 +108,10 @@ function classifyResumeState(
   return classifyBackendResumeState(session);
 }
 
-function classifyBackendResumeState(session: AgentSessionRecord): { state: SessionResumeState; reason: SessionResumeReason | null } {
+function classifyBackendResumeState(session: AgentSessionRecord): {
+  state: SessionResumeState;
+  reason: SessionResumeReason | null;
+} {
   if (session.backend === "claude" && !session.backendSessionId) {
     return { state: "unavailable", reason: "backend_session_missing" };
   }

@@ -1,16 +1,21 @@
 export {
+  type BrowserLaunchSpec,
+  BrowserPairingPresenter,
+  type BrowserPairingPresenterOptions,
+  browserLaunchSpec,
+} from "./browser-pairing-presenter.js";
+export {
   PairCommand,
   PairCommandError,
-  parsePairCommandOptions,
   type PairCommandIo,
-  type PairMuximodUrlResolver,
   type PairCommandOptions,
   type PairDeviceRuntime,
   type PairDeviceRuntimeFactory,
+  type PairMuximodUrlResolver,
   type ParsedPairCommandOptions,
+  parsePairCommandOptions,
   type ResolvedPairCommandOptions,
 } from "./pair-command.js";
-export { BrowserPairingPresenter, browserLaunchSpec, type BrowserLaunchSpec, type BrowserPairingPresenterOptions } from "./browser-pairing-presenter.js";
-export { TerminalPairingPresenter, type TerminalPairingPresenterOptions } from "./terminal-pairing-presenter.js";
 export { SvgQrRenderer } from "./svg-qr-renderer.js";
-export { TerminalQrRenderer, type QrRendererPort, type TerminalQrRendererOptions } from "./terminal-qr-renderer.js";
+export { TerminalPairingPresenter, type TerminalPairingPresenterOptions } from "./terminal-pairing-presenter.js";
+export { type QrRendererPort, TerminalQrRenderer, type TerminalQrRendererOptions } from "./terminal-qr-renderer.js";

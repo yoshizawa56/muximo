@@ -1,8 +1,12 @@
 import { useMemo, useState } from "react";
-import { connectionForProfile, readBrowserConnectionProfile, type BrowserConnectionProfile } from "./connection-profile-store";
-import { muximodConnectionKey, unconfiguredMuximodConnection } from "./muximod-client";
+import {
+  type BrowserConnectionProfile,
+  connectionForProfile,
+  readBrowserConnectionProfile,
+} from "./connection-profile-store";
 import type { MuximodConnection } from "./muximod-client";
-import { muximodQueryUtils, type MuximodQueryUtils } from "./orpc-utils";
+import { muximodConnectionKey, unconfiguredMuximodConnection } from "./muximod-client";
+import { type MuximodQueryUtils, muximodQueryUtils } from "./orpc-utils";
 
 export type MuximodConnectionState = {
   profile: BrowserConnectionProfile | null;

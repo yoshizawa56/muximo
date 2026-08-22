@@ -1,4 +1,4 @@
-import { Outlet, createRootRoute, type ErrorComponentProps } from "@tanstack/react-router";
+import { createRootRoute, type ErrorComponentProps, Outlet } from "@tanstack/react-router";
 import { AppErrorView } from "../app/app-error-view";
 import { useMobileViewportHeight } from "../app/mobile-viewport";
 

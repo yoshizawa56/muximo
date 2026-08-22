@@ -1,9 +1,11 @@
-import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import tailwindcss from "@tailwindcss/vite";
+import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(",").map((host) => host.trim()).filter(Boolean);
+const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
 const devHost = process.env.VITE_DEV_HOST ?? "0.0.0.0";
 const devPort = Number(process.env.VITE_DEV_PORT ?? 5227);
 const previewPort = Number(process.env.VITE_PREVIEW_PORT ?? 4173);

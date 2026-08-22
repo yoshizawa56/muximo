@@ -1,20 +1,30 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import type { WorkspaceRecord } from "@muximo/domain";
+import { createAgentDatabase, DrizzleWorkspaceRepository } from "@muximo/infrastructure";
 import {
+  type Assertion,
+  type FixtureHandle,
   hasNoError,
   hasObserved,
   runScenarioTable,
-  type Assertion,
-  type FixtureHandle,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { createAgentDatabase, DrizzleWorkspaceRepository } from "@muximo/infrastructure";
+import { describe, expect, it } from "vitest";
 import { MuximoCommand } from "./muximo-command.js";
 
 type WorkspaceStep = {
@@ -23,9 +33,7 @@ type WorkspaceStep = {
   errorIncludes?: string;
 };
 
-type Outcome =
-  | { ok: true; value: number }
-  | { ok: false; error: unknown };
+type Outcome = { ok: true; value: number } | { ok: false; error: unknown };
 
 type WorkspaceFixture = ReturnType<typeof createFixture> & {
   command: MuximoCommand;
@@ -102,15 +110,35 @@ const scenarios = [
       hasNoError<WorkspaceContext, void>(),
       stepOutcomesMatch,
       hasObserved<WorkspaceContext, void>("workspaceCount", 0),
-      outputContains("workspace 'primary' added", "workspace 'renamed' updated", "workspace 'renamed' unregistered; directory was not deleted"),
+      outputContains(
+        "workspace 'primary' added",
+        "workspace 'renamed' updated",
+        "workspace 'renamed' unregistered; directory was not deleted",
+      ),
       workspaceDirectoryRemains(),
     ],
   },
   {
     name: "validates hooks and preserves configured workspace metadata",
     steps: [
-      { args: ["workspace", "add", ".", "--setup-hook", "hooks/setup", "--copy-pattern", ".env", "--copy-pattern", "config/**/*.local.json"], expected: "success" },
-      { args: ["workspace", "update", "workspace", "--no-setup-hook", "--add-copy-pattern", "tmp/local.json"], expected: "success" },
+      {
+        args: [
+          "workspace",
+          "add",
+          ".",
+          "--setup-hook",
+          "hooks/setup",
+          "--copy-pattern",
+          ".env",
+          "--copy-pattern",
+          "config/**/*.local.json",
+        ],
+        expected: "success",
+      },
+      {
+        args: ["workspace", "update", "workspace", "--no-setup-hook", "--add-copy-pattern", "tmp/local.json"],
+        expected: "success",
+      },
       { args: ["workspace", "list", "--json"], expected: "success" },
     ],
     assert: [
@@ -126,7 +154,11 @@ const scenarios = [
   {
     name: "rejects an invalid hook without creating a partial registration",
     steps: [
-      { args: ["workspace", "add", ".", "--setup-hook", "hooks/missing"], expected: "error", errorIncludes: "workspace hook does not exist" },
+      {
+        args: ["workspace", "add", ".", "--setup-hook", "hooks/missing"],
+        expected: "error",
+        errorIncludes: "workspace hook does not exist",
+      },
       { args: ["workspace", "list", "--json"], expected: "success" },
     ],
     assert: [
@@ -194,7 +226,7 @@ const table: ScenarioTable<WorkspaceFixture, WorkspaceFixtureKey, WorkspaceStep,
   },
   observe: async (fixture) => {
     const database = createAgentDatabase(fixture.database);
-    let workspaces;
+    let workspaces: WorkspaceRecord[];
     try {
       workspaces = await new DrizzleWorkspaceRepository(database.db).list();
     } finally {

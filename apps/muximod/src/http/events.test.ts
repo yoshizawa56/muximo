@@ -1,17 +1,17 @@
-import { describe, it } from "vitest";
-import { EventPublisher } from "@orpc/server";
-import { createHttpTestClient } from "./test-client.js";
 import type { MuximodApplication, MuximodAuthPort } from "@muximo/application";
+import type { MuximodEvent } from "@muximo/contract";
 import {
+  type FixtureHandle,
   hasObserved,
   runScenarioTable,
-  type FixtureHandle,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { MuximodEvent } from "@muximo/contract";
+import { EventPublisher } from "@orpc/server";
+import { describe, it } from "vitest";
 import { createMuximodApp } from "./app.js";
+import { createHttpTestClient } from "./test-client.js";
 
 const event: MuximodEvent = {
   type: "session_updated",
@@ -118,29 +118,69 @@ describe("muximod event transport", () => {
 
 const testAuth: MuximodAuthPort = {
   serverId: authContext.serverId,
-  authenticateAccessToken: (token) => token === "events-token" ? authContext : null,
-  claimPairing: () => { throw new Error("not used"); },
-  pairingStatus: () => { throw new Error("not used"); },
-  createChallenge: () => { throw new Error("not used"); },
-  createSession: () => { throw new Error("not used"); },
-  issueWebSocketTicket: () => { throw new Error("not used"); },
+  authenticateAccessToken: (token) => (token === "events-token" ? authContext : null),
+  claimPairing: () => {
+    throw new Error("not used");
+  },
+  pairingStatus: () => {
+    throw new Error("not used");
+  },
+  createChallenge: () => {
+    throw new Error("not used");
+  },
+  createSession: () => {
+    throw new Error("not used");
+  },
+  issueWebSocketTicket: () => {
+    throw new Error("not used");
+  },
   consumeWebSocketTicket: () => null,
 };
 
 function createApplication(): MuximodApplication {
   return {
-    terminal: { get: async () => ({ id: "terminal", name: "terminal", host: "host", tailnetIp: "100.64.0.1", state: "online", detail: "test", lastSeen: "now" }) },
+    terminal: {
+      get: async () => ({
+        id: "terminal",
+        name: "terminal",
+        host: "host",
+        tailnetIp: "100.64.0.1",
+        state: "online",
+        detail: "test",
+        lastSeen: "now",
+      }),
+    },
     workspaces: {
       list: async () => [],
       browse: async () => [],
-      register: async () => { throw new Error("not used"); },
-      update: async () => { throw new Error("not used"); },
-      delete: async () => { throw new Error("not used"); },
-      resolveDirectory: async () => { throw new Error("not used"); },
-      resolveSelection: async () => { throw new Error("not used"); },
+      register: async () => {
+        throw new Error("not used");
+      },
+      update: async () => {
+        throw new Error("not used");
+      },
+      delete: async () => {
+        throw new Error("not used");
+      },
+      resolveDirectory: async () => {
+        throw new Error("not used");
+      },
+      resolveSelection: async () => {
+        throw new Error("not used");
+      },
     },
-    sessions: { list: async () => [], create: async () => { throw new Error("not used"); } },
-    panes: { list: async () => [], create: async () => { throw new Error("not used"); } },
+    sessions: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
+    panes: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
     hooks: { handleTmux: () => undefined },
   };
 }

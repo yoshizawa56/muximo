@@ -1,11 +1,5 @@
-import type {
-  PairDeviceInput,
-  PairDeviceResult,
-} from "../../models/pairing.js";
-import type {
-  PairingControlPort,
-  PairingPresenterPort,
-} from "../../ports/pairing.js";
+import type { PairDeviceInput, PairDeviceResult } from "../../models/pairing.js";
+import type { PairingControlPort, PairingPresenterPort } from "../../ports/pairing.js";
 
 /**
  * Coordinates the device-pairing workflow without knowing how the control

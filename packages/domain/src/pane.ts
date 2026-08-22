@@ -18,33 +18,35 @@ export const paneStates = [
 export const paneStateSchema = z.enum(paneStates);
 export type PaneState = z.infer<typeof paneStateSchema>;
 
-const paneSchema = z.object({
-  id: PaneId.schema,
-  tmuxPaneId: z.string().min(1),
-  tmuxServerId: z.string().min(1).optional(),
-  agentSessionId: AgentSessionId.schema.optional(),
-  agentExecutionId: z.string().min(1).optional(),
-  sessionName: z.string().min(1),
-  windowId: z.string().min(1),
-  kind: paneKindSchema,
-  name: z.string().min(1),
-  cwd: z.string().min(1),
-  workspaceId: WorkspaceId.schema.optional(),
-  agentId: z.string().min(1).optional(),
-  state: paneStateSchema,
-  title: z.string().optional(),
-  recentOutput: z.string().optional(),
-  lastSeenAt: z.string().min(1),
-  windowName: z.string().optional(),
-  windowIndex: z.number().int().min(0).optional(),
-  paneIndex: z.number().int().min(0).optional(),
-  left: z.number().int().min(0).optional(),
-  top: z.number().int().min(0).optional(),
-  width: z.number().int().min(1).optional(),
-  height: z.number().int().min(1).optional(),
-  windowWidth: z.number().int().min(1).optional(),
-  windowHeight: z.number().int().min(1).optional(),
-}).strict();
+const paneSchema = z
+  .object({
+    id: PaneId.schema,
+    tmuxPaneId: z.string().min(1),
+    tmuxServerId: z.string().min(1).optional(),
+    agentSessionId: AgentSessionId.schema.optional(),
+    agentExecutionId: z.string().min(1).optional(),
+    sessionName: z.string().min(1),
+    windowId: z.string().min(1),
+    kind: paneKindSchema,
+    name: z.string().min(1),
+    cwd: z.string().min(1),
+    workspaceId: WorkspaceId.schema.optional(),
+    agentId: z.string().min(1).optional(),
+    state: paneStateSchema,
+    title: z.string().optional(),
+    recentOutput: z.string().optional(),
+    lastSeenAt: z.string().min(1),
+    windowName: z.string().optional(),
+    windowIndex: z.number().int().min(0).optional(),
+    paneIndex: z.number().int().min(0).optional(),
+    left: z.number().int().min(0).optional(),
+    top: z.number().int().min(0).optional(),
+    width: z.number().int().min(1).optional(),
+    height: z.number().int().min(1).optional(),
+    windowWidth: z.number().int().min(1).optional(),
+    windowHeight: z.number().int().min(1).optional(),
+  })
+  .strict();
 
 export type Pane = z.infer<typeof paneSchema>;
 export type PaneRecord = Pane;
@@ -59,20 +61,23 @@ export type PaneStateTransition = {
 
 const terminalStates = new Set<PaneState>(["failed", "completed", "stopped"]);
 
+const parsePane = (input: unknown): Pane => paneSchema.parse(input);
+
 export const Pane = {
   schema: paneSchema,
 
-  validate(input: unknown): Pane {
-    return paneSchema.parse(input);
+  /** Rehydrates a persisted pane. This is the only re-entry point for raw data. */
+  restore(input: unknown): Pane {
+    return parsePane(input);
   },
 
   create(input: Pane): Pane {
-    return Pane.validate(input);
+    return parsePane(input);
   },
 
   update(entity: Pane, input: PaneUpdateInput): Pane {
-    const current = Pane.validate(entity);
-    return Pane.validate(applyObjectPatch(current, input));
+    const current = parsePane(entity);
+    return parsePane(applyObjectPatch(current, input));
   },
 
   canTransitionState: canTransitionPaneState,

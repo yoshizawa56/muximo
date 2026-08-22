@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useMemo, useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { storyTerminal, storyWorkspaces } from "../../../-story-fixtures";
+import type { WorkspacePickerViewModel } from "../-workspace-picker-viewmodel";
 import { NewSessionView } from "./-new-session-view";
 import type { NewSessionViewModel } from "./-new-session-viewmodel";
-import type { WorkspacePickerViewModel } from "../-workspace-picker-viewmodel";
-import { storyTerminal, storyWorkspaces } from "../../../-story-fixtures";
 
 function buildWorkspacePicker(overrides: Partial<WorkspacePickerViewModel> = {}): WorkspacePickerViewModel {
   return {
@@ -56,23 +56,30 @@ function NewSessionStory({ initialName = "" }: { initialName?: string }) {
   const [name, setName] = useState(initialName);
   const [created, setCreated] = useState(false);
   const onCreate = useMemo(() => fn(), []);
-  const viewModel = useMemo<NewSessionViewModel>(() => ({
-    terminal: storyTerminal,
-    name,
-    workspacePicker: buildWorkspacePicker(),
-    isCreating: false,
-    errorMessage: null,
-    onNameChange: setName,
-    onBack: fn(),
-    onCreate: () => {
-      onCreate();
-      setCreated(true);
-    },
-  }), [name, onCreate]);
+  const viewModel = useMemo<NewSessionViewModel>(
+    () => ({
+      terminal: storyTerminal,
+      name,
+      workspacePicker: buildWorkspacePicker(),
+      isCreating: false,
+      errorMessage: null,
+      onNameChange: setName,
+      onBack: fn(),
+      onCreate: () => {
+        onCreate();
+        setCreated(true);
+      },
+    }),
+    [name, onCreate],
+  );
   return (
     <>
       <NewSessionView viewModel={viewModel} />
-      {created ? <p role="status" className="fixed bottom-5 left-5 rounded bg-lime px-3 py-2 text-xs text-black">Session request submitted</p> : null}
+      {created ? (
+        <p role="status" className="fixed bottom-5 left-5 rounded bg-lime px-3 py-2 text-xs text-black">
+          Session request submitted
+        </p>
+      ) : null}
     </>
   );
 }

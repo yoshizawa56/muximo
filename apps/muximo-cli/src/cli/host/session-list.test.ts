@@ -1,23 +1,26 @@
-import { describe, it } from "vitest";
+import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
 import {
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { AgentSession, AgentSessionId, WorkspaceId, type AgentSessionRecord, type AgentSessionState } from "@muximo/domain";
+import { describe, it } from "vitest";
 import {
   projectAgentSession,
-  sessionListPolicy,
-  shouldCheckSessionWorktree,
   type SessionListObservation,
   type SessionListProjection,
+  sessionListPolicy,
+  shouldCheckSessionWorktree,
 } from "./session-list.js";
 
 type ProjectionContext = {};
-type ProjectionResult = Pick<SessionListProjection, "executionHealth" | "resume" | "resumeReason" | "worktreeState" | "visibleByDefault">;
+type ProjectionResult = Pick<
+  SessionListProjection,
+  "executionHealth" | "resume" | "resumeReason" | "worktreeState" | "visibleByDefault"
+>;
 type ProjectionInput = {
   session?: Partial<AgentSessionRecord>;
   observation: SessionListObservation;
@@ -30,48 +33,154 @@ const recent = new Date(now - 1_000).toISOString();
 const projectionCases = [
   {
     name: "keeps an exited session with an available worktree visible and resumable",
-    input: { session: { status: "exited", updatedAt: old }, observation: { now, processAlive: undefined, worktreeState: "available" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "inactive", resume: "available", resumeReason: null, worktreeState: "available", visibleByDefault: true })],
+    input: {
+      session: { status: "exited", updatedAt: old },
+      observation: { now, processAlive: undefined, worktreeState: "available" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "inactive",
+        resume: "available",
+        resumeReason: null,
+        worktreeState: "available",
+        visibleByDefault: true,
+      }),
+    ],
   },
   {
     name: "hides an exited session whose worktree is missing",
-    input: { session: { status: "exited", updatedAt: old }, observation: { now, processAlive: undefined, worktreeState: "missing" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "inactive", resume: "unavailable", resumeReason: "worktree_missing", worktreeState: "missing", visibleByDefault: false })],
+    input: {
+      session: { status: "exited", updatedAt: old },
+      observation: { now, processAlive: undefined, worktreeState: "missing" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "inactive",
+        resume: "unavailable",
+        resumeReason: "worktree_missing",
+        worktreeState: "missing",
+        visibleByDefault: false,
+      }),
+    ],
   },
   {
     name: "hides an interrupted session whose worktree is no longer registered",
-    input: { session: { status: "interrupted", updatedAt: old }, observation: { now, processAlive: undefined, worktreeState: "unregistered" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "inactive", resume: "unavailable", resumeReason: "worktree_unregistered", worktreeState: "unregistered", visibleByDefault: false })],
+    input: {
+      session: { status: "interrupted", updatedAt: old },
+      observation: { now, processAlive: undefined, worktreeState: "unregistered" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "inactive",
+        resume: "unavailable",
+        resumeReason: "worktree_unregistered",
+        worktreeState: "unregistered",
+        visibleByDefault: false,
+      }),
+    ],
   },
   {
     name: "keeps a recent exited session uncertain while worktree inspection is deferred",
-    input: { session: { status: "exited", updatedAt: recent }, observation: { now, processAlive: undefined, worktreeState: "unknown" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "inactive", resume: "unknown", resumeReason: "worktree_state_unknown", worktreeState: "unknown", visibleByDefault: true })],
+    input: {
+      session: { status: "exited", updatedAt: recent },
+      observation: { now, processAlive: undefined, worktreeState: "unknown" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "inactive",
+        resume: "unknown",
+        resumeReason: "worktree_state_unknown",
+        worktreeState: "unknown",
+        visibleByDefault: true,
+      }),
+    ],
   },
   {
     name: "marks a recent live execution as active",
-    input: { session: { status: "running", executionStartedAt: recent, updatedAt: recent, executionPid: 100 }, observation: { now, processAlive: true, worktreeState: "not_applicable" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "active", resume: "unavailable", resumeReason: "currently_running", worktreeState: "not_applicable", visibleByDefault: true })],
+    input: {
+      session: { status: "running", executionStartedAt: recent, updatedAt: recent, executionPid: 100 },
+      observation: { now, processAlive: true, worktreeState: "not_applicable" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "active",
+        resume: "unavailable",
+        resumeReason: "currently_running",
+        worktreeState: "not_applicable",
+        visibleByDefault: true,
+      }),
+    ],
   },
   {
     name: "marks a month-old live execution as long-running",
-    input: { session: { status: "running", executionStartedAt: old, updatedAt: old, executionPid: 100 }, observation: { now, processAlive: true, worktreeState: "not_applicable" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "long_running", resume: "unavailable", resumeReason: "currently_running", worktreeState: "not_applicable", visibleByDefault: true })],
+    input: {
+      session: { status: "running", executionStartedAt: old, updatedAt: old, executionPid: 100 },
+      observation: { now, processAlive: true, worktreeState: "not_applicable" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "long_running",
+        resume: "unavailable",
+        resumeReason: "currently_running",
+        worktreeState: "not_applicable",
+        visibleByDefault: true,
+      }),
+    ],
   },
   {
     name: "marks a dead long-running execution as stale and resumable",
-    input: { session: { status: "running", executionStartedAt: old, updatedAt: old, executionPid: 100 }, observation: { now, processAlive: false, worktreeState: "available" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "stale", resume: "available", resumeReason: null, worktreeState: "available", visibleByDefault: true })],
+    input: {
+      session: { status: "running", executionStartedAt: old, updatedAt: old, executionPid: 100 },
+      observation: { now, processAlive: false, worktreeState: "available" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "stale",
+        resume: "available",
+        resumeReason: null,
+        worktreeState: "available",
+        visibleByDefault: true,
+      }),
+    ],
   },
   {
     name: "keeps stale Codex execution recovery uncertain when discovery is required",
-    input: { session: { backend: "codex", backendSessionId: undefined, status: "running", executionStartedAt: old, updatedAt: old, executionPid: undefined }, observation: { now, processAlive: undefined, worktreeState: "not_applicable" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "stale", resume: "unknown", resumeReason: "backend_session_discovery_required", worktreeState: "not_applicable", visibleByDefault: true })],
+    input: {
+      session: {
+        backend: "codex",
+        backendSessionId: undefined,
+        status: "running",
+        executionStartedAt: old,
+        updatedAt: old,
+        executionPid: undefined,
+      },
+      observation: { now, processAlive: undefined, worktreeState: "not_applicable" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "stale",
+        resume: "unknown",
+        resumeReason: "backend_session_discovery_required",
+        worktreeState: "not_applicable",
+        visibleByDefault: true,
+      }),
+    ],
   },
   {
     name: "keeps stale executions with missing worktrees visible for recovery",
-    input: { session: { status: "running", executionStartedAt: old, updatedAt: old, executionPid: 100 }, observation: { now, processAlive: false, worktreeState: "missing" } },
-    assert: [returns<ProjectionContext, ProjectionResult>({ executionHealth: "stale", resume: "unavailable", resumeReason: "worktree_missing", worktreeState: "missing", visibleByDefault: true })],
+    input: {
+      session: { status: "running", executionStartedAt: old, updatedAt: old, executionPid: 100 },
+      observation: { now, processAlive: false, worktreeState: "missing" },
+    },
+    assert: [
+      returns<ProjectionContext, ProjectionResult>({
+        executionHealth: "stale",
+        resume: "unavailable",
+        resumeReason: "worktree_missing",
+        worktreeState: "missing",
+        visibleByDefault: true,
+      }),
+    ],
   },
 ] satisfies readonly OperationCase<"default", ProjectionInput, ProjectionResult, ProjectionContext>[];
 
@@ -89,7 +198,7 @@ const projectionTable: OperationTable<undefined, "default", ProjectionInput, Pro
       visibleByDefault: projection.visibleByDefault,
     };
   },
-  observe: (_fixture, result) => result.ok ? result.value : {},
+  observe: (_fixture, result) => (result.ok ? result.value : {}),
 };
 
 type WorktreeCheckContext = {};
@@ -125,7 +234,7 @@ const worktreeCheckTable: OperationTable<undefined, "default", WorktreeCheckInpu
   defaultFixture: noFixture(),
   cases: worktreeCheckCases,
   execute: (_fixture, input) => shouldCheckSessionWorktree({ ...sessionFixture(), ...input.session }, input.now),
-  observe: (_fixture, result) => result.ok ? result.value : false,
+  observe: (_fixture, result) => (result.ok ? result.value : false),
 };
 
 describe("muximo session list projection", () => {

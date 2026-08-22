@@ -1,16 +1,17 @@
 // Filesystem and Git workspace discovery is the workspace infrastructure adapter.
+
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
 import type { MuximodWorkspaceDirectory, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "@muximo/application";
 import {
-  Workspace,
-  WorkspaceId,
   validateWorktreeCopyPatterns as validateDomainWorktreeCopyPatterns,
   validateWorkspaceSelection,
+  Workspace,
   type WorkspaceDirectoryOption,
+  WorkspaceId,
   type WorkspaceRecord,
   type WorkspaceSelection,
 } from "@muximo/domain";
@@ -38,7 +39,10 @@ export class InvalidWorkspaceDirectoryError extends Error {
 export class InvalidWorkspaceHookError extends Error {
   public readonly code = "invalid_hook" as const;
 
-  public constructor(public readonly path: string, public readonly reason: InvalidHookReason) {
+  public constructor(
+    public readonly path: string,
+    public readonly reason: InvalidHookReason,
+  ) {
     super(invalidHookMessage(path, reason));
     this.name = "InvalidWorkspaceHookError";
   }
@@ -52,7 +56,10 @@ export class InvalidWorkspaceHookError extends Error {
 export class AllowedRootPolicy {
   public readonly roots: string[];
 
-  public constructor(roots: readonly string[], private readonly basePath = process.cwd()) {
+  public constructor(
+    roots: readonly string[],
+    private readonly basePath = process.cwd(),
+  ) {
     this.roots = unique(roots.map((root) => expandPath(root, this.basePath)).map((root) => realpathIfPresent(root)));
   }
 
@@ -64,7 +71,8 @@ export class AllowedRootPolicy {
   public assertDirectory(directory: string): string {
     const expanded = expandPath(directory, this.basePath);
     if (!existsSync(expanded)) throw new InvalidWorkspaceDirectoryError(directory, "not_found", this.roots);
-    if (!statSync(expanded).isDirectory()) throw new InvalidWorkspaceDirectoryError(directory, "not_directory", this.roots);
+    if (!statSync(expanded).isDirectory())
+      throw new InvalidWorkspaceDirectoryError(directory, "not_directory", this.roots);
 
     const realPath = realpathSync(expanded);
     if (!this.roots.some((root) => isPathWithin(root, realPath))) {
@@ -101,11 +109,11 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
 
   /** Lists directory candidates for the host-side registration browser. */
   public async browseDirectories(parentPath?: string): Promise<MuximodWorkspaceDirectory[]> {
-    const bases = parentPath
-      ? [this.policy.assertDirectory(parentPath)]
-      : this.policy.roots.filter(isDirectory);
+    const bases = parentPath ? [this.policy.assertDirectory(parentPath)] : this.policy.roots.filter(isDirectory);
     const candidates = parentPath
-      ? safeReadDirectory(bases[0]!).map((entry) => resolve(bases[0]!, entry)).filter(isDirectory)
+      ? safeReadDirectory(bases[0]!)
+          .map((entry) => resolve(bases[0]!, entry))
+          .filter(isDirectory)
       : bases;
 
     return candidates
@@ -159,12 +167,14 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
 
   private resolveRegisteredWorkspace(workspace: WorkspaceRecord): WorkspaceRecord {
     const rootPath = this.policy.assertDirectory(workspace.rootPath);
-    return Workspace.validate({
+    return Workspace.restore({
       ...workspace,
       rootPath,
       isGit: isGitWorkspace(rootPath),
       ...(workspace.setupScriptPath ? { setupScriptPath: validateHookPath(workspace.setupScriptPath, rootPath) } : {}),
-      ...(workspace.cleanupScriptPath ? { cleanupScriptPath: validateHookPath(workspace.cleanupScriptPath, rootPath) } : {}),
+      ...(workspace.cleanupScriptPath
+        ? { cleanupScriptPath: validateHookPath(workspace.cleanupScriptPath, rootPath) }
+        : {}),
       worktreeCopyPatterns: validateWorktreeCopyPatterns(workspace.worktreeCopyPatterns),
     });
   }
@@ -184,7 +194,12 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
 
 export function allowedRootsFromEnvironment(env: NodeJS.ProcessEnv = process.env, fallback = process.cwd()): string[] {
   const configured = (env.MUXIMOD_WORKSPACE_ROOTS ?? env.MUXIMOD_ALLOWED_ROOTS)?.trim();
-  return configured ? configured.split(delimiter).map((root) => root.trim()).filter(Boolean) : [fallback];
+  return configured
+    ? configured
+        .split(delimiter)
+        .map((root) => root.trim())
+        .filter(Boolean)
+    : [fallback];
 }
 
 function validateHookPath(path: string, workspaceRoot: string): string {
@@ -243,10 +258,12 @@ function isDirectory(path: string): boolean {
 }
 
 function isGitWorkspace(path: string): boolean {
-  return spawnSync("git", ["-C", path, "rev-parse", "--show-toplevel"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  }).status === 0;
+  return (
+    spawnSync("git", ["-C", path, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).status === 0
+  );
 }
 
 function gitWorkspaceRoot(path: string): string | undefined {

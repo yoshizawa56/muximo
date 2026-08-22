@@ -1,13 +1,16 @@
-import { useMemo, useState } from "react";
-import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
 import type { PanePlacement, PaneSummary } from "@muximo/contract";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useMemo, useState } from "react";
+import { expect, fn, userEvent, within } from "storybook/test";
+import { storyPanes, storySession, storyTerminal, storyWorkspaces } from "../../../../../-story-fixtures";
+import type { WorkspacePickerViewModel, WorkspaceSelectionMode } from "../../../-workspace-picker-viewmodel";
 import { NewPaneView } from "./-new-pane-view";
 import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "./-new-pane-viewmodel";
-import type { WorkspacePickerViewModel, WorkspaceSelectionMode } from "../../../-workspace-picker-viewmodel";
-import { storyPanes, storySession, storyTerminal, storyWorkspaces } from "../../../../../-story-fixtures";
 
-function buildWorkspacePicker(mode: WorkspaceSelectionMode, onModeChange: (value: WorkspaceSelectionMode) => void): WorkspacePickerViewModel {
+function buildWorkspacePicker(
+  mode: WorkspaceSelectionMode,
+  onModeChange: (value: WorkspaceSelectionMode) => void,
+): WorkspacePickerViewModel {
   return {
     workspaces: storyWorkspaces,
     workspaceCandidates: storyWorkspaces,
@@ -62,7 +65,15 @@ function buildViewModel(overrides: Partial<NewPaneViewModel> = {}): NewPaneViewM
   };
 }
 
-function NewPaneStory({ initialKind = "agent", initialPlacement = "window", initialPanes = storyPanes }: { initialKind?: NewPaneKind; initialPlacement?: PanePlacement; initialPanes?: PaneSummary[] }) {
+function NewPaneStory({
+  initialKind = "agent",
+  initialPlacement = "window",
+  initialPanes = storyPanes,
+}: {
+  initialKind?: NewPaneKind;
+  initialPlacement?: PanePlacement;
+  initialPanes?: PaneSummary[];
+}) {
   const [name, setName] = useState("review");
   const [kind, setKind] = useState(initialKind);
   const [agentId, setAgentId] = useState<NewPaneAgent>("codex");
@@ -71,33 +82,40 @@ function NewPaneStory({ initialKind = "agent", initialPlacement = "window", init
   const [mode, setMode] = useState<WorkspaceSelectionMode>(initialKind === "shell" ? "workspace" : "worktree");
   const [created, setCreated] = useState(false);
   const onCreate = useMemo(() => () => setCreated(true), []);
-  const viewModel = useMemo<NewPaneViewModel>(() => ({
-    terminal: storyTerminal,
-    session: storySession,
-    name,
-    workspacePicker: buildWorkspacePicker(mode, setMode),
-    kind,
-    agentId,
-    existingPanes: initialPanes,
-    placement,
-    targetPaneId,
-    isCreating: false,
-    errorMessage: null,
-    onNameChange: setName,
-    onKindChange: (nextKind) => {
-      setKind(nextKind);
-      if (nextKind === "shell") setMode("workspace");
-    },
-    onAgentChange: setAgentId,
-    onPlacementChange: setPlacement,
-    onTargetPaneChange: setTargetPaneId,
-    onCreate,
-    onBack: fn(),
-  }), [agentId, initialPanes, kind, mode, name, onCreate, placement, targetPaneId]);
+  const viewModel = useMemo<NewPaneViewModel>(
+    () => ({
+      terminal: storyTerminal,
+      session: storySession,
+      name,
+      workspacePicker: buildWorkspacePicker(mode, setMode),
+      kind,
+      agentId,
+      existingPanes: initialPanes,
+      placement,
+      targetPaneId,
+      isCreating: false,
+      errorMessage: null,
+      onNameChange: setName,
+      onKindChange: (nextKind) => {
+        setKind(nextKind);
+        if (nextKind === "shell") setMode("workspace");
+      },
+      onAgentChange: setAgentId,
+      onPlacementChange: setPlacement,
+      onTargetPaneChange: setTargetPaneId,
+      onCreate,
+      onBack: fn(),
+    }),
+    [agentId, initialPanes, kind, mode, name, onCreate, placement, targetPaneId],
+  );
   return (
     <>
       <NewPaneView viewModel={viewModel} />
-      {created ? <p role="status" className="fixed bottom-5 left-5 rounded bg-lime px-3 py-2 text-xs text-black">Pane request submitted</p> : null}
+      {created ? (
+        <p role="status" className="fixed bottom-5 left-5 rounded bg-lime px-3 py-2 text-xs text-black">
+          Pane request submitted
+        </p>
+      ) : null}
     </>
   );
 }

@@ -1,6 +1,7 @@
 // This adapter owns all tmux process I/O; application code sees only MuximodHostPort.
-import { createHash } from "node:crypto";
+
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -105,7 +106,7 @@ export function resolveMuximoCommand(
   if (configured) return configured;
 
   const entry = runtime.argv[1];
-  const sourceEntry = entry && entry.endsWith(".ts") && existsSync(resolve(entry)) ? resolve(entry) : undefined;
+  const sourceEntry = entry?.endsWith(".ts") && existsSync(resolve(entry)) ? resolve(entry) : undefined;
   if (sourceEntry) {
     if (sourceEntry.endsWith("/apps/muximo-cli/src/index.ts")) return sourceEntry;
     const sourceLauncherCandidates = [
@@ -124,12 +125,13 @@ export class TmuxAdapter {
   private readonly metadataPrefix: string;
   private readonly environment: NodeJS.ProcessEnv;
 
-  public constructor(socketPath = process.env.MUXIMOD_TMUX_SOCKET, configFile?: string, environment: NodeJS.ProcessEnv = process.env) {
+  public constructor(
+    socketPath = process.env.MUXIMOD_TMUX_SOCKET,
+    configFile?: string,
+    environment: NodeJS.ProcessEnv = process.env,
+  ) {
     this.environment = { ...process.env, ...environment };
-    this.commandPrefix = [
-      ...(configFile ? ["-f", configFile] : []),
-      ...(socketPath ? ["-S", socketPath] : []),
-    ];
+    this.commandPrefix = [...(configFile ? ["-f", configFile] : []), ...(socketPath ? ["-S", socketPath] : [])];
     const namespace = this.environment.MUXIMO_WORKTREE_ID?.trim();
     this.metadataPrefix = namespace ? `@muximod.${sanitizeMetadataNamespace(namespace)}.` : "@muximod.";
   }
@@ -152,11 +154,7 @@ export class TmuxAdapter {
   public require(args: string[]): string {
     const result = this.command(args);
     if (result.status !== 0) {
-      throw new TmuxError(
-        result.stderr.trim() || `tmux ${args.join(" ")} failed`,
-        args,
-        result,
-      );
+      throw new TmuxError(result.stderr.trim() || `tmux ${args.join(" ")} failed`, args, result);
     }
     return result.stdout;
   }
@@ -169,11 +167,7 @@ export class TmuxAdapter {
     if (command) args.push(command);
     const created = this.command(args);
     if (created.status !== 0) {
-      throw new TmuxError(
-        created.stderr.trim() || `Could not create tmux session: ${target}`,
-        args,
-        created,
-      );
+      throw new TmuxError(created.stderr.trim() || `Could not create tmux session: ${target}`, args, created);
     }
     return true;
   }
@@ -191,11 +185,7 @@ export class TmuxAdapter {
     if (command) args.push(command);
     const created = this.command(args);
     if (created.status !== 0) {
-      throw new TmuxError(
-        created.stderr.trim() || `Could not create tmux session: ${target}`,
-        args,
-        created,
-      );
+      throw new TmuxError(created.stderr.trim() || `Could not create tmux session: ${target}`, args, created);
     }
   }
 
@@ -208,15 +198,7 @@ export class TmuxAdapter {
   }
 
   public newWindow(sessionName: string, cwd?: string, command?: string): string {
-    const args = [
-      "new-window",
-      "-d",
-      "-P",
-      "-F",
-      "#{pane_id}",
-      "-t",
-      sessionName,
-    ];
+    const args = ["new-window", "-d", "-P", "-F", "#{pane_id}", "-t", sessionName];
     if (cwd) args.push("-c", resolveTmuxCwd(cwd));
     if (command) args.push(command);
     return this.require(args).trim();
@@ -228,13 +210,7 @@ export class TmuxAdapter {
     targetPaneId: string,
     keepZoomed = false,
   ): string {
-    const args = [
-      "split-window",
-      "-d",
-      "-P",
-      "-F",
-      "#{pane_id}",
-    ];
+    const args = ["split-window", "-d", "-P", "-F", "#{pane_id}"];
     if (keepZoomed) args.push("-Z");
     if (placement === "right") args.push("-h");
     args.push("-t", targetPaneId, "-c", this.resolvePaneCwd(targetPaneId));
@@ -268,7 +244,11 @@ export class TmuxAdapter {
     this.setAgentPaneMetadata(paneId, "pane_name", "shell");
   }
 
-  public setManagedSessionMetadata(sessionName: string, field: "managed_session_id" | "managed" | "wrapper", value: string): void {
+  public setManagedSessionMetadata(
+    sessionName: string,
+    field: "managed_session_id" | "managed" | "wrapper",
+    value: string,
+  ): void {
     this.setSessionOption(sessionName, this.metadataKey(field), value);
   }
 
@@ -304,11 +284,11 @@ export class TmuxAdapter {
       env: this.environment,
     });
     if (result.status !== 0) {
-      throw new TmuxError(
-        result.stderr?.trim() || `tmux set-buffer failed for ${name}`,
-        fullArgs,
-        { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" },
-      );
+      throw new TmuxError(result.stderr?.trim() || `tmux set-buffer failed for ${name}`, fullArgs, {
+        status: result.status,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+      });
     }
   }
 
@@ -322,13 +302,7 @@ export class TmuxAdapter {
   }
 
   public resolvePane(target: string): TmuxPaneRef {
-    const output = this.require([
-      "display-message",
-      "-p",
-      "-t",
-      target,
-      "#{pane_id}\t#{window_id}\t#{session_name}",
-    ]);
+    const output = this.require(["display-message", "-p", "-t", target, "#{pane_id}\t#{window_id}\t#{session_name}"]);
     const [paneId, windowId, sessionName] = output.trim().split("\t");
     if (!paneId || !windowId || !sessionName) {
       throw new Error(`Could not resolve tmux pane: ${target}`);
@@ -387,12 +361,9 @@ export class TmuxAdapter {
       // tmux exits its server after the last session disappears. An empty
       // live snapshot is more useful to callers than treating that normal
       // lifecycle transition as an infrastructure failure.
-      if (isTmuxServerGone(result.stderr)) return { panes: [], available: false, tmuxServerId: null, tmuxServerScope: null };
-      throw new TmuxError(
-        result.stderr.trim() || `tmux ${args.join(" ")} failed`,
-        args,
-        result,
-      );
+      if (isTmuxServerGone(result.stderr))
+        return { panes: [], available: false, tmuxServerId: null, tmuxServerScope: null };
+      throw new TmuxError(result.stderr.trim() || `tmux ${args.join(" ")} failed`, args, result);
     }
     const output = result.stdout;
 
@@ -401,8 +372,46 @@ export class TmuxAdapter {
       .map((line) => line.trimEnd())
       .filter(Boolean)
       .map((line) => {
-        const [paneId, windowId, sessionName, windowName, windowIndex, paneIndex, cwd, command, title, active, left, top, width, height, windowWidth, windowHeight, muximodPaneId, muximodName, muximodKind, muximodAgentId, muximodWorkspaceId, muximodManagedSessionId, muximodSessionId, muximodExecutionId, serverPid, serverStartTime, socketPath] = splitTmuxFormatLine(line, separator);
-        if (!paneId || !windowId || !sessionName || windowName === undefined || windowIndex === undefined || paneIndex === undefined || cwd === undefined || command === undefined || title === undefined) {
+        const [
+          paneId,
+          windowId,
+          sessionName,
+          windowName,
+          windowIndex,
+          paneIndex,
+          cwd,
+          command,
+          title,
+          active,
+          left,
+          top,
+          width,
+          height,
+          windowWidth,
+          windowHeight,
+          muximodPaneId,
+          muximodName,
+          muximodKind,
+          muximodAgentId,
+          muximodWorkspaceId,
+          muximodManagedSessionId,
+          muximodSessionId,
+          muximodExecutionId,
+          serverPid,
+          serverStartTime,
+          socketPath,
+        ] = splitTmuxFormatLine(line, separator);
+        if (
+          !paneId ||
+          !windowId ||
+          !sessionName ||
+          windowName === undefined ||
+          windowIndex === undefined ||
+          paneIndex === undefined ||
+          cwd === undefined ||
+          command === undefined ||
+          title === undefined
+        ) {
           throw new Error(`Could not parse tmux pane: ${line}`);
         }
         if (!serverPid || !serverStartTime || !socketPath) throw new Error(`Could not identify tmux server: ${line}`);
@@ -652,11 +661,23 @@ export class TmuxAdapter {
     this.require(["set-hook", "-gu", `${name}[${index}]`]);
   }
 
-  private metadataKey(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id" | "managed" | "wrapper"): string {
+  private metadataKey(
+    field:
+      | "pane_id"
+      | "pane_name"
+      | "kind"
+      | "agent_id"
+      | "workspace_id"
+      | "managed_session_id"
+      | "managed"
+      | "wrapper",
+  ): string {
     return `${this.metadataPrefix}${field}`;
   }
 
-  private metadataFormat(field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id"): string {
+  private metadataFormat(
+    field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id",
+  ): string {
     return `#{${this.metadataKey(field)}}`;
   }
 

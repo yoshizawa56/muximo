@@ -1,5 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  statSync,
+  writeSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -8,14 +20,7 @@ export type LogLevel = (typeof logLevels)[number];
 export type LogMode = "attached" | "background";
 export type LogFormat = "human" | "json";
 
-export type LogValue =
-  | string
-  | number
-  | boolean
-  | null
-  | undefined
-  | LogValue[]
-  | { [key: string]: LogValue };
+export type LogValue = string | number | boolean | null | undefined | LogValue[] | { [key: string]: LogValue };
 
 /** Values accepted from callers before they are normalized for a sink. */
 export type LogContext = Record<string, unknown>;
@@ -73,8 +78,10 @@ const levelWeights: Record<LogLevel, number> = {
   debug: 3,
 };
 
-const sensitiveKeyPattern = /(?:password|passphrase|secret|token|api[-_]?key|authorization|cookie|prompt|headers?|argv|args|environment|env|stdin|stdout|stderr|body|content)/i;
-const diagnosticSecretPattern = /\b(authorization|cookie|password|passphrase|secret|token|api[-_]?key)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi;
+const sensitiveKeyPattern =
+  /(?:password|passphrase|secret|token|api[-_]?key|authorization|cookie|prompt|headers?|argv|args|environment|env|stdin|stdout|stderr|body|content)/i;
+const diagnosticSecretPattern =
+  /\b(authorization|cookie|password|passphrase|secret|token|api[-_]?key)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi;
 const maxValueDepth = 6;
 const maxStringLength = 4_096;
 
@@ -89,14 +96,23 @@ export function createLogger(options: LoggerOptions): Logger {
   });
 }
 
-export function createDefaultSink(options: Pick<LoggerOptions, "mode" | "output" | "format" | "logFile" | "maxBytes" | "maxFiles" | "showStack" | "level">): LogSink {
+export function createDefaultSink(
+  options: Pick<
+    LoggerOptions,
+    "mode" | "output" | "format" | "logFile" | "maxBytes" | "maxFiles" | "showStack" | "level"
+  >,
+): LogSink {
   if (options.logFile) {
     return createFileSinkOrFallback(options.logFile, options);
   }
   if (options.mode === "background") {
     return createFileSinkOrFallback(defaultLogFile(), options);
   }
-  return createStreamSink(options.output ?? process.stderr, options.format ?? "human", options.showStack ?? options.level === "debug");
+  return createStreamSink(
+    options.output ?? process.stderr,
+    options.format ?? "human",
+    options.showStack ?? options.level === "debug",
+  );
 }
 
 function createFileSinkOrFallback(
@@ -113,13 +129,21 @@ function createFileSinkOrFallback(
     // Attached processes retain a visible diagnostic fallback; detached
     // processes use a no-op sink because their standard streams are ignored.
     if (options.mode === "attached") {
-      return createStreamSink(options.output ?? process.stderr, "human", options.showStack ?? options.level === "debug");
+      return createStreamSink(
+        options.output ?? process.stderr,
+        "human",
+        options.showStack ?? options.level === "debug",
+      );
     }
     return { write() {} };
   }
 }
 
-export function createStreamSink(output: NodeJS.WritableStream, format: LogFormat = "human", showStack = false): LogSink {
+export function createStreamSink(
+  output: NodeJS.WritableStream,
+  format: LogFormat = "human",
+  showStack = false,
+): LogSink {
   let disabled = false;
   const streamWithEvents = output as NodeJS.WritableStream & {
     on?: (event: "error", listener: () => void) => unknown;
@@ -144,10 +168,7 @@ export function createStreamSink(output: NodeJS.WritableStream, format: LogForma
   };
 }
 
-export function createRotatingFileSink(
-  file: string,
-  options: { maxBytes?: number; maxFiles?: number } = {},
-): LogSink {
+export function createRotatingFileSink(file: string, options: { maxBytes?: number; maxFiles?: number } = {}): LogSink {
   const path = resolve(file);
   const maxBytes = options.maxBytes ?? 10 * 1024 * 1024;
   const maxFiles = Math.max(1, options.maxFiles ?? 3);
@@ -173,7 +194,9 @@ export function parseLogLevel(value: string | undefined, fallback: LogLevel = "w
 }
 
 export function defaultLogFile(environment: NodeJS.ProcessEnv = process.env): string {
-  return resolve(environment.MUXIMO_LOG_FILE ?? join(environment.HOME ?? homedir(), ".local", "state", "muximo", "muximod.log"));
+  return resolve(
+    environment.MUXIMO_LOG_FILE ?? join(environment.HOME ?? homedir(), ".local", "state", "muximo", "muximod.log"),
+  );
 }
 
 export function errorFields(error: unknown): LogContext {
@@ -226,7 +249,10 @@ class StructuredLogger implements Logger {
   private readonly sink: LogSink;
   private readonly clock: () => Date;
 
-  public constructor(options: LoggerOptions & { processInstanceId: string; pid: number; sink: LogSink }, context: LogContext = {}) {
+  public constructor(
+    options: LoggerOptions & { processInstanceId: string; pid: number; sink: LogSink },
+    context: LogContext = {},
+  ) {
     this.service = options.service;
     this.level = options.level;
     this.mode = options.mode;
@@ -238,15 +264,18 @@ class StructuredLogger implements Logger {
   }
 
   public child(context: LogContext): Logger {
-    return new StructuredLogger({
-      service: this.service,
-      mode: this.mode,
-      level: this.level,
-      processInstanceId: this.processInstanceId,
-      pid: this.pid,
-      sink: this.sink,
-      clock: this.clock,
-    }, { ...this.context, ...context });
+    return new StructuredLogger(
+      {
+        service: this.service,
+        mode: this.mode,
+        level: this.level,
+        processInstanceId: this.processInstanceId,
+        pid: this.pid,
+        sink: this.sink,
+        clock: this.clock,
+      },
+      { ...this.context, ...context },
+    );
   }
 
   public isEnabled(level: LogLevel): boolean {
@@ -352,7 +381,10 @@ function sanitizeError(error: Error, depth: number, seen: WeakSet<object>): Reco
   if (typeof code === "string" || typeof code === "number") result.code = code;
   const stack = safeErrorProperty(error, "stack", undefined);
   if (stack) {
-    result.stack = truncate(isSubprocessDiagnostic(message) ? `${name}: ${message}` : redactDiagnosticText(stack), 16_384);
+    result.stack = truncate(
+      isSubprocessDiagnostic(message) ? `${name}: ${message}` : redactDiagnosticText(stack),
+      16_384,
+    );
   }
   if (depth < maxValueDepth) {
     const cause = safeErrorProperty(error, "cause", undefined);

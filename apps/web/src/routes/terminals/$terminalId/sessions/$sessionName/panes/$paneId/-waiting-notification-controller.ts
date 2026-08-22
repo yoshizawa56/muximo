@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
 import type { PaneSummary } from "@muximo/contract";
+import { useEffect, useRef, useState } from "react";
 import type { WaitingAgent } from "./-waiting-notification-patterns";
 
 export type WaitingNoticeState = "waiting_input" | "waiting_approval";
@@ -48,22 +48,24 @@ export function useWaitingNotices(panes: PaneSummary[]): { notices: WaitingNotic
       stillWaiting.add(pane.id);
       if (!previous.has(pane.id)) lateAdditions.push(pane);
     }
-    previousWaitingIdsRef.current = new Set(panes
-      .filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval")
-      .map((pane) => pane.id));
+    previousWaitingIdsRef.current = new Set(
+      panes
+        .filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval")
+        .map((pane) => pane.id),
+    );
 
     if (!lateAdditions.length) return;
-    const incoming = lateAdditions
-      .map(prepareNotice)
-      .filter((notice): notice is WaitingNotice => notice !== null);
+    const incoming = lateAdditions.map(prepareNotice).filter((notice): notice is WaitingNotice => notice !== null);
     if (!incoming.length) return;
     setNotices((current) => {
       const withoutResolved = current.filter((notice) => stillWaiting.has(notice.id));
       const merged = [...withoutResolved, ...incoming];
-      const unique = merged.filter((notice, index) => merged.findIndex((candidate) => candidate.id === notice.id) === index);
+      const unique = merged.filter(
+        (notice, index) => merged.findIndex((candidate) => candidate.id === notice.id) === index,
+      );
       return unique.slice(-MAX_NOTICES);
     });
-  }, [panes]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [panes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!notices.length) return;
@@ -81,11 +83,8 @@ export function useWaitingNotices(panes: PaneSummary[]): { notices: WaitingNotic
 }
 
 function prepareNotice(pane: PaneSummary): WaitingNotice | null {
-  const state: WaitingNoticeState | null = pane.state === "waiting_input"
-    ? "waiting_input"
-    : pane.state === "waiting_approval"
-      ? "waiting_approval"
-      : null;
+  const state: WaitingNoticeState | null =
+    pane.state === "waiting_input" ? "waiting_input" : pane.state === "waiting_approval" ? "waiting_approval" : null;
   if (!state) return null;
   return {
     id: pane.id,
@@ -100,18 +99,17 @@ function prepareNotice(pane: PaneSummary): WaitingNotice | null {
 }
 
 export function toToastAgent(notice: WaitingNotice): WaitingAgent {
-  const agentBadgeClass = notice.agentId === "claude"
-    ? "border-[#9a5b3c] bg-[rgb(154_52_18_/_22%)] text-[#fdba74]"
-    : notice.agentId === "opencode"
-      ? "border-[#3d8b4c] bg-[rgb(57_214_91_/_14%)] text-lime"
-      : "border-[#2b6f8a] bg-[rgb(21_94_117_/_24%)] text-[#7dd3fc]";
+  const agentBadgeClass =
+    notice.agentId === "claude"
+      ? "border-[#9a5b3c] bg-[rgb(154_52_18_/_22%)] text-[#fdba74]"
+      : notice.agentId === "opencode"
+        ? "border-[#3d8b4c] bg-[rgb(57_214_91_/_14%)] text-lime"
+        : "border-[#2b6f8a] bg-[rgb(21_94_117_/_24%)] text-[#7dd3fc]";
   return {
     id: notice.id,
     name: notice.name,
     monogram: notice.kind === "shell" ? "S" : (notice.agentId?.slice(0, 1) ?? "·").toUpperCase(),
-    badgeClass: notice.kind === "shell"
-      ? "border-[#6a7a72] bg-[rgb(90_105_98_/_22%)] text-[#b7c4bd]"
-      : agentBadgeClass,
+    badgeClass: notice.kind === "shell" ? "border-[#6a7a72] bg-[rgb(90_105_98_/_22%)] text-[#b7c4bd]" : agentBadgeClass,
     state: notice.state,
     stateLabel: notice.state === "waiting_input" ? "Waiting for input" : "Waiting for approval",
     cwd: notice.cwd,

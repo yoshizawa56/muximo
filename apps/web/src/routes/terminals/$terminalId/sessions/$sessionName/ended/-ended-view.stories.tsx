@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { storySession, storyTerminal } from "../../../../-story-fixtures";
 import { EndedView } from "./-ended-view";
 import type { EndedViewModel } from "./-ended-viewmodel";
-import { storySession, storyTerminal } from "../../../../-story-fixtures";
 
 function buildViewModel(overrides: Partial<EndedViewModel> = {}): EndedViewModel {
   return {

@@ -1,12 +1,6 @@
+import { existsSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { createInterface, type Interface } from "node:readline";
-import { existsSync } from "node:fs";
-import {
-  decodeMuximodControlResponse,
-  encodeMuximodControlRequest,
-  type MuximodControlRequest,
-  type MuximodControlResponse,
-} from "@muximo/contract";
 import type {
   ApprovedDevice,
   PairDeviceInput,
@@ -14,6 +8,12 @@ import type {
   PairingControlPort,
   PairingOffer,
 } from "@muximo/application";
+import {
+  decodeMuximodControlResponse,
+  encodeMuximodControlRequest,
+  type MuximodControlRequest,
+  type MuximodControlResponse,
+} from "@muximo/contract";
 
 type AgentStatus = Extract<MuximodControlRequest, { type: "observe_agent_session" }>["state"];
 
@@ -40,7 +40,10 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
 
   private constructor(private readonly socket: Socket) {
     socket.on("error", (error) => {
-      this.socketError = new PairingControlError(`muximod control socket failed: ${error.message}`, "control_socket_error");
+      this.socketError = new PairingControlError(
+        `muximod control socket failed: ${error.message}`,
+        "control_socket_error",
+      );
     });
     this.reader = createInterface({ input: socket, crlfDelay: Infinity });
     this.responses = this.reader[Symbol.asyncIterator]();
@@ -88,7 +91,12 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
 
   public async approvePairing(pairingId: string): Promise<ApprovedDevice> {
     const response = await this.request({ type: "approve_pairing", pairingId });
-    if (response.type !== "pairing_result" || response.pairingId !== pairingId || response.status !== "approved" || !response.deviceId) {
+    if (
+      response.type !== "pairing_result" ||
+      response.pairingId !== pairingId ||
+      response.status !== "approved" ||
+      !response.deviceId
+    ) {
       throw unexpectedResponse("approved pairing_result", response.type);
     }
     return { deviceId: response.deviceId };
@@ -101,23 +109,53 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     }
   }
 
-  public async adoptAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void> {
+  public async adoptAgentSession(input: {
+    agentSessionId: string;
+    tmuxPaneId: string;
+    executionId: string;
+  }): Promise<void> {
     const response = await this.request({ type: "adopt_agent_session", ...input });
-    if (response.type !== "agent_session_adopted" || response.agentSessionId !== input.agentSessionId || response.tmuxPaneId !== input.tmuxPaneId || response.executionId !== input.executionId) {
+    if (
+      response.type !== "agent_session_adopted" ||
+      response.agentSessionId !== input.agentSessionId ||
+      response.tmuxPaneId !== input.tmuxPaneId ||
+      response.executionId !== input.executionId
+    ) {
       throw unexpectedResponse("agent_session_adopted", response.type);
     }
   }
 
-  public async observeAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string; state: AgentStatus; recentOutput?: string }): Promise<void> {
+  public async observeAgentSession(input: {
+    agentSessionId: string;
+    tmuxPaneId: string;
+    executionId: string;
+    state: AgentStatus;
+    recentOutput?: string;
+  }): Promise<void> {
     const response = await this.request({ type: "observe_agent_session", ...input });
-    if (response.type !== "agent_session_observed" || response.agentSessionId !== input.agentSessionId || response.tmuxPaneId !== input.tmuxPaneId || response.executionId !== input.executionId || response.state !== input.state) {
+    if (
+      response.type !== "agent_session_observed" ||
+      response.agentSessionId !== input.agentSessionId ||
+      response.tmuxPaneId !== input.tmuxPaneId ||
+      response.executionId !== input.executionId ||
+      response.state !== input.state
+    ) {
       throw unexpectedResponse("agent_session_observed", response.type);
     }
   }
 
-  public async releaseAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void> {
+  public async releaseAgentSession(input: {
+    agentSessionId: string;
+    tmuxPaneId: string;
+    executionId: string;
+  }): Promise<void> {
     const response = await this.request({ type: "release_agent_session", ...input });
-    if (response.type !== "agent_session_released" || response.agentSessionId !== input.agentSessionId || response.tmuxPaneId !== input.tmuxPaneId || response.executionId !== input.executionId) {
+    if (
+      response.type !== "agent_session_released" ||
+      response.agentSessionId !== input.agentSessionId ||
+      response.tmuxPaneId !== input.tmuxPaneId ||
+      response.executionId !== input.executionId
+    ) {
       throw unexpectedResponse("agent_session_released", response.type);
     }
   }
@@ -140,13 +178,18 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     try {
       next = await this.responses.next();
     } catch (error) {
-      throw new PairingControlError(`muximod control socket failed: ${error instanceof Error ? error.message : String(error)}`, "control_socket_error");
+      throw new PairingControlError(
+        `muximod control socket failed: ${error instanceof Error ? error.message : String(error)}`,
+        "control_socket_error",
+      );
     }
     if (this.socketError) throw this.socketError;
-    if (next.done) throw new PairingControlError("muximod control socket closed before pairing completed", "control_socket_closed");
+    if (next.done)
+      throw new PairingControlError("muximod control socket closed before pairing completed", "control_socket_closed");
 
     const parsed = decodeMuximodControlResponse(next.value);
-    if (!parsed.ok) throw new PairingControlError(`muximod control socket returned ${parsed.message}`, "invalid_control_response");
+    if (!parsed.ok)
+      throw new PairingControlError(`muximod control socket returned ${parsed.message}`, "invalid_control_response");
     return parsed.value;
   }
 }
@@ -158,7 +201,13 @@ function connectControlSocket(path: string): Promise<Socket> {
       return;
     }
     const socket = createConnection(path);
-    const onError = (error: Error) => reject(new PairingControlError(`could not connect to muximod control socket: ${error.message}`, "control_socket_connect_failed"));
+    const onError = (error: Error) =>
+      reject(
+        new PairingControlError(
+          `could not connect to muximod control socket: ${error.message}`,
+          "control_socket_connect_failed",
+        ),
+      );
     socket.once("connect", () => {
       socket.off("error", onError);
       resolve(socket);

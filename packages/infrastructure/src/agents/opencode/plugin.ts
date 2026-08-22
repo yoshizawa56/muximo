@@ -21,12 +21,7 @@ import type {
 import { agentCapabilities } from "../index.js";
 import { OpenCodeClient, type OpenCodeLog } from "./client.js";
 import { OpenCodeMonitor, type OpenCodeMonitorOptions } from "./monitor.js";
-import {
-  defaultOpenCodeRegistryFile,
-  OpenCodeServerManager,
-  type OpenCodeServerManagerOptions,
-  type OpenCodeServerEntry,
-} from "./server.js";
+import { defaultOpenCodeRegistryFile, type OpenCodeServerEntry, OpenCodeServerManager } from "./server.js";
 
 export type OpenCodePluginOptions = {
   serverManager?: OpenCodeServerManager;
@@ -39,17 +34,22 @@ export type OpenCodePluginOptions = {
 };
 
 export class OpenCodePluginError extends Error {
-  public constructor(message: string, public readonly code = "opencode_launch_failed") {
+  public constructor(
+    message: string,
+    public readonly code = "opencode_launch_failed",
+  ) {
     super(message);
     this.name = "OpenCodePluginError";
   }
 }
 
 export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): AgentPluginV1 {
-  const manager = options.serverManager ?? new OpenCodeServerManager({
-    registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(),
-    executable: options.executable,
-  });
+  const manager =
+    options.serverManager ??
+    new OpenCodeServerManager({
+      registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(),
+      executable: options.executable,
+    });
 
   return {
     manifest: {
@@ -61,9 +61,7 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
 
     async detect(input: DetectInput) {
       const command = input.command.split("/").at(-1)?.toLowerCase();
-      return command === "opencode"
-        ? { confidence: 1, agentId: "opencode", name: "OpenCode" }
-        : null;
+      return command === "opencode" ? { confidence: 1, agentId: "opencode", name: "OpenCode" } : null;
     },
 
     async launch(_input: LaunchInput): Promise<LaunchSpec> {
@@ -76,26 +74,31 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
     createObserver() {
       return {
         onOutput: () => [],
-        onExit: ({ code }): AgentObservation[] => [{
-          type: "state_changed",
-          state: code === 0 ? "completed" : "failed",
-          reason: "OpenCode TUI exited",
-        }],
+        onExit: ({ code }): AgentObservation[] => [
+          {
+            type: "state_changed",
+            state: code === 0 ? "completed" : "failed",
+            reason: "OpenCode TUI exited",
+          },
+        ],
       };
     },
 
-    async prepareLaunch(input: LaunchInput & { monitorContext: AgentMonitorContext; resumeSessionId?: string | null }): Promise<LaunchPlan> {
+    async prepareLaunch(
+      input: LaunchInput & { monitorContext: AgentMonitorContext; resumeSessionId?: string | null },
+    ): Promise<LaunchPlan> {
       const root = input.cwd;
       const entry = await manager.ensure(root);
       const baseUrl = `http://127.0.0.1:${entry.port}`;
       const client = options.clientFactory?.(baseUrl) ?? new OpenCodeClient(baseUrl, { onLog: options.onLog });
       const sessionId = await resolveSessionId(client, entry, input.resumeSessionId ?? null, input.name);
-      const monitor = options.monitorFactory?.({
-        baseUrl,
-        sessionId,
-        workspaceRoot: root,
-        client,
-      }) ?? new OpenCodeMonitor({ baseUrl, sessionId, workspaceRoot: root, client });
+      const monitor =
+        options.monitorFactory?.({
+          baseUrl,
+          sessionId,
+          workspaceRoot: root,
+          client,
+        }) ?? new OpenCodeMonitor({ baseUrl, sessionId, workspaceRoot: root, client });
       const attachExecutable = options.attachExecutable ?? "opencode";
 
       return {
@@ -107,14 +110,16 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
         },
         monitor,
         backendSessionId: sessionId,
-        sidecars: [{
-          kind: "opencode-serve",
-          pid: entry.pid,
-          health: () => manager.isHealthy(entry.port),
-          stop: async () => {
-            await manager.dispose(root);
+        sidecars: [
+          {
+            kind: "opencode-serve",
+            pid: entry.pid,
+            health: () => manager.isHealthy(entry.port),
+            stop: async () => {
+              await manager.dispose(root);
+            },
           },
-        }],
+        ],
         dispose: async () => {
           await manager.dispose(root);
         },

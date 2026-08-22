@@ -1,16 +1,15 @@
-import { describe, it } from "vitest";
 import {
   hasObserved,
-  noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 import type { AgentObservation } from "../index.js";
-import { OpenCodeStreamClosedError, type OpenCodeEvent, type OpenCodeSessionStatus } from "./client.js";
-import { OpenCodeMonitor, openCodeMonitorActions, type OpenCodeMonitorClient } from "./monitor.js";
+import { type OpenCodeEvent, type OpenCodeSessionStatus, OpenCodeStreamClosedError } from "./client.js";
+import { OpenCodeMonitor, type OpenCodeMonitorClient, openCodeMonitorActions } from "./monitor.js";
 
 const primarySessionId = "session-primary";
 
@@ -25,7 +24,11 @@ type MonitorInput = {
   /** When false the stream stays open so the test can feed more events. */
   endAfterDrain?: boolean;
   /** Runs after start, before the drain wait (for action execution). */
-  afterStart?: (context: { monitor: OpenCodeMonitor; observations: AgentObservation[]; state: FakeState }) => Promise<void>;
+  afterStart?: (context: {
+    monitor: OpenCodeMonitor;
+    observations: AgentObservation[];
+    state: FakeState;
+  }) => Promise<void>;
 };
 
 type FakeState = {
@@ -63,63 +66,107 @@ const cases = [
   {
     name: "maps session busy and idle to running and waiting input",
     input: {
-      queue: [
-        statusEvent("busy"),
-        statusEvent("idle"),
-      ],
+      queue: [statusEvent("busy"), statusEvent("idle")],
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: ["running", "waiting_input"], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["running", "waiting_input"],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "does not emit waiting input for a freshly created idle session",
     input: { queue: [idleEvent()] },
-    assert: [returns<EmptyContext, MonitorResult>({ states: [], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: [],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "maps a session retry to running",
     input: { queue: [statusEvent("retry")] },
-    assert: [returns<EmptyContext, MonitorResult>({ states: ["running"], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["running"],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "maps a permission request to waiting approval with approve and reject actions",
     input: {
       queue: [permissionEvent("permission-1", "Allow bash")],
     },
-    assert: [returns<EmptyContext, MonitorResult>({
-      states: ["waiting_approval"],
-      actions: [
-        { id: "approve", metadata: { permissionID: "permission-1", title: "Allow bash" } },
-        { id: "reject", metadata: { permissionID: "permission-1", title: "Allow bash" } },
-      ],
-      permissionCalls: [],
-      aborted: false,
-      abortCalls: 0,
-    })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["waiting_approval"],
+        actions: [
+          { id: "approve", metadata: { permissionID: "permission-1", title: "Allow bash" } },
+          { id: "reject", metadata: { permissionID: "permission-1", title: "Allow bash" } },
+        ],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "maps a permission reply back to running",
     input: {
       queue: [permissionEvent("permission-1", "Allow bash"), replyEvent("permission-1")],
     },
-    assert: [returns<EmptyContext, MonitorResult>({
-      states: ["waiting_approval", "running"],
-      actions: [{ id: "approve", metadata: { permissionID: "permission-1", title: "Allow bash" } }, { id: "reject", metadata: { permissionID: "permission-1", title: "Allow bash" } }],
-      permissionCalls: [],
-      aborted: false,
-      abortCalls: 0,
-    })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["waiting_approval", "running"],
+        actions: [
+          { id: "approve", metadata: { permissionID: "permission-1", title: "Allow bash" } },
+          { id: "reject", metadata: { permissionID: "permission-1", title: "Allow bash" } },
+        ],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "maps a primary session error to failed",
     input: {
       queue: [errorEvent(primarySessionId, "APIError")],
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: ["failed"], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["failed"],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "ignores a global session error without a session id",
     input: { queue: [errorEvent(undefined, "APIError")] },
-    assert: [returns<EmptyContext, MonitorResult>({ states: [], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: [],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "ignores child session events",
@@ -129,7 +176,15 @@ const cases = [
         { type: "session.idle", properties: { sessionID: "session-child" } },
       ],
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: [], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: [],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "ignores events from another directory",
@@ -137,7 +192,15 @@ const cases = [
       workspaceRoot: "/workspace",
       queue: [{ type: "session.idle", properties: { sessionID: primarySessionId }, directory: "/other" }],
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: [], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: [],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "ignores unknown and sessionless event types",
@@ -148,12 +211,28 @@ const cases = [
         { type: "todo.updated", properties: { sessionID: primarySessionId, todos: [] } },
       ],
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: [], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: [],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "deduplicates consecutive identical states",
     input: { queue: [statusEvent("busy"), statusEvent("busy")] },
-    assert: [returns<EmptyContext, MonitorResult>({ states: ["running"], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["running"],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "abort emits stopped and suppresses later idle events",
@@ -165,7 +244,15 @@ const cases = [
         state.queue.push(idleEvent());
       },
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: ["stopped"], actions: [], permissionCalls: [], aborted: true, abortCalls: 1 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["stopped"],
+        actions: [],
+        permissionCalls: [],
+        aborted: true,
+        abortCalls: 1,
+      }),
+    ],
   },
   {
     name: "approve with remember posts allow and remember to the permission endpoint",
@@ -179,13 +266,17 @@ const cases = [
         });
       },
     },
-    assert: [returns<EmptyContext, MonitorResult>({
-      states: [],
-      actions: [],
-      permissionCalls: [{ sessionId: primarySessionId, permissionId: "permission-9", response: "allow", remember: true }],
-      aborted: false,
-      abortCalls: 0,
-    })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: [],
+        actions: [],
+        permissionCalls: [
+          { sessionId: primarySessionId, permissionId: "permission-9", response: "allow", remember: true },
+        ],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "reject posts deny without remember",
@@ -196,13 +287,17 @@ const cases = [
         await monitor.execute({ ...openCodeMonitorActions.reject, metadata: { permissionID: "permission-9" } });
       },
     },
-    assert: [returns<EmptyContext, MonitorResult>({
-      states: [],
-      actions: [],
-      permissionCalls: [{ sessionId: primarySessionId, permissionId: "permission-9", response: "deny", remember: false }],
-      aborted: false,
-      abortCalls: 0,
-    })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: [],
+        actions: [],
+        permissionCalls: [
+          { sessionId: primarySessionId, permissionId: "permission-9", response: "deny", remember: false },
+        ],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "reconnects after a stream failure and reconciles a busy session without a terminal state",
@@ -211,7 +306,15 @@ const cases = [
       queue: [statusEvent("busy")],
       sessionStatus: "busy",
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: ["running"], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["running"],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "reconciles a missing session as failed after a disconnect",
@@ -220,7 +323,15 @@ const cases = [
       queue: [],
       sessionExists: false,
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: ["failed"], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["failed"],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "keeps the current state when the reconnect status is unknown",
@@ -229,7 +340,15 @@ const cases = [
       queue: [],
       sessionExists: true,
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: [], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: [],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "does not mark a disconnected session as completed",
@@ -238,7 +357,15 @@ const cases = [
       queue: [statusEvent("busy")],
       sessionStatus: "idle",
     },
-    assert: [returns<EmptyContext, MonitorResult>({ states: ["running", "waiting_input"], actions: [], permissionCalls: [], aborted: false, abortCalls: 0 })],
+    assert: [
+      returns<EmptyContext, MonitorResult>({
+        states: ["running", "waiting_input"],
+        actions: [],
+        permissionCalls: [],
+        aborted: false,
+        abortCalls: 0,
+      }),
+    ],
   },
   {
     name: "stop aborts the open event stream so the process is not held alive",
@@ -275,10 +402,16 @@ const table: OperationTable<FakeState, "default", MonitorInput, MonitorResult, M
     await monitor.stop();
     return {
       states: observations
-        .filter((observation): observation is Extract<AgentObservation, { type: "state_changed" }> => observation.type === "state_changed")
+        .filter(
+          (observation): observation is Extract<AgentObservation, { type: "state_changed" }> =>
+            observation.type === "state_changed",
+        )
         .map((observation) => observation.state),
       actions: observations
-        .filter((observation): observation is Extract<AgentObservation, { type: "action_requested" }> => observation.type === "action_requested")
+        .filter(
+          (observation): observation is Extract<AgentObservation, { type: "action_requested" }> =>
+            observation.type === "action_requested",
+        )
         .map((observation) => ({ id: observation.action.id, metadata: observation.action.metadata })),
       permissionCalls: state.permissionCalls,
       aborted: state.aborted,
@@ -389,12 +522,22 @@ function idleEvent(): OpenCodeEvent {
 function permissionEvent(permissionId: string, title: string): OpenCodeEvent {
   return {
     type: "permission.updated",
-    properties: { id: permissionId, sessionID: primarySessionId, messageID: "message-1", title, type: "bash", pattern: "npm run *" },
+    properties: {
+      id: permissionId,
+      sessionID: primarySessionId,
+      messageID: "message-1",
+      title,
+      type: "bash",
+      pattern: "npm run *",
+    },
   };
 }
 
 function replyEvent(permissionId: string): OpenCodeEvent {
-  return { type: "permission.replied", properties: { sessionID: primarySessionId, permissionID: permissionId, response: "allow" } };
+  return {
+    type: "permission.replied",
+    properties: { sessionID: primarySessionId, permissionID: permissionId, response: "allow" },
+  };
 }
 
 function errorEvent(sessionID: string | undefined, name: string): OpenCodeEvent {
@@ -410,4 +553,3 @@ function errorEvent(sessionID: string | undefined, name: string): OpenCodeEvent 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
-

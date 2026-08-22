@@ -1,9 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useMemo, useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { storyWorkspaces } from "../terminals/-story-fixtures";
 import { WorkspacesListView } from "./-workspaces-view";
 import type { WorkspacesListViewModel } from "./-workspaces-viewmodel";
-import { storyWorkspaces } from "../terminals/-story-fixtures";
 
 function buildViewModel(overrides: Partial<WorkspacesListViewModel> = {}): WorkspacesListViewModel {
   return {
@@ -36,7 +36,11 @@ function InteractiveWorkspaces() {
   return (
     <>
       <WorkspacesListView viewModel={viewModel} />
-      {selectedWorkspace ? <p role="status" className="fixed bottom-5 left-5 rounded bg-lime px-3 py-2 text-xs text-black">Selected {selectedWorkspace}</p> : null}
+      {selectedWorkspace ? (
+        <p role="status" className="fixed bottom-5 left-5 rounded bg-lime px-3 py-2 text-xs text-black">
+          Selected {selectedWorkspace}
+        </p>
+      ) : null}
     </>
   );
 }

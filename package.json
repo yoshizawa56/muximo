@@ -29,14 +29,20 @@
     "dev": "bun scripts/dev.mjs",
     "audit:public": "bun scripts/audit-public-repo.mjs",
     "check:architecture": "node scripts/check-architecture.mjs",
-    "lint": "bunx --no-install turbo run lint",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
     "test:table": "node scripts/check-table-tests.mjs",
     "test": "bun run check:architecture && bun run test:table && bun test scripts/dev.test.ts && bunx --no-install turbo run test",
-    "typecheck": "bun run check:architecture && bunx --no-install turbo run typecheck"
+    "test:local": "bun test packages/domain/src packages/application/src packages/contract/src packages/test-support/src packages/infrastructure/src apps/muximod/src apps/muximo-cli/src apps/web/src scripts/dev.test.ts",
+    "typecheck": "bun run check:architecture && bunx --no-install turbo run typecheck",
+    "prepare": "lefthook install"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.8",
+    "@biomejs/biome": "^2.5.8",
     "@muximo/test-support": "workspace:*",
+    "lefthook": "^2.1.10",
     "turbo": "^2.10.8"
   }
 }

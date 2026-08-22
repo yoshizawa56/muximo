@@ -32,7 +32,11 @@ export type OpenCodePermission = {
   metadata?: Record<string, unknown>;
 };
 
-export type OpenCodeLog = (level: "debug" | "info" | "warn" | "error", message: string, extra?: Record<string, unknown>) => void;
+export type OpenCodeLog = (
+  level: "debug" | "info" | "warn" | "error",
+  message: string,
+  extra?: Record<string, unknown>,
+) => void;
 
 export type OpenCodeRequest = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -184,17 +188,20 @@ export class OpenCodeClient {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        let boundary: number;
-        while ((boundary = findEventBoundary(buffer)) !== -1) {
+        let boundary = findEventBoundary(buffer);
+        while (boundary !== -1) {
           const block = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 1);
           const event = parseSseBlock(block);
           if (event) yield event;
+          boundary = findEventBoundary(buffer);
         }
       }
     } catch (error) {
       if (error instanceof OpenCodeStreamClosedError) throw error;
-      throw new OpenCodeStreamClosedError(`OpenCode event stream failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new OpenCodeStreamClosedError(
+        `OpenCode event stream failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     } finally {
       reader.releaseLock();
     }
@@ -279,7 +286,7 @@ async function safeJson(response: Response): Promise<unknown> {
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 function stringValue(value: unknown): string | undefined {

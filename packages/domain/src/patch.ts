@@ -6,7 +6,7 @@ export type Patch<T> = T | ClearPatch | undefined;
 
 export function applyPatch<T>(current: T | undefined, input: Patch<T>): T | undefined {
   if (input === undefined) return current;
-  return input === clearPatch ? undefined : input as T;
+  return input === clearPatch ? undefined : (input as T);
 }
 
 export type ObjectPatch<T extends object> = {

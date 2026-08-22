@@ -1,24 +1,28 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
-import { workspaceIdForPath } from "@muximo/infrastructure";
+import { AgentSession, AgentSessionId, type AgentSessionRecord, Workspace, WorkspaceId } from "@muximo/domain";
 import {
+  createAgentDatabase,
+  DrizzleAgentSessionRepository,
+  DrizzleWorkspaceRepository,
+  workspaceIdForPath,
+} from "@muximo/infrastructure";
+import {
+  type CleanupRegistrar,
+  type FixtureHandle,
   hasError,
   hasNoError,
   hasObserved,
-  runOperationTable,
-  returns,
-  type CleanupRegistrar,
-  type FixtureHandle,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { AgentSession, AgentSessionId, Workspace, WorkspaceId, type AgentSessionRecord } from "@muximo/domain";
-import { createAgentDatabase, DrizzleAgentSessionRepository, DrizzleWorkspaceRepository } from "@muximo/infrastructure";
+import { describe, expect, it } from "vitest";
 import { MuximoCommand } from "./muximo-command.js";
 
 type ListFixture = {
@@ -50,11 +54,18 @@ const listCases = [
       returns<ListContext, ListResult>({ code: 0 }),
       {
         name: "does not list the missing worktree session by default",
-        check: (ctx: ListContext) => expect(ctx.records.map((record) => record.name)).not.toEqual(expect.arrayContaining(["missing", "unregistered"])),
+        check: (ctx: ListContext) =>
+          expect(ctx.records.map((record) => record.name)).not.toEqual(
+            expect.arrayContaining(["missing", "unregistered"]),
+          ),
       },
       {
         name: "shows long-running execution health",
-        check: (ctx: ListContext) => expect(ctx.records.find((record) => record.name === "long-running")).toMatchObject({ status: "running", health: "long_running" }),
+        check: (ctx: ListContext) =>
+          expect(ctx.records.find((record) => record.name === "long-running")).toMatchObject({
+            status: "running",
+            health: "long_running",
+          }),
       },
     ],
   },
@@ -66,13 +77,26 @@ const listCases = [
       returns<ListContext, ListResult>({ code: 0 }),
       {
         name: "lists the missing worktree session when requested",
-        check: (ctx: ListContext) => expect(ctx.records.find((record) => record.name === "missing")).toMatchObject({ resume: "unavailable", resume_reason: "worktree_missing", worktree_state: "missing" }),
+        check: (ctx: ListContext) =>
+          expect(ctx.records.find((record) => record.name === "missing")).toMatchObject({
+            resume: "unavailable",
+            resume_reason: "worktree_missing",
+            worktree_state: "missing",
+          }),
       },
       {
         name: "reports a worktree path that is no longer registered",
-        check: (ctx: ListContext) => expect(ctx.records.find((record) => record.name === "unregistered")).toMatchObject({ resume: "unavailable", resume_reason: "worktree_unregistered", worktree_state: "unregistered" }),
+        check: (ctx: ListContext) =>
+          expect(ctx.records.find((record) => record.name === "unregistered")).toMatchObject({
+            resume: "unavailable",
+            resume_reason: "worktree_unregistered",
+            worktree_state: "unregistered",
+          }),
       },
-      hasObserved<ListContext, ListResult>("records", expect.arrayContaining([expect.objectContaining({ name: "long-running", health: "long_running" })])),
+      hasObserved<ListContext, ListResult>(
+        "records",
+        expect.arrayContaining([expect.objectContaining({ name: "long-running", health: "long_running" })]),
+      ),
     ],
   },
 ] satisfies readonly OperationCase<"default", ListInput, ListResult, ListContext>[];
@@ -95,7 +119,8 @@ const listTable: OperationTable<ListFixture, "default", ListInput, ListResult, L
   },
   observe: (fixture) => ({
     output: fixture.output.value(),
-    records: fixture.output.value()
+    records: fixture.output
+      .value()
       .split("\n")
       .filter((line) => line.startsWith("{"))
       .map((line) => JSON.parse(line) as Record<string, unknown>),
@@ -155,54 +180,64 @@ async function createListFixture(registerCleanup?: CleanupRegistrar): Promise<Fi
   const old = new Date(now - 31 * 24 * 60 * 60 * 1_000).toISOString();
   const databaseHandle = createAgentDatabase(database);
   const workspaceId = workspaceIdForPath(workspaceRoot);
-  await new DrizzleWorkspaceRepository(databaseHandle.db).upsert(Workspace.create({
-    id: workspaceId,
-    rootPath: workspaceRoot,
-    name: "workspace",
-    isGit: true,
-    worktreeCopyPatterns: [],
-    createdAt: old,
-    updatedAt: old,
-  }));
+  await new DrizzleWorkspaceRepository(databaseHandle.db).upsert(
+    Workspace.create({
+      id: workspaceId,
+      rootPath: workspaceRoot,
+      name: "workspace",
+      isGit: true,
+      worktreeCopyPatterns: [],
+      createdAt: old,
+      updatedAt: old,
+    }),
+  );
   const sessions = new DrizzleAgentSessionRepository(databaseHandle.db);
-  await sessions.insert(sessionFixture({
-    id: AgentSessionId.create("missing-id"),
-    name: "missing",
-    status: "exited",
-    workspaceId,
-    workspaceRoot,
-    worktreePath: join(root, "deleted-worktree"),
-    updatedAt: old,
-    createdAt: old,
-  }));
-  await sessions.insert(sessionFixture({
-    id: AgentSessionId.create("long-running-id"),
-    name: "long-running",
-    status: "running",
-    workspaceId,
-    workspaceRoot,
-    useWorktree: false,
-    worktreeRoot: undefined,
-    worktreePath: undefined,
-    branch: undefined,
-    baseCommit: undefined,
-    executionId: "long-running-execution",
-    executionPid: process.pid,
-    executionStartedAt: old,
-    updatedAt: old,
-    createdAt: old,
-  }));
-  await sessions.insert(sessionFixture({
-    id: AgentSessionId.create("unregistered-id"),
-    name: "unregistered",
-    status: "exited",
-    workspaceId,
-    workspaceRoot: workspace,
-    worktreePath: unregisteredWorktree,
-    updatedAt: old,
-    createdAt: old,
-  }));
-  databaseHandle.sqlite.prepare("UPDATE agent_sessions SET updated_at = ? WHERE id IN (?, ?, ?)").run(old, "missing-id", "unregistered-id", "long-running-id");
+  await sessions.insert(
+    sessionFixture({
+      id: AgentSessionId.create("missing-id"),
+      name: "missing",
+      status: "exited",
+      workspaceId,
+      workspaceRoot,
+      worktreePath: join(root, "deleted-worktree"),
+      updatedAt: old,
+      createdAt: old,
+    }),
+  );
+  await sessions.insert(
+    sessionFixture({
+      id: AgentSessionId.create("long-running-id"),
+      name: "long-running",
+      status: "running",
+      workspaceId,
+      workspaceRoot,
+      useWorktree: false,
+      worktreeRoot: undefined,
+      worktreePath: undefined,
+      branch: undefined,
+      baseCommit: undefined,
+      executionId: "long-running-execution",
+      executionPid: process.pid,
+      executionStartedAt: old,
+      updatedAt: old,
+      createdAt: old,
+    }),
+  );
+  await sessions.insert(
+    sessionFixture({
+      id: AgentSessionId.create("unregistered-id"),
+      name: "unregistered",
+      status: "exited",
+      workspaceId,
+      workspaceRoot: workspace,
+      worktreePath: unregisteredWorktree,
+      updatedAt: old,
+      createdAt: old,
+    }),
+  );
+  databaseHandle.sqlite
+    .prepare("UPDATE agent_sessions SET updated_at = ? WHERE id IN (?, ?, ?)")
+    .run(old, "missing-id", "unregistered-id", "long-running-id");
   databaseHandle.close();
 
   const fixture: ListFixture = { root, workspace, database, output: captureOutput() };

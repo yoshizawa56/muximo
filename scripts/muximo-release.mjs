@@ -1,17 +1,19 @@
 #!/usr/bin/env bun
-import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 const binary = resolve(process.env.MUXIMO_RELEASE_BINARY ?? join(homedir(), ".local", "libexec", "muximo", "muximo"));
 
 if (!existsSync(binary)) {
-  process.stderr.write([
-    `muximo: production binary not found: ${binary}`,
-    "muximo: install the latest stable release with 'bun run muximo:install' or set MUXIMO_RELEASE_BINARY",
-    "muximo: use 'bun run dev' for source-based local development",
-  ].join("\n") + "\n");
+  process.stderr.write(
+    `${[
+      `muximo: production binary not found: ${binary}`,
+      "muximo: install the latest stable release with 'bun run muximo:install' or set MUXIMO_RELEASE_BINARY",
+      "muximo: use 'bun run dev' for source-based local development",
+    ].join("\n")}\n`,
+  );
   process.exitCode = 1;
 } else {
   const child = spawn(binary, process.argv.slice(2), {

@@ -1,16 +1,16 @@
-import { describe, it } from "vitest";
+import type { PairingCodePayload } from "@muximo/contract";
+import { encodePairingCode } from "@muximo/contract";
 import {
   hasError,
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { encodePairingCode } from "@muximo/contract";
+import { describe, it } from "vitest";
 import { parsePairingQrPayload } from "./browser-auth";
-import type { PairingCodePayload } from "@muximo/contract";
 
 type EmptyContext = {};
 type PairingPayloadInput = { code: string };
@@ -31,7 +31,9 @@ const cases = [
   {
     name: "rejects a navigation URL instead of decoding it",
     input: { code: "https://muximo-host.example/settings#ma1=payload" },
-    assert: [hasError<EmptyContext, PairingCodePayload>({ message: "QR code does not contain a valid muximo pairing code" })],
+    assert: [
+      hasError<EmptyContext, PairingCodePayload>({ message: "QR code does not contain a valid muximo pairing code" }),
+    ],
   },
   {
     name: "rejects an endpoint with an unsupported protocol",

@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { storyOfflineTerminal, storyTerminal, storyTerminals } from "./-story-fixtures";
 import { TerminalsView } from "./-terminals-view";
 import type { TerminalsViewModel } from "./-terminals-viewmodel";
-import { storyOfflineTerminal, storyTerminal, storyTerminals } from "./-story-fixtures";
 
 function buildViewModel(overrides: Partial<TerminalsViewModel> = {}): TerminalsViewModel {
   return {
@@ -40,5 +40,11 @@ export const Loading: Story = {
 };
 
 export const RequestFailed: Story = {
-  args: { viewModel: buildViewModel({ terminals: [storyOfflineTerminal], status: "error", errorMessage: "muximod is unreachable" }) },
+  args: {
+    viewModel: buildViewModel({
+      terminals: [storyOfflineTerminal],
+      status: "error",
+      errorMessage: "muximod is unreachable",
+    }),
+  },
 };

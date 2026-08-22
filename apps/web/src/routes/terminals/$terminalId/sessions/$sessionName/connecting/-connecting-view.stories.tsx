@@ -1,8 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { storySession, storyTerminal } from "../../../../-story-fixtures";
 import { ConnectingView } from "./-connecting-view";
 import type { ConnectingViewModel } from "./-connecting-viewmodel";
-import { storySession, storyTerminal } from "../../../../-story-fixtures";
 
 function buildViewModel(overrides: Partial<ConnectingViewModel> = {}): ConnectingViewModel {
   return {

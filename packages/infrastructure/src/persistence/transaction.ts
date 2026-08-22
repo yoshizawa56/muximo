@@ -1,6 +1,6 @@
-import { Database } from "bun:sqlite";
-import { drizzle } from "drizzle-orm/bun-sqlite";
+import type { Database } from "bun:sqlite";
 import type { TransactionManager } from "@muximo/application";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import type { AgentDatabase } from "./index.js";
 import {
   currentSqliteTransaction,
@@ -36,7 +36,7 @@ export class SqliteTransactionManager implements TransactionManager {
   private closed = false;
 
   public constructor(
-    private readonly root: AgentDatabase,
+    readonly root: AgentDatabase,
     private readonly options: SqliteRetryOptions = {},
   ) {
     if (root.databaseFile === ":memory:") {

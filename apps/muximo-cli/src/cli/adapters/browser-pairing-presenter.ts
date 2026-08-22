@@ -1,8 +1,8 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createInterface } from "node:readline/promises";
-import type { Readable, Writable } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline/promises";
+import type { Readable, Writable } from "node:stream";
 import type { PairingClaim, PairingOffer, PairingPresenterPort } from "@muximo/application";
 import { SvgQrRenderer } from "./svg-qr-renderer.js";
 import type { QrRendererPort } from "./terminal-qr-renderer.js";
@@ -58,7 +58,9 @@ export class BrowserPairingPresenter implements PairingPresenterPort {
   }
 
   public async confirmPairing(claim: PairingClaim): Promise<boolean> {
-    this.write(`\nConnection request received.\n  name: ${claim.deviceName}\n  type: ${claim.deviceType}\n  platform: ${claim.platform ?? "(not provided)"}\n  clientVersion: ${claim.clientVersion ?? "(not provided)"}\n  public key fingerprint: ${claim.keyFingerprint}\n`);
+    this.write(
+      `\nConnection request received.\n  name: ${claim.deviceName}\n  type: ${claim.deviceType}\n  platform: ${claim.platform ?? "(not provided)"}\n  clientVersion: ${claim.clientVersion ?? "(not provided)"}\n  public key fingerprint: ${claim.keyFingerprint}\n`,
+    );
     const prompt = createInterface({ input: this.options.input, output: this.options.out });
     try {
       const answer = await prompt.question("Approve this device? [y/N] ");
@@ -135,11 +137,15 @@ function renderPairingPage(svg: string, offer: PairingOffer): string {
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[character]!);
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character]!,
+  );
 }

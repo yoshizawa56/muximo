@@ -1,7 +1,19 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { defaultOpenCodeRegistryFile, OpenCodeServerManager, createLogger, defaultLogFile, errorFields, errorMessage, parseLogLevel, resolveMuximodPaths, validateMuximodControlSocketPath, type LogLevel, type Logger } from "@muximo/infrastructure";
+import {
+  createLogger,
+  defaultLogFile,
+  defaultOpenCodeRegistryFile,
+  errorFields,
+  errorMessage,
+  type Logger,
+  type LogLevel,
+  OpenCodeServerManager,
+  parseLogLevel,
+  resolveMuximodPaths,
+  validateMuximodControlSocketPath,
+} from "@muximo/infrastructure";
 import { createMuximodServer } from "./server.js";
 
 export type MuximodCliOptions = {
@@ -39,7 +51,11 @@ export function restartMarkerPath(pidFile: string): string {
 export function writeRestartMarker(pidFile: string, refreshServers: boolean): void {
   const path = restartMarkerPath(pidFile);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${JSON.stringify({ pid: process.pid, refreshServers, startedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+  writeFileSync(
+    path,
+    `${JSON.stringify({ pid: process.pid, refreshServers, startedAt: new Date().toISOString() })}\n`,
+    { mode: 0o600 },
+  );
 }
 
 /** Report whether a restart was requested, without removing the marker. */
@@ -91,7 +107,9 @@ type MuximodHealthFailureContext = {
   pid?: number;
 };
 
-export async function runMuximodCommand(args: string[] = []): Promise<ReturnType<typeof createMuximodServer> | undefined> {
+export async function runMuximodCommand(
+  args: string[] = [],
+): Promise<ReturnType<typeof createMuximodServer> | undefined> {
   const { command, rest } = normalizeCommand(args);
   if (rest.includes("-h") || rest.includes("--help")) {
     printUsage(command);
@@ -120,7 +138,9 @@ export async function runMuximodCommand(args: string[] = []): Promise<ReturnType
   }
 }
 
-export async function startMuximod(args: string[] | MuximodCliOptions = []): Promise<ReturnType<typeof createMuximodServer> | undefined> {
+export async function startMuximod(
+  args: string[] | MuximodCliOptions = [],
+): Promise<ReturnType<typeof createMuximodServer> | undefined> {
   const options = Array.isArray(args) ? parseMuximodOptions(normalizeStartCommand(args)).options : args;
   const logger = createLogger({
     service: "muximod",
@@ -286,8 +306,10 @@ function parseMuximodOptions(args: string[]): ParsedMuximodOptions {
     else if (argument.startsWith("--control-socket=")) controlSocket = argument.slice("--control-socket=".length);
     else if (argument === "--muximod-base-url") muximodBaseUrl = requireValue(argument, args[++index]);
     else if (argument.startsWith("--muximod-base-url=")) muximodBaseUrl = argument.slice("--muximod-base-url=".length);
-    else if (argument === "--log-level") logLevel = parseRequiredLogLevel(argument, requireValue(argument, args[++index]));
-    else if (argument.startsWith("--log-level=")) logLevel = parseRequiredLogLevel("--log-level", argument.slice("--log-level=".length));
+    else if (argument === "--log-level")
+      logLevel = parseRequiredLogLevel(argument, requireValue(argument, args[++index]));
+    else if (argument.startsWith("--log-level="))
+      logLevel = parseRequiredLogLevel("--log-level", argument.slice("--log-level=".length));
     else if (argument === "--log-file") logFile = resolve(requireValue(argument, args[++index]));
     else if (argument.startsWith("--log-file=")) logFile = resolve(argument.slice("--log-file=".length));
     else throw new Error(`unknown muximo daemon option: ${argument}`);
@@ -303,17 +325,21 @@ async function statusMuximod(options: MuximodCliOptions): Promise<number> {
   const healthCheckStartedAt = Date.now();
   if (await isHealthy(options)) {
     const record = readPidRecord(options.pidFile);
-    process.stdout.write(`muximod running${record ? ` (pid ${record.pid})` : ""} at http://${displayHost(options.host)}:${options.port}\n`);
+    process.stdout.write(
+      `muximod running${record ? ` (pid ${record.pid})` : ""} at http://${displayHost(options.host)}:${options.port}\n`,
+    );
     return 0;
   }
 
   const record = readPidRecord(options.pidFile);
   if (record && isProcessAlive(record.pid)) {
-    process.stderr.write(`${formatMuximodHealthFailure(
-      `muximod process ${record.pid} exists but is not healthy at http://${displayHost(options.host)}:${options.port}`,
-      options,
-      { startedAt: healthCheckStartedAt, pid: record.pid },
-    )}\n`);
+    process.stderr.write(
+      `${formatMuximodHealthFailure(
+        `muximod process ${record.pid} exists but is not healthy at http://${displayHost(options.host)}:${options.port}`,
+        options,
+        { startedAt: healthCheckStartedAt, pid: record.pid },
+      )}\n`,
+    );
     return 1;
   }
 
@@ -327,7 +353,9 @@ async function stopMuximod(options: MuximodCliOptions, quiet = false): Promise<n
   const record = readPidRecord(options.pidFile);
   if (!record) {
     if (await isHealthy(options)) {
-      throw new Error(`muximod is healthy but its pid file is missing: ${options.pidFile}; stop it through its service manager`);
+      throw new Error(
+        `muximod is healthy but its pid file is missing: ${options.pidFile}; stop it through its service manager`,
+      );
     }
     if (!quiet) process.stdout.write("muximod is already stopped\n");
     return 0;
@@ -341,11 +369,13 @@ async function stopMuximod(options: MuximodCliOptions, quiet = false): Promise<n
 
   const recordOptions = { ...options, host: record.host, port: record.port };
   if (!(await isHealthy(recordOptions))) {
-    throw new Error(formatMuximodHealthFailure(
-      `refusing to signal pid ${record.pid}; pid file does not point to a healthy muximod`,
-      options,
-      { startedAt: healthCheckStartedAt, pid: record.pid },
-    ));
+    throw new Error(
+      formatMuximodHealthFailure(
+        `refusing to signal pid ${record.pid}; pid file does not point to a healthy muximod`,
+        options,
+        { startedAt: healthCheckStartedAt, pid: record.pid },
+      ),
+    );
   }
 
   process.kill(record.pid, "SIGTERM");
@@ -374,7 +404,9 @@ async function restartMuximod(options: MuximodCliOptions): Promise<number> {
   // exits. Reuse that process when it becomes healthy before spawning a second
   // one ourselves.
   if (await waitFor(() => isHealthy(options), 1_000)) {
-    process.stdout.write(`muximod restarted by its service manager at http://${displayHost(options.host)}:${options.port}\n`);
+    process.stdout.write(
+      `muximod restarted by its service manager at http://${displayHost(options.host)}:${options.port}\n`,
+    );
     return 0;
   }
 
@@ -386,11 +418,13 @@ async function restartMuximod(options: MuximodCliOptions): Promise<number> {
     } catch {
       // The child may have exited already; preserve the useful health error.
     }
-    throw new Error(formatMuximodHealthFailure(
-      `muximod did not become healthy at http://${displayHost(options.host)}:${options.port}`,
-      options,
-      { startedAt: startupStartedAt, pid: child.pid },
-    ));
+    throw new Error(
+      formatMuximodHealthFailure(
+        `muximod did not become healthy at http://${displayHost(options.host)}:${options.port}`,
+        options,
+        { startedAt: startupStartedAt, pid: child.pid },
+      ),
+    );
   }
   process.stdout.write(`muximod restarted at http://${displayHost(options.host)}:${options.port}\n`);
   return 0;
@@ -405,11 +439,13 @@ async function ensureMuximod(options: MuximodCliOptions): Promise<number> {
 
   const record = readPidRecord(options.pidFile);
   if (record && isProcessAlive(record.pid)) {
-    throw new Error(formatMuximodHealthFailure(
-      `muximod pid ${record.pid} exists but is not healthy; use 'muximo daemon restart'`,
-      options,
-      { startedAt: healthCheckStartedAt, pid: record.pid },
-    ));
+    throw new Error(
+      formatMuximodHealthFailure(
+        `muximod pid ${record.pid} exists but is not healthy; use 'muximo daemon restart'`,
+        options,
+        { startedAt: healthCheckStartedAt, pid: record.pid },
+      ),
+    );
   }
 
   const startupStartedAt = Date.now();
@@ -420,11 +456,13 @@ async function ensureMuximod(options: MuximodCliOptions): Promise<number> {
     } catch {
       // The child may have exited already; preserve the useful health error.
     }
-    throw new Error(formatMuximodHealthFailure(
-      `muximod did not become healthy at http://${displayHost(options.host)}:${options.port}`,
-      options,
-      { startedAt: startupStartedAt, pid: child.pid },
-    ));
+    throw new Error(
+      formatMuximodHealthFailure(
+        `muximod did not become healthy at http://${displayHost(options.host)}:${options.port}`,
+        options,
+        { startedAt: startupStartedAt, pid: child.pid },
+      ),
+    );
   }
   process.stdout.write(`muximod started at http://${displayHost(options.host)}:${options.port}\n`);
   return 0;
@@ -459,7 +497,9 @@ export function formatMuximodHealthFailure(
 function readRecentMuximodDiagnostics(logFile: string, context: MuximodHealthFailureContext): string[] {
   let lines: string[];
   try {
-    lines = readFileSync(logFile, "utf8").split(/\r?\n/).filter((line) => line.length > 0);
+    lines = readFileSync(logFile, "utf8")
+      .split(/\r?\n/)
+      .filter((line) => line.length > 0);
   } catch {
     return [];
   }
@@ -488,11 +528,12 @@ function formatMuximodDiagnostic(line: string, context: MuximodHealthFailureCont
   const error = asRecord(fields?.error);
   const level = String(record.level).toUpperCase();
   const event = typeof record.event === "string" ? record.event : "unknown";
-  const message = typeof fields?.message === "string"
-    ? fields.message
-    : typeof error?.message === "string"
-      ? error.message
-      : undefined;
+  const message =
+    typeof fields?.message === "string"
+      ? fields.message
+      : typeof error?.message === "string"
+        ? error.message
+        : undefined;
   const code = typeof error?.code === "string" || typeof error?.code === "number" ? String(error.code) : undefined;
   const errorId = typeof fields?.errorId === "string" ? fields.errorId : undefined;
   const detail = message ? `: ${truncateHealthDiagnostic(errorMessage(message))}` : "";
@@ -503,14 +544,12 @@ function formatMuximodDiagnostic(line: string, context: MuximodHealthFailureCont
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
 function truncateHealthDiagnostic(value: string): string {
-  return value.length <= healthDiagnosticMessageLimit
-    ? value
-    : `${value.slice(0, healthDiagnosticMessageLimit - 1)}…`;
+  return value.length <= healthDiagnosticMessageLimit ? value : `${value.slice(0, healthDiagnosticMessageLimit - 1)}…`;
 }
 
 function spawnCurrentDaemon(options: MuximodCliOptions) {
@@ -529,9 +568,11 @@ async function isHealthy(options: Pick<MuximodCliOptions, "host" | "port">): Pro
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), healthTimeoutMs);
   try {
-    const response = await fetch(`http://${displayHost(options.host)}:${options.port}/health`, { signal: controller.signal });
+    const response = await fetch(`http://${displayHost(options.host)}:${options.port}/health`, {
+      signal: controller.signal,
+    });
     if (!response.ok) return false;
-    const body = await response.json() as { ok?: boolean; service?: string };
+    const body = (await response.json()) as { ok?: boolean; service?: string };
     return body.ok === true && body.service === "muximod";
   } catch {
     return false;
@@ -608,15 +649,19 @@ function displayHost(host: string): string {
 }
 
 function printUsage(command: MuximodCommand): void {
-  const usage = command === "start"
-    ? "Usage: muximo daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--muximod-base-url URL] [--log-level LEVEL] [--log-file PATH]"
-    : command === "restart"
-      ? "Usage: muximo daemon restart [--refresh-servers] [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]"
-      : `Usage: muximo daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]`;
-  const behavior = command === "start"
-    ? "Starts muximod in the background and waits until it is healthy by default. Use --foreground when a service manager should own the muximod process."
-    : command === "restart"
-      ? "Stops muximod and starts it in the background, unless a service manager takes over the replacement process. Running OpenCode servers are kept; use --refresh-servers to restart them on the same ports so configuration or environment changes are picked up."
-      : undefined;
-  process.stdout.write(`${usage}\n${behavior ? `\n${behavior}\n` : ""}\nCommands: start, status, stop, restart, ensure\n`);
+  const usage =
+    command === "start"
+      ? "Usage: muximo daemon start [--foreground] [--host HOST] [--port PORT] [--pid-file PATH] [--control-socket PATH] [--muximod-base-url URL] [--log-level LEVEL] [--log-file PATH]"
+      : command === "restart"
+        ? "Usage: muximo daemon restart [--refresh-servers] [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]"
+        : `Usage: muximo daemon ${command} [--host HOST] [--port PORT] [--pid-file PATH] [--log-level LEVEL] [--log-file PATH]`;
+  const behavior =
+    command === "start"
+      ? "Starts muximod in the background and waits until it is healthy by default. Use --foreground when a service manager should own the muximod process."
+      : command === "restart"
+        ? "Stops muximod and starts it in the background, unless a service manager takes over the replacement process. Running OpenCode servers are kept; use --refresh-servers to restart them on the same ports so configuration or environment changes are picked up."
+        : undefined;
+  process.stdout.write(
+    `${usage}\n${behavior ? `\n${behavior}\n` : ""}\nCommands: start, status, stop, restart, ensure\n`,
+  );
 }

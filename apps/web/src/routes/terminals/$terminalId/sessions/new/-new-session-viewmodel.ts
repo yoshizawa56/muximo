@@ -1,11 +1,15 @@
-import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useState } from "react";
 import { invalidateSessionData } from "../../../../../app/api/invalidation";
 import { useMuximodConnection } from "../../../../../app/api/use-muximod-connection";
 import type { TerminalEndpoint } from "../../../-connection-flow-viewmodel";
 import { fallbackTerminal, useTerminalResources } from "../../../-terminal-resources";
-import { useWorkspacePickerViewModel, workspacePickerState, type WorkspacePickerViewModel } from "../-workspace-picker-viewmodel";
+import {
+  useWorkspacePickerViewModel,
+  type WorkspacePickerViewModel,
+  workspacePickerState,
+} from "../-workspace-picker-viewmodel";
 
 export type NewSessionViewModel = {
   terminal: TerminalEndpoint;
@@ -41,25 +45,30 @@ export function useNewSessionViewModel(): NewSessionViewModel {
     },
     onCreate: () => {
       const workspaceId = workspacePicker.workspaceId;
-      if (!connection || !name.trim() || !workspacePickerState(workspacePicker).canContinue || !workspaceId || isCreating) return;
+      if (
+        !connection ||
+        !name.trim() ||
+        !workspacePickerState(workspacePicker).canContinue ||
+        !workspaceId ||
+        isCreating
+      )
+        return;
       setIsCreating(true);
       setErrorMessage(null);
-      void utils.sessions.create.call({ name: name.trim(), workspaceId }, {})
+      void utils.sessions.create
+        .call({ name: name.trim(), workspaceId }, {})
         .then((response) => {
           const session = response.session;
-          queryClient.setQueryData(
-            utils.sessions.list.queryKey({ input: {} }),
-            (current) => {
-              if (!current) return current;
-              const sessions = [
-                ...current.sessions.filter((candidate) => candidate.name !== session.name),
-                session,
-              ];
-              return { ...current, sessions };
-            },
-          );
+          queryClient.setQueryData(utils.sessions.list.queryKey({ input: {} }), (current) => {
+            if (!current) return current;
+            const sessions = [...current.sessions.filter((candidate) => candidate.name !== session.name), session];
+            return { ...current, sessions };
+          });
           invalidateSessionData(queryClient, utils);
-          void navigate({ to: "/terminals/$terminalId/sessions/$sessionName", params: { terminalId, sessionName: session.name } });
+          void navigate({
+            to: "/terminals/$terminalId/sessions/$sessionName",
+            params: { terminalId, sessionName: session.name },
+          });
         })
         .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)))
         .finally(() => setIsCreating(false));

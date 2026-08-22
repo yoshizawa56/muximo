@@ -1,43 +1,67 @@
-import { describe, expect, it } from "vitest";
 import {
+  type Assertion,
+  type FixtureHandle,
   noFixture,
+  type OperationCase,
+  type OperationTable,
   returns,
   runOperationTable,
   runScenarioTable,
-  type Assertion,
-  type FixtureHandle,
-  type OperationCase,
-  type OperationTable,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, expect, it } from "vitest";
 import {
+  type BrowserConnectionProfile,
   clearBrowserConnectionProfile,
   connectionForProfile,
   normalizeMuximodBaseUrl,
   readBrowserConnectionProfile,
   saveBrowserConnectionProfile,
-  type BrowserConnectionProfile,
 } from "./connection-profile-store";
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
 
-  get length(): number { return this.values.size; }
-  clear(): void { this.values.clear(); }
-  getItem(key: string): string | null { return this.values.get(key) ?? null; }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null; }
-  removeItem(key: string): void { this.values.delete(key); }
-  setItem(key: string, value: string): void { this.values.set(key, value); }
+  get length(): number {
+    return this.values.size;
+  }
+  clear(): void {
+    this.values.clear();
+  }
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+  key(index: number): string | null {
+    return [...this.values.keys()][index] ?? null;
+  }
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+  }
 }
 
 type EmptyContext = {};
 
 const normalizeCases = [
-  { name: "removes a trailing slash", input: "https://workstation.tailnet.ts.net/", assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net")] },
-  { name: "preserves a non-default port", input: "https://workstation.tailnet.ts.net:8449/", assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net:8449")] },
-  { name: "removes path and query details", input: "https://example.test/muximod/?ignored=1", assert: [returns<EmptyContext, string>("https://example.test/muximod")] },
+  {
+    name: "removes a trailing slash",
+    input: "https://workstation.tailnet.ts.net/",
+    assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net")],
+  },
+  {
+    name: "preserves a non-default port",
+    input: "https://workstation.tailnet.ts.net:8449/",
+    assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net:8449")],
+  },
+  {
+    name: "removes path and query details",
+    input: "https://example.test/muximod/?ignored=1",
+    assert: [returns<EmptyContext, string>("https://example.test/muximod")],
+  },
 ] satisfies readonly OperationCase<"default", string, string, EmptyContext>[];
 
 const normalizeTable: OperationTable<undefined, "default", string, string, EmptyContext> = {
@@ -55,7 +79,13 @@ const connectionCases = [
   },
 ] satisfies readonly OperationCase<"default", null, ReturnType<typeof connectionForProfile>, EmptyContext>[];
 
-const connectionTable: OperationTable<undefined, "default", null, ReturnType<typeof connectionForProfile>, EmptyContext> = {
+const connectionTable: OperationTable<
+  undefined,
+  "default",
+  null,
+  ReturnType<typeof connectionForProfile>,
+  EmptyContext
+> = {
   defaultFixture: noFixture(),
   cases: connectionCases,
   execute: (_fixture, input) => connectionForProfile(input),
@@ -110,16 +140,21 @@ const profileCases = [
   },
   {
     name: "ignores malformed stored data",
-    steps: [
-      { type: "set-raw", value: "not-json" },
-      { type: "read" },
-    ],
+    steps: [{ type: "set-raw", value: "not-json" }, { type: "read" }],
     assert: [returns<ProfileContext, ProfileResult>(null)],
   },
   {
     name: "reads the legacy serveUrl field as a muximod endpoint",
     steps: [
-      { type: "set-raw", value: JSON.stringify({ id: "default", name: "Workstation", serveUrl: "https://workstation.tailnet.ts.net/", updatedAt: "2026-08-15T00:00:00.000Z" }) },
+      {
+        type: "set-raw",
+        value: JSON.stringify({
+          id: "default",
+          name: "Workstation",
+          serveUrl: "https://workstation.tailnet.ts.net/",
+          updatedAt: "2026-08-15T00:00:00.000Z",
+        }),
+      },
       { type: "read" },
     ],
     assert: [hasProfileEndpoint("https://workstation.tailnet.ts.net")],

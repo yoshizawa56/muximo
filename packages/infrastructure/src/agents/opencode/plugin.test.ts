@@ -1,17 +1,17 @@
-import { describe, it } from "vitest";
 import {
-  noFixture,
-  returns,
   hasError,
-  runOperationTable,
+  noFixture,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 import type { AgentMonitor, AgentObservationSink, AgentPluginV1 } from "../index.js";
-import { createOpenCodePlugin } from "./plugin.js";
-import type { OpenCodeMonitorOptions } from "./monitor.js";
 import type { OpenCodeClient, OpenCodeSessionStatus } from "./client.js";
+import type { OpenCodeMonitorOptions } from "./monitor.js";
+import { createOpenCodePlugin } from "./plugin.js";
 import type { OpenCodeServerEntry, OpenCodeServerManager } from "./server.js";
 
 const serverEntry: OpenCodeServerEntry = {
@@ -22,7 +22,9 @@ const serverEntry: OpenCodeServerEntry = {
   startedAt: "2026-08-15T00:00:00.000Z",
 };
 
-function fakeManager(overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown> } = {}): OpenCodeServerManager {
+function fakeManager(
+  overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown> } = {},
+): OpenCodeServerManager {
   return {
     ensure: async (root: string) => {
       if (overrides.ensureThrows) throw new Error("opencode serve did not become healthy within 15000ms");
@@ -86,71 +88,85 @@ const cases = [
   {
     name: "detects the opencode executable",
     input: { kind: "detect" as const, command: "/usr/local/bin/opencode" },
-    assert: [returns<EmptyContext, PluginResult>({ detected: { agentId: "opencode", confidence: 1 }, plan: {} as never, titleCalls: { createdTitles: [], renamedSessions: [] } })],
+    assert: [
+      returns<EmptyContext, PluginResult>({
+        detected: { agentId: "opencode", confidence: 1 },
+        plan: {} as never,
+        titleCalls: { createdTitles: [], renamedSessions: [] },
+      }),
+    ],
   },
   {
     name: "prepares a launch that attaches the TUI to the owned server",
     input: { kind: "prepare" as const },
-    assert: [returns<EmptyContext, PluginResult>({
-      detected: null,
-      plan: {
-        command: "opencode",
-        args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-created"],
-        cwd: "/workspace",
-        backendSessionId: "session-created",
-        monitorPresent: true,
-        sidecarKinds: ["opencode-serve"],
-      },
-      titleCalls: { createdTitles: [undefined], renamedSessions: [] },
-    })],
+    assert: [
+      returns<EmptyContext, PluginResult>({
+        detected: null,
+        plan: {
+          command: "opencode",
+          args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-created"],
+          cwd: "/workspace",
+          backendSessionId: "session-created",
+          monitorPresent: true,
+          sidecarKinds: ["opencode-serve"],
+        },
+        titleCalls: { createdTitles: [undefined], renamedSessions: [] },
+      }),
+    ],
   },
   {
     name: "titles the new session with the agent session name",
     input: { kind: "prepare" as const, name: "review" },
-    assert: [returns<EmptyContext, PluginResult>({
-      detected: null,
-      plan: {
-        command: "opencode",
-        args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-created"],
-        cwd: "/workspace",
-        backendSessionId: "session-created",
-        monitorPresent: true,
-        sidecarKinds: ["opencode-serve"],
-      },
-      titleCalls: { createdTitles: ["review"], renamedSessions: [] },
-    })],
+    assert: [
+      returns<EmptyContext, PluginResult>({
+        detected: null,
+        plan: {
+          command: "opencode",
+          args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-created"],
+          cwd: "/workspace",
+          backendSessionId: "session-created",
+          monitorPresent: true,
+          sidecarKinds: ["opencode-serve"],
+        },
+        titleCalls: { createdTitles: ["review"], renamedSessions: [] },
+      }),
+    ],
   },
   {
     name: "resumes an existing session by its persisted id",
     input: { kind: "prepare-resume" as const },
-    assert: [returns<EmptyContext, PluginResult>({
-      detected: null,
-      plan: {
-        command: "opencode",
-        args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-resumed"],
-        cwd: "/workspace",
-        backendSessionId: "session-resumed",
-        monitorPresent: true,
-        sidecarKinds: ["opencode-serve"],
-      },
-      titleCalls: { createdTitles: [], renamedSessions: [] },
-    })],
+    assert: [
+      returns<EmptyContext, PluginResult>({
+        detected: null,
+        plan: {
+          command: "opencode",
+          args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-resumed"],
+          cwd: "/workspace",
+          backendSessionId: "session-resumed",
+          monitorPresent: true,
+          sidecarKinds: ["opencode-serve"],
+        },
+        titleCalls: { createdTitles: [], renamedSessions: [] },
+      }),
+    ],
   },
   {
     name: "keeps the agent session name on the resumed session title",
     input: { kind: "prepare-resume" as const, name: "review" },
-    assert: [returns<EmptyContext, PluginResult>({
-      detected: null,
-      plan: {
-        command: "opencode",
-        args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-resumed"],
-        cwd: "/workspace",
-        backendSessionId: "session-resumed",
-        monitorPresent: true,
-        sidecarKinds: ["opencode-serve"],
-      },
-      titleCalls: { createdTitles: [], renamedSessions: [{ sessionId: "session-resumed", title: "review" }] },
-    })],
+    assert: [
+      returns<EmptyContext, PluginResult>({
+        detected: null,
+        plan: {
+          command: "opencode",
+          args: ["attach", "http://127.0.0.1:49152", "--dir", "/workspace", "--session", "session-resumed"],
+          cwd: "/workspace",
+          backendSessionId: "session-resumed",
+          monitorPresent: true,
+          sidecarKinds: ["opencode-serve"],
+        },
+        titleCalls: { createdTitles: [], renamedSessions: [{ sessionId: "session-resumed", title: "review" }] },
+      }),
+    ],
   },
   {
     name: "rejects a resume when the session no longer exists",
@@ -180,8 +196,17 @@ const table: OperationTable<undefined, "default", PluginInput, PluginResult, Emp
     });
     switch (input.kind) {
       case "detect": {
-        const detected = await plugin.detect({ command: input.command ?? "opencode", args: [], cwd: "/workspace", environment: {} });
-        return { detected: detected ? { agentId: detected.agentId, confidence: detected.confidence } : null, plan: {} as never, titleCalls: records };
+        const detected = await plugin.detect({
+          command: input.command ?? "opencode",
+          args: [],
+          cwd: "/workspace",
+          environment: {},
+        });
+        return {
+          detected: detected ? { agentId: detected.agentId, confidence: detected.confidence } : null,
+          plan: {} as never,
+          titleCalls: records,
+        };
       }
       case "launch":
         await plugin.launch({ cwd: "/workspace", args: [], environment: {} });
@@ -189,9 +214,8 @@ const table: OperationTable<undefined, "default", PluginInput, PluginResult, Emp
       case "prepare":
       case "prepare-resume":
       case "prepare-resume-missing": {
-        const resumeSessionId = input.kind === "prepare"
-          ? null
-          : input.kind === "prepare-resume" ? "session-resumed" : "session-gone";
+        const resumeSessionId =
+          input.kind === "prepare" ? null : input.kind === "prepare-resume" ? "session-resumed" : "session-gone";
         const plan = await plugin.prepareLaunch!({
           cwd: "/workspace",
           args: [],

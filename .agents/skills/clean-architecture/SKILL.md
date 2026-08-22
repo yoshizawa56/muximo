@@ -61,11 +61,11 @@ implementation, its package, or its runtime library.
 
 ## Domain model and patch rules
 
-- Entity modules expose a namespace API such as
-  `{ schema, validate, create, update, ...businessOperations }`.
-- Creation, update, reconstitution, and domain operations validate their input
-  and preserve invariants. Do not construct entity-shaped objects around these
-  APIs.
+- Entity modules expose a namespace API such as `{ schema, create, restore, update, ...businessOperations }`.
+- `create` builds new aggregates, `restore` rehydrates persisted data, and `update` applies pure transitions.
+  Repositories and adapters must rehydrate through `.restore(...)`; there is no public `.validate(...)`
+  so raw objects cannot be legitimized after construction.
+- Creation, update, reconstitution, and domain operations validate their input and preserve invariants. Do not construct entity-shaped objects around these APIs; do not call `<Entity>.schema.parse` outside the domain or contract packages (`check-architecture` enforces both).
 - Domain schemas use optional properties for absence and do not use nullable
   fields. A transport PATCH interprets `undefined` as unchanged and `null` as
   clear; the outer adapter maps that representation to the domain patch type.

@@ -26,6 +26,4 @@ export type ApprovedDevice = {
   deviceId: string;
 };
 
-export type PairDeviceResult =
-  | { status: "approved"; deviceId: string }
-  | { status: "rejected" };
+export type PairDeviceResult = { status: "approved"; deviceId: string } | { status: "rejected" };

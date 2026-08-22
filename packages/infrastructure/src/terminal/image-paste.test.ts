@@ -1,7 +1,25 @@
 // Tests for the terminal adapter stay co-located with its implementation.
+
+import {
+  type FixtureHandle,
+  hasError,
+  hasObserved,
+  noFixture,
+  type OperationCase,
+  type OperationTable,
+  returns,
+  runOperationTable,
+  type TestRegistrar,
+} from "@muximo/test-support";
 import { describe, it, vi } from "vitest";
-import { hasError, hasObserved, noFixture, returns, runOperationTable, type FixtureHandle, type OperationCase, type OperationTable, type TestRegistrar } from "@muximo/test-support";
-import { inlineImageSequence, sanitizeInlineImageName, createImagePaster, type ImagePasteAdapter, type ImagePasteInput, type ImagePasteResult } from "./image-paste.js";
+import {
+  createImagePaster,
+  type ImagePasteAdapter,
+  type ImagePasteInput,
+  type ImagePasteResult,
+  inlineImageSequence,
+  sanitizeInlineImageName,
+} from "./image-paste.js";
 
 const bytes = Buffer.from([0x00, 0x01, 0x02, 0xfe, 0xff]);
 
@@ -32,19 +50,26 @@ type PasteContext = {
   osascriptReferencesTempFile: boolean;
 };
 
-const createPasteFixture = (options: { platform?: NodeJS.Platform; osascriptStatus?: number | null; pasteFails?: boolean } = {}): FixtureHandle<PasteFixture> => {
+const createPasteFixture = (
+  options: { platform?: NodeJS.Platform; osascriptStatus?: number | null; pasteFails?: boolean } = {},
+): FixtureHandle<PasteFixture> => {
   const calls: PasteCall[] = [];
   const adapter: ImagePasteAdapter = {
-    setBuffer: vi.fn<(name: string, _data: Buffer) => void>((name) => { calls.push({ kind: "set", name }); }),
+    setBuffer: vi.fn<(name: string, _data: Buffer) => void>((name) => {
+      calls.push({ kind: "set", name });
+    }),
     pasteBuffer: vi.fn<(name: string, target: string) => void>((name, target) => {
       calls.push({ kind: "paste", name, target });
       if (options.pasteFails) throw new Error("tmux paste failed");
     }),
-    deleteBuffer: vi.fn<(name: string) => void>((name) => { calls.push({ kind: "delete", name }); }),
+    deleteBuffer: vi.fn<(name: string) => void>((name) => {
+      calls.push({ kind: "delete", name });
+    }),
   };
-  const runOsascript = options.platform === "darwin"
-    ? vi.fn<(script: string) => { status: number | null }>(() => ({ status: options.osascriptStatus ?? 0 }))
-    : undefined;
+  const runOsascript =
+    options.platform === "darwin"
+      ? vi.fn<(script: string) => { status: number | null }>(() => ({ status: options.osascriptStatus ?? 0 }))
+      : undefined;
   const paster = createImagePaster({
     tmux: adapter,
     platform: options.platform ?? "linux",
@@ -63,7 +88,10 @@ const pasteCases = [
       hasObserved<PasteContext, PasteResult>("setCount", 1),
       hasObserved<PasteContext, PasteResult>("bufferNamePattern", true),
       hasObserved<PasteContext, PasteResult>("pastedTarget", "%3"),
-      hasObserved<PasteContext, PasteResult>("sequence", `\x1b]1337;file=inline=1;name=photo.png:${bytes.toString("base64")}\x07`),
+      hasObserved<PasteContext, PasteResult>(
+        "sequence",
+        `\x1b]1337;file=inline=1;name=photo.png:${bytes.toString("base64")}\x07`,
+      ),
       hasObserved<PasteContext, PasteResult>("deleteCount", 1),
     ],
   },
@@ -71,7 +99,12 @@ const pasteCases = [
     name: "reports the staged temp file and the pasted byte count",
     input: { paneId: "%3", name: "photo.png", mimeType: "image/png", bytes },
     assert: [
-      hasObserved<PasteContext, PasteResult>("result", { bytes: bytes.length, name: "photo.png", tempFilePath: "/tmp/photo.png", clipboard: "unavailable" }),
+      hasObserved<PasteContext, PasteResult>("result", {
+        bytes: bytes.length,
+        name: "photo.png",
+        tempFilePath: "/tmp/photo.png",
+        clipboard: "unavailable",
+      }),
     ],
   },
   {
@@ -140,7 +173,10 @@ const pasteTable: OperationTable<PasteFixture, PasteFixtureKey, PasteInput, Past
       clipboard: result.ok ? result.value.clipboard : undefined,
       osascriptCalls: fixture.runOsascript?.mock.calls.length ?? 0,
       osascriptIncludesAppKit: osascriptScript?.includes("ObjC.import('AppKit')") ?? false,
-      osascriptReferencesTempFile: osascriptScript ? (result.ok && osascriptScript.includes(result.value.tempFilePath)) || osascriptScript.includes("/tmp/photo.png") : false,
+      osascriptReferencesTempFile: osascriptScript
+        ? (result.ok && osascriptScript.includes(result.value.tempFilePath)) ||
+          osascriptScript.includes("/tmp/photo.png")
+        : false,
     };
   },
 };
@@ -153,7 +189,9 @@ const pureCases = [
   {
     name: "encodes the payload as standard base64",
     input: { name: "screenshot.png", bytes },
-    assert: [returns<PureContext, PureResult>(`\x1b]1337;file=inline=1;name=screenshot.png:${bytes.toString("base64")}\x07`)],
+    assert: [
+      returns<PureContext, PureResult>(`\x1b]1337;file=inline=1;name=screenshot.png:${bytes.toString("base64")}\x07`),
+    ],
   },
   {
     name: "sanitizes names that could break the OSC header",
@@ -175,7 +213,8 @@ const pureCases = [
 const pureTable: OperationTable<undefined, "default", PureInput, PureResult, PureContext> = {
   defaultFixture: noFixture(),
   cases: pureCases,
-  execute: (_fixture, input) => input.bytes ? inlineImageSequence(input.name, input.bytes) : sanitizeInlineImageName(input.name),
+  execute: (_fixture, input) =>
+    input.bytes ? inlineImageSequence(input.name, input.bytes) : sanitizeInlineImageName(input.name),
   observe: () => ({}),
 };
 

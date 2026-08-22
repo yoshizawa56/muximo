@@ -1,19 +1,22 @@
 import { Writable } from "node:stream";
-import { describe, it } from "vitest";
+import type { PairingOffer } from "@muximo/application";
 import {
-  hasObserved,
-  runOperationTable,
   type FixtureHandle,
+  hasObserved,
   type OperationCase,
   type OperationTable,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { PairingOffer } from "@muximo/application";
+import { describe, it } from "vitest";
 import { TerminalPairingPresenter } from "./terminal-pairing-presenter.js";
 
 class CaptureOutput extends Writable {
   public value = "";
-  public _write(chunk: Buffer | string, _encoding: string, callback: (error?: Error) => void): void { this.value += chunk.toString(); callback(); }
+  public _write(chunk: Buffer | string, _encoding: string, callback: (error?: Error) => void): void {
+    this.value += chunk.toString();
+    callback();
+  }
 }
 
 const offer: PairingOffer = {
@@ -25,7 +28,9 @@ const offer: PairingOffer = {
 
 type PresenterFixture = { out: CaptureOutput; received: string | undefined };
 type PresenterContext = { received: string | undefined; output: boolean; instruction: boolean };
-const presenterFixture = (): FixtureHandle<PresenterFixture> => ({ fixture: { out: new CaptureOutput(), received: undefined } });
+const presenterFixture = (): FixtureHandle<PresenterFixture> => ({
+  fixture: { out: new CaptureOutput(), received: undefined },
+});
 
 const cases = [
   {
@@ -47,12 +52,19 @@ const table: OperationTable<PresenterFixture, "default", PairingOffer, undefined
       out: fixture.out,
       input: process.stdin,
       qrRenderer: {
-        render: async (value) => { fixture.received = value; return "rendered-qr"; },
+        render: async (value) => {
+          fixture.received = value;
+          return "rendered-qr";
+        },
       },
     });
     await presenter.showPairing(input);
   },
-  observe: (fixture) => ({ received: fixture.received, output: fixture.out.value.includes("rendered-qr"), instruction: fixture.out.value.includes("Scan this QR code in the Muximo app") }),
+  observe: (fixture) => ({
+    received: fixture.received,
+    output: fixture.out.value.includes("rendered-qr"),
+    instruction: fixture.out.value.includes("Scan this QR code in the Muximo app"),
+  }),
 };
 
 describe("TerminalPairingPresenter", () => {

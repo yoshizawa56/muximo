@@ -1,9 +1,19 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
+import {
+  buildServeArgs,
+  buildServeHttpUrl,
+  buildTailscaleInvocation,
+  errorFields,
+  errorMessage,
+  type Logger,
+  type LogLevel,
+  normalizeTailscaleStdout,
+  parseLogLevel,
+  parseTailscaleHostname,
+} from "@muximo/infrastructure";
 import { runMuximodCommand } from "@muximo/muximod/runtime";
-import { errorFields, errorMessage, parseLogLevel, type Logger, type LogLevel } from "@muximo/infrastructure";
-import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "@muximo/infrastructure";
 
 const execFile = promisify(execFileCallback);
 const tailscaleCommandTimeoutMs = 15_000;
@@ -73,7 +83,11 @@ export function parseServeOptions(args: string[], environment: NodeJS.ProcessEnv
     const argument = rest[index]!;
     if (argument === "--port" || argument === "--https-port" || argument === "--external-port") {
       externalPort = parsePort(argument, requireValue(argument, rest[++index]));
-    } else if (argument.startsWith("--port=") || argument.startsWith("--https-port=") || argument.startsWith("--external-port=")) {
+    } else if (
+      argument.startsWith("--port=") ||
+      argument.startsWith("--https-port=") ||
+      argument.startsWith("--external-port=")
+    ) {
       const option = argument.slice(0, argument.indexOf("="));
       externalPort = parsePort(option, argument.slice(argument.indexOf("=") + 1));
     } else if (argument === "--muximod-port") {
@@ -127,13 +141,19 @@ export async function runServeCommand(
     return 0;
   }
   const options = parseServeOptions(args, environment);
-  const result = await ensureTailscaleServe(options, {
-    ensureMuximod: dependencies.ensureMuximod,
-    runCommand: dependencies.runCommand,
-    logger,
-  }, environment);
+  const result = await ensureTailscaleServe(
+    options,
+    {
+      ensureMuximod: dependencies.ensureMuximod,
+      runCommand: dependencies.runCommand,
+      logger,
+    },
+    environment,
+  );
   if (result.stderr) err(result.stderr);
-  out(`muximo serve tailscale: ${result.url ?? `HTTPS port ${options.externalPort}`} -> ${localMuximodUrl(options.muximodHost, options.muximodPort)}\n`);
+  out(
+    `muximo serve tailscale: ${result.url ?? `HTTPS port ${options.externalPort}`} -> ${localMuximodUrl(options.muximodHost, options.muximodPort)}\n`,
+  );
   if (result.stdout) out(result.stdout);
   return 0;
 }
@@ -166,7 +186,11 @@ export async function ensureTailscaleServe(
 
   const serveArgs = buildServeArgs({ localPort: options.muximodPort, externalPort: options.externalPort });
   const commandStartedAt = Date.now();
-  logger?.debug("serve.subprocess_starting", { kind: "tailscale", executable: options.tailscaleBinary, argumentCount: serveArgs.length });
+  logger?.debug("serve.subprocess_starting", {
+    kind: "tailscale",
+    executable: options.tailscaleBinary,
+    argumentCount: serveArgs.length,
+  });
   const result = await runCommand(options.tailscaleBinary, serveArgs, { env: environment });
   logger?.debug("serve.subprocess_finished", { kind: "tailscale", durationMs: Date.now() - commandStartedAt });
 
@@ -175,10 +199,18 @@ export async function ensureTailscaleServe(
     const statusStartedAt = Date.now();
     try {
       logger?.debug("serve.hostname_lookup_started", { executable: options.tailscaleBinary });
-      hostname = parseTailscaleHostname((await runCommand(options.tailscaleBinary, ["status", "--json"], { env: environment })).stdout);
-      logger?.debug("serve.hostname_lookup_finished", { durationMs: Date.now() - statusStartedAt, resolved: Boolean(hostname) });
+      hostname = parseTailscaleHostname(
+        (await runCommand(options.tailscaleBinary, ["status", "--json"], { env: environment })).stdout,
+      );
+      logger?.debug("serve.hostname_lookup_finished", {
+        durationMs: Date.now() - statusStartedAt,
+        resolved: Boolean(hostname),
+      });
     } catch (error) {
-      logger?.debug("serve.hostname_lookup_failed", { durationMs: Date.now() - statusStartedAt, ...errorFields(error) });
+      logger?.debug("serve.hostname_lookup_failed", {
+        durationMs: Date.now() - statusStartedAt,
+        ...errorFields(error),
+      });
     }
   }
   const url = hostname ? buildServeHttpUrl(hostname, options.externalPort) : undefined;
@@ -189,9 +221,12 @@ export async function ensureTailscaleServe(
 export async function ensureLocalMuximod(options: ServeCommandOptions): Promise<void> {
   const args = [
     "ensure",
-    "--host", options.muximodHost,
-    "--port", String(options.muximodPort),
-    "--log-level", options.logLevel,
+    "--host",
+    options.muximodHost,
+    "--port",
+    String(options.muximodPort),
+    "--log-level",
+    options.logLevel,
   ];
   if (options.pidFile) args.push("--pid-file", options.pidFile);
   if (options.logFile) args.push("--log-file", options.logFile);
@@ -200,7 +235,8 @@ export async function ensureLocalMuximod(options: ServeCommandOptions): Promise<
 
 export function localMuximodUrl(host: string, port: number): string {
   const normalizedHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
-  const urlHost = normalizedHost.includes(":") && !normalizedHost.startsWith("[") ? `[${normalizedHost}]` : normalizedHost;
+  const urlHost =
+    normalizedHost.includes(":") && !normalizedHost.startsWith("[") ? `[${normalizedHost}]` : normalizedHost;
   return `http://${urlHost}:${port}`;
 }
 

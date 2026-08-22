@@ -1,55 +1,75 @@
-import { randomUUID } from "node:crypto";
-import { accessSync, chmodSync, closeSync, constants, copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createInterface } from "node:readline/promises";
+import { randomUUID } from "node:crypto";
+import {
+  accessSync,
+  chmodSync,
+  closeSync,
+  constants,
+  copyFileSync,
+  createWriteStream,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { buildMuximoShellCommand, configureManagedTmuxSession, resolveMuximoCommand, TmuxAdapter } from "@muximo/infrastructure";
-import { AgentPluginRegistry, createDefaultAgentPluginRegistry, defaultOpenCodeRegistryFile, openCodeMonitorActions, OpenCodeServerManager, type AgentMonitor, type AgentObservation } from "@muximo/infrastructure";
-import { WorkspaceSelectionCatalog, workspaceIdForPath } from "@muximo/infrastructure";
-import { MuximodPairingControlAdapter, PairingControlError } from "./muximod-pairing-control-adapter.js";
-import { WorkspaceCrud, type UpdateWorkspaceInput } from "@muximo/application";
-import type {
-  AgentBackend,
-  AgentSessionRecord,
-  PaneState,
-  WorkspaceRecord,
-} from "@muximo/domain";
+import { type UpdateWorkspaceInput, WorkspaceCrud } from "@muximo/application";
+import type { AgentBackend, AgentSessionRecord, PaneState, WorkspaceRecord } from "@muximo/domain";
 import {
   AgentSession,
   AgentSessionId,
+  type AgentSessionUpdateInput,
   clearPatch,
   InvalidAgentSessionNameError,
   isValidWorktreeCopyPattern,
   normalizeAgentSessionName,
   normalizeWorktreeCopyPatterns,
-  WorkspaceId,
-  type AgentSessionUpdateInput,
   type Patch,
+  WorkspaceId,
 } from "@muximo/domain";
 import {
+  type AgentDatabase,
+  type AgentMonitor,
+  type AgentObservation,
+  type AgentPluginRegistry,
+  buildMuximoShellCommand,
+  configureManagedTmuxSession,
+  createAgentDatabase,
+  createDefaultAgentPluginRegistry,
   createLogger,
+  DrizzleAgentSessionRepository,
+  DrizzleWorkspaceRepository,
+  defaultOpenCodeRegistryFile,
   errorFields,
   type Logger,
   type LogLevel,
-} from "@muximo/infrastructure";
-import {
-  createAgentDatabase,
-  DrizzleAgentSessionRepository,
-  DrizzleWorkspaceRepository,
+  OpenCodeServerManager,
+  openCodeMonitorActions,
   recordAuditEvent,
+  resolveMuximoCommand,
   resolveMuximodPaths,
   SqliteTransactionManager,
-  type AgentDatabase,
+  TmuxAdapter,
+  WorkspaceSelectionCatalog,
+  workspaceIdForPath,
 } from "@muximo/infrastructure";
 import { manageCodexThread } from "./codex-remote.js";
+import { MuximodPairingControlAdapter, PairingControlError } from "./muximod-pairing-control-adapter.js";
 import {
   projectAgentSession,
-  shouldCheckSessionWorktree,
   type SessionListProjection,
   type SessionWorktreeState,
+  shouldCheckSessionWorktree,
 } from "./session-list.js";
 
 export type MuximoCommandIO = {
@@ -204,9 +224,7 @@ type SessionListOptions = {
   all: boolean;
 };
 
-type GitWorktreeRegistry =
-  | { ok: true; paths: ReadonlySet<string> }
-  | { ok: false };
+type GitWorktreeRegistry = { ok: true; paths: ReadonlySet<string> } | { ok: false };
 
 type WorkspaceMutationOptions = {
   selector?: string;
@@ -228,12 +246,7 @@ type WorkspaceDeleteOptions = {
 };
 
 const sessionNamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]{0,63}$/u;
-const supportedCodexOriginators = new Set([
-  "codex-tui",
-  "codex_cli_rs",
-  "codex_exec",
-  "codex_chatgpt_ios_remote",
-]);
+const supportedCodexOriginators = new Set(["codex-tui", "codex_cli_rs", "codex_exec", "codex_chatgpt_ios_remote"]);
 
 /**
  * Clean TypeScript implementation of the dotfiles `muximo` wrapper.
@@ -269,13 +282,15 @@ export class MuximoCommand {
     this.env = { ...process.env, ...options.env };
     this.io = options.io ?? { out: process.stdout, err: process.stderr };
     this.ownsLogger = !options.logger;
-    this.logger = options.logger ?? createLogger({
-      service: "muximo-cli",
-      mode: "attached",
-      level: options.logLevel ?? "warn",
-      output: this.io.err,
-      showStack: options.logLevel === "debug",
-    });
+    this.logger =
+      options.logger ??
+      createLogger({
+        service: "muximo-cli",
+        mode: "attached",
+        level: options.logLevel ?? "warn",
+        output: this.io.err,
+        showStack: options.logLevel === "debug",
+      });
     this.agentPlugins = options.agentPlugins ?? createDefaultAgentPluginRegistry();
     this.repositoryRoot = options.repositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
     const paths = resolveMuximodPaths(this.env, { databaseFile: options.databaseFile });
@@ -283,9 +298,10 @@ export class MuximoCommand {
     this.defaultCodexRemote = this.env.MUXIMO_CODEX_REMOTE === undefined ? "unix://" : this.env.MUXIMO_CODEX_REMOTE;
     this.databaseFile = options.databaseFile ?? paths.databaseFile;
     const configuredDatabaseFile = options.databaseFile ?? this.env.MUXIMOD_DB_FILE ?? this.env.MUXIMO_DATABASE_FILE;
-    this.instanceDirectory = this.databaseFile === ":memory:" || (configuredDatabaseFile?.trim() && !this.env.MUXIMOD_INSTANCE_DIR?.trim())
-      ? undefined
-      : paths.instanceDirectory;
+    this.instanceDirectory =
+      this.databaseFile === ":memory:" || (configuredDatabaseFile?.trim() && !this.env.MUXIMOD_INSTANCE_DIR?.trim())
+        ? undefined
+        : paths.instanceDirectory;
     this.tmux = options.tmux ?? new TmuxAdapter(this.env.MUXIMOD_TMUX_SOCKET, undefined, this.env);
   }
 
@@ -311,13 +327,16 @@ export class MuximoCommand {
       switch (command) {
         case "run": {
           const backend = args[1];
-          if (backend !== "codex" && backend !== "claude" && backend !== "opencode") throw new MuximoCommandError("run requires codex, claude, or opencode");
+          if (backend !== "codex" && backend !== "claude" && backend !== "opencode")
+            throw new MuximoCommandError("run requires codex, claude, or opencode");
           status = await this.runSession(backend, this.parseRunOptions(backend, args.slice(2)));
           break;
         }
         case "shell":
           if (args.includes("-h") || args.includes("--help")) {
-            this.write("Usage: muximo shell [--shell PATH] [--worktree [NAME]] [--exit-after-command] [-- COMMAND...]\n");
+            this.write(
+              "Usage: muximo shell [--shell PATH] [--worktree [NAME]] [--exit-after-command] [-- COMMAND...]\n",
+            );
             status = 0;
             break;
           }
@@ -450,8 +469,15 @@ export class MuximoCommand {
       } else if (argument === "--no-cleanup-hook") {
         cleanupHook = undefined;
         cleanupHookExplicit = true;
-      } else if (argument === "--setup-task" || argument === "--cleanup-task" || argument.startsWith("--setup-task=") || argument.startsWith("--cleanup-task=")) {
-        throw new MuximoCommandError(`${argument} is no longer supported; use workspace hooks or --setup-hook/--cleanup-hook`);
+      } else if (
+        argument === "--setup-task" ||
+        argument === "--cleanup-task" ||
+        argument.startsWith("--setup-task=") ||
+        argument.startsWith("--cleanup-task=")
+      ) {
+        throw new MuximoCommandError(
+          `${argument} is no longer supported; use workspace hooks or --setup-hook/--cleanup-hook`,
+        );
       } else if (argument === "--codex-profile") {
         codexProfile = requireOptionValue(argument, args[++index]);
       } else if (argument.startsWith("--codex-profile=")) {
@@ -516,7 +542,8 @@ export class MuximoCommand {
       } else throw new MuximoCommandError(`unknown shell option: ${argument}`);
     }
 
-    if (exitAfterCommand && command.length === 0) throw new MuximoCommandError("--exit-after-command requires a command after --");
+    if (exitAfterCommand && command.length === 0)
+      throw new MuximoCommandError("--exit-after-command requires a command after --");
     return { shell, command, exitAfterCommand, worktree, worktreeName };
   }
 
@@ -554,8 +581,12 @@ export class MuximoCommand {
           worktreePath: created.worktreePath ?? null,
           branch: created.branch ?? null,
           baseCommit: created.baseCommit ?? null,
-          setupHook: workspace.setupScriptPath ? this.resolveHookPath(workspace.setupScriptPath, workspace.rootPath) : null,
-          cleanupHook: workspace.cleanupScriptPath ? this.resolveHookPath(workspace.cleanupScriptPath, workspace.rootPath) : null,
+          setupHook: workspace.setupScriptPath
+            ? this.resolveHookPath(workspace.setupScriptPath, workspace.rootPath)
+            : null,
+          cleanupHook: workspace.cleanupScriptPath
+            ? this.resolveHookPath(workspace.cleanupScriptPath, workspace.rootPath)
+            : null,
           worktreeCopyPatterns: workspace.worktreeCopyPatterns,
         };
         worktreeContext = context;
@@ -571,7 +602,9 @@ export class MuximoCommand {
       const shellBinary = resolveExecutable(options.shell ?? this.env.SHELL ?? "sh", this.env);
       const interactiveShellEnvironment: NodeJS.ProcessEnv = { ...shellEnvironment };
       delete interactiveShellEnvironment.MUXIMOD_WORKTREE_SESSION_NAME;
-      return await spawnAttached(shellBinary, ["-i"], shellCwd, interactiveShellEnvironment).then((result) => result.code);
+      return await spawnAttached(shellBinary, ["-i"], shellCwd, interactiveShellEnvironment).then(
+        (result) => result.code,
+      );
     } finally {
       try {
         if (worktreeContext) await this.disposeWorktreeShell(worktreeContext);
@@ -594,7 +627,8 @@ export class MuximoCommand {
     }
 
     const options = parseTmuxNewSessionOptions(rest, this.cwd);
-    if (this.tmux.hasSession(options.name)) throw new MuximoCommandError(`tmux session already exists: ${options.name}`);
+    if (this.tmux.hasSession(options.name))
+      throw new MuximoCommandError(`tmux session already exists: ${options.name}`);
 
     const managedSessionId = randomUUID();
     const binary = resolveMuximoCommand(this.env);
@@ -726,31 +760,49 @@ export class MuximoCommand {
         name = requireOptionValue("--name", argument.slice("--name=".length));
         nameExplicit = true;
       } else if (argument === "--directory" || argument === "--path") {
-        if (mode === "update") throw new MuximoCommandError("workspace directory is immutable; delete and add a new registration");
+        if (mode === "update")
+          throw new MuximoCommandError("workspace directory is immutable; delete and add a new registration");
         directory = requireOptionValue(argument, args[++index]);
       } else if (argument.startsWith("--directory=") || argument.startsWith("--path=")) {
-        if (mode === "update") throw new MuximoCommandError("workspace directory is immutable; delete and add a new registration");
+        if (mode === "update")
+          throw new MuximoCommandError("workspace directory is immutable; delete and add a new registration");
         const option = argument.startsWith("--directory=") ? "--directory" : "--path";
         directory = requireOptionValue(option, argument.slice(argument.indexOf("=") + 1));
       } else if (argument === "--setup-hook" || argument === "--setup-script" || argument === "--setup-script-path") {
         setupHook = requireOptionValue(argument, args[++index]);
         setupHookExplicit = true;
-      } else if (argument.startsWith("--setup-hook=") || argument.startsWith("--setup-script=") || argument.startsWith("--setup-script-path=")) {
+      } else if (
+        argument.startsWith("--setup-hook=") ||
+        argument.startsWith("--setup-script=") ||
+        argument.startsWith("--setup-script-path=")
+      ) {
         const option = argument.startsWith("--setup-hook=")
           ? "--setup-hook"
-          : argument.startsWith("--setup-script=") ? "--setup-script" : "--setup-script-path";
+          : argument.startsWith("--setup-script=")
+            ? "--setup-script"
+            : "--setup-script-path";
         setupHook = requireOptionValue(option, argument.slice(argument.indexOf("=") + 1));
         setupHookExplicit = true;
       } else if (argument === "--no-setup-hook" || argument === "--no-setup-script") {
         setupHook = null;
         setupHookExplicit = true;
-      } else if (argument === "--cleanup-hook" || argument === "--cleanup-script" || argument === "--cleanup-script-path") {
+      } else if (
+        argument === "--cleanup-hook" ||
+        argument === "--cleanup-script" ||
+        argument === "--cleanup-script-path"
+      ) {
         cleanupHook = requireOptionValue(argument, args[++index]);
         cleanupHookExplicit = true;
-      } else if (argument.startsWith("--cleanup-hook=") || argument.startsWith("--cleanup-script=") || argument.startsWith("--cleanup-script-path=")) {
+      } else if (
+        argument.startsWith("--cleanup-hook=") ||
+        argument.startsWith("--cleanup-script=") ||
+        argument.startsWith("--cleanup-script-path=")
+      ) {
         const option = argument.startsWith("--cleanup-hook=")
           ? "--cleanup-hook"
-          : argument.startsWith("--cleanup-script=") ? "--cleanup-script" : "--cleanup-script-path";
+          : argument.startsWith("--cleanup-script=")
+            ? "--cleanup-script"
+            : "--cleanup-script-path";
         cleanupHook = requireOptionValue(option, argument.slice(argument.indexOf("=") + 1));
         cleanupHookExplicit = true;
       } else if (argument === "--no-cleanup-hook" || argument === "--no-cleanup-script") {
@@ -759,7 +811,11 @@ export class MuximoCommand {
       } else if (argument === "--copy-pattern" || argument === "--worktree-copy-pattern" || argument === "--copy") {
         copyPatterns.push(requireOptionValue(argument, args[++index]));
         copyPatternsExplicit = true;
-      } else if (argument.startsWith("--copy-pattern=") || argument.startsWith("--worktree-copy-pattern=") || argument.startsWith("--copy=")) {
+      } else if (
+        argument.startsWith("--copy-pattern=") ||
+        argument.startsWith("--worktree-copy-pattern=") ||
+        argument.startsWith("--copy=")
+      ) {
         copyPatterns.push(requireOptionValue("--copy-pattern", argument.slice(argument.indexOf("=") + 1)));
         copyPatternsExplicit = true;
       } else if (argument === "--add-copy-pattern" || argument === "--append-copy-pattern") {
@@ -775,7 +831,9 @@ export class MuximoCommand {
       } else if (mode === "update" && !selector) {
         selector = argument;
       } else {
-        throw new MuximoCommandError(`workspace ${mode} accepts exactly one ${mode === "add" ? "directory" : "workspace selector"}`);
+        throw new MuximoCommandError(
+          `workspace ${mode} accepts exactly one ${mode === "add" ? "directory" : "workspace selector"}`,
+        );
       }
     }
 
@@ -784,7 +842,8 @@ export class MuximoCommand {
     if (mode === "add" && (appendCopyPatterns.length > 0 || clearCopyPatterns)) {
       throw new MuximoCommandError("--add-copy-pattern and --clear-copy-patterns are only valid for workspace update");
     }
-    if (copyPatternsExplicit && clearCopyPatterns) throw new MuximoCommandError("--clear-copy-patterns cannot be combined with --copy-pattern");
+    if (copyPatternsExplicit && clearCopyPatterns)
+      throw new MuximoCommandError("--clear-copy-patterns cannot be combined with --copy-pattern");
     return {
       selector,
       directory,
@@ -826,27 +885,31 @@ export class MuximoCommand {
       return 0;
     }
     for (const workspace of workspaces) {
-      this.write(padRow([
-        workspace.id,
-        workspace.name,
-        displayWorkspacePath(workspace.rootPath),
-        workspace.isGit ? "yes" : "no",
-        workspace.setupScriptPath ? displayWorkspacePath(workspace.setupScriptPath) : "-",
-        workspace.cleanupScriptPath ? displayWorkspacePath(workspace.cleanupScriptPath) : "-",
-        workspace.worktreeCopyPatterns.length > 0 ? workspace.worktreeCopyPatterns.join(",") : "-",
-      ]));
+      this.write(
+        padRow([
+          workspace.id,
+          workspace.name,
+          displayWorkspacePath(workspace.rootPath),
+          workspace.isGit ? "yes" : "no",
+          workspace.setupScriptPath ? displayWorkspacePath(workspace.setupScriptPath) : "-",
+          workspace.cleanupScriptPath ? displayWorkspacePath(workspace.cleanupScriptPath) : "-",
+          workspace.worktreeCopyPatterns.length > 0 ? workspace.worktreeCopyPatterns.join(",") : "-",
+        ]),
+      );
     }
     return 0;
   }
 
   private async addWorkspace(options: WorkspaceMutationOptions): Promise<number> {
-    const workspace = await this.runWorkspaceUseCase(() => this.workspaceCrud.register.execute({
-      directory: options.directory!,
-      name: options.nameExplicit ? options.name : undefined,
-      setupHook: options.setupHookExplicit ? toWorkspacePatch(options.setupHook) : undefined,
-      cleanupHook: options.cleanupHookExplicit ? toWorkspacePatch(options.cleanupHook) : undefined,
-      worktreeCopyPatterns: options.copyPatternsExplicit ? options.copyPatterns : undefined,
-    }));
+    const workspace = await this.runWorkspaceUseCase(() =>
+      this.workspaceCrud.register.execute({
+        directory: options.directory!,
+        name: options.nameExplicit ? options.name : undefined,
+        setupHook: options.setupHookExplicit ? toWorkspacePatch(options.setupHook) : undefined,
+        cleanupHook: options.cleanupHookExplicit ? toWorkspacePatch(options.cleanupHook) : undefined,
+        worktreeCopyPatterns: options.copyPatternsExplicit ? options.copyPatterns : undefined,
+      }),
+    );
     this.info(`workspace '${workspace.name}' added (${displayWorkspacePath(workspace.rootPath)})`);
     return 0;
   }
@@ -898,11 +961,14 @@ export class MuximoCommand {
   }
 
   private restoreCurrentPaneMetadata(environment = this.env): void {
-    this.markCurrentPane({
-      kind: "shell",
-      agentId: null,
-      name: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
-    }, environment);
+    this.markCurrentPane(
+      {
+        kind: "shell",
+        agentId: null,
+        name: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
+      },
+      environment,
+    );
   }
 
   private parseResumeOptions(args: string[]): ResumeOptions {
@@ -992,9 +1058,13 @@ export class MuximoCommand {
       executable: basename(backendBinary),
     });
     if (hasOption("--help", options.backendArgs) || hasOption("-h", options.backendArgs)) {
-      const helpArgs = backend === "codex" && options.codexProfile && !hasOption("--profile", options.backendArgs) && !hasOption("-p", options.backendArgs)
-        ? ["--profile", options.codexProfile, ...options.backendArgs]
-        : options.backendArgs;
+      const helpArgs =
+        backend === "codex" &&
+        options.codexProfile &&
+        !hasOption("--profile", options.backendArgs) &&
+        !hasOption("-p", options.backendArgs)
+          ? ["--profile", options.codexProfile, ...options.backendArgs]
+          : options.backendArgs;
       logger.debug("backend.help_started", { argumentCount: helpArgs.length });
       const status = await runAttachedProcess(backendBinary, helpArgs, this.cwd, this.env, logger, "backend_help");
       logger.debug("backend.help_finished", { status, durationMs: Date.now() - sessionStartedAt });
@@ -1002,20 +1072,35 @@ export class MuximoCommand {
     }
 
     this.ensureDatabase();
-    await ensureCodexRemoteControl(backend, options.backendArgs, backendBinary, this.defaultCodexRemote, this.env, logger);
+    await ensureCodexRemoteControl(
+      backend,
+      options.backendArgs,
+      backendBinary,
+      this.defaultCodexRemote,
+      this.env,
+      logger,
+    );
     const workspace = await this.resolveWorkspace();
     logger.debug("workspace.resolved", {
       workspaceId: workspace.id,
       isGit: workspace.isGit,
     });
     const setupHook = options.setupHookExplicit
-      ? (options.setupHook ? this.resolveHookPath(options.setupHook, workspace.rootPath) : undefined)
-      : options.useWorktree ? this.resolveStoredHook(workspace.setupScriptPath) : undefined;
+      ? options.setupHook
+        ? this.resolveHookPath(options.setupHook, workspace.rootPath)
+        : undefined
+      : options.useWorktree
+        ? this.resolveStoredHook(workspace.setupScriptPath)
+        : undefined;
     const cleanupHook = options.cleanupHookExplicit
-      ? (options.cleanupHook ? this.resolveHookPath(options.cleanupHook, workspace.rootPath) : undefined)
-      : options.useWorktree ? this.resolveStoredHook(workspace.cleanupScriptPath) : undefined;
+      ? options.cleanupHook
+        ? this.resolveHookPath(options.cleanupHook, workspace.rootPath)
+        : undefined
+      : options.useWorktree
+        ? this.resolveStoredHook(workspace.cleanupScriptPath)
+        : undefined;
 
-    const name = normalizeSessionName(options.name ?? await this.generateName(workspace.id, backend));
+    const name = normalizeSessionName(options.name ?? (await this.generateName(workspace.id, backend)));
     const existing = (await this.sessions.list(workspace.id)).find((session) => {
       try {
         return normalizeAgentSessionName(session.name) === name;
@@ -1027,8 +1112,10 @@ export class MuximoCommand {
 
     const worktree = options.useWorktree ? this.createWorktree(workspace, name, options.worktreeRoot) : emptyWorktree();
     const now = timestamp();
-    const claudeBackendSessionId = backend === "claude" ? optionValue("--session-id", options.backendArgs) ?? randomUUID() : undefined;
-    const codexRemote = backend === "codex" ? codexRemoteEndpoint(options.backendArgs, this.defaultCodexRemote) : undefined;
+    const claudeBackendSessionId =
+      backend === "claude" ? (optionValue("--session-id", options.backendArgs) ?? randomUUID()) : undefined;
+    const codexRemote =
+      backend === "codex" ? codexRemoteEndpoint(options.backendArgs, this.defaultCodexRemote) : undefined;
     const session = AgentSession.create({
       id: AgentSessionId.create(randomUUID()),
       name,
@@ -1082,7 +1169,8 @@ export class MuximoCommand {
       throw new MuximoCommandError(`setup hook failed; mapping retained as '${name}'`);
     }
     current = updateSession(current, { setupRan: Boolean(current.setupHook) });
-    if (current.useWorktree) current = updateSession(current, { baselineStatus: this.gitStatus(current.worktreePath!) });
+    if (current.useWorktree)
+      current = updateSession(current, { baselineStatus: this.gitStatus(current.worktreePath!) });
     current = updateSession(current, { status: "ready" });
     await this.sessions.update(current);
     sessionLogger.debug("session.status_changed", { status: current.status });
@@ -1097,7 +1185,10 @@ export class MuximoCommand {
     }
     sessionLogger.debug("session.baseline_captured", { backend: current.backend });
     const startedAt = Math.floor(Date.now() / 1000);
-    current = updateSession(current, { status: "running", ...(claudeBackendSessionId === undefined ? {} : { backendSessionId: claudeBackendSessionId }) });
+    current = updateSession(current, {
+      status: "running",
+      ...(claudeBackendSessionId === undefined ? {} : { backendSessionId: claudeBackendSessionId }),
+    });
     // Keep the generated Claude ID out of durable state until runBackend has
     // observed a successful child spawn. Codex remains unbound until discovery.
     await this.sessions.update(updateSession(current, { backendSessionId: clearPatch }));
@@ -1126,7 +1217,10 @@ export class MuximoCommand {
         monitor: launch.monitor,
         backendSessionId: launch.backendSessionId,
       });
-      await this.publishAgentObservation(current, result.interrupted ? "stopped" : result.code === 0 ? "completed" : "failed");
+      await this.publishAgentObservation(
+        current,
+        result.interrupted ? "stopped" : result.code === 0 ? "completed" : "failed",
+      );
       await this.abortRemoteSessionIfInterrupted(current, launch.abortSession, result);
     } finally {
       await this.releaseSessionPane(current);
@@ -1153,35 +1247,61 @@ export class MuximoCommand {
       global: options.global,
       backendArgumentCount: options.backendArgs.length,
     });
-    if (session.status === "setup_failed") throw new MuximoCommandError(`session '${session.name}' has a failed setup; clean it up before retrying`);
+    if (session.status === "setup_failed")
+      throw new MuximoCommandError(`session '${session.name}' has a failed setup; clean it up before retrying`);
     if (session.status === "starting" || session.status === "setup" || session.status === "ready") {
-      throw new MuximoCommandError(`session '${session.name}' has not started its backend; rerun it instead of resuming`);
+      throw new MuximoCommandError(
+        `session '${session.name}' has not started its backend; rerun it instead of resuming`,
+      );
     }
     const runDir = session.worktreePath ?? session.workspaceRoot;
     if (!existsSync(runDir)) throw new MuximoCommandError(`session working directory is missing: ${runDir}`);
-    if (session.useWorktree && !this.worktreeIsRegistered(session)) throw new MuximoCommandError(`managed worktree is no longer registered: ${session.worktreePath}`);
+    if (session.useWorktree && !this.worktreeIsRegistered(session))
+      throw new MuximoCommandError(`managed worktree is no longer registered: ${session.worktreePath}`);
     if (!session.backendSessionId && session.backend === "codex") {
       session = await this.repairCodexSessionId(session, runDir, "resume");
     }
-    if (!session.backendSessionId) throw new MuximoCommandError(`session '${session.name}' has no backend session ID; it cannot be resumed`);
+    if (!session.backendSessionId)
+      throw new MuximoCommandError(`session '${session.name}' has no backend session ID; it cannot be resumed`);
     const backendBinary = resolveBackendCommand(session.backend, this.env);
     logger.debug("backend.resolved", { executable: basename(backendBinary) });
-    await ensureCodexRemoteControl(session.backend, options.backendArgs, backendBinary, session.codexRemote ?? this.defaultCodexRemote, this.env, logger);
+    await ensureCodexRemoteControl(
+      session.backend,
+      options.backendArgs,
+      backendBinary,
+      session.codexRemote ?? this.defaultCodexRemote,
+      this.env,
+      logger,
+    );
     if (session.executionPid !== undefined && isProcessAlive(session.executionPid)) {
       throw new MuximoCommandError(`session '${session.name}' is already running (pid ${session.executionPid})`);
     }
     const executionId = randomUUID();
     const executionStartedAt = timestamp();
-    const claimed = await this.sessions.claimExecution(session.id, session.executionPid ?? null, executionId, process.pid, executionStartedAt);
+    const claimed = await this.sessions.claimExecution(
+      session.id,
+      session.executionPid ?? null,
+      executionId,
+      process.pid,
+      executionStartedAt,
+    );
     if (!claimed) throw new MuximoCommandError(`session '${session.name}' is already being resumed`);
-    const current = updateSession(session, { status: "resuming", resuming: true, executionId, executionPid: process.pid, executionStartedAt });
+    const current = updateSession(session, {
+      status: "resuming",
+      resuming: true,
+      executionId,
+      executionPid: process.pid,
+      executionStartedAt,
+    });
     await this.sessions.update(current);
     let launch: BackendLaunch;
     try {
       launch = await this.createBackendLaunch(current, options.backendArgs, backendBinary, runDir, logger, true);
     } catch (error) {
       logger.debug("session.launch_failed", { ...errorFields(error) });
-      await this.sessions.update(updateSession(current, { status: "exited", lastExitStatus: 1 })).catch(() => undefined);
+      await this.sessions
+        .update(updateSession(current, { status: "exited", lastExitStatus: 1 }))
+        .catch(() => undefined);
       throw error;
     }
     logger.debug("backend.command_ready", { argumentCount: launch.command.length, resume: true });
@@ -1196,7 +1316,10 @@ export class MuximoCommand {
         monitor: launch.monitor,
         backendSessionId: launch.backendSessionId,
       });
-      await this.publishAgentObservation(current, result.interrupted ? "stopped" : result.code === 0 ? "completed" : "failed");
+      await this.publishAgentObservation(
+        current,
+        result.interrupted ? "stopped" : result.code === 0 ? "completed" : "failed",
+      );
       await this.abortRemoteSessionIfInterrupted(current, launch.abortSession, result);
     } finally {
       await this.releaseSessionPane(current);
@@ -1224,7 +1347,9 @@ export class MuximoCommand {
         setFallbackSessionMetadata(this.env, input);
         return;
       }
-      this.warn(`muximod could not adopt pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
+      this.warn(
+        `muximod could not adopt pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -1250,11 +1375,17 @@ export class MuximoCommand {
         }
         return;
       }
-      this.warn(`muximod could not release pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`);
+      this.warn(
+        `muximod could not release pane ${tmuxPaneId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
-  private async publishAgentObservation(session: AgentSessionRecord, state: PaneState, recentOutput?: string): Promise<void> {
+  private async publishAgentObservation(
+    session: AgentSessionRecord,
+    state: PaneState,
+    recentOutput?: string,
+  ): Promise<void> {
     const tmuxPaneId = currentTmuxPane(this.env);
     if (!tmuxPaneId || !session.executionId) return;
     try {
@@ -1311,10 +1442,15 @@ export class MuximoCommand {
       for (const view of views) this.write(`${JSON.stringify(toSessionJson(view))}\n`);
       return finish(0);
     }
-    if (options.global) this.write(padHeader(["WORKSPACE", "NAME", "BACKEND", "STATUS", "HEALTH", "RESUME", "BRANCH", "WORKTREE"]));
+    if (options.global)
+      this.write(padHeader(["WORKSPACE", "NAME", "BACKEND", "STATUS", "HEALTH", "RESUME", "BRANCH", "WORKTREE"]));
     else this.write(padHeader(["NAME", "BACKEND", "STATUS", "HEALTH", "RESUME", "BRANCH", "WORKTREE"]));
     if (views.length === 0) {
-      this.info(allViews.length === 0 ? "no managed sessions" : "no visible managed sessions; use --all to include unavailable sessions");
+      this.info(
+        allViews.length === 0
+          ? "no managed sessions"
+          : "no visible managed sessions; use --all to include unavailable sessions",
+      );
       return finish(0);
     }
     for (const view of views) {
@@ -1337,10 +1473,10 @@ export class MuximoCommand {
     const now = Date.now();
     const registries = new Map<string, GitWorktreeRegistry>();
     return sessions.map((session) => {
-      const processAlive = (session.status === "running" || session.status === "resuming")
-        && session.executionPid !== undefined
-        ? isProcessAlive(session.executionPid)
-        : undefined;
+      const processAlive =
+        (session.status === "running" || session.status === "resuming") && session.executionPid !== undefined
+          ? isProcessAlive(session.executionPid)
+          : undefined;
       return projectAgentSession(session, {
         now,
         processAlive,
@@ -1402,7 +1538,10 @@ export class MuximoCommand {
       throw new MuximoCommandError(`session '${session.name}' is still running (pid ${session.executionPid})`);
     }
     if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
-      if (!this.worktreeIsRegistered(session)) throw new MuximoCommandError(`managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`);
+      if (!this.worktreeIsRegistered(session))
+        throw new MuximoCommandError(
+          `managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`,
+        );
     }
     const dirty = session.useWorktree && session.worktreePath ? this.worktreeHasAgentChanges(session) : false;
     let force = options.force;
@@ -1445,7 +1584,10 @@ export class MuximoCommand {
         const codex = commandPath("codex", this.env);
         const validationStartedAt = Date.now();
         const validation = codex
-          ? spawnSync(codex, ["--profile", configuredProfile, "--strict-config", "--help"], { stdio: "ignore", env: this.env })
+          ? spawnSync(codex, ["--profile", configuredProfile, "--strict-config", "--help"], {
+              stdio: "ignore",
+              env: this.env,
+            })
           : undefined;
         logger.debug("doctor.codex_profile_checked", {
           available: Boolean(codex),
@@ -1468,7 +1610,9 @@ export class MuximoCommand {
     if (options.verbose) {
       this.write(`database: ${this.databaseFile}\n`);
       this.write(`codex remote: ${this.defaultCodexRemote || "native local mode"}\n`);
-      this.write(`worktree root pattern: <workspace-parent>/<workspace-name>.worktrees${this.env.MUXIMO_WORKTREE_ID ? `/${this.env.MUXIMO_WORKTREE_ID}` : ""}/<session-name>\n`);
+      this.write(
+        `worktree root pattern: <workspace-parent>/<workspace-name>.worktrees${this.env.MUXIMO_WORKTREE_ID ? `/${this.env.MUXIMO_WORKTREE_ID}` : ""}/<session-name>\n`,
+      );
     }
     logger.debug("doctor.finished", { status, durationMs: Date.now() - startedAt });
     return status;
@@ -1494,7 +1638,7 @@ export class MuximoCommand {
     const gitRoot = gitWorkspaceRoot(this.cwd);
     const root = gitRoot ?? this.cwd;
     const id = workspaceIdForPath(root);
-    const existing = await this.workspaces.findById(id) ?? await this.findRegisteredWorkspaceForCwd(root);
+    const existing = (await this.workspaces.findById(id)) ?? (await this.findRegisteredWorkspaceForCwd(root));
     if (existing) {
       this.currentLogger.debug("workspace.resolve_finished", {
         workspaceId: existing.id,
@@ -1581,10 +1725,17 @@ export class MuximoCommand {
     return candidate;
   }
 
-  private createWorktree(workspace: WorkspaceContext, name: string, override?: string): Pick<AgentSessionRecord, "worktreeRoot" | "worktreePath" | "branch" | "baseCommit"> {
-    if (!workspace.isGit) throw new MuximoCommandError("a managed worktree requires a git workspace; use --no-worktree here");
-    const defaultRoot = this.env.MUXIMO_WORKTREE_ROOT ?? join(dirname(workspace.rootPath), `${workspace.name}.worktrees`);
-    const configuredRoot = override ?? (this.env.MUXIMO_WORKTREE_ID ? join(defaultRoot, this.env.MUXIMO_WORKTREE_ID) : defaultRoot);
+  private createWorktree(
+    workspace: WorkspaceContext,
+    name: string,
+    override?: string,
+  ): Pick<AgentSessionRecord, "worktreeRoot" | "worktreePath" | "branch" | "baseCommit"> {
+    if (!workspace.isGit)
+      throw new MuximoCommandError("a managed worktree requires a git workspace; use --no-worktree here");
+    const defaultRoot =
+      this.env.MUXIMO_WORKTREE_ROOT ?? join(dirname(workspace.rootPath), `${workspace.name}.worktrees`);
+    const configuredRoot =
+      override ?? (this.env.MUXIMO_WORKTREE_ID ? join(defaultRoot, this.env.MUXIMO_WORKTREE_ID) : defaultRoot);
     const worktreeRoot = realpathAfterMkdir(resolveFromRoot(configuredRoot, workspace.rootPath));
     const worktreePath = join(worktreeRoot, name);
     let branch = this.worktreeBranch(name);
@@ -1592,7 +1743,10 @@ export class MuximoCommand {
     if (gitStatusCode(workspace.rootPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]) === 0) {
       branch = `muximo/${this.env.MUXIMO_WORKTREE_ID ?? workspace.id}/${name}`;
     }
-    if (gitStatusCode(workspace.rootPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]) === 0) throw new MuximoCommandError(`muximo branch already exists; choose another name or remove it manually: ${branch}`);
+    if (gitStatusCode(workspace.rootPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]) === 0)
+      throw new MuximoCommandError(
+        `muximo branch already exists; choose another name or remove it manually: ${branch}`,
+      );
     if (existsSync(worktreePath)) throw new MuximoCommandError(`worktree path already exists: ${worktreePath}`);
     this.currentLogger.debug("worktree.create_started", {
       workspaceId: workspace.id,
@@ -1600,7 +1754,11 @@ export class MuximoCommand {
       branch,
     });
     this.info(`creating worktree '${worktreePath}'`);
-    gitRequired(workspace.rootPath, ["worktree", "add", "-b", branch, "--", worktreePath, baseCommit], "git worktree creation failed");
+    gitRequired(
+      workspace.rootPath,
+      ["worktree", "add", "-b", branch, "--", worktreePath, baseCommit],
+      "git worktree creation failed",
+    );
     this.currentLogger.debug("worktree.created", { workspaceId: workspace.id, worktreePath, branch });
     return { worktreeRoot, worktreePath, branch, baseCommit };
   }
@@ -1657,7 +1815,9 @@ export class MuximoCommand {
         copyFileSync(sourcePath, targetPath);
         chmodSync(targetPath, sourceStat.mode & 0o777);
       } catch (error) {
-        this.warn(`could not copy unmanaged file '${relativePath}': ${error instanceof Error ? error.message : String(error)}`);
+        this.warn(
+          `could not copy unmanaged file '${relativePath}': ${error instanceof Error ? error.message : String(error)}`,
+        );
         return false;
       }
     }
@@ -1681,7 +1841,10 @@ export class MuximoCommand {
       setupOutputFile: session.setupOutputFile ?? "",
     });
     const finalOutput = this.hookOutputFile(session.id, kind);
-    const next = updateSession(session, kind === "setup" ? { setupOutputFile: finalOutput } : { cleanupOutputFile: finalOutput });
+    const next = updateSession(
+      session,
+      kind === "setup" ? { setupOutputFile: finalOutput } : { cleanupOutputFile: finalOutput },
+    );
     Object.assign(session, next);
     await this.sessions.update(next);
     return success;
@@ -1724,12 +1887,14 @@ export class MuximoCommand {
     }
     const dirty = this.gitStatus(ctx.worktreePath) !== "";
     if (dirty) {
-      this.warn(`shell worktree has uncommitted changes; keeping it: ${ctx.worktreePath} (branch ${ctx.branch ?? "unknown"})`);
+      this.warn(
+        `shell worktree has uncommitted changes; keeping it: ${ctx.worktreePath} (branch ${ctx.branch ?? "unknown"})`,
+      );
       return;
     }
     try {
       gitRequired(ctx.workspaceRoot, ["worktree", "remove", "--", ctx.worktreePath], "git worktree removal failed");
-    } catch (error) {
+    } catch (_error) {
       this.warn(`git worktree removal failed; keeping worktree at '${ctx.worktreePath}'`);
       return;
     }
@@ -1746,7 +1911,9 @@ export class MuximoCommand {
   }
 
   private worktreeIsRegisteredAt(workspaceRoot: string, worktreePath: string): boolean {
-    return gitOutputOrEmpty(workspaceRoot, ["worktree", "list", "--porcelain"]).split("\n").some((line) => line === `worktree ${worktreePath}`);
+    return gitOutputOrEmpty(workspaceRoot, ["worktree", "list", "--porcelain"])
+      .split("\n")
+      .some((line) => line === `worktree ${worktreePath}`);
   }
 
   private async runHookCore(input: {
@@ -1777,13 +1944,20 @@ export class MuximoCommand {
     logger.debug("hook.started", { script: basename(hook), cwd: runDir });
     this.info(`running workspace hook '${hook}' (${kind})`);
     const args = [
-      "--name", input.name,
-      "--backend", input.backend,
-      "--workspace", input.workspaceRoot,
-      "--worktree", input.worktreePath,
-      "--session-id", input.backendSessionId,
-      "--state-id", input.stateId,
-      "--resuming", input.resuming ? "1" : "0",
+      "--name",
+      input.name,
+      "--backend",
+      input.backend,
+      "--workspace",
+      input.workspaceRoot,
+      "--worktree",
+      input.worktreePath,
+      "--session-id",
+      input.backendSessionId,
+      "--state-id",
+      input.stateId,
+      "--resuming",
+      input.resuming ? "1" : "0",
     ];
     if (kind === "cleanup" && input.setupOutputFile) args.push("--setup-output-file", input.setupOutputFile);
     const child = spawn(hook, args, {
@@ -1838,10 +2012,6 @@ export class MuximoCommand {
     return join(dir, `${kind}.log`);
   }
 
-  private outputFileFor(session: AgentSessionRecord, kind: "setup" | "cleanup"): string {
-    return this.hookOutputFile(session.id, kind);
-  }
-
   private async runBackend(
     session: AgentSessionRecord,
     command: string[],
@@ -1862,7 +2032,10 @@ export class MuximoCommand {
       argumentCount: command.length - 1,
     });
     this.setTerminalTitle(session.name);
-    const nameWatcher = session.backend === "codex" && session.backendSessionId === undefined && session.codexRemote ? this.watchCodexSessionName(session, startedAt, runDir) : undefined;
+    const nameWatcher =
+      session.backend === "codex" && session.backendSessionId === undefined && session.codexRemote
+        ? this.watchCodexSessionName(session, startedAt, runDir)
+        : undefined;
     const monitor = options.monitor ?? this.createAgentMonitor(session, runDir, startedAt);
     const preparedBackendSessionId = options.backendSessionId;
     let monitorStarted = false;
@@ -1876,40 +2049,51 @@ export class MuximoCommand {
           logger.debug("agent.monitor_start_failed", errorFields(error));
         }
       }
-      result = await spawnAttached(command[0]!, command.slice(1), runDir, {
-        ...this.env,
-        MUXIMOD_AGENT_SESSION_ID: session.id,
-        MUXIMOD_AGENT_ID: session.backend,
-      }, {
-        onStarted: async (pid) => {
-          logger.debug("subprocess.started", {
-          kind: "backend",
-          executable: basename(command[0] ?? "unknown"),
-          cwd: runDir,
-          pid,
-          });
-          if (session.backend === "claude" && session.backendSessionId) {
-            try {
-              await this.sessions.update(session);
-            } catch (error) {
-              this.warn(`Claude session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`);
-            }
-            return;
-          }
-          if (session.backend === "opencode" && preparedBackendSessionId) {
-            try {
-              await this.sessions.update(updateSession(session, { backendSessionId: preparedBackendSessionId }));
-            } catch (error) {
-              this.warn(`OpenCode session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`);
-            }
-          }
+      result = await spawnAttached(
+        command[0]!,
+        command.slice(1),
+        runDir,
+        {
+          ...this.env,
+          MUXIMOD_AGENT_SESSION_ID: session.id,
+          MUXIMOD_AGENT_ID: session.backend,
         },
-        onError: (error) => logger.debug("subprocess.spawn_failed", {
-          kind: "backend",
-          executable: basename(command[0] ?? "unknown"),
-          ...errorFields(error),
-        }),
-      });
+        {
+          onStarted: async (pid) => {
+            logger.debug("subprocess.started", {
+              kind: "backend",
+              executable: basename(command[0] ?? "unknown"),
+              cwd: runDir,
+              pid,
+            });
+            if (session.backend === "claude" && session.backendSessionId) {
+              try {
+                await this.sessions.update(session);
+              } catch (error) {
+                this.warn(
+                  `Claude session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`,
+                );
+              }
+              return;
+            }
+            if (session.backend === "opencode" && preparedBackendSessionId) {
+              try {
+                await this.sessions.update(updateSession(session, { backendSessionId: preparedBackendSessionId }));
+              } catch (error) {
+                this.warn(
+                  `OpenCode session launch was not persisted for resume: ${error instanceof Error ? error.message : String(error)}`,
+                );
+              }
+            }
+          },
+          onError: (error) =>
+            logger.debug("subprocess.spawn_failed", {
+              kind: "backend",
+              executable: basename(command[0] ?? "unknown"),
+              ...errorFields(error),
+            }),
+        },
+      );
     } finally {
       if (monitorStarted && monitor) {
         try {
@@ -1983,7 +2167,7 @@ export class MuximoCommand {
         backendSessionId: plan.backendSessionId ?? null,
         abortSession: plan.monitor?.execute
           ? async () => {
-              await plan.monitor!.execute!({ ...openCodeMonitorActions.abort });
+              await plan.monitor?.execute?.({ ...openCodeMonitorActions.abort });
             }
           : undefined,
       };
@@ -2004,7 +2188,9 @@ export class MuximoCommand {
     try {
       await abortSession();
     } catch (error) {
-      this.warn(`OpenCode session abort failed for '${session.name}': ${error instanceof Error ? error.message : String(error)}`);
+      this.warn(
+        `OpenCode session abort failed for '${session.name}': ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -2013,7 +2199,13 @@ export class MuximoCommand {
     await this.publishAgentObservation(session, observation.state, observation.recentOutput);
   }
 
-  private async finalizeSession(session: AgentSessionRecord, result: ProcessResult, startedAt: number, runDir: string, codexBaseline: boolean): Promise<number> {
+  private async finalizeSession(
+    session: AgentSessionRecord,
+    result: ProcessResult,
+    startedAt: number,
+    runDir: string,
+    codexBaseline: boolean,
+  ): Promise<number> {
     const logger = this.currentLogger.child({
       sessionId: session.id,
       sessionName: session.name,
@@ -2059,8 +2251,14 @@ export class MuximoCommand {
     session = updateSession(session, { status: "exited" });
     await this.sessions.update(session);
     if (!session.useWorktree) {
-      logger.debug("session.finished", { status: session.status, cleanup: "retained", durationMs: Date.now() - startedAt * 1000 });
-      this.info(`session '${session.name}' mapping retained; use 'muximo resume ${session.name}' or 'muximo cleanup ${session.name}'`);
+      logger.debug("session.finished", {
+        status: session.status,
+        cleanup: "retained",
+        durationMs: Date.now() - startedAt * 1000,
+      });
+      this.info(
+        `session '${session.name}' mapping retained; use 'muximo resume ${session.name}' or 'muximo cleanup ${session.name}'`,
+      );
       return result.code;
     }
     const dirty = this.worktreeHasAgentChanges(session);
@@ -2075,7 +2273,11 @@ export class MuximoCommand {
       this.info(`session '${session.name}' retained because cleanup did not complete`);
       return result.code === 0 ? 1 : result.code;
     }
-    logger.debug("session.finished", { status: session.status, cleanup: "completed", durationMs: Date.now() - startedAt * 1000 });
+    logger.debug("session.finished", {
+      status: session.status,
+      cleanup: "completed",
+      durationMs: Date.now() - startedAt * 1000,
+    });
     this.info(`session '${session.name}' cleaned up`);
     return result.code;
   }
@@ -2088,7 +2290,12 @@ export class MuximoCommand {
     });
     const startedAt = Date.now();
     logger.debug("session.cleanup_started", { force, useWorktree: session.useWorktree });
-    if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath) && !this.worktreeIsRegistered(session)) {
+    if (
+      session.useWorktree &&
+      session.worktreePath &&
+      existsSync(session.worktreePath) &&
+      !this.worktreeIsRegistered(session)
+    ) {
       logger.debug("session.cleanup_failed", { stage: "worktree_registration" });
       this.warn(`managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`);
       return false;
@@ -2107,7 +2314,11 @@ export class MuximoCommand {
     }
     if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
       try {
-        gitRequired(session.workspaceRoot, ["worktree", "remove", ...(force ? ["--force"] : []), "--", session.worktreePath], "git worktree removal failed");
+        gitRequired(
+          session.workspaceRoot,
+          ["worktree", "remove", ...(force ? ["--force"] : []), "--", session.worktreePath],
+          "git worktree removal failed",
+        );
       } catch (error) {
         if (session.backend === "codex" && session.codexRemote) await this.manageRemoteThread(session, "unarchive");
         logger.debug("session.cleanup_failed", { stage: "worktree_remove", ...errorFields(error) });
@@ -2151,7 +2362,9 @@ export class MuximoCommand {
       });
       await manager.dispose(runDir);
     } catch (error) {
-      this.warn(`OpenCode server release failed for '${runDir}': ${error instanceof Error ? error.message : String(error)}`);
+      this.warn(
+        `OpenCode server release failed for '${runDir}': ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -2184,7 +2397,9 @@ export class MuximoCommand {
 
   private worktreeIsRegistered(session: AgentSessionRecord): boolean {
     if (!session.worktreePath) return false;
-    return gitOutputOrEmpty(session.workspaceRoot, ["worktree", "list", "--porcelain"]).split("\n").some((line) => line === `worktree ${session.worktreePath}`);
+    return gitOutputOrEmpty(session.workspaceRoot, ["worktree", "list", "--porcelain"])
+      .split("\n")
+      .some((line) => line === `worktree ${session.worktreePath}`);
   }
 
   private worktreeHasAgentChanges(session: AgentSessionRecord): boolean {
@@ -2200,10 +2415,16 @@ export class MuximoCommand {
   private async captureCodexSessionBaseline(session: AgentSessionRecord): Promise<boolean> {
     if (session.backend !== "codex") return true;
     const startedAt = Date.now();
-    const logger = this.currentLogger.child({ sessionId: session.id, sessionName: session.name, backend: session.backend });
+    const logger = this.currentLogger.child({
+      sessionId: session.id,
+      sessionName: session.name,
+      backend: session.backend,
+    });
     logger.debug("codex.baseline_started");
     const files = await this.codexSessionFiles();
-    const baseline = files.map((file) => codexMeta(file)?.session_id).filter((value): value is string => Boolean(value));
+    const baseline = files
+      .map((file) => codexMeta(file)?.session_id)
+      .filter((value): value is string => Boolean(value));
     // Baselines are persisted in the same database record as a newline list so
     // a restart never depends on an auxiliary state file.
     session = updateSession(session, { codexSessionBaseline: JSON.stringify({ codexSessions: baseline }) });
@@ -2216,7 +2437,12 @@ export class MuximoCommand {
     return true;
   }
 
-  private async discoverCodexSessionId(startedAt: number, runDir: string, sessionId: string, endedAt?: number): Promise<CodexDiscoveryResult> {
+  private async discoverCodexSessionId(
+    startedAt: number,
+    runDir: string,
+    sessionId: string,
+    endedAt?: number,
+  ): Promise<CodexDiscoveryResult> {
     const session = await this.sessions.findById(AgentSessionId.create(sessionId));
     const logger = this.currentLogger.child({ sessionId, backend: "codex" });
     const discoveryStartedAt = Date.now();
@@ -2224,8 +2450,19 @@ export class MuximoCommand {
     const baseline = new Set<string>(readCodexBaseline(session?.codexSessionBaseline));
     const started = Date.now();
     const root = this.codexSessionRoot();
-    const candidates = this.codexSessionCandidates(await this.codexSessionFiles(), startedAt, runDir, baseline, endedAt);
-    const safeCandidates = await this.filterCodexSessionCandidates(candidates.candidates, candidates.diagnostics, session, runDir);
+    const candidates = this.codexSessionCandidates(
+      await this.codexSessionFiles(),
+      startedAt,
+      runDir,
+      baseline,
+      endedAt,
+    );
+    const safeCandidates = await this.filterCodexSessionCandidates(
+      candidates.candidates,
+      candidates.diagnostics,
+      session,
+      runDir,
+    );
     const result = {
       selectedId: preferredCodexSessionId(safeCandidates),
       candidates: safeCandidates,
@@ -2254,10 +2491,11 @@ export class MuximoCommand {
     if (!session) return candidates;
     const sessions = await this.sessions.list(session.workspaceId);
     const otherSessions = sessions.filter((candidate) => candidate.id !== session.id);
-    const unboundSameDirectory = otherSessions.some((candidate) =>
-      candidate.backend === "codex"
-      && !candidate.backendSessionId
-      && (candidate.worktreePath ?? candidate.workspaceRoot) === runDir,
+    const unboundSameDirectory = otherSessions.some(
+      (candidate) =>
+        candidate.backend === "codex" &&
+        !candidate.backendSessionId &&
+        (candidate.worktreePath ?? candidate.workspaceRoot) === runDir,
     );
     const reject = (reason: CodexDiscoveryRejection): void => {
       diagnostics.rejected[reason] = (diagnostics.rejected[reason] ?? 0) + 1;
@@ -2280,7 +2518,7 @@ export class MuximoCommand {
     if (!Number.isFinite(createdAt)) {
       return {
         candidates: [],
-      diagnostics: emptyCodexDiscoveryDiagnostics(existsSync(this.codexSessionRoot())),
+        diagnostics: emptyCodexDiscoveryDiagnostics(existsSync(this.codexSessionRoot())),
       };
     }
     const updatedAt = session.lastExitStatus === undefined ? Number.NaN : Date.parse(session.updatedAt);
@@ -2290,17 +2528,26 @@ export class MuximoCommand {
       session.id,
       Number.isFinite(updatedAt) ? updatedAt / 1_000 : undefined,
     );
-    if (result.candidates.length === 1) return { ...result, selectedId: result.candidates[0]!.id };
-    const ownershipRejected = (result.diagnostics.rejected.known_to_other_session ?? 0) + (result.diagnostics.rejected.competing_session ?? 0);
+    if (result.candidates.length === 1) return { ...result, selectedId: result.candidates[0]?.id };
+    const ownershipRejected =
+      (result.diagnostics.rejected.known_to_other_session ?? 0) + (result.diagnostics.rejected.competing_session ?? 0);
     if (result.candidates.length > 1 || ownershipRejected > 0) {
-      this.warn(`cannot safely recover Codex session ID for '${session.name}'; found ${result.diagnostics.candidateFiles} matching rollouts (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`);
+      this.warn(
+        `cannot safely recover Codex session ID for '${session.name}'; found ${result.diagnostics.candidateFiles} matching rollouts (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`,
+      );
     } else {
-      this.warn(`cannot recover Codex session ID for '${session.name}' (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`);
+      this.warn(
+        `cannot recover Codex session ID for '${session.name}' (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`,
+      );
     }
     return { ...result, selectedId: undefined };
   }
 
-  private async repairCodexSessionId(session: AgentSessionRecord, runDir: string, phase: "resume"): Promise<AgentSessionRecord> {
+  private async repairCodexSessionId(
+    session: AgentSessionRecord,
+    runDir: string,
+    phase: "resume",
+  ): Promise<AgentSessionRecord> {
     if (session.backend !== "codex" || session.backendSessionId) return session;
     const result = await this.recoverCodexSessionId(session, runDir);
     if (!result.selectedId) {
@@ -2314,14 +2561,22 @@ export class MuximoCommand {
     }
     await this.sessions.setBackendSessionIdIfMissing(session.id, result.selectedId);
     const persisted = await this.sessions.findById(session.id);
-    if (!persisted?.backendSessionId) throw new MuximoCommandError(`session '${session.name}' disappeared while repairing its backend session ID`);
+    if (!persisted?.backendSessionId)
+      throw new MuximoCommandError(`session '${session.name}' disappeared while repairing its backend session ID`);
     this.info(`recovered Codex session ID for '${session.name}' during ${phase}`);
     return persisted;
   }
 
-  private reportCodexDiscoveryFailure(session: AgentSessionRecord, runDir: string, phase: "finalize" | "resume", result: CodexDiscoveryResult): void {
+  private reportCodexDiscoveryFailure(
+    session: AgentSessionRecord,
+    runDir: string,
+    phase: "finalize" | "resume",
+    result: CodexDiscoveryResult,
+  ): void {
     const diagnostics = formatCodexDiscoveryDiagnostics(result.diagnostics);
-    this.warn(`Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired (${diagnostics})`);
+    this.warn(
+      `Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired (${diagnostics})`,
+    );
     this.audit("agent_session.codex_session_id_missing", session.id, {
       name: session.name,
       phase,
@@ -2352,7 +2607,7 @@ export class MuximoCommand {
       diagnostics.rejected[reason] = (diagnostics.rejected[reason] ?? 0) + 1;
     };
     for (const file of files) {
-      let stat;
+      let stat: ReturnType<typeof statSync>;
       try {
         stat = statSync(file);
       } catch {
@@ -2404,7 +2659,8 @@ export class MuximoCommand {
       diagnostics.candidateFiles += 1;
       const previous = candidates.get(candidate.id);
       const isPreferred = candidate.rolloutIdMatches && !previous?.rolloutIdMatches;
-      const isNewerSameKind = previous && candidate.rolloutIdMatches === previous.rolloutIdMatches && candidate.mtime > previous.mtime;
+      const isNewerSameKind =
+        previous && candidate.rolloutIdMatches === previous.rolloutIdMatches && candidate.mtime > previous.mtime;
       if (!previous || isPreferred || isNewerSameKind) {
         candidates.set(candidate.id, candidate);
       }
@@ -2426,7 +2682,11 @@ export class MuximoCommand {
     return existsSync(root) ? walkFiles(root).filter((file) => file.endsWith(".jsonl")) : [];
   }
 
-  private watchCodexSessionName(session: AgentSessionRecord, startedAt: number, runDir: string): { stop: () => Promise<void> } {
+  private watchCodexSessionName(
+    session: AgentSessionRecord,
+    startedAt: number,
+    runDir: string,
+  ): { stop: () => Promise<void> } {
     let stopped = false;
     const controller = new AbortController();
     const run = async () => {
@@ -2435,7 +2695,11 @@ export class MuximoCommand {
         if (discovery.selectedId) {
           try {
             await this.sessions.setBackendSessionIdIfMissing(session.id, discovery.selectedId);
-            await this.manageRemoteThread({ ...session, backendSessionId: discovery.selectedId }, "name", controller.signal);
+            await this.manageRemoteThread(
+              { ...session, backendSessionId: discovery.selectedId },
+              "name",
+              controller.signal,
+            );
             return;
           } catch {
             // The app-server may expose the rollout shortly after the JSONL file.
@@ -2454,7 +2718,11 @@ export class MuximoCommand {
     };
   }
 
-  private async manageRemoteThread(session: AgentSessionRecord, operation: "name" | "archive" | "unarchive", signal?: AbortSignal): Promise<boolean> {
+  private async manageRemoteThread(
+    session: AgentSessionRecord,
+    operation: "name" | "archive" | "unarchive",
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     if (signal?.aborted) return false;
     let result = false;
     const queued = this.remoteOperation.then(async () => {
@@ -2466,7 +2734,11 @@ export class MuximoCommand {
     return result;
   }
 
-  private async manageRemoteThreadNow(session: AgentSessionRecord, operation: "name" | "archive" | "unarchive", signal?: AbortSignal): Promise<boolean> {
+  private async manageRemoteThreadNow(
+    session: AgentSessionRecord,
+    operation: "name" | "archive" | "unarchive",
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     if (!session.codexRemote) return true;
     if (session.codexRemote !== "unix://") {
       this.warn(`cannot ${operation} Codex remote thread on unsupported endpoint: ${session.codexRemote}`);
@@ -2493,33 +2765,53 @@ export class MuximoCommand {
         const status = await runCodexThreadHelper(executable, args, this.env, signal);
         if (status !== 0) throw new Error(`helper exited with ${status}`);
       } else {
-        await manageCodexThread({ threadId: session.backendSessionId, operation, name: operation === "name" ? session.name : undefined });
+        await manageCodexThread({
+          threadId: session.backendSessionId,
+          operation,
+          name: operation === "name" ? session.name : undefined,
+        });
       }
       logger.debug("codex.remote_finished", { success: true, durationMs: Date.now() - startedAt });
       return true;
     } catch (error) {
-      logger.debug("codex.remote_failed", { success: false, ...errorFields(error), durationMs: Date.now() - startedAt });
-      this.warn(`could not ${operation} Codex remote thread '${session.backendSessionId}': ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug("codex.remote_failed", {
+        success: false,
+        ...errorFields(error),
+        durationMs: Date.now() - startedAt,
+      });
+      this.warn(
+        `could not ${operation} Codex remote thread '${session.backendSessionId}': ${error instanceof Error ? error.message : String(error)}`,
+      );
       return false;
     }
   }
 
   private async locateSession(reference: string, global: boolean): Promise<AgentSessionRecord> {
     const separatorIndex = reference.indexOf("/");
-    if (!global && separatorIndex >= 0) throw new MuximoCommandError(`workspace-qualified session references require --global: ${reference}`);
+    if (!global && separatorIndex >= 0)
+      throw new MuximoCommandError(`workspace-qualified session references require --global: ${reference}`);
     const selector = separatorIndex >= 0 ? reference.slice(0, separatorIndex) : undefined;
     const requestedName = separatorIndex >= 0 ? reference.slice(separatorIndex + 1) : reference;
     if (requestedName.includes("/")) throw new MuximoCommandError(`invalid session reference: ${reference}`);
     const sessions = await this.sessions.list(global ? undefined : (await this.resolveWorkspace()).id);
-    const scopedSessions = sessions.filter((session) => !selector || session.workspaceId === selector || session.workspaceName === selector);
+    const scopedSessions = sessions.filter(
+      (session) => !selector || session.workspaceId === selector || session.workspaceName === selector,
+    );
     const exactMatches = scopedSessions.filter((session) => session.name === requestedName);
     if (exactMatches.length === 1) return exactMatches[0]!;
-    if (exactMatches.length > 1) throw new MuximoCommandError(`${global ? "global " : ""}session name is ambiguous; use WORKSPACE/${requestedName}`);
+    if (exactMatches.length > 1)
+      throw new MuximoCommandError(
+        `${global ? "global " : ""}session name is ambiguous; use WORKSPACE/${requestedName}`,
+      );
 
     const name = normalizeSessionName(requestedName);
     const matches = scopedSessions.filter((session) => session.name === name);
-    if (matches.length === 0) throw new MuximoCommandError(global ? `global session not found: ${reference}` : `session not found in this workspace: ${reference}`);
-    if (matches.length > 1) throw new MuximoCommandError(`${global ? "global " : ""}session name is ambiguous; use WORKSPACE/${name}`);
+    if (matches.length === 0)
+      throw new MuximoCommandError(
+        global ? `global session not found: ${reference}` : `session not found in this workspace: ${reference}`,
+      );
+    if (matches.length > 1)
+      throw new MuximoCommandError(`${global ? "global " : ""}session name is ambiguous; use WORKSPACE/${name}`);
     return matches[0]!;
   }
 
@@ -2534,7 +2826,9 @@ export class MuximoCommand {
   }
 
   private audit(eventType: string, entityId: string, payload: unknown): void {
-    recordAuditEvent(this.database!.db, { eventType, entityId, payload });
+    this.ensureDatabase();
+    if (!this.database) throw new MuximoCommandError("database is not available for audit logging");
+    recordAuditEvent(this.database.db, { eventType, entityId, payload });
   }
 
   private ensureDatabase(): void {
@@ -2544,7 +2838,8 @@ export class MuximoCommand {
       migrationsFolder: this.env.MUXIMOD_MIGRATIONS_DIR ?? this.env.MUXIMO_MIGRATIONS_DIR,
       instanceDirectory: this.instanceDirectory,
     });
-    this.transactionManager = this.database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(this.database);
+    this.transactionManager =
+      this.database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(this.database);
     this.sessions = new DrizzleAgentSessionRepository(this.database.db);
     this.workspaces = new DrizzleWorkspaceRepository(this.database.db);
     this.workspaceCatalog = new WorkspaceSelectionCatalog(["/"], this.cwd);
@@ -2621,10 +2916,16 @@ function toWorkspacePatch(value: string | null | undefined): Patch<string> {
   return value === null ? clearPatch : value;
 }
 
-export function buildRunCommand(session: AgentSessionRecord, backendArgs: string[], defaultRemote: string, backendBinary: string): string[] {
+export function buildRunCommand(
+  session: AgentSessionRecord,
+  backendArgs: string[],
+  defaultRemote: string,
+  backendBinary: string,
+): string[] {
   if (session.backend === "codex") {
     const args = [backendBinary];
-    if (session.codexProfile && !hasOption("--profile", backendArgs) && !hasOption("-p", backendArgs)) args.push("--profile", session.codexProfile);
+    if (session.codexProfile && !hasOption("--profile", backendArgs) && !hasOption("-p", backendArgs))
+      args.push("--profile", session.codexProfile);
     const remote = codexRemoteEndpoint(backendArgs, defaultRemote);
     if (remote && !hasOption("--remote", backendArgs)) args.push("--remote", remote);
     const runDir = session.worktreePath ?? session.workspaceRoot;
@@ -2635,15 +2936,26 @@ export function buildRunCommand(session: AgentSessionRecord, backendArgs: string
   const args = [backendBinary];
   if (!hasOption("--name", backendArgs) && !hasOption("-n", backendArgs)) args.push("--name", session.name);
   if (!hasOption("--session-id", backendArgs)) args.push("--session-id", session.backendSessionId ?? "");
-  if (!hasOption("--permission-mode", backendArgs) && !hasOption("--dangerously-skip-permissions", backendArgs)) args.push("--permission-mode", "auto");
+  if (!hasOption("--permission-mode", backendArgs) && !hasOption("--dangerously-skip-permissions", backendArgs))
+    args.push("--permission-mode", "auto");
   args.push(...backendArgs);
   return args;
 }
 
-export function buildResumeCommand(session: AgentSessionRecord, backendArgs: string[], defaultRemote: string, backendBinary: string): string[] {
+export function buildResumeCommand(
+  session: AgentSessionRecord,
+  backendArgs: string[],
+  defaultRemote: string,
+  backendBinary: string,
+): string[] {
   if (!session.backendSessionId) throw new MuximoCommandError("backend session ID is required to resume");
   if (session.backend === "codex") {
-    const full = buildRunCommand(AgentSession.update(session, { backendSessionId: clearPatch }), backendArgs, session.codexRemote ?? defaultRemote, backendBinary);
+    const full = buildRunCommand(
+      AgentSession.update(session, { backendSessionId: clearPatch }),
+      backendArgs,
+      session.codexRemote ?? defaultRemote,
+      backendBinary,
+    );
     const backendStart = full.length - backendArgs.length;
     return [...full.slice(0, backendStart), "resume", session.backendSessionId, ...backendArgs];
   }
@@ -2760,12 +3072,34 @@ function isControlSocketUnavailable(error: unknown): boolean {
 }
 
 function setFallbackSessionMetadata(env: NodeJS.ProcessEnv, input: SessionPaneAdoption): void {
-  runTmuxMetadataCommand(env, ["set-option", "-p", "-t", input.tmuxPaneId, "@muximod.agent_execution_id", input.executionId]);
-  runTmuxMetadataCommand(env, ["set-option", "-p", "-t", input.tmuxPaneId, "@muximod.agent_session_id", input.agentSessionId]);
+  runTmuxMetadataCommand(env, [
+    "set-option",
+    "-p",
+    "-t",
+    input.tmuxPaneId,
+    "@muximod.agent_execution_id",
+    input.executionId,
+  ]);
+  runTmuxMetadataCommand(env, [
+    "set-option",
+    "-p",
+    "-t",
+    input.tmuxPaneId,
+    "@muximod.agent_session_id",
+    input.agentSessionId,
+  ]);
 }
 
 function clearFallbackSessionMetadata(env: NodeJS.ProcessEnv, input: SessionPaneAdoption): boolean {
-  const current = runTmuxMetadataCommand(env, ["show-options", "-q", "-p", "-v", "-t", input.tmuxPaneId, "@muximod.agent_execution_id"]);
+  const current = runTmuxMetadataCommand(env, [
+    "show-options",
+    "-q",
+    "-p",
+    "-v",
+    "-t",
+    input.tmuxPaneId,
+    "@muximod.agent_execution_id",
+  ]);
   if (current.status !== 0 || current.stdout.trim() !== input.executionId) return false;
   runTmuxMetadataCommand(env, ["set-option", "-p", "-u", "-t", input.tmuxPaneId, "@muximod.agent_execution_id"]);
   runTmuxMetadataCommand(env, ["set-option", "-p", "-u", "-t", input.tmuxPaneId, "@muximod.agent_session_id"]);
@@ -2823,7 +3157,8 @@ function parseTmuxNewSessionOptions(args: string[], defaultCwd: string): TmuxNew
     const argument = args[index]!;
     if (argument === "-s" || argument === "--name") name = requireOptionValue(argument, args[++index]);
     else if (argument.startsWith("--name=")) name = argument.slice("--name=".length);
-    else if (argument === "-c" || argument === "--cwd") cwd = resolveFromRoot(requireOptionValue(argument, args[++index]), defaultCwd);
+    else if (argument === "-c" || argument === "--cwd")
+      cwd = resolveFromRoot(requireOptionValue(argument, args[++index]), defaultCwd);
     else if (argument.startsWith("--cwd=")) cwd = resolveFromRoot(argument.slice("--cwd=".length), defaultCwd);
     else if (argument === "-d" || argument === "--detached") detached = true;
     else throw new MuximoCommandError(`unknown tmux new-session option: ${argument}`);
@@ -2834,12 +3169,13 @@ function parseTmuxNewSessionOptions(args: string[], defaultCwd: string): TmuxNew
   return { name, cwd: realpathSafe(cwd), detached };
 }
 
-function shellQuote(value: string): string {
+function _shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function validateSessionName(name: string): void {
-  if (!sessionNamePattern.test(name)) throw new MuximoCommandError(`invalid session name '${name}'; use 1-64 letters, digits, '.', '_' or '-'`);
+  if (!sessionNamePattern.test(name))
+    throw new MuximoCommandError(`invalid session name '${name}'; use 1-64 letters, digits, '.', '_' or '-'`);
 }
 
 function normalizeSessionName(value: string): string {
@@ -2855,7 +3191,12 @@ function normalizeSessionName(value: string): string {
 
 function gitWorkspaceRoot(cwd: string): string | undefined {
   try {
-    return realpathSafe(execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    return realpathSafe(
+      execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim(),
+    );
   } catch {
     return undefined;
   }
@@ -2903,12 +3244,13 @@ function matchesWorktreeCopyPattern(pattern: string, path: string): boolean {
     if (patternIndex === patternSegments.length) {
       result = pathIndex === pathSegments.length;
     } else if (patternSegments[patternIndex] === "**") {
-      result = match(patternIndex + 1, pathIndex)
-        || (pathIndex < pathSegments.length && match(patternIndex, pathIndex + 1));
+      result =
+        match(patternIndex + 1, pathIndex) || (pathIndex < pathSegments.length && match(patternIndex, pathIndex + 1));
     } else {
-      result = pathIndex < pathSegments.length
-        && matchSegmentPattern(patternSegments[patternIndex]!, pathSegments[pathIndex]!)
-        && match(patternIndex + 1, pathIndex + 1);
+      result =
+        pathIndex < pathSegments.length &&
+        matchSegmentPattern(patternSegments[patternIndex]!, pathSegments[pathIndex]!) &&
+        match(patternIndex + 1, pathIndex + 1);
     }
     memo.set(key, result);
     return result;
@@ -2941,14 +3283,18 @@ function gitStatusCode(cwd: string, args: string[]): number {
 
 function commandPath(command: string, env: NodeJS.ProcessEnv): string | undefined {
   try {
-    return execFileSync("which", [command], { encoding: "utf8", env, stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined;
+    return (
+      execFileSync("which", [command], { encoding: "utf8", env, stdio: ["ignore", "pipe", "ignore"] }).trim() ||
+      undefined
+    );
   } catch {
     return undefined;
   }
 }
 
 function resolveBackendCommand(backend: AgentBackend, env: NodeJS.ProcessEnv): string {
-  const override = backend === "codex" ? "MUXIMO_CODEX_BIN" : backend === "claude" ? "MUXIMO_CLAUDE_BIN" : "MUXIMO_OPENCODE_BIN";
+  const override =
+    backend === "codex" ? "MUXIMO_CODEX_BIN" : backend === "claude" ? "MUXIMO_CLAUDE_BIN" : "MUXIMO_OPENCODE_BIN";
   return resolveExecutable(env[override] ?? backend, env);
 }
 
@@ -2975,7 +3321,10 @@ async function ensureCodexRemoteControl(
     executable: basename(binary),
     remoteConfigured: true,
   });
-  for (const command of [["app-server", "daemon", "enable-remote-control"], ["app-server", "daemon", "start"]]) {
+  for (const command of [
+    ["app-server", "daemon", "enable-remote-control"],
+    ["app-server", "daemon", "start"],
+  ]) {
     const startedAt = Date.now();
     logger?.debug("codex.remote_control_command_started", {
       executable: basename(binary),
@@ -3006,7 +3355,13 @@ type SpawnHooks = {
   onError?: (error: unknown) => void;
 };
 
-async function spawnAttached(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, hooks: SpawnHooks = {}): Promise<ProcessResult> {
+async function spawnAttached(
+  binary: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  hooks: SpawnHooks = {},
+): Promise<ProcessResult> {
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(binary, args, { cwd, env, stdio: "inherit" });
@@ -3030,12 +3385,14 @@ async function spawnAttached(binary: string, args: string[], cwd: string, env: N
       hooks.onError?.(error);
       resolvePromise({ code: 127, interrupted, pid: child.pid, signal: null });
     });
-    child.once("close", (code, signal) => resolvePromise({
-      code: code ?? signalExitCode(signal),
-      interrupted,
-      pid: child.pid,
-      signal,
-    }));
+    child.once("close", (code, signal) =>
+      resolvePromise({
+        code: code ?? signalExitCode(signal),
+        interrupted,
+        pid: child.pid,
+        signal,
+      }),
+    );
   });
   try {
     if (await started) await hooks.onStarted?.(child.pid);
@@ -3062,16 +3419,18 @@ async function runAttachedProcess(
     argumentCount: args.length,
   });
   const result = await spawnAttached(binary, args, cwd, env, {
-    onStarted: (pid) => logger?.debug("subprocess.started", {
-      kind,
-      executable: basename(binary),
-      pid,
-    }),
-    onError: (error) => logger?.debug("subprocess.spawn_failed", {
-      kind,
-      executable: basename(binary),
-      ...errorFields(error),
-    }),
+    onStarted: (pid) =>
+      logger?.debug("subprocess.started", {
+        kind,
+        executable: basename(binary),
+        pid,
+      }),
+    onError: (error) =>
+      logger?.debug("subprocess.spawn_failed", {
+        kind,
+        executable: basename(binary),
+        ...errorFields(error),
+      }),
   });
   logger?.debug("subprocess.finished", {
     kind,
@@ -3118,7 +3477,9 @@ function readCodexBaseline(value: string | null | undefined): string[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value) as { codexSessions?: unknown };
-    return Array.isArray(parsed.codexSessions) ? parsed.codexSessions.filter((item): item is string => typeof item === "string") : [];
+    return Array.isArray(parsed.codexSessions)
+      ? parsed.codexSessions.filter((item): item is string => typeof item === "string")
+      : [];
   } catch {
     return [];
   }
@@ -3144,10 +3505,11 @@ function emptyCodexDiscoveryDiagnostics(rootExists: boolean): CodexDiscoveryDiag
 }
 
 function formatCodexDiscoveryDiagnostics(diagnostics: CodexDiscoveryDiagnostics): string {
-  const rejected = Object.entries(diagnostics.rejected)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([reason, count]) => `${reason}=${count}`)
-    .join(",") || "none";
+  const rejected =
+    Object.entries(diagnostics.rejected)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([reason, count]) => `${reason}=${count}`)
+      .join(",") || "none";
   return `rollout scan: root=${diagnostics.rootExists ? "present" : "missing"}, files=${diagnostics.filesScanned}, session_meta=${diagnostics.sessionMetaFiles}, payload=${diagnostics.payloadMetadataFiles}, flat=${diagnostics.flatMetadataFiles}, baseline_entries=${diagnostics.baselineEntries}, candidate_files=${diagnostics.candidateFiles}, unique_candidates=${diagnostics.uniqueCandidates}, rejected=${rejected}, scan_ms=${diagnostics.elapsedMs}`;
 }
 
@@ -3174,7 +3536,7 @@ function inspectCodexMeta(file: string): CodexMetaInspection {
     // persisted sessions remain resumable across Codex upgrades.
     const payload = record.payload;
     const isPayload = payload && typeof payload === "object" && !Array.isArray(payload);
-    const metadata = isPayload ? payload as Record<string, unknown> : record;
+    const metadata = isPayload ? (payload as Record<string, unknown>) : record;
     return {
       shape: isPayload ? "payload" : "flat",
       meta: {
@@ -3221,7 +3583,12 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function runCodexThreadHelper(executable: string, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<number> {
+function runCodexThreadHelper(
+  executable: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<number> {
   return new Promise((resolvePromise) => {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let killTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -3281,9 +3648,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 function padHeader(values: string[]): string {
-  return `${values.map((value) => value.padEnd(24)).join(" ").trimEnd()}\n`;
+  return `${values
+    .map((value) => value.padEnd(24))
+    .join(" ")
+    .trimEnd()}\n`;
 }
 
 function padRow(values: string[]): string {
-  return `${values.map((value) => value.padEnd(24)).join(" ").trimEnd()}\n`;
+  return `${values
+    .map((value) => value.padEnd(24))
+    .join(" ")
+    .trimEnd()}\n`;
 }

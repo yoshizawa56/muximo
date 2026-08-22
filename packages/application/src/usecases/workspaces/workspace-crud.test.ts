@@ -1,19 +1,19 @@
-import { WorkspaceId } from "@muximo/domain";
 import type { WorkspaceRecord } from "@muximo/domain";
-import { describe, it } from "vitest";
+import { WorkspaceId } from "@muximo/domain";
 import {
+  type FixtureHandle,
   hasNoError,
   hasObserved,
   runScenarioTable,
-  type FixtureHandle,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { WorkspaceCrud } from "./workspace-crud.js";
+import { describe, it } from "vitest";
 import type { UpdateWorkspaceInput } from "../../models/workspace.js";
-import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
 import type { WorkspaceRepository } from "../../ports/repositories.js";
+import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
+import { WorkspaceCrud } from "./workspace-crud.js";
 
 type WorkspaceStep =
   | { type: "register"; input: { directory: string; name?: string; worktreeCopyPatterns?: string[] } }
@@ -39,7 +39,11 @@ const scenarios = [
     name: "registers and updates metadata through the shared application service",
     steps: [
       { type: "register", input: { directory: "/work/project", name: "project", worktreeCopyPatterns: [".env"] } },
-      { type: "update", selector: "project", input: { name: "renamed", appendCopyPatterns: ["config/**/*.local.json"] } },
+      {
+        type: "update",
+        selector: "project",
+        input: { name: "renamed", appendCopyPatterns: ["config/**/*.local.json"] },
+      },
     ],
     assert: [
       hasNoError<WorkspaceContext, WorkspaceRecord>(),
@@ -72,11 +76,12 @@ const table: ScenarioTable<WorkspaceFixture, "default", WorkspaceStep, Workspace
   execute: async (fixture, steps) => {
     let result: WorkspaceRecord | undefined;
     for (const step of steps) {
-      result = step.type === "register"
-        ? await fixture.crud.register.execute(step.input)
-        : step.type === "update"
-          ? await fixture.crud.update.execute(step.selector, step.input)
-          : await fixture.crud.delete.execute(step.selector);
+      result =
+        step.type === "register"
+          ? await fixture.crud.register.execute(step.input)
+          : step.type === "update"
+            ? await fixture.crud.update.execute(step.selector, step.input)
+            : await fixture.crud.delete.execute(step.selector);
     }
     return result!;
   },
@@ -107,7 +112,11 @@ function createWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
       auditEvents,
       crud: new WorkspaceCrud(repository, directory, {
         now: () => "2026-08-15T00:00:00.000Z",
-        audit: { record: (eventType) => { auditEvents.push(eventType); } },
+        audit: {
+          record: (eventType) => {
+            auditEvents.push(eventType);
+          },
+        },
       }),
     },
   };

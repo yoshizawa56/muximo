@@ -1,14 +1,14 @@
-import { describe, expect, it } from "vitest";
 import type { MuximodApplication, MuximodSocket } from "@muximo/application";
 import {
-  runOperationTable,
-  hasObserved,
   type Assertion,
   type FixtureHandle,
+  hasObserved,
   type OperationCase,
   type OperationTable,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, expect, it } from "vitest";
 import type { MuximodApp } from "./app.js";
 import { createMuximodApp } from "./app.js";
 import type { MuximodAuthPort } from "./types.js";
@@ -37,9 +37,7 @@ const authContext = {
   },
 };
 
-type SocketInput =
-  | { kind: "plain" }
-  | { kind: "websocket"; ticket: string; payload?: readonly number[] };
+type SocketInput = { kind: "plain" } | { kind: "websocket"; ticket: string; payload?: readonly number[] };
 
 type SocketResult =
   | { kind: "response"; status: number; body: unknown }
@@ -79,11 +77,21 @@ const fixture = (): FixtureHandle<SocketFixture> => {
   const auth: MuximodAuthPort = {
     serverId: authContext.serverId,
     authenticateAccessToken: () => authContext,
-    claimPairing: () => { throw new Error("not used"); },
-    pairingStatus: () => { throw new Error("not used"); },
-    createChallenge: () => { throw new Error("not used"); },
-    createSession: () => { throw new Error("not used"); },
-    issueWebSocketTicket: () => { throw new Error("not used"); },
+    claimPairing: () => {
+      throw new Error("not used");
+    },
+    pairingStatus: () => {
+      throw new Error("not used");
+    },
+    createChallenge: () => {
+      throw new Error("not used");
+    },
+    createSession: () => {
+      throw new Error("not used");
+    },
+    issueWebSocketTicket: () => {
+      throw new Error("not used");
+    },
     consumeWebSocketTicket: (ticket, endpoint) => {
       const expected = `ticket-${endpoint}`;
       if (!ticket || ticket !== expected || !validTickets.has(ticket)) return null;
@@ -93,18 +101,48 @@ const fixture = (): FixtureHandle<SocketFixture> => {
     },
   };
   const application: MuximodApplication = {
-    terminal: { get: async () => ({ id: "terminal", name: "terminal", host: "host", tailnetIp: "100.64.0.1", state: "online", detail: "test", lastSeen: "now" }) },
+    terminal: {
+      get: async () => ({
+        id: "terminal",
+        name: "terminal",
+        host: "host",
+        tailnetIp: "100.64.0.1",
+        state: "online",
+        detail: "test",
+        lastSeen: "now",
+      }),
+    },
     workspaces: {
       list: async () => [],
       browse: async () => [],
-      register: async () => { throw new Error("not used"); },
-      update: async () => { throw new Error("not used"); },
-      delete: async () => { throw new Error("not used"); },
-      resolveDirectory: async () => { throw new Error("not used"); },
-      resolveSelection: async () => { throw new Error("not used"); },
+      register: async () => {
+        throw new Error("not used");
+      },
+      update: async () => {
+        throw new Error("not used");
+      },
+      delete: async () => {
+        throw new Error("not used");
+      },
+      resolveDirectory: async () => {
+        throw new Error("not used");
+      },
+      resolveSelection: async () => {
+        throw new Error("not used");
+      },
     },
-    sessions: { list: async () => [], create: async () => { throw new Error("not used"); } },
-    panes: { list: async () => [], create: async () => { throw new Error("not used"); } },
+    sessions: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
+    panes: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
     hooks: { handleTmux: () => undefined },
   };
   const echo = (socket: MuximodSocket): void => {
@@ -133,7 +171,9 @@ const fixture = (): FixtureHandle<SocketFixture> => {
       app,
       server,
       consumedTickets,
-      get terminalConnections() { return terminalConnections; },
+      get terminalConnections() {
+        return terminalConnections;
+      },
     },
     cleanup: () => server.stop(true),
   };

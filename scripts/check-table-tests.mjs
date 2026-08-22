@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 import { readdir, readFile } from "node:fs/promises";
-import { extname, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "@babel/parser";
 
-const repositoryRoot = resolve(
-  fileURLToPath(new URL("..", import.meta.url)),
-);
+const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const sourceRoots = ["apps", "packages", "scripts"];
 const testFilePattern = /\.test\.(?:mjs|js|ts|tsx)$/;
 const runnerNames = new Set(["runOperationTable", "runScenarioTable"]);
@@ -32,7 +30,7 @@ if (violations.length > 0) {
   console.log(`Table-test rules passed for ${testFiles.length} files.`);
 }
 
-function inspectTestFile(source, filePath, relativePath) {
+function inspectTestFile(source, _filePath, relativePath) {
   let ast;
   try {
     ast = parse(source, {
@@ -150,7 +148,9 @@ function inspectTestFile(source, filePath, relativePath) {
     const allowedRowKeys = new Set(["name", "fixture", "input", "steps", "assert"]);
     for (const key of properties.keys()) {
       if (!allowedRowKeys.has(key)) {
-        violations.push(`${relativePath}: row-level ${key} is not allowed; keep execution and observation at table level`);
+        violations.push(
+          `${relativePath}: row-level ${key} is not allowed; keep execution and observation at table level`,
+        );
       }
     }
 
@@ -171,17 +171,18 @@ function inspectTestFile(source, filePath, relativePath) {
 
   for (const runnerCall of runnerCalls) {
     const tableArgument = runnerCall.arguments[1];
-    if (!tableArgument || tableArgument.type !== "Identifier") continue;
+    if (tableArgument?.type !== "Identifier") continue;
     const tableDeclaration = variableDeclarations.get(tableArgument.name);
     if (!tableDeclaration || !hasExplicitType(tableDeclaration)) {
-      violations.push(`${relativePath}: table passed to ${runnerCall.callee.name ?? "the shared runner"} must have an explicit type`);
+      violations.push(
+        `${relativePath}: table passed to ${runnerCall.callee.name ?? "the shared runner"} must have an explicit type`,
+      );
       continue;
     }
 
     const tableObject = unwrapExpression(tableDeclaration.init);
-    const casesProperty = tableObject?.type === "ObjectExpression"
-      ? namedProperties(tableObject).get("cases")
-      : undefined;
+    const casesProperty =
+      tableObject?.type === "ObjectExpression" ? namedProperties(tableObject).get("cases") : undefined;
     const casesValue = casesProperty ? unwrapExpression(casesProperty.value) : undefined;
     if (casesValue?.type !== "Identifier") continue;
     const casesDeclaration = variableDeclarations.get(casesValue.name);
@@ -221,7 +222,10 @@ function memberChain(node) {
 
 function unwrapExpression(node) {
   let current = node;
-  while (current && ["TSSatisfiesExpression", "TSAsExpression", "TypeCastExpression", "ParenthesizedExpression"].includes(current.type)) {
+  while (
+    current &&
+    ["TSSatisfiesExpression", "TSAsExpression", "TypeCastExpression", "ParenthesizedExpression"].includes(current.type)
+  ) {
     current = current.expression;
   }
   return current;

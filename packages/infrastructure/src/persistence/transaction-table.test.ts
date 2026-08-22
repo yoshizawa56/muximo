@@ -1,17 +1,17 @@
-import { afterAll, describe, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
 import {
   hasObserved,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
-import { createAgentDatabase, DrizzleWorkspaceRepository } from "./index.js";
+import { afterAll, describe, it } from "vitest";
 import { createSqliteRollbackScope } from "./__tests__/sqlite-table-scope.js";
+import { createAgentDatabase, DrizzleWorkspaceRepository } from "./index.js";
 
 type Input = { id: string };
 type Fixture = { repository: DrizzleWorkspaceRepository };

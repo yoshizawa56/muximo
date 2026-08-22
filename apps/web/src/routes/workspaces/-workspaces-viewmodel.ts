@@ -1,7 +1,8 @@
-import { useCallback, useState } from "react";
+import type { WorkspaceDirectory } from "@muximo/contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import type { WorkspaceDirectory } from "@muximo/contract";import { useMuximodEvents } from "../../app/api/muximod-events";
+import { useState } from "react";
+import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 
 export type WorkspacesStatus = "loading" | "ready" | "error";
@@ -44,8 +45,8 @@ export type WorkspaceDetailViewModel = {
 export function filterWorkspaces(workspaces: WorkspaceDirectory[], query: string): WorkspaceDirectory[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return workspaces;
-  return workspaces.filter((workspace) =>
-    workspace.name.toLowerCase().includes(needle) || workspace.directory.toLowerCase().includes(needle),
+  return workspaces.filter(
+    (workspace) => workspace.name.toLowerCase().includes(needle) || workspace.directory.toLowerCase().includes(needle),
   );
 }
 
@@ -54,7 +55,14 @@ export function workspaceDetailCanSave(name: string): boolean {
 }
 
 export function parseWorktreeCopyPatterns(value: string): string[] {
-  return [...new Set(value.split(/\r?\n/).map((pattern) => pattern.trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      value
+        .split(/\r?\n/)
+        .map((pattern) => pattern.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 export function useWorkspacesListViewModel(): WorkspacesListViewModel {
@@ -63,10 +71,13 @@ export function useWorkspacesListViewModel(): WorkspacesListViewModel {
   const { connection, utils } = useMuximodConnection();
   useMuximodEvents(connection);
   const [query, setQuery] = useState("");
-  const workspacesQuery = useQuery(utils.workspaces.list.queryOptions({
-    staleTime: 5_000,
-    enabled: Boolean(connection),
-  }));
+  const workspacesQuery = useQuery(
+    utils.workspaces.list.queryOptions({
+      input: {},
+      staleTime: 5_000,
+      enabled: Boolean(connection),
+    }),
+  );
   const registerMutation = useMutation({
     mutationFn: (input: { directory: string; name?: string }) => {
       if (!connection) throw new Error("Connection profile is not configured");
@@ -74,15 +85,13 @@ export function useWorkspacesListViewModel(): WorkspacesListViewModel {
     },
     onSuccess: (response) => {
       const workspace = response.workspace;
-      queryClient.setQueryData(
-        utils.workspaces.list.queryKey({ input: {} }),
-        (current) => {
-          if (!current) return current;
-          const workspaces = [...current.workspaces.filter((candidate) => candidate.id !== workspace.id), workspace]
-            .sort((left, right) => left.name.localeCompare(right.name));
-          return { ...current, workspaces };
-        },
-      );
+      queryClient.setQueryData(utils.workspaces.list.queryKey({ input: {} }), (current) => {
+        if (!current) return current;
+        const workspaces = [...current.workspaces.filter((candidate) => candidate.id !== workspace.id), workspace].sort(
+          (left, right) => left.name.localeCompare(right.name),
+        );
+        return { ...current, workspaces };
+      });
       void navigate({ to: "/workspaces/$workspaceId", params: { workspaceId: workspace.id } });
     },
   });

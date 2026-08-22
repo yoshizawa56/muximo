@@ -50,9 +50,18 @@ export interface MuximodHostPort {
   createManagedPane(input: CreatePaneInput, workspace: WorkspaceRecord | undefined, cwd: string | undefined): string;
   resolvePane(target: string): MuximodPaneRef;
   isWindowZoomed(pane: MuximodPaneRef): boolean;
-  splitPane(command: string | undefined, placement: Exclude<MuximodPanePlacement, "window">, targetPaneId: string, zoomed: boolean): string;
+  splitPane(
+    command: string | undefined,
+    placement: Exclude<MuximodPanePlacement, "window">,
+    targetPaneId: string,
+    zoomed: boolean,
+  ): string;
   listPanesSnapshot(): MuximodLiveSnapshot;
-  setAgentPaneMetadata(paneId: string, field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id", value: string): void;
+  setAgentPaneMetadata(
+    paneId: string,
+    field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id",
+    value: string,
+  ): void;
   setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): void;
   clearAgentExecutionMetadata(paneId: string, expectedExecutionId?: string): boolean;
   resetAgentPaneMetadata(paneId: string): void;
@@ -62,7 +71,10 @@ export interface MuximodHostPort {
 }
 
 export interface MuximodViewportPort {
-  handleTmuxHook(event: "client-attached" | "client-active" | "client-resized" | "client-focus-in" | "client-detached", client: string): void;
+  handleTmuxHook(
+    event: "client-attached" | "client-active" | "client-resized" | "client-focus-in" | "client-detached",
+    client: string,
+  ): void;
   reassertMobileViewport(target: string): void;
 }
 
@@ -70,8 +82,14 @@ export interface MuximodWorkspaceCatalogPort extends WorkspaceDirectoryPort {
   toDirectoryOption(workspace: WorkspaceRecord): MuximodWorkspaceDirectory;
   browseDirectories(parentPath?: string): Promise<MuximodWorkspaceDirectory[]>;
   resolveLegacyDirectory(directory: string): Promise<string>;
-  resolveWorkspaceDirectory(workspaceId: WorkspaceId, findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>): Promise<WorkspaceRecord>;
-  resolveSelection(selection: { workspaceId: WorkspaceId; mode: "workspace" | "worktree" }, findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>): Promise<WorkspaceRecord>;
+  resolveWorkspaceDirectory(
+    workspaceId: WorkspaceId,
+    findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
+  ): Promise<WorkspaceRecord>;
+  resolveSelection(
+    selection: { workspaceId: WorkspaceId; mode: "workspace" | "worktree" },
+    findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
+  ): Promise<WorkspaceRecord>;
 }
 
 export type AgentExecutionObservation = Pick<AgentSessionRecord, "status" | "executionPid"> & {

@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 import type { PairingClaim, PairingOffer, PairingPresenterPort } from "@muximo/application";
-import { TerminalQrRenderer, type QrRendererPort } from "./terminal-qr-renderer.js";
+import { type QrRendererPort, TerminalQrRenderer } from "./terminal-qr-renderer.js";
 
 export type TerminalPairingPresenterOptions = {
   out: Writable;
@@ -27,7 +27,9 @@ export class TerminalPairingPresenter implements PairingPresenterPort {
   }
 
   public async confirmPairing(claim: PairingClaim): Promise<boolean> {
-    this.write(`\nConnection request received.\n  name: ${claim.deviceName}\n  type: ${claim.deviceType}\n  platform: ${claim.platform ?? "(not provided)"}\n  clientVersion: ${claim.clientVersion ?? "(not provided)"}\n  public key fingerprint: ${claim.keyFingerprint}\n`);
+    this.write(
+      `\nConnection request received.\n  name: ${claim.deviceName}\n  type: ${claim.deviceType}\n  platform: ${claim.platform ?? "(not provided)"}\n  clientVersion: ${claim.clientVersion ?? "(not provided)"}\n  public key fingerprint: ${claim.keyFingerprint}\n`,
+    );
     const prompt = createInterface({ input: this.options.input, output: this.options.out });
     try {
       const answer = await prompt.question("Approve this device? [y/N] ");

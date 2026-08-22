@@ -1,24 +1,42 @@
-import { describe, expect, it } from "vitest";
 import {
-  noFixture,
-  returns,
-  runOperationTable,
   type Assertion,
+  noFixture,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, expect, it } from "vitest";
 import { classifyPinchDirection, isBrowserZoomKey, isZoomInKey } from "./-window-map-gesture";
 
 type Context = {};
 
 const pinchCases = [
-  { name: "classifies a deliberate pinch out", input: { initial: 120, current: 150 }, assert: [returns<Context, "out" | "in" | null>("out")] },
-  { name: "classifies a deliberate pinch in", input: { initial: 150, current: 120 }, assert: [returns<Context, "out" | "in" | null>("in")] },
-  { name: "ignores movement below the deliberate threshold", input: { initial: 120, current: 141 }, assert: [returns<Context, "out" | "in" | null>(null)] },
+  {
+    name: "classifies a deliberate pinch out",
+    input: { initial: 120, current: 150 },
+    assert: [returns<Context, "out" | "in" | null>("out")],
+  },
+  {
+    name: "classifies a deliberate pinch in",
+    input: { initial: 150, current: 120 },
+    assert: [returns<Context, "out" | "in" | null>("in")],
+  },
+  {
+    name: "ignores movement below the deliberate threshold",
+    input: { initial: 120, current: 141 },
+    assert: [returns<Context, "out" | "in" | null>(null)],
+  },
 ] satisfies readonly OperationCase<"default", { initial: number; current: number }, "out" | "in" | null, Context>[];
 
-const pinchTable: OperationTable<undefined, "default", { initial: number; current: number }, "out" | "in" | null, Context> = {
+const pinchTable: OperationTable<
+  undefined,
+  "default",
+  { initial: number; current: number },
+  "out" | "in" | null,
+  Context
+> = {
   defaultFixture: noFixture(),
   cases: pinchCases,
   execute: (_fixture, input) => classifyPinchDirection(input.initial, input.current),
@@ -37,11 +55,31 @@ const matchesZoomResult = (expected: Partial<ZoomResult>): Assertion<Context, Zo
 });
 
 const zoomCases = [
-  { name: "recognizes plus with a control modifier", input: { key: "+", ctrlKey: true, metaKey: false }, assert: [matchesZoomResult({ isBrowserZoom: true, isZoomIn: true })] },
-  { name: "recognizes equals with a meta modifier", input: { key: "=", ctrlKey: false, metaKey: true }, assert: [matchesZoomResult({ isBrowserZoom: true, isZoomIn: true })] },
-  { name: "recognizes minus with a control modifier", input: { key: "-", ctrlKey: true, metaKey: false }, assert: [matchesZoomResult({ isBrowserZoom: true, isZoomIn: false })] },
-  { name: "recognizes zero with a meta modifier", input: { key: "0", ctrlKey: false, metaKey: true }, assert: [matchesZoomResult({ isBrowserZoom: true, isZoomIn: false })] },
-  { name: "ignores an unmodified plus key", input: { key: "+", ctrlKey: false, metaKey: false }, assert: [matchesZoomResult({ isBrowserZoom: false })] },
+  {
+    name: "recognizes plus with a control modifier",
+    input: { key: "+", ctrlKey: true, metaKey: false },
+    assert: [matchesZoomResult({ isBrowserZoom: true, isZoomIn: true })],
+  },
+  {
+    name: "recognizes equals with a meta modifier",
+    input: { key: "=", ctrlKey: false, metaKey: true },
+    assert: [matchesZoomResult({ isBrowserZoom: true, isZoomIn: true })],
+  },
+  {
+    name: "recognizes minus with a control modifier",
+    input: { key: "-", ctrlKey: true, metaKey: false },
+    assert: [matchesZoomResult({ isBrowserZoom: true, isZoomIn: false })],
+  },
+  {
+    name: "recognizes zero with a meta modifier",
+    input: { key: "0", ctrlKey: false, metaKey: true },
+    assert: [matchesZoomResult({ isBrowserZoom: true, isZoomIn: false })],
+  },
+  {
+    name: "ignores an unmodified plus key",
+    input: { key: "+", ctrlKey: false, metaKey: false },
+    assert: [matchesZoomResult({ isBrowserZoom: false })],
+  },
 ] satisfies readonly OperationCase<"default", ZoomInput, ZoomResult, Context>[];
 
 const zoomTable: OperationTable<undefined, "default", ZoomInput, ZoomResult, Context> = {

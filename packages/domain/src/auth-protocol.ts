@@ -22,14 +22,14 @@ export function pairingClaimMessage(input: {
   keyFingerprint: string;
   clientNonce: string;
 }): string {
-  return [
+  return `${[
     "MA-PAIR-CLAIM-V1",
     input.serverId,
     input.pairingId,
     input.pairingSecretHash,
     input.keyFingerprint,
     input.clientNonce,
-  ].join("\n") + "\n";
+  ].join("\n")}\n`;
 }
 
 export function sessionMessage(input: {
@@ -39,12 +39,12 @@ export function sessionMessage(input: {
   challengeNonce: string;
   expiresAt: string;
 }): string {
-  return [
+  return `${[
     "MA-SESSION-V1",
     input.serverId,
     input.deviceId,
     input.challengeId,
     input.challengeNonce,
     input.expiresAt,
-  ].join("\n") + "\n";
+  ].join("\n")}\n`;
 }

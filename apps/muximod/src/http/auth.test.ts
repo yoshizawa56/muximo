@@ -1,25 +1,35 @@
-import { describe, it } from "vitest";
 import type { MuximodApplication } from "@muximo/application";
-import { createHttpTestClient } from "./test-client.js";
 import {
+  type FixtureHandle,
   hasObserved,
   runScenarioTable,
-  type FixtureHandle,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
+import { createHttpTestClient } from "./test-client.js";
 
 const serverId = "server-auth-test-000000";
 const auth: MuximodAuthPort = {
   serverId,
   authenticateAccessToken: () => null,
-  claimPairing: () => { throw new Error("not used"); },
-  pairingStatus: () => { throw new Error("not used"); },
-  createChallenge: () => { throw new Error("not used"); },
-  createSession: () => { throw new Error("not used"); },
-  issueWebSocketTicket: () => { throw new Error("not used"); },
+  claimPairing: () => {
+    throw new Error("not used");
+  },
+  pairingStatus: () => {
+    throw new Error("not used");
+  },
+  createChallenge: () => {
+    throw new Error("not used");
+  },
+  createSession: () => {
+    throw new Error("not used");
+  },
+  issueWebSocketTicket: () => {
+    throw new Error("not used");
+  },
   consumeWebSocketTicket: () => null,
 };
 
@@ -38,7 +48,12 @@ type HttpContext = {
 
 const httpFixture = (): FixtureHandle<HttpFixture> => {
   const originalFetch = globalThis.fetch;
-  const app = createMuximodApp({ auth, application: createApplication(), corsOrigin: "http://web.example", hookToken: "hook" });
+  const app = createMuximodApp({
+    auth,
+    application: createApplication(),
+    corsOrigin: "http://web.example",
+    hookToken: "hook",
+  });
   const fixture: HttpFixture = { app, statuses: {}, origins: {}, lastResponse: null, originalFetch };
   globalThis.fetch = (async (input, init) => {
     const response = await app.fetch(new Request(input, init));
@@ -49,7 +64,9 @@ const httpFixture = (): FixtureHandle<HttpFixture> => {
   }) as typeof globalThis.fetch;
   return {
     fixture,
-    cleanup: () => { globalThis.fetch = originalFetch; },
+    cleanup: () => {
+      globalThis.fetch = originalFetch;
+    },
   };
 };
 
@@ -59,7 +76,12 @@ const cases = [
     steps: [{ type: "health" }, { type: "info" }, { type: "protected" }, { type: "preflight" }],
     assert: [
       hasObserved<HttpContext, undefined>("statuses", { health: 200, info: 200, protected: 401, preflight: 204 }),
-      hasObserved<HttpContext, undefined>("origins", { health: null, info: "http://web.example", protected: "http://web.example", preflight: "http://web.example" }),
+      hasObserved<HttpContext, undefined>("origins", {
+        health: null,
+        info: "http://web.example",
+        protected: "http://web.example",
+        preflight: "http://web.example",
+      }),
     ],
   },
 ] satisfies readonly ScenarioCase<"default", HttpStep, undefined, HttpContext>[];
@@ -87,15 +109,21 @@ const table: ScenarioTable<HttpFixture, "default", HttpStep, undefined, HttpCont
           await client.capabilities();
           fixture.statuses.protected = 200;
         } catch (error) {
-          fixture.statuses.protected = fixture.lastResponse?.status ?? (typeof error === "object" && error !== null && "status" in error && typeof error.status === "number" ? error.status : 0);
+          fixture.statuses.protected =
+            fixture.lastResponse?.status ??
+            (typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
+              ? error.status
+              : 0);
         }
         fixture.origins.protected = fixture.lastResponse?.origin ?? null;
         continue;
       }
-      const response = await fixture.app.request(new Request("http://muximod.example/rpc/capabilities", {
-        method: "OPTIONS",
-        headers: { origin: "http://web.example", "access-control-request-method": "POST" },
-      }));
+      const response = await fixture.app.request(
+        new Request("http://muximod.example/rpc/capabilities", {
+          method: "OPTIONS",
+          headers: { origin: "http://web.example", "access-control-request-method": "POST" },
+        }),
+      );
       fixture.statuses.preflight = response.status;
       fixture.origins.preflight = response.headers.get("access-control-allow-origin");
     }
@@ -109,18 +137,48 @@ describe("muximod RPC authentication boundary", () => {
 
 function createApplication(): MuximodApplication {
   return {
-    terminal: { get: async () => ({ id: "terminal", name: "terminal", host: "host", tailnetIp: "100.64.0.1", state: "online", detail: "test", lastSeen: "now" }) },
+    terminal: {
+      get: async () => ({
+        id: "terminal",
+        name: "terminal",
+        host: "host",
+        tailnetIp: "100.64.0.1",
+        state: "online",
+        detail: "test",
+        lastSeen: "now",
+      }),
+    },
     workspaces: {
       list: async () => [],
       browse: async () => [],
-      register: async () => { throw new Error("not used"); },
-      update: async () => { throw new Error("not used"); },
-      delete: async () => { throw new Error("not used"); },
-      resolveDirectory: async () => { throw new Error("not used"); },
-      resolveSelection: async () => { throw new Error("not used"); },
+      register: async () => {
+        throw new Error("not used");
+      },
+      update: async () => {
+        throw new Error("not used");
+      },
+      delete: async () => {
+        throw new Error("not used");
+      },
+      resolveDirectory: async () => {
+        throw new Error("not used");
+      },
+      resolveSelection: async () => {
+        throw new Error("not used");
+      },
     },
-    sessions: { list: async () => [], create: async () => { throw new Error("not used"); } },
-    panes: { list: async () => [], create: async () => { throw new Error("not used"); } },
+    sessions: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
+    panes: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
     hooks: { handleTmux: () => undefined },
   };
 }

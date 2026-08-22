@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import type { TmuxSession } from "@muximo/contract";
+import { useQuery } from "@tanstack/react-query";
 import { useMuximodEvents } from "../../app/api/muximod-events";
-import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 import type { MuximodQueryUtils } from "../../app/api/orpc-utils";
+import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 import type { ConnectionFlowViewModel, TerminalEndpoint } from "./-connection-flow-viewmodel";
 
 export type TerminalResources = {
@@ -19,24 +19,38 @@ export type TerminalResources = {
   sessionsError: string | null;
 };
 
-export function useTerminalResources({ terminalId, sessionName, pollSessions = false }: { terminalId?: string; sessionName?: string; pollSessions?: boolean }): TerminalResources {
+export function useTerminalResources({
+  terminalId,
+  sessionName,
+  pollSessions = false,
+}: {
+  terminalId?: string;
+  sessionName?: string;
+  pollSessions?: boolean;
+}): TerminalResources {
   const { connection, connectionKey, utils } = useMuximodConnection();
   useMuximodEvents(connection);
 
-  const terminalsQuery = useQuery(utils.terminals.list.queryOptions({
-    staleTime: 5_000,
-    retry: 1,
-    enabled: Boolean(connection),
-  }));
+  const terminalsQuery = useQuery(
+    utils.terminals.list.queryOptions({
+      input: {},
+      staleTime: 5_000,
+      retry: 1,
+      enabled: Boolean(connection),
+    }),
+  );
 
   // The session list does not depend on the terminal; the shared contract key
   // deduplicates it across terminal routes instead of caching copies.
-  const sessionsQuery = useQuery(utils.sessions.list.queryOptions({
-    staleTime: 1_000,
-    refetchInterval: pollSessions ? 5_000 : false,
-    retry: 1,
-    enabled: Boolean(connection) && Boolean(terminalId),
-  }));
+  const sessionsQuery = useQuery(
+    utils.sessions.list.queryOptions({
+      input: {},
+      staleTime: 1_000,
+      refetchInterval: pollSessions ? 5_000 : false,
+      retry: 1,
+      enabled: Boolean(connection) && Boolean(terminalId),
+    }),
+  );
 
   const terminals = terminalsQuery.data?.terminals ?? [];
   const sessions = sessionsQuery.data?.sessions ?? [];

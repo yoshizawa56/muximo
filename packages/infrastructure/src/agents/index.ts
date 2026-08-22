@@ -1,5 +1,5 @@
-import { createClaudeMonitor, createCodexMonitor } from "./provider-monitors.js";
 import { createOpenCodePlugin } from "./opencode/plugin.js";
+import { createClaudeMonitor, createCodexMonitor } from "./provider-monitors.js";
 
 export * from "./opencode/index.js";
 
@@ -47,7 +47,12 @@ export type OutputChunk = {
 };
 
 export type AgentObservation =
-  | { type: "state_changed"; state: "starting" | "running" | "waiting_input" | "waiting_approval" | "failed" | "completed" | "stopped"; reason?: string; recentOutput?: string }
+  | {
+      type: "state_changed";
+      state: "starting" | "running" | "waiting_input" | "waiting_approval" | "failed" | "completed" | "stopped";
+      reason?: string;
+      recentOutput?: string;
+    }
   | { type: "title_changed"; title: string }
   | { type: "progress"; value?: number; message?: string }
   | { type: "action_requested"; action: ActionDescriptor }
@@ -120,7 +125,9 @@ export interface AgentPluginV1 {
    * foreground process can start. When present, the host should prefer it
    * over `launch` + `createMonitor`.
    */
-  prepareLaunch?(input: LaunchInput & { monitorContext: AgentMonitorContext; resumeSessionId?: string | null }): Promise<LaunchPlan>;
+  prepareLaunch?(
+    input: LaunchInput & { monitorContext: AgentMonitorContext; resumeSessionId?: string | null },
+  ): Promise<LaunchPlan>;
   actions(): ActionDescriptor[];
 }
 
@@ -155,12 +162,19 @@ export const shellPlugin: AgentPluginV1 = {
       : null;
   },
   async launch(input) {
-    return { command: input.args?.[0] ?? "sh", args: input.args?.slice(1) ?? [], cwd: input.cwd, environment: input.environment ?? {} };
+    return {
+      command: input.args?.[0] ?? "sh",
+      args: input.args?.slice(1) ?? [],
+      cwd: input.cwd,
+      environment: input.environment ?? {},
+    };
   },
   createObserver() {
     return {
       onOutput: () => [],
-      onExit: ({ code }) => [{ type: "state_changed", state: code === 0 ? "completed" : "failed", reason: "shell exited" }],
+      onExit: ({ code }) => [
+        { type: "state_changed", state: code === 0 ? "completed" : "failed", reason: "shell exited" },
+      ],
     };
   },
   actions: () => [],
@@ -209,12 +223,23 @@ function createBackendPlugin(options: {
       return command === options.executable ? { confidence: 1, agentId: options.id, name: options.displayName } : null;
     },
     async launch(input) {
-      return { command: options.executable, args: input.args ?? [], cwd: input.cwd, environment: input.environment ?? {} };
+      return {
+        command: options.executable,
+        args: input.args ?? [],
+        cwd: input.cwd,
+        environment: input.environment ?? {},
+      };
     },
     createObserver() {
       return {
         onOutput: () => [],
-        onExit: ({ code }) => [{ type: "state_changed", state: code === 0 ? "completed" : "failed", reason: `${options.displayName} exited` }],
+        onExit: ({ code }) => [
+          {
+            type: "state_changed",
+            state: code === 0 ? "completed" : "failed",
+            reason: `${options.displayName} exited`,
+          },
+        ],
       };
     },
     createMonitor: options.createMonitor,

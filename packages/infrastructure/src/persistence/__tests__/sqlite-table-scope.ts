@@ -1,5 +1,5 @@
-import { drizzle } from "drizzle-orm/bun-sqlite";
 import type { CaseScope } from "@muximo/test-support";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import type { AgentDatabase } from "../index.js";
 import { runWithSqliteTransaction, type SqliteTransactionScope } from "../transaction-context.js";
 

@@ -10,10 +10,8 @@ export function configureSqliteConnection(
     throw new Error("SQLite busy timeout must be a non-negative integer");
   }
 
-  sqlite.exec([
-    "PRAGMA foreign_keys = ON",
-    "PRAGMA journal_mode = WAL",
-    `PRAGMA busy_timeout = ${busyTimeoutMs}`,
-  ].join("; "));
+  sqlite.exec(
+    ["PRAGMA foreign_keys = ON", "PRAGMA journal_mode = WAL", `PRAGMA busy_timeout = ${busyTimeoutMs}`].join("; "),
+  );
   return sqlite;
 }

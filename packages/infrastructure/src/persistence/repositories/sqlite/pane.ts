@@ -1,8 +1,8 @@
-import { and, desc, eq, like, lt, notInArray, or } from "drizzle-orm";
-import { Pane, PaneId, AgentSessionId, WorkspaceId, type PaneRecord } from "@muximo/domain";
 import type { PaneFilter, PaneRepository } from "@muximo/application";
+import { AgentSessionId, Pane, PaneId, type PaneRecord, WorkspaceId } from "@muximo/domain";
+import { and, desc, eq, like, lt, notInArray, or } from "drizzle-orm";
 import type { AgentDrizzleDatabase } from "../../database-types.js";
-import { panes, type PaneRow } from "../../schema.js";
+import { type PaneRow, panes } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
 export class DrizzlePaneRepository extends DrizzleRepositoryBase implements PaneRepository {
@@ -17,7 +17,11 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
     if (filter?.sessionName) conditions.push(eq(panes.sessionName, filter.sessionName));
 
     const rows = conditions.length
-      ? this.db().select().from(panes).where(and(...conditions)).all()
+      ? this.db()
+          .select()
+          .from(panes)
+          .where(and(...conditions))
+          .all()
       : this.db().select().from(panes).all();
     return rows.map(toPaneRecord);
   }
@@ -75,7 +79,11 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
       .run();
   }
 
-  public async pruneStalePanes(activePaneIds: readonly PaneId[], olderThan: string, tmuxServerScope: string): Promise<number> {
+  public async pruneStalePanes(
+    activePaneIds: readonly PaneId[],
+    olderThan: string,
+    tmuxServerScope: string,
+  ): Promise<number> {
     // An empty live set is deliberately not treated as authoritative. tmux
     // exits its server after the last session disappears, so deleting all old
     // rows here would turn a temporary tmux outage into data loss.
@@ -93,7 +101,7 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
 }
 
 function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
-  const pane = Pane.validate(record);
+  const pane = Pane.restore(record);
   return {
     id: pane.id,
     tmuxPaneId: pane.tmuxPaneId,
@@ -116,7 +124,7 @@ function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
 }
 
 function toPaneRecord(row: PaneRow): PaneRecord {
-  return Pane.validate({
+  return Pane.restore({
     id: PaneId.create(row.id),
     tmuxPaneId: row.tmuxPaneId,
     ...(row.tmuxServerId === "legacy" ? {} : { tmuxServerId: row.tmuxServerId }),

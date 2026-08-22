@@ -1,6 +1,7 @@
 // Image-paste integration is a terminal transport adapter, not application behavior.
-import { randomBytes } from "node:crypto";
+
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,12 +95,18 @@ export function inlineImageSequence(name: string, bytes: Buffer): string {
 }
 
 export function sanitizeInlineImageName(name: string): string {
-  const sanitized = name.replaceAll(/[^\x20-\x7e]/g, "_").replaceAll(/[:;]/g, "_").trim();
+  const sanitized = name
+    .replaceAll(/[^\x20-\x7e]/g, "_")
+    .replaceAll(/[:;]/g, "_")
+    .trim();
   return (sanitized || "image").slice(0, 255);
 }
 
 function stageTempImage(input: ImagePasteInput, tempDir: string): string {
-  const filePath = join(tempDir, `muximod-paste-${randomBytes(8).toString("hex")}${extensionForMimeType(input.mimeType)}`);
+  const filePath = join(
+    tempDir,
+    `muximod-paste-${randomBytes(8).toString("hex")}${extensionForMimeType(input.mimeType)}`,
+  );
   writeFileSync(filePath, input.bytes, { mode: 0o600 });
   return filePath;
 }
@@ -125,7 +132,11 @@ function extensionForMimeType(mimeType: string | undefined): string {
   }
 }
 
-function setSystemClipboardImage(path: string, platform: NodeJS.Platform, runOsascript: (script: string) => CommandResult): ImagePasteResult["clipboard"] {
+function setSystemClipboardImage(
+  path: string,
+  platform: NodeJS.Platform,
+  runOsascript: (script: string) => CommandResult,
+): ImagePasteResult["clipboard"] {
   if (platform !== "darwin") return "unavailable";
   try {
     const result = runOsascript(osascriptClipboardScript(path));

@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { WorkspaceDirectory } from "@muximo/contract";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
 import { useMuximodConnection } from "../../../../app/api/use-muximod-connection";
 
 export type WorkspacePickerStatus = "loading" | "ready" | "error";
@@ -46,27 +46,34 @@ export type WorkspacePickerViewModel = WorkspacePickerInput & {
 
 export function workspacePickerState(input: WorkspacePickerInput): WorkspacePickerState {
   const selectedWorkspace = input.workspaces.find((workspace) => workspace.id === input.workspaceId) ?? null;
-  const canContinue = input.workspaceStatus === "ready"
-    && Boolean(selectedWorkspace)
-    && (input.mode === "workspace" || Boolean(selectedWorkspace?.isGit));
+  const canContinue =
+    input.workspaceStatus === "ready" &&
+    Boolean(selectedWorkspace) &&
+    (input.mode === "workspace" || Boolean(selectedWorkspace?.isGit));
 
   return {
     selectedWorkspace,
     canContinue,
-    modeHelp: input.mode === "worktree"
-      ? "The host creates an isolated git worktree and runs the registered workspace hooks with the worktree as cwd."
-      : "Open the selected workspace directory directly.",
+    modeHelp:
+      input.mode === "worktree"
+        ? "The host creates an isolated git worktree and runs the registered workspace hooks with the worktree as cwd."
+        : "Open the selected workspace directory directly.",
   };
 }
 
 export function workspacePickerErrorMessage(error: unknown): string | null {
   if (!error) return null;
   if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error && "message" in error && typeof error.message === "string") return error.message;
+  if (typeof error === "object" && error && "message" in error && typeof error.message === "string")
+    return error.message;
   return String(error);
 }
 
-export function useWorkspacePickerViewModel({ initialMode = "workspace" }: { initialMode?: WorkspaceSelectionMode } = {}): WorkspacePickerViewModel {
+export function useWorkspacePickerViewModel({
+  initialMode = "workspace",
+}: {
+  initialMode?: WorkspaceSelectionMode;
+} = {}): WorkspacePickerViewModel {
   const queryClient = useQueryClient();
   const { connection, utils } = useMuximodConnection();
   const [workspaceId, setWorkspaceId] = useState("");
@@ -83,63 +90,91 @@ export function useWorkspacePickerViewModel({ initialMode = "workspace" }: { ini
   const [registrationError, setRegistrationError] = useState<string | null>(null);
   const [isRegisteringWorkspace, setIsRegisteringWorkspace] = useState(false);
 
-  const workspacesQuery = useQuery(utils.workspaces.list.queryOptions({
-    staleTime: 5_000,
-    retry: 1,
-    enabled: Boolean(connection),
-  }));
+  const workspacesQuery = useQuery(
+    utils.workspaces.list.queryOptions({
+      input: {},
+      staleTime: 5_000,
+      retry: 1,
+      enabled: Boolean(connection),
+    }),
+  );
   const workspaces = workspacesQuery.data?.workspaces ?? [];
   const effectiveWorkspaceId = workspaceId || workspaces[0]?.id || "";
 
-  const browseWorkspaceDirectories = useCallback((path?: string) => {
-    setBrowserStatus("loading");
-    setBrowserError(null);
-    if (!connection) {
-      setBrowserStatus("error");
-      setBrowserError("Connection profile is not configured");
-      return;
-    }
-    void utils.workspaces.browse.call(path ? { path } : {}, {})
-      .then((response) => {
-        setWorkspaceCandidates(response.directories);
-        setBrowserPath(path ?? null);
-        setBrowserStatus("ready");
-      })
-      .catch((error: unknown) => {
-        setBrowserError(workspacePickerErrorMessage(error) ?? "Could not browse host directories");
+  const browseWorkspaceDirectories = useCallback(
+    (path?: string) => {
+      setBrowserStatus("loading");
+      setBrowserError(null);
+      if (!connection) {
         setBrowserStatus("error");
-      });
-  }, [connection, utils]);
+        setBrowserError("Connection profile is not configured");
+        return;
+      }
+      void utils.workspaces.browse
+        .call(path ? { path } : {}, {})
+        .then((response) => {
+          setWorkspaceCandidates(response.directories);
+          setBrowserPath(path ?? null);
+          setBrowserStatus("ready");
+        })
+        .catch((error: unknown) => {
+          setBrowserError(workspacePickerErrorMessage(error) ?? "Could not browse host directories");
+          setBrowserStatus("error");
+        });
+    },
+    [connection, utils],
+  );
 
   const onRegisterWorkspace = useCallback(() => {
     const directory = registrationDirectory.trim();
     if (!directory || isRegisteringWorkspace || !connection) return;
     setIsRegisteringWorkspace(true);
     setRegistrationError(null);
-    void utils.workspaces.register.call({
-      directory,
-      setupScriptPath: setupScriptPath.trim() || null,
-      cleanupScriptPath: cleanupScriptPath.trim() || null,
-      worktreeCopyPatterns: [...new Set(worktreeCopyPatterns.split(/\r?\n/).map((pattern) => pattern.trim()).filter(Boolean))],
-    }, {})
+    void utils.workspaces.register
+      .call(
+        {
+          directory,
+          setupScriptPath: setupScriptPath.trim() || null,
+          cleanupScriptPath: cleanupScriptPath.trim() || null,
+          worktreeCopyPatterns: [
+            ...new Set(
+              worktreeCopyPatterns
+                .split(/\r?\n/)
+                .map((pattern) => pattern.trim())
+                .filter(Boolean),
+            ),
+          ],
+        },
+        {},
+      )
       .then((response) => {
         const workspace = response.workspace;
-        queryClient.setQueryData(
-          utils.workspaces.list.queryKey({ input: {} }),
-          (current) => {
-            if (!current) return current;
-            const workspaces = [...current.workspaces.filter((candidate) => candidate.id !== workspace.id), workspace]
-              .sort((left, right) => left.name.localeCompare(right.name));
-            return { ...current, workspaces };
-          },
-        );
+        queryClient.setQueryData(utils.workspaces.list.queryKey({ input: {} }), (current) => {
+          if (!current) return current;
+          const workspaces = [
+            ...current.workspaces.filter((candidate) => candidate.id !== workspace.id),
+            workspace,
+          ].sort((left, right) => left.name.localeCompare(right.name));
+          return { ...current, workspaces };
+        });
         setWorkspaceId(workspace.id);
         setRegistrationOpen(false);
         setRegistrationError(null);
       })
-      .catch((error: unknown) => setRegistrationError(workspacePickerErrorMessage(error) ?? "Could not register workspace"))
+      .catch((error: unknown) =>
+        setRegistrationError(workspacePickerErrorMessage(error) ?? "Could not register workspace"),
+      )
       .finally(() => setIsRegisteringWorkspace(false));
-  }, [connection, isRegisteringWorkspace, queryClient, registrationDirectory, setupScriptPath, cleanupScriptPath, worktreeCopyPatterns, utils]);
+  }, [
+    connection,
+    isRegisteringWorkspace,
+    queryClient,
+    registrationDirectory,
+    setupScriptPath,
+    cleanupScriptPath,
+    worktreeCopyPatterns,
+    utils,
+  ]);
 
   return {
     workspaces,
