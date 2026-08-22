@@ -1,3 +1,4 @@
+// Auth-flow boundary data owned by the auth ports and auth use cases.
 import type { PublicKeyJwk } from "@muximo/domain";
 
 export type { PublicKeyJwk } from "@muximo/domain";

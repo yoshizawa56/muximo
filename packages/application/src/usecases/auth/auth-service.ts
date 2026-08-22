@@ -1,3 +1,4 @@
+import type { AuthCryptoPort, AuthStorePort, MuximodAuthPort } from "../../ports/auth.js";
 import type {
   AuthChallengeResponse,
   AuthDeviceRecord,
@@ -10,8 +11,7 @@ import type {
   AuthSessionResponse,
   MuximodAuthContext,
   WsTicketResponse,
-} from "../../models/auth.js";
-import type { AuthCryptoPort, AuthStorePort, MuximodAuthPort } from "../../ports/auth.js";
+} from "../../ports/auth-types.js";
 import type { MuximodSocket } from "../../ports/socket.js";
 import { AuthStoreError } from "./auth-errors.js";
 

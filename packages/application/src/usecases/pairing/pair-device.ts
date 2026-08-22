@@ -1,5 +1,6 @@
-import type { PairDeviceInput, PairDeviceResult } from "../../models/pairing.js";
-import type { PairingControlPort, PairingPresenterPort } from "../../ports/pairing.js";
+import type { PairDeviceInput, PairingControlPort, PairingPresenterPort } from "../../ports/pairing.js";
+
+export type PairDeviceResult = { status: "approved"; deviceId: string } | { status: "rejected" };
 
 /**
  * Coordinates the device-pairing workflow without knowing how the control

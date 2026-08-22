@@ -1,3 +1,4 @@
+// Workspace CRUD operation inputs owned by the workspace use cases.
 import type { Patch } from "@muximo/domain";
 
 export type RegisterWorkspaceInput = {

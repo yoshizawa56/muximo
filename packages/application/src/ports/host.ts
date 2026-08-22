@@ -1,5 +1,5 @@
 import type { AgentBackend, AgentSessionRecord, PaneState, WorkspaceId, WorkspaceRecord } from "@muximo/domain";
-import type { CreatePaneInput, MuximodPanePlacement, MuximodWorkspaceDirectory } from "../models/muximod.js";
+import type { CreatePaneInput, MuximodPanePlacement, MuximodWorkspaceDirectory } from "./application.js";
 import type { WorkspaceDirectoryPort } from "./workspace.js";
 
 export type MuximodPaneRef = {

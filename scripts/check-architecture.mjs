@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const root = process.cwd();
@@ -77,6 +77,16 @@ const entityRules = {
   entityNames: "(?:Workspace|Pane|AgentSession)",
   schemaParseAllowedRoots: ["packages/domain/src/", "packages/contract/src/"],
 };
+
+// The application layer has no models/ directory: port-owned data lives in the
+// port file, use-case inputs live in the use case file, and shared business
+// vocabulary belongs to the domain package.
+for (const sourceRoot of ["packages/application/src/models"]) {
+  const modelsPath = join(root, sourceRoot);
+  if (existsSync(modelsPath)) {
+    errors.push(`${sourceRoot}: application/src/models was abolished; move types into ports or use case files`);
+  }
+}
 
 for (const [packageName, packageInfo] of workspacePackages) {
   const allowed = packageRules.get(packageName);

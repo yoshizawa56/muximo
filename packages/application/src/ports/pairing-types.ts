@@ -1,3 +1,4 @@
+// Pairing control-channel data owned by the pairing ports.
 export type PairDeviceInput = {
   muximodBaseUrl: string;
 };
@@ -25,5 +26,3 @@ export type PairingDeviceType = "browser" | "native" | "cli";
 export type ApprovedDevice = {
   deviceId: string;
 };
-
-export type PairDeviceResult = { status: "approved"; deviceId: string } | { status: "rejected" };

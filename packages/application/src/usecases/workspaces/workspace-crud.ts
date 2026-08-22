@@ -1,8 +1,8 @@
 import { clearPatch, type Patch, Workspace, type WorkspaceRecord, WorkspaceUpdateEmptyError } from "@muximo/domain";
-import type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "../../models/workspace.js";
 import type { WorkspaceRepository } from "../../ports/repositories.js";
 import type { TransactionManager } from "../../ports/transactions.js";
 import type { WorkspaceAuditPort, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "../../ports/workspace.js";
+import type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "./workspace-inputs.js";
 
 export class WorkspaceUseCaseError extends Error {
   public constructor(

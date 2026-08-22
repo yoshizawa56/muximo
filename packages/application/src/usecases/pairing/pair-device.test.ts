@@ -8,8 +8,8 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import type { PairDeviceResult, PairingClaim, PairingOffer } from "../../models/pairing.js";
-import type { PairingControlPort, PairingPresenterPort } from "../../ports/pairing.js";
+import type { PairingClaim, PairingControlPort, PairingOffer, PairingPresenterPort } from "../../ports/pairing.js";
+import type { PairDeviceResult } from "./pair-device.js";
 import { PairDevice } from "./pair-device.js";
 
 const offer: PairingOffer = {

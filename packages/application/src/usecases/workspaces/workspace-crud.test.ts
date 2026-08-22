@@ -10,10 +10,10 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import type { UpdateWorkspaceInput } from "../../models/workspace.js";
 import type { WorkspaceRepository } from "../../ports/repositories.js";
 import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
 import { WorkspaceCrud } from "./workspace-crud.js";
+import type { UpdateWorkspaceInput } from "./workspace-inputs.js";
 
 type WorkspaceStep =
   | { type: "register"; input: { directory: string; name?: string; worktreeCopyPatterns?: string[] } }

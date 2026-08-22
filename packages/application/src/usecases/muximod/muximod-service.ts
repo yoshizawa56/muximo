@@ -13,11 +13,11 @@ import {
 } from "@muximo/domain";
 import type {
   CreatePaneInput,
+  MuximodApplication,
   MuximodPaneSummary,
   MuximodSessionSummary,
   MuximodTerminalEndpoint,
-} from "../../models/muximod.js";
-import type { MuximodApplication } from "../../ports/application.js";
+} from "../../ports/application.js";
 import { ApplicationError } from "../../ports/application.js";
 import type {
   MuximodHostPort,

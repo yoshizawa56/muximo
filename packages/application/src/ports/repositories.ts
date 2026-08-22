@@ -3,10 +3,16 @@ import type {
   AgentSessionRecord,
   PaneId,
   PaneRecord,
+  PaneState,
   WorkspaceId,
   WorkspaceRecord,
 } from "@muximo/domain";
-import type { PaneFilter } from "../models/panes.js";
+
+export type PaneFilter = {
+  state?: PaneState;
+  kind?: PaneRecord["kind"];
+  sessionName?: string;
+};
 
 export interface PaneRepository {
   list(filter?: PaneFilter): Promise<PaneRecord[]>;

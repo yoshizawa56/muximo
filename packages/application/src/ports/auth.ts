@@ -16,7 +16,7 @@ import type {
   MuximodAuthContext,
   PublicKeyJwk,
   WsTicketResponse,
-} from "../models/auth.js";
+} from "./auth-types.js";
 
 export interface AuthStorePort {
   getServerId(): string;
