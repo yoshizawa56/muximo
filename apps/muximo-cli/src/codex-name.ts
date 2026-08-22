@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { manageCodexThread } from "@muximo/infrastructure";
+import { manageCodexThread } from "./cli/host/codex-remote.js";
 
 const args = process.argv.slice(2);
 const usage = "Usage: muximo-codex-name --thread-id ID (--name NAME|--archive|--unarchive) [--socket PATH] [--transport auto|http|raw]\n";

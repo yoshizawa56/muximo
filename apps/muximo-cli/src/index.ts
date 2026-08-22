@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { createLogger, runMuximoCli } from "@muximo/infrastructure";
+import { createLogger } from "@muximo/infrastructure";
 import { parseGlobalOptions } from "./global-options.js";
+import { runMuximoCli } from "./entrypoint.js";
 
 export { parseGlobalOptions } from "./global-options.js";
 export type { ParsedGlobalOptions } from "./global-options.js";

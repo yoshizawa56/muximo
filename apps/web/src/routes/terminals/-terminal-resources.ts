@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import type { TmuxSession } from "@muximo/api";
-import { fetchSessions, fetchTerminals } from "../../app/api/muximod-api";
+import type { TmuxSession } from "@muximo/contract";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
+import type { MuximodQueryUtils } from "../../app/api/orpc-utils";
 import type { ConnectionFlowViewModel, TerminalEndpoint } from "./-connection-flow-viewmodel";
 
 export type TerminalResources = {
   connection: ReturnType<typeof useMuximodConnection>["connection"];
   connectionKey: string;
+  utils: MuximodQueryUtils;
   terminals: TerminalEndpoint[];
   sessions: TmuxSession[];
   selectedTerminal: TerminalEndpoint | null;
@@ -19,38 +20,31 @@ export type TerminalResources = {
 };
 
 export function useTerminalResources({ terminalId, sessionName, pollSessions = false }: { terminalId?: string; sessionName?: string; pollSessions?: boolean }): TerminalResources {
-  const { connection, connectionKey } = useMuximodConnection();
-  useMuximodEvents(connection, connectionKey);
+  const { connection, connectionKey, utils } = useMuximodConnection();
+  useMuximodEvents(connection);
 
-  const terminalsQuery = useQuery({
-    queryKey: ["terminals", connectionKey],
-    queryFn: () => {
-      if (!connection) throw new Error("Connection profile is not configured");
-      return fetchTerminals(connection);
-    },
-    enabled: Boolean(connection),
+  const terminalsQuery = useQuery(utils.terminals.list.queryOptions({
     staleTime: 5_000,
     retry: 1,
-  });
+    enabled: Boolean(connection),
+  }));
 
-  const sessionsQuery = useQuery({
-    queryKey: ["sessions", connectionKey, terminalId],
-    queryFn: () => {
-      if (!connection) throw new Error("Connection profile is not configured");
-      return fetchSessions(connection);
-    },
-    enabled: Boolean(connection) && Boolean(terminalId),
+  // The session list does not depend on the terminal; the shared contract key
+  // deduplicates it across terminal routes instead of caching copies.
+  const sessionsQuery = useQuery(utils.sessions.list.queryOptions({
     staleTime: 1_000,
     refetchInterval: pollSessions ? 5_000 : false,
     retry: 1,
-  });
+    enabled: Boolean(connection) && Boolean(terminalId),
+  }));
 
-  const terminals = terminalsQuery.data ?? [];
-  const sessions = sessionsQuery.data ?? [];
+  const terminals = terminalsQuery.data?.terminals ?? [];
+  const sessions = sessionsQuery.data?.sessions ?? [];
 
   return {
     connection,
     connectionKey,
+    utils,
     terminals,
     sessions,
     selectedTerminal: terminals.find((terminal) => terminal.id === terminalId) ?? null,

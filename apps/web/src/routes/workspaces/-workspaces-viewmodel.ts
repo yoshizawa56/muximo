@@ -1,9 +1,7 @@
 import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import type { WorkspaceDirectory } from "@muximo/api";
-import { fetchWorkspaces, registerWorkspace } from "../../app/api/muximod-api";
-import { useMuximodEvents } from "../../app/api/muximod-events";
+import type { WorkspaceDirectory } from "@muximo/contract";import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 
 export type WorkspacesStatus = "loading" | "ready" | "error";
@@ -62,34 +60,35 @@ export function parseWorktreeCopyPatterns(value: string): string[] {
 export function useWorkspacesListViewModel(): WorkspacesListViewModel {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { connection, connectionKey } = useMuximodConnection();
-  useMuximodEvents(connection, connectionKey);
+  const { connection, utils } = useMuximodConnection();
+  useMuximodEvents(connection);
   const [query, setQuery] = useState("");
-  const workspacesQuery = useQuery({
-    queryKey: ["workspaces", connectionKey],
-    queryFn: () => {
-      if (!connection) throw new Error("Connection profile is not configured");
-      return fetchWorkspaces(connection);
-    },
-    enabled: Boolean(connection),
+  const workspacesQuery = useQuery(utils.workspaces.list.queryOptions({
     staleTime: 5_000,
-  });
+    enabled: Boolean(connection),
+  }));
   const registerMutation = useMutation({
     mutationFn: (input: { directory: string; name?: string }) => {
       if (!connection) throw new Error("Connection profile is not configured");
-      return registerWorkspace(input, connection);
+      return utils.workspaces.register.call(input, {});
     },
-    onSuccess: (workspace) => {
-      queryClient.setQueryData<WorkspaceDirectory[]>(["workspaces", connectionKey], (current) => {
-        const next = [...(current ?? []).filter((candidate) => candidate.id !== workspace.id), workspace];
-        return next.sort((left, right) => left.name.localeCompare(right.name));
-      });
+    onSuccess: (response) => {
+      const workspace = response.workspace;
+      queryClient.setQueryData(
+        utils.workspaces.list.queryKey({ input: {} }),
+        (current) => {
+          if (!current) return current;
+          const workspaces = [...current.workspaces.filter((candidate) => candidate.id !== workspace.id), workspace]
+            .sort((left, right) => left.name.localeCompare(right.name));
+          return { ...current, workspaces };
+        },
+      );
       void navigate({ to: "/workspaces/$workspaceId", params: { workspaceId: workspace.id } });
     },
   });
 
   return {
-    workspaces: workspacesQuery.data ?? [],
+    workspaces: workspacesQuery.data?.workspaces ?? [],
     status: workspacesQuery.status === "pending" ? "loading" : workspacesQuery.status === "error" ? "error" : "ready",
     query,
     errorMessage: errorMessage(workspacesQuery.error),

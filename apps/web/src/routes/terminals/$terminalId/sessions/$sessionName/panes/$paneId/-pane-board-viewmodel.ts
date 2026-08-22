@@ -1,9 +1,8 @@
 import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
-import type { PaneSummary as ProtocolPaneSummary } from "@muximo/api";
-import { fetchPanes } from "../../../../../../../app/api/muximod-api";
-import { paneQueryKey } from "../../../../../../../app/api/muximod-query-keys";
+import type { PaneSummary as ProtocolPaneSummary } from "@muximo/contract";
+import type { MuximodQueryUtils } from "../../../../../../../app/api/orpc-utils";
 import { isMockMode } from "../../../../../../../mock/mock-data";
 
 export type PaneSummary = ProtocolPaneSummary;
@@ -21,14 +20,10 @@ export type PaneBoardViewModel = {
   refresh: () => void;
 };
 
-export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, connection, alwaysOpen = false }: { onSelect: (target: string) => void; selectedTarget: string; sessionName?: string; connection?: MuximodConnection; alwaysOpen?: boolean }): PaneBoardViewModel {
+export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, connection, utils, alwaysOpen = false }: { onSelect: (target: string) => void; selectedTarget: string; sessionName?: string; connection?: MuximodConnection; utils: MuximodQueryUtils; alwaysOpen?: boolean }): PaneBoardViewModel {
   const [isOpen, setIsOpen] = useState(false);
-  const query = useQuery({
-    queryKey: paneQueryKey(connection, sessionName),
-    queryFn: () => {
-      if (!connection) throw new Error("Connection profile is not configured");
-      return fetchPanes(sessionName, connection);
-    },
+  const query = useQuery(utils.panes.list.queryOptions({
+    input: sessionName ? { session: sessionName } : {},
     enabled: Boolean(connection) && (alwaysOpen || isOpen),
     staleTime: 1_000,
     // While the window map is open poll for live layout updates. In the control
@@ -36,7 +31,7 @@ export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, c
     // fallback can be a long safety net; mock mode has no event socket and
     // keeps polling so state changes are still detected.
     refetchInterval: isOpen ? 3_000 : alwaysOpen ? (isMockMode() ? 3_000 : 10_000) : false,
-  });
+  }));
 
   const open = useCallback(() => setIsOpen(true), []);
   const close = useCallback(() => setIsOpen(false), []);
@@ -55,7 +50,7 @@ export function usePaneBoardViewModel({ onSelect, selectedTarget, sessionName, c
   return {
     isOpen,
     selectedTarget,
-    panes: query.data ?? [],
+    panes: query.data?.panes ?? [],
     status: query.isPending ? "loading" : query.isError ? "error" : "ready",
     errorMessage: query.error instanceof Error ? query.error.message : query.isError ? "Unable to load panes" : null,
     open,

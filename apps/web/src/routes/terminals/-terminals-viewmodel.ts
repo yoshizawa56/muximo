@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { fetchTerminals } from "../../app/api/muximod-api";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 import type { ConnectionFlowViewModel, TerminalEndpoint } from "./-connection-flow-viewmodel";
@@ -9,19 +8,14 @@ export type TerminalsViewModel = Pick<ConnectionFlowViewModel, "terminals" | "st
 
 export function useTerminalsViewModel(): TerminalsViewModel {
   const navigate = useNavigate();
-  const { connection, connectionKey } = useMuximodConnection();
-  useMuximodEvents(connection, connectionKey);
-  const terminalsQuery = useQuery({
-    queryKey: ["terminals", connectionKey],
-    queryFn: () => {
-      if (!connection) throw new Error("Connection profile is not configured");
-      return fetchTerminals(connection);
-    },
-    enabled: Boolean(connection),
+  const { connection, utils } = useMuximodConnection();
+  useMuximodEvents(connection);
+  const terminalsQuery = useQuery(utils.terminals.list.queryOptions({
     staleTime: 5_000,
     retry: 1,
-  });
-  const terminals = terminalsQuery.data ?? [];
+    enabled: Boolean(connection),
+  }));
+  const terminals = terminalsQuery.data?.terminals ?? [];
 
   return {
     terminals,

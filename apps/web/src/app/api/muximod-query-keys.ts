@@ -1,5 +1,3 @@
-import type { MuximodConnection } from "./muximod-client";
-
-export function paneQueryKey(connection: MuximodConnection | undefined, sessionName?: string): readonly [string, string, string] {
-  return ["panes", connection?.httpBaseUrl ?? "unconfigured", sessionName ?? "all"];
-}
+// Intentionally emptied during the oRPC TanStack Query migration.
+// The paneQueryKey factory was replaced by contract-derived keys in orpc-utils.ts.
+// This file is pending deletion.

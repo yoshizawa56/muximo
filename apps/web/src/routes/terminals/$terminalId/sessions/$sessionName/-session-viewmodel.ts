@@ -1,8 +1,6 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import type { PaneSummary } from "@muximo/api";
-import { fetchPanes } from "../../../../../app/api/muximod-api";
-import { paneQueryKey } from "../../../../../app/api/muximod-query-keys";
+import type { PaneSummary } from "@muximo/contract";
 import type { TerminalEndpoint, TmuxSession } from "../../../-connection-flow-viewmodel";
 import { fallbackSession, fallbackTerminal, useTerminalResources } from "../../../-terminal-resources";
 
@@ -22,22 +20,20 @@ export function useSessionViewModel(): SessionOverviewViewModel {
   const navigate = useNavigate();
   const { terminalId, sessionName } = useParams({ from: "/terminals/$terminalId/sessions/$sessionName/" });
   const resources = useTerminalResources({ terminalId, sessionName });
-  const panesQuery = useQuery({
-    queryKey: paneQueryKey(resources.connection, resources.selectedSession?.name ?? sessionName),
-    queryFn: () => {
-      if (!resources.connection) throw new Error("Connection profile is not configured");
-      return fetchPanes(resources.selectedSession?.name ?? sessionName, resources.connection);
-    },
+  const scopedSessionName = resources.selectedSession?.name ?? sessionName;
+  const panesQuery = useQuery(resources.utils.panes.list.queryOptions({
+    input: scopedSessionName ? { session: scopedSessionName } : {},
     enabled: Boolean(resources.connection) && Boolean(sessionName),
     staleTime: 1_000,
     refetchInterval: 3_000,
     retry: 1,
-  });
+  }));
+  const panes = panesQuery.data?.panes ?? [];
 
   return {
     terminal: resources.selectedTerminal ?? fallbackTerminal,
     session: resources.selectedSession ?? fallbackSession,
-    panes: panesQuery.data ?? [],
+    panes,
     status: panesQuery.isPending ? "loading" : panesQuery.isError ? "error" : "ready",
     errorMessage: panesQuery.error instanceof Error ? panesQuery.error.message : panesQuery.isError ? "Unable to load panes" : null,
     onSelectPane: (pane) => {

@@ -25,20 +25,20 @@ for (const workspaceRoot of workspaceRoots) {
 }
 
 const packageRules = new Map([
-  ["@muximo/api", []],
+  ["@muximo/contract", ["@muximo/domain"]],
   ["@muximo/application", ["@muximo/domain"]],
   ["@muximo/domain", []],
-  ["@muximo/infrastructure", ["@muximo/api", "@muximo/application", "@muximo/domain"]],
+  ["@muximo/infrastructure", ["@muximo/application", "@muximo/domain"]],
   ["@muximo/test-support", []],
-  ["@muximo/muximo-cli", ["@muximo/infrastructure"]],
-  ["@muximo/muximod", ["@muximo/infrastructure"]],
-  ["@muximo/web", ["@muximo/api"]],
+  ["@muximo/muximo-cli", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure", "@muximo/muximod"]],
+  ["@muximo/muximod", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure"]],
+  ["@muximo/web", ["@muximo/contract"]],
 ]);
 
 const forbiddenImports = [
   {
-    root: "packages/api/src",
-    packages: /^@muximo\//,
+    root: "packages/contract/src",
+    packages: /^@muximo\/(?:application|infrastructure|web)/,
     runtimes: /^(?:node|bun):/,
   },
   {
@@ -47,11 +47,27 @@ const forbiddenImports = [
     runtimes: /^(?:node|bun):/,
   },
   {
+    root: "packages/infrastructure/src",
+    packages: /^@muximo\/contract$/,
+  },
+  {
     root: "packages/application/src",
-    packages: /^@muximo\/(?:api|infrastructure)/,
+    packages: /^@muximo\/(?:contract|infrastructure)/,
     runtimes: /^(?:node|bun):/,
   },
 ];
+
+const webQueryKeyRules = {
+  root: "apps/web/src",
+  allowedFiles: new Set([
+    "apps/web/src/app/api/orpc-utils.ts",
+    "apps/web/src/app/api/invalidation.ts",
+  ]),
+  patterns: [
+    { name: "raw query key array", regex: /\bqueryKey\s*:\s*\[/ },
+    { name: "raw setQueryData key array", regex: /\.setQueryData(?:<[^>(]*)?\(\s*\[/ },
+  ],
+};
 
 for (const [packageName, packageInfo] of workspacePackages) {
   const allowed = packageRules.get(packageName);
@@ -97,7 +113,7 @@ function inspectSource(path, relativePath) {
     const specifier = match[1];
     const line = source.slice(0, match.index).split("\n").length;
     const rule = forbiddenImports.find((candidate) => relativePath.startsWith(candidate.root));
-    if (rule && (rule.packages.test(specifier) || rule.runtimes.test(specifier))) {
+    if (rule && (rule.packages.test(specifier) || rule.runtimes?.test(specifier))) {
       errors.push(`${relativePath}:${line}: forbidden ${specifier} import for this layer`);
     }
 
@@ -108,6 +124,20 @@ function inspectSource(path, relativePath) {
         errors.push(`${relativePath}:${line}: ${dependency} is imported but is not a production dependency of ${sourcePackage}`);
       }
     }
+  }
+
+  inspectWebQueryKeys(source, relativePath);
+}
+
+function inspectWebQueryKeys(source, relativePath) {
+  const rule = webQueryKeyRules;
+  if (!relativePath.startsWith(`${rule.root}/`)) return;
+  if (rule.allowedFiles.has(relativePath)) return;
+  for (const pattern of rule.patterns) {
+    const match = pattern.regex.exec(source);
+    if (!match) continue;
+    const line = source.slice(0, match.index).split("\n").length;
+    errors.push(`${relativePath}:${line}: ${pattern.name}; derive keys through app/api/orpc-utils.ts and invalidate through app/api/invalidation.ts`);
   }
 }
 

@@ -1,24 +1,7 @@
 import { ORPCError, createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
-import { muximodContract } from "@muximo/api";
-import {
-  createPaneRequestSchema,
-  createSessionRequestSchema,
-  registerWorkspaceRequestSchema,
-  updateWorkspaceRequestSchema,
-  type CreatePaneRequest,
-  type CreateSessionRequest,
-  type MuximodCapabilities,
-  type MuximodEvent,
-  type MuximodHealth,
-  type PaneSummary,
-  type RegisterWorkspaceRequest,
-  type TerminalEndpoint,
-  type TmuxSession,
-  type UpdateWorkspaceRequest,
-  type WorkspaceDirectory,
-} from "@muximo/api";
+import { muximodContract, type MuximodEvent } from "@muximo/contract";
 
 export type MuximodRouteKind = "serve" | "same-origin" | "lan" | "ssh";
 
@@ -44,9 +27,7 @@ type MuximodClientContext = {
   pairingToken?: string;
 };
 
-type MuximodRpcClient = ContractRouterClient<typeof muximodContract, MuximodClientContext>;
-
-export type MuximodClient = ReturnType<typeof createMuximodClient>;
+export type MuximodRpcClient = ContractRouterClient<typeof muximodContract, MuximodClientContext>;
 
 export class MuximodApiError extends Error {
   public constructor(
@@ -61,10 +42,14 @@ export class MuximodApiError extends Error {
 }
 
 /**
- * Creates the browser/native standard connection through Tailscale Serve.
- * SSH is deliberately not part of this helper: a native RouteProvider can
- * create a local forward and pass its resulting URLs to createMuximodClient.
+ * Stable cache/namespace identity for a connection. Query utils and
+ * invalidation scope every key under this segment so two connections can
+ * never share or clear each other's cache entries.
  */
+export function muximodConnectionKey(connection: MuximodConnection | undefined): string {
+  return connection ? `${connection.route ?? "custom"}:${connection.httpBaseUrl}` : "unconfigured";
+}
+
 export function createServeConnection(serveUrl: string): MuximodConnection {
   return createUrlConnection(serveUrl, "serve");
 }
@@ -73,49 +58,33 @@ export function createSameOriginConnection(origin: string): MuximodConnection {
   return createUrlConnection(origin, "same-origin");
 }
 
-export function createMuximodClient(connection: MuximodConnection) {
-  const rpc = createRpcClient(connection);
+/**
+ * Sentinel connection used when no profile is configured yet. Query utilities
+ * built on it stay disabled (`enabled: false`) but exist so hooks never have
+ * to assert non-nullness.
+ */
+export const unconfiguredMuximodConnection: MuximodConnection = Object.freeze({
+  httpBaseUrl: "",
+  websocketUrl: "",
+});
 
-  return {
-    health: (): Promise<MuximodHealth> => callRpc(() => rpc.health({})),
-    capabilities: (): Promise<MuximodCapabilities> => callRpc(() => rpc.capabilities({})),
-    workspaces: async (): Promise<WorkspaceDirectory[]> => (await callRpc(() => rpc.workspaces.list({}))).workspaces,
-    browseWorkspaces: async (path?: string): Promise<WorkspaceDirectory[]> => (await callRpc(() => rpc.workspaces.browse(path ? { path } : {}))).directories,
-    registerWorkspace: async (input: RegisterWorkspaceRequest): Promise<WorkspaceDirectory> => {
-      const validated = registerWorkspaceRequestSchema.parse(input);
-      return (await callRpc(() => rpc.workspaces.register(validated))).workspace;
-    },
-    updateWorkspace: async (workspaceId: string, input: UpdateWorkspaceRequest): Promise<WorkspaceDirectory> => {
-      const validated = updateWorkspaceRequestSchema.parse(input);
-      return (await callRpc(() => rpc.workspaces.update({ workspaceId, input: validated }))).workspace;
-    },
-    deleteWorkspace: async (workspaceId: string): Promise<void> => {
-      await callRpc(() => rpc.workspaces.delete({ workspaceId }));
-    },
-    terminals: async (): Promise<TerminalEndpoint[]> => (await callRpc(() => rpc.terminals.list({}))).terminals,
-    sessions: async (): Promise<TmuxSession[]> => (await callRpc(() => rpc.sessions.list({}))).sessions,
-    createSession: async (input: CreateSessionRequest): Promise<TmuxSession> => {
-      const validated = createSessionRequestSchema.parse(input);
-      return (await callRpc(() => rpc.sessions.create(validated))).session;
-    },
-    panes: async (sessionName?: string): Promise<PaneSummary[]> => (await callRpc(() => rpc.panes.list(sessionName ? { session: sessionName } : {}))).panes,
-    createPane: async (input: CreatePaneRequest): Promise<PaneSummary> => {
-      const validated = createPaneRequestSchema.parse(input);
-      return (await callRpc(() => rpc.panes.create(validated))).pane;
-    },
-    authInfo: () => callRpc(() => rpc.auth.info({})),
-    claimPairing: (pairingId: string, request: Parameters<MuximodRpcClient["auth"]["claimPairing"]>[0]["request"]) => callRpc(() => rpc.auth.claimPairing({ pairingId, request })),
-    pairingStatus: (pairingId: string, claimToken: string) => callRpc(() => rpc.auth.pairingStatus({ pairingId, claimToken }, { context: { pairingToken: claimToken } })),
-    createChallenge: (deviceId: string) => callRpc(() => rpc.auth.createChallenge({ deviceId })),
-    createAuthSession: (input: Parameters<MuximodRpcClient["auth"]["createSession"]>[0]) => callRpc(() => rpc.auth.createSession(input)),
-    issueWebSocketTicket: (endpoint: "terminal") => callRpc(() => rpc.auth.issueWebSocketTicket({ endpoint })),
-    openTerminal: async (): Promise<WebSocket> => new WebSocket(await websocketEndpoint(connection)),
-    openEvents: (): Promise<AsyncIteratorObject<MuximodEvent>> => callRpc(() => rpc.events.subscribe({})),
-    connection,
-  };
+const rpcCache = new WeakMap<MuximodConnection, MuximodRpcClient>();
+
+/**
+ * Returns the contract-typed RPC client for a connection. Errors thrown by
+ * oRPC are normalized to {@link MuximodApiError} at this single boundary.
+ * The client is memoized per connection object so headers and links are
+ * built once instead of on every call.
+ */
+export function muximodRpc(connection: MuximodConnection): MuximodRpcClient {
+  const cached = rpcCache.get(connection);
+  if (cached) return cached;
+  const client = normalizeRpcErrors(createRawRpcClient(connection));
+  rpcCache.set(connection, client);
+  return client;
 }
 
-function createRpcClient(connection: MuximodConnection): MuximodRpcClient {
+function createRawRpcClient(connection: MuximodConnection): MuximodRpcClient {
   const link = new RPCLink<MuximodClientContext>({
     url: `${ensureTrailingSlash(connection.httpBaseUrl)}rpc`,
     headers: async ({ context }) => {
@@ -128,47 +97,66 @@ function createRpcClient(connection: MuximodConnection): MuximodRpcClient {
   return createORPCClient<MuximodRpcClient>(link);
 }
 
-async function websocketEndpoint(connection: MuximodConnection): Promise<string> {
-  if (!connection.auth) return connection.websocketUrl;
-  const url = new URL(connection.websocketUrl);
-  url.searchParams.set("ticket", await connection.auth.getWebSocketTicket("terminal"));
-  return url.toString();
+/**
+ * Wraps every callable in the client tree so rejections surface as
+ * {@link MuximodApiError}. Router nodes stay plain proxies with stable
+ * identity; leaf calls only normalize rejected promises.
+ */
+function normalizeRpcErrors<T>(value: T): T {
+  const cache = new WeakMap<object, unknown>();
+  const wrap = function wrapNode<V>(child: V): V {
+    if (typeof child === "function") {
+      const call = child as (...args: unknown[]) => unknown;
+      return ((...args: unknown[]) =>
+        Promise.resolve(call(...args)).catch((error: unknown) => {
+          throw toMuximodApiError(error);
+        })) as V;
+    }
+    if (!isRecord(child)) return child;
+    const existing = cache.get(child);
+    if (existing) return existing as V;
+    const proxied = new Proxy(child, {
+      get(target, property) {
+        if (typeof property === "symbol") return Reflect.get(target, property);
+        return wrap(Reflect.get(target, property));
+      },
+    });
+    cache.set(child, proxied);
+    return proxied as V;
+  };
+  return wrap(value);
 }
 
-function createUrlConnection(baseUrl: string, route: MuximodRouteKind): MuximodConnection {
-  const url = new URL(baseUrl);
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`muximod URL must use http or https: ${baseUrl}`);
-  }
+function toMuximodApiError(error: unknown): unknown {
+  if (!(error instanceof ORPCError)) return error;
+  const data = isRecord(error.data) ? error.data : {};
+  const details = isRecord(data.details) ? data.details : null;
+  return new MuximodApiError(
+    error.message,
+    error.status,
+    typeof data.code === "string" ? data.code : null,
+    details,
+  );
+}
 
-  const normalizedPath = url.pathname.replace(/\/+$/, "");
-  const httpBaseUrl = `${url.origin}${normalizedPath}`;
-  const websocketProtocol = url.protocol === "https:" ? "wss:" : "ws:";
-  const websocketUrl = `${websocketProtocol}//${url.host}${normalizedPath}/terminal`;
-  return { httpBaseUrl, websocketUrl, route };
+export async function openMuximodTerminal(connection: MuximodConnection): Promise<WebSocket> {
+  if (!connection.auth) return new WebSocket(connection.websocketUrl);
+  const url = new URL(connection.websocketUrl);
+  url.searchParams.set("ticket", await connection.auth.getWebSocketTicket("terminal"));
+  return new WebSocket(url.toString());
+}
+
+/**
+ * Subscribes to the server event stream. Events carry no resource data:
+ * consumers use them as invalidation hints through the invalidation matrix.
+ */
+export function openMuximodEvents(connection: MuximodConnection): Promise<AsyncIteratorObject<MuximodEvent>> {
+  return muximodRpc(connection).events.subscribe({});
 }
 
 function ensureTrailingSlash(value: string): string {
   if (!value) return "/";
   return value.endsWith("/") ? value : `${value}/`;
-}
-
-async function callRpc<T>(operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (error instanceof ORPCError) {
-      const data = isRecord(error.data) ? error.data : {};
-      const details = isRecord(data.details) ? data.details : null;
-      throw new MuximodApiError(
-        error.message,
-        error.status,
-        typeof data.code === "string" ? data.code : null,
-        details,
-      );
-    }
-    throw error;
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

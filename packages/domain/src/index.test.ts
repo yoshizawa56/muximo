@@ -14,6 +14,7 @@ import {
   paneKindForCommand,
   transitionPaneState,
   validateWorkspaceSelection,
+  WorkspaceId,
   type PaneState,
   type WorkspaceDirectoryOption,
   type WorkspaceSelection,
@@ -78,7 +79,7 @@ const commandTable: OperationTable<undefined, "default", CommandInput, string, E
 };
 
 const workspace: WorkspaceDirectoryOption = {
-  id: "workspace-1",
+  id: WorkspaceId.create("workspace-1"),
   name: "muximo",
   rootPath: "/work/muximo",
   isGit: true,
@@ -92,7 +93,7 @@ const workspaceCases = [
   { name: "accepts a workspace directory", input: { selection: { workspaceId: workspace.id, mode: "workspace" }, workspace }, assert: [returns<EmptyContext, WorkspaceSelection>({ workspaceId: workspace.id, mode: "workspace" })] },
   { name: "accepts a workspace worktree", input: { selection: { workspaceId: workspace.id, mode: "worktree" }, workspace }, assert: [returns<EmptyContext, WorkspaceSelection>({ workspaceId: workspace.id, mode: "worktree" })] },
   { name: "rejects worktrees for non-git directories", input: { selection: { workspaceId: workspace.id, mode: "worktree" }, workspace: { ...workspace, isGit: false } }, assert: [hasError<EmptyContext, WorkspaceSelection>({ code: "worktree_not_supported" })] },
-  { name: "rejects an unknown workspace", input: { selection: { workspaceId: "missing", mode: "workspace" }, workspace: undefined }, assert: [hasError<EmptyContext, WorkspaceSelection>({ code: "workspace_not_found" })] },
+  { name: "rejects an unknown workspace", input: { selection: { workspaceId: WorkspaceId.create("missing"), mode: "workspace" }, workspace: undefined }, assert: [hasError<EmptyContext, WorkspaceSelection>({ code: "workspace_not_found" })] },
 ] satisfies readonly OperationCase<"default", WorkspaceInput, WorkspaceSelection, EmptyContext>[];
 
 const workspaceTable: OperationTable<undefined, "default", WorkspaceInput, WorkspaceSelection, EmptyContext> = {

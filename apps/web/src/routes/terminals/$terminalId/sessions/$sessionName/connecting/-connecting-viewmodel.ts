@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { TmuxSession } from "@muximo/api";
+import type { TmuxSession } from "@muximo/contract";
 import type { TerminalEndpoint } from "../../../../-connection-flow-viewmodel";
 import { useTerminalResources } from "../../../../-terminal-resources";
 

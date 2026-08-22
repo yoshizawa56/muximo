@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import type { PaneSummary } from "@muximo/api";
+import type { PaneSummary } from "@muximo/contract";
 import { AppIcon } from "../../../../../app/components/app-icon";
 import { paneStateLabel } from "./-pane-state";
 

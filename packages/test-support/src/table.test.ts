@@ -302,4 +302,50 @@ describe("operation table support", () => {
   };
 
   runOperationTable(register, runnerProbeTable);
+
+  type ScopeInput = "success" | "error";
+  type ScopeFixture = { events: string[] };
+  type ScopeContext = { events: readonly string[] };
+  const scopeEvents: string[] = [];
+  const scopeCases = [
+    {
+      name: "wraps successful fixture, execution, observation, and assertions",
+      input: "success" as const,
+      assert: [hasObserved<ScopeContext, string>("events", ["scope-start", "fixture", "execute", "observe"])],
+    },
+    {
+      name: "wraps expected execution errors in the same case scope",
+      input: "error" as const,
+      assert: [hasError<ScopeContext, string>({ message: "expected" })],
+    },
+  ] satisfies readonly OperationCase<"default", ScopeInput, string, ScopeContext>[];
+
+  const scopeTable: OperationTable<ScopeFixture, "default", ScopeInput, string, ScopeContext> = {
+    defaultFixture: (registerCleanup) => {
+      scopeEvents.push("fixture");
+      registerCleanup?.(() => { scopeEvents.push("cleanup"); });
+      return { fixture: { events: scopeEvents } };
+    },
+    caseScope: async (operation) => {
+      scopeEvents.length = 0;
+      scopeEvents.push("scope-start");
+      try {
+        return await operation();
+      } finally {
+        scopeEvents.push("scope-end");
+      }
+    },
+    cases: scopeCases,
+    execute: (fixture, input) => {
+      fixture.events.push("execute");
+      if (input === "error") throw new Error("expected");
+      return "ok";
+    },
+    observe: (fixture) => {
+      fixture.events.push("observe");
+      return { events: [...fixture.events] };
+    },
+  };
+
+  runOperationTable(register, scopeTable);
 });

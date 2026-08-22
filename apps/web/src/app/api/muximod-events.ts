@@ -1,48 +1,22 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { consumeEventIterator } from "@orpc/client";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import type { MuximodConnection } from "./muximod-client.js";
-import type { MuximodEvent } from "@muximo/api";
+import { openMuximodEvents } from "./muximod-client.js";
+import { invalidateOnMuximodEvent, invalidateOnReconnect } from "./invalidation.js";
 import { isMockMode } from "../../mock/mock-data";
-import { openMuximodEvents } from "./muximod-api";
-import { paneQueryKey } from "./muximod-query-keys";
 
-type QueryKey = readonly unknown[];
-
-/**
- * Returns the HTTP resources invalidated by a session update event.
- * The event contains no resource data; HTTP remains the source of truth.
- * Pane queries are keyed by the connection's HTTP base URL (see paneQueryKey),
- * so the connection is required to build the matching invalidation key.
- */
-export function invalidationQueryKeys(connectionKey: string, connection: MuximodConnection | undefined, event: MuximodEvent): QueryKey[] {
-  return [
-    ["sessions", connectionKey],
-    paneQueryKey(connection, event.sessionName),
-  ];
-}
-
-export function invalidateMuximodEvent(queryClient: Pick<QueryClient, "invalidateQueries">, connectionKey: string, connection: MuximodConnection | undefined, event: MuximodEvent): void {
-  for (const queryKey of invalidationQueryKeys(connectionKey, connection, event)) {
-    void queryClient.invalidateQueries({ queryKey });
-  }
-}
-
-export function useMuximodEvents(connection: MuximodConnection | undefined, connectionKey: string): void {
+export function useMuximodEvents(connection: MuximodConnection | undefined): void {
   const queryClient = useQueryClient();
+  const utils = useMemo(() => (connection ? muximodQueryUtils(connection) : undefined), [connection]);
 
   useEffect(() => {
-    if (isMockMode() || !connection?.auth) return;
+    if (isMockMode() || !connection?.auth || !utils) return;
 
     let disposed = false;
     let stopEvents: (() => Promise<void>) | undefined;
     let reconnectTimer: number | undefined;
     let retry = 0;
-
-    const invalidateAll = () => {
-      void queryClient.invalidateQueries({ queryKey: ["sessions", connectionKey] });
-      void queryClient.invalidateQueries({ queryKey: ["panes", connectionKey] });
-    };
 
     const scheduleReconnect = () => {
       if (disposed || reconnectTimer !== undefined) return;
@@ -63,9 +37,9 @@ export function useMuximodEvents(connection: MuximodConnection | undefined, conn
           return;
         }
         retry = 0;
-        invalidateAll();
+        invalidateOnReconnect(queryClient, utils);
         stopEvents = consumeEventIterator(current, {
-          onEvent: (event) => invalidateMuximodEvent(queryClient, connectionKey, connection, event),
+          onEvent: (event) => invalidateOnMuximodEvent(queryClient, utils, event),
           onError: () => {
             stopEvents = undefined;
             scheduleReconnect();
@@ -89,5 +63,5 @@ export function useMuximodEvents(connection: MuximodConnection | undefined, conn
       void stopEvents?.();
       stopEvents = undefined;
     };
-  }, [connection, connectionKey, queryClient]);
+  }, [connection, utils, queryClient]);
 }

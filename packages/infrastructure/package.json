@@ -19,18 +19,12 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@muximo/api": "workspace:*",
     "@muximo/application": "workspace:*",
     "@muximo/domain": "workspace:*",
-    "@orpc/server": "^1.15.0",
-    "drizzle-orm": "^0.45.2",
-    "qrcode": "^1.5.4",
-    "zod": "^4.4.3"
+    "drizzle-orm": "^0.45.2"
   },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",
-    "@orpc/client": "^1.15.0",
-    "@orpc/contract": "^1.15.0",
     "@types/node": "^26.1.2",
     "bun-types": "^1.3.14",
     "drizzle-kit": "^0.31.10",

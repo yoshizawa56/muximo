@@ -5,9 +5,11 @@ description: Enforce Muximo's Clean Architecture dependency direction when revie
 
 # Muximo Clean Architecture
 
-Apply this skill to any change that can affect package dependencies, layer boundaries, entrypoints, plugins, persistence, host integrations, authentication, HTTP, CLI, or terminal runtime behavior.
+Apply this skill to changes involving package dependencies, layer boundaries,
+entrypoints, persistence, host integrations, authentication, transports,
+terminal runtime, or the Web UI.
 
-## Dependency rule
+## Dependency direction
 
 Dependencies point inward:
 
@@ -19,39 +21,113 @@ application -> domain and application-owned ports
 domain -> no outer packages or runtime adapters
 ```
 
-The source layer owns its abstractions. A concrete outer implementation may implement an inner port, but an inner layer must not import the concrete implementation, its package, or its runtime library.
+The source layer owns its abstractions. A concrete outer implementation may
+implement an inward port, but an inward layer must not import the concrete
+implementation, its package, or its runtime library.
 
-## Muximo layer rules
+## Package and responsibility rules
 
-- `packages/domain` contains entities, value rules, and pure policies. It must not import `api`, HTTP, Bun, Node, SQLite, tmux, agent providers, or UI code.
-- `packages/application` contains use cases, application-owned input/output models, and ports. It must not import `api`, HTTP route types, persistence implementations, provider plugins, tmux, PTY, filesystem, child processes, sockets, or browser APIs.
-- `packages/api` contains wire schemas and oRPC contracts. Do not use API DTOs as the application model when a use case-owned model is needed; map at the adapter boundary. It must remain free of Node, Bun, database, host, and UI dependencies.
-- `packages/infrastructure` contains the concrete outer adapters, organized by technical concern: HTTP/WebSocket under `src/http`, provider plugins under `src/agents`, CLI adapters and host commands under `src/cli`, persistence under `src/persistence`, logging under `src/logging`, and Tailscale integration under `src/tailscale`.
-- `apps/web` owns the browser/native oRPC client because it uses browser `fetch`, `WebSocket`, and UI-facing connection state. It may depend on `api`, but `api` and `application` must not depend on it.
-- Infrastructure owns concrete filesystem, process, tmux, PTY, Unix socket, SQLite, Tailscale, browser-facing transport adapters, authentication crypto, and provider-specific agent implementations.
-- `apps/*/src/index.ts` is a composition root and entrypoint. It may read argv/environment/I/O, select a command, construct concrete dependencies, and report process-level errors. It must not contain business workflows or infrastructure policy.
-- A server composition module may construct concrete adapters, but keep runtime lifecycle and application policy in separate collaborators where practical.
+- `packages/domain` contains Zod-backed entities, branded identifiers,
+  invariants, and pure business policies. It must not import application,
+  contract, infrastructure, Bun/Node, SQLite, Drizzle, tmux, PTY, providers,
+  filesystem APIs, transport, or UI code.
+- `packages/application` contains application-owned models, ports, and use
+  cases. Keep `src/ports`, `src/models`, and `src/usecases` separate; group
+  use cases by business domain and keep each use case focused in its own file.
+  Application ports are generally async so use cases do not depend on a
+  synchronous storage driver. Application must not import `contract` or
+  concrete persistence, provider, host, process, socket, or browser adapters.
+- `packages/contract` contains shared oRPC contracts, wire schemas, event
+  envelopes, and protocol codecs. It may derive, omit, or extend domain types
+  from `domain`; it must not duplicate domain business models or depend on
+  application, infrastructure, or UI. Infrastructure must never import it.
+- `packages/infrastructure` contains concrete implementations of application
+  ports and host integrations. Organize it by technical concern and port:
+  `persistence/repositories`, `terminal`, `auth`, `agents`, `logging`,
+  `tailscale`, and concrete transport adapters such as `http`.
+- `apps/muximod` owns muximod-specific oRPC/HTTP/SSE/WebSocket handlers,
+  private control handlers, runtime lifecycle, and dependency injection.
+  `apps/muximo-cli` owns CLI argument parsing, command transport, presenters,
+  and control-socket clients. Both are outer roots and must call application
+  use cases rather than reimplement business rules.
+- `apps/*/src/index.ts` may read argv/environment/I/O, select a command,
+  construct concrete dependencies, manage lifecycle, and report process-level
+  errors. Host integration and infrastructure policy belong in injected
+  adapters, not in the entrypoint.
+- `apps/web` owns browser clients and route-specific UI. File-based route
+  views, view models, and state are colocated with the route; shared
+  `components` contain only genuinely generic primitives; do not add a
+  feature layer.
 
-## Plugins and providers
+## Domain model and patch rules
 
-Provider implementations belong in infrastructure. Keep provider-neutral application ports separate from provider-specific plugin registries, default plugin lists, monitors, sidecars, and RPC clients. The composition root registers defaults and injects the resulting port implementation; use cases do not import or register concrete plugins.
+- Entity modules expose a namespace API such as
+  `{ schema, validate, create, update, ...businessOperations }`.
+- Creation, update, reconstitution, and domain operations validate their input
+  and preserve invariants. Do not construct entity-shaped objects around these
+  APIs.
+- Domain schemas use optional properties for absence and do not use nullable
+  fields. A transport PATCH interprets `undefined` as unchanged and `null` as
+  clear; the outer adapter maps that representation to the domain patch type.
+- Database `NULL` is converted at the infrastructure boundary. It must not
+  leak into domain or application models.
+
+## Transport and authentication
+
+- Use oRPC directly; do not add a Hono wrapper solely to host oRPC.
+- oRPC handles request/response calls. Typed SSE carries best-effort events
+  that may be missed and do not require replay. WebSocket is limited to
+  interactive terminal data and control messages.
+- `contract` owns wire validation and WebSocket control-frame encoding and
+  decoding. PTY terminal bytes remain raw `Uint8Array` data; do not duplicate
+  protocol JSON parsing in apps or infrastructure.
+- Transport middleware performs origin, credential, session, and endpoint
+  ticket checks before application calls. Preserve pairing proof/approval,
+  credential ownership, one-use endpoint-bound WebSocket tickets, and
+  secret-free logs.
+
+## SQLite transaction rules
+
+- Keep application and repository interfaces async, but remember that Bun's
+  SQLite calls are synchronous and can block the event loop.
+- Never pass an async callback to Bun's synchronous
+  `Database.transaction(...)` API or to an equivalent Drizzle callback API.
+- The permitted async transaction scope is an explicit infrastructure
+  implementation using a dedicated connection, process-local serialization,
+  `BEGIN IMMEDIATE`, ambient transaction context, and whole-scope rollback and
+  retry. Its callback is a DB-only scope: repository and database-audit calls
+  are allowed; network, PTY, tmux, provider, filesystem, authentication
+  service, and other external side effects are not.
+- The transaction connection and root/autocommit connections are distinct.
+  Code must not write through a root connection from an active transaction
+  scope. A process-local mutex is not cross-process coordination; direct CLI
+  writers still rely on SQLite locking, constraints, conditional updates, and
+  transparent busy handling.
+- Use explicit transactions only for multiple writes that must commit or roll
+  back together. Reads and independent single writes may use autocommit.
+  Keep transactions short and database-only.
+- Repository persistence reads and writes use Drizzle. Driver-specific SQL is
+  limited to connection pragmas and documented migration/bootstrap operations.
+
+## Providers and infrastructure details
+
+Provider-neutral ports remain in application. Provider registries, defaults,
+monitors, sidecars, RPC clients, tmux/PTY/process/filesystem adapters,
+authentication crypto, logging, Tailscale, and SQLite repositories remain in
+infrastructure. Keep implementation-specific invariants in short comments
+beside the implementation; do not make a temporary architecture document the
+only source of truth.
 
 ## Review workflow
 
-Before changing code:
+Before changing code, identify the layer of every touched module, separate
+business decisions from I/O, put abstractions in the inward layer, and wire
+concrete implementations at the composition root. Check both imports and
+workspace manifest dependencies for reverse edges. Preserve authentication
+replay prevention, credential ownership, session claims, worktree containment
+and cleanup, hook ordering, provider lifecycle disposal, and tmux identity
+reconciliation.
 
-1. Identify the layer of every touched module and inspect its imports and package dependencies.
-2. Separate business decisions from I/O, process control, persistence, transport, and presentation.
-3. Put the narrow abstraction in the inward layer and the concrete implementation in infrastructure.
-4. Make the composition root wire the concrete graph.
-5. Test application rules with fakes and adapter behavior with focused integration tests.
-6. Check for reverse imports and new public exports that expose infrastructure to inner layers.
-
-Run `bun run check:architecture` after the change. The check validates workspace
-package dependencies, production workspace imports, and the most important
-domain/application/interface-adapter boundaries without requiring a database,
-tmux, or external provider to be available.
-
-Preserve existing behavior and security invariants while moving boundaries, especially authentication replay prevention, credential ownership, session execution claims, worktree containment and cleanup, hook ordering, provider lifecycle disposal, and tmux identity/reconciliation.
-
-When a boundary is intentionally relaxed, document the reason in the code or architecture reference and keep the dependency one-way.
+Run `bun run check:architecture` after the change. Test application rules with
+fakes and concrete adapters with focused integration tests. Follow the
+`table-driven-tests` skill for all behavior test changes.

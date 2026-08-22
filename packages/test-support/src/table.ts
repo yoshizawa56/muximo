@@ -1,6 +1,7 @@
 export type MaybePromise<T> = T | PromiseLike<T>;
 export type Cleanup = () => MaybePromise<void>;
 export type CleanupRegistrar = (cleanup: Cleanup) => void;
+export type CaseScope = <Result>(operation: () => MaybePromise<Result>) => MaybePromise<Result>;
 
 export type Outcome<Result> =
   | { ok: true; value: Result }
@@ -56,6 +57,8 @@ export type OperationTable<
 > = {
   defaultFixture: FixtureFactory<Fixture>;
   fixtures?: Readonly<Record<FixtureKey, FixtureFactory<Fixture>>>;
+  /** Wraps fixture setup, execution, observation, and assertions in one case scope. */
+  caseScope?: CaseScope;
   cases: readonly OperationCase<FixtureKey, Input, Result, Context>[];
   execute: (
     fixture: Fixture,
@@ -88,6 +91,8 @@ export type ScenarioTable<
 > = {
   defaultFixture: FixtureFactory<Fixture>;
   fixtures?: Readonly<Record<FixtureKey, FixtureFactory<Fixture>>>;
+  /** Wraps fixture setup, execution, observation, and assertions in one case scope. */
+  caseScope?: CaseScope;
   cases: readonly ScenarioCase<FixtureKey, Step, Result, Context>[];
   execute: (
     fixture: Fixture,
@@ -163,6 +168,7 @@ export function runOperationTable<
       await runCase({
         caseName: testCase.name,
         fixtureFactory: selectFixtureFactory(table, testCase.fixture),
+        caseScope: table.caseScope,
         assert: testCase.assert,
         execute: (fixture) => table.execute(fixture, testCase.input),
         observe: table.observe,
@@ -188,6 +194,7 @@ export function runScenarioTable<
       await runCase({
         caseName: testCase.name,
         fixtureFactory: selectFixtureFactory(table, testCase.fixture),
+        caseScope: table.caseScope,
         assert: testCase.assert,
         execute: (fixture) => table.execute(fixture, testCase.steps),
         observe: table.observe,
@@ -199,12 +206,14 @@ export function runScenarioTable<
 async function runCase<Fixture, Result, Context>({
   caseName,
   fixtureFactory,
+  caseScope,
   assert,
   execute,
   observe,
 }: {
   caseName: string;
   fixtureFactory: FixtureFactory<Fixture>;
+  caseScope?: CaseScope;
   assert: NonEmptyArray<Assertion<Context, Result>>;
   execute: (fixture: Fixture) => MaybePromise<Result>;
   observe: (
@@ -217,7 +226,7 @@ async function runCase<Fixture, Result, Context>({
   let failed = false;
   let failure: unknown;
 
-  try {
+  const body = async (): Promise<void> => {
     setup = await fixtureFactory((cleanup) => {
       cleanups.push(cleanup);
     });
@@ -225,6 +234,14 @@ async function runCase<Fixture, Result, Context>({
     const result = await captureOutcome(() => execute(setup!.fixture));
     const ctx = await observe(setup.fixture, result);
     await assertAll(caseName, assert, ctx, result);
+  };
+
+  try {
+    if (caseScope) {
+      await caseScope(body);
+    } else {
+      await body();
+    }
   } catch (error) {
     failed = true;
     failure = error;

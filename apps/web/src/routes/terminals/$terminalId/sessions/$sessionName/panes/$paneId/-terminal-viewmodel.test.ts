@@ -1,5 +1,5 @@
 import { describe, it } from "vitest";
-import { terminalProtocolVersion, type ClientControlMessage, type ServerControlMessage } from "@muximo/api";
+import { terminalProtocolVersion, type ClientControlMessage, type ServerControlMessage } from "@muximo/contract";
 import {
   hasObserved,
   noFixture,

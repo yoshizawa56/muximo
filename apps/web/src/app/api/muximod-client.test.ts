@@ -1,7 +1,7 @@
 import { describe, it } from "vitest";
 import { ORPCError, implement } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
-import { muximodContract } from "@muximo/api";
+import { muximodContract } from "@muximo/contract";
 import {
   hasError,
   hasObserved,
@@ -14,9 +14,9 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import {
-  createMuximodClient,
   createSameOriginConnection,
   createServeConnection,
+  muximodRpc,
   type MuximodConnection,
 } from "./muximod-client.js";
 
@@ -133,11 +133,11 @@ const rpcTable: OperationTable<RpcFixture, "default", RpcInput, unknown, RpcCont
   cases: rpcCases,
   execute: async (fixture, input) => {
     fixture.behavior.failure = input.operation === "invalid-session" ? input.operation : null;
-    const client = createMuximodClient({ httpBaseUrl: "http://muximod.local", websocketUrl: "ws://muximod.local/terminal" });
-    if (input.operation === "sessions" || input.operation === "invalid-session") return client.sessions();
-    if (input.operation === "panes") return client.panes(input.sessionName);
-    if (input.operation === "workspaces") return client.workspaces();
-    return client.browseWorkspaces();
+    const rpc = muximodRpc({ httpBaseUrl: "http://muximod.local", websocketUrl: "ws://muximod.local/terminal" });
+    if (input.operation === "sessions" || input.operation === "invalid-session") return (await rpc.sessions.list({})).sessions;
+    if (input.operation === "panes") return (await rpc.panes.list(input.sessionName ? { session: input.sessionName } : {})).panes;
+    if (input.operation === "workspaces") return (await rpc.workspaces.list({})).workspaces;
+    return (await rpc.workspaces.browse({})).directories;
   },
   observe: (fixture) => ({ requests: [...fixture.requests] }),
 };
@@ -164,10 +164,11 @@ const mutationCases = [
 const mutationTable: OperationTable<RpcFixture, "default", RpcInput, unknown, RpcContext> = {
   defaultFixture: rpcFixture,
   cases: mutationCases,
-  execute: async (fixture, input) => {
-    const client = createMuximodClient({ httpBaseUrl: "http://muximod.local", websocketUrl: "ws://muximod.local/terminal" });
-    if (input.operation === "update-workspace") return client.updateWorkspace(input.workspaceId!, { name: "renamed" });
-    return client.deleteWorkspace(input.workspaceId!);
+  execute: async (_fixture, input) => {
+    const rpc = muximodRpc({ httpBaseUrl: "http://muximod.local", websocketUrl: "ws://muximod.local/terminal" });
+    if (input.operation === "update-workspace") return (await rpc.workspaces.update({ workspaceId: input.workspaceId!, input: { name: "renamed" } })).workspace;
+    await rpc.workspaces.delete({ workspaceId: input.workspaceId! });
+    return undefined;
   },
   observe: (fixture) => ({ requests: [...fixture.requests] }),
 };

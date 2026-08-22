@@ -1,17 +1,10 @@
-import type {
-  AgentSessionRecord,
-  PaneId,
-  PaneRecord,
-  PaneState,
-  WorkspaceRecord,
-} from "@muximo/domain";
-
-export { ApplicationError, type MuximodApplication, type MuximodHookEvent } from "./muximod.js";
+export { ApplicationError, type MuximodApplication, type MuximodHookEvent } from "./ports/application.js";
 export {
   createMuximodApplication,
   type MuximodApplicationResources,
   type MuximodApplicationRuntime,
-} from "./muximod-service.js";
+} from "./usecases/muximod/muximod-service.js";
+
 export {
   agentStatusKey,
   inferUnmanagedAgentState,
@@ -20,69 +13,80 @@ export {
   recentAgentOutputLimits,
   type AgentStatusObservation,
   type AgentStatusStore,
-} from "./agent-status.js";
-export {
-  AuthStoreError,
-  type AuthChallengeResponse,
-  type AuthCryptoPort,
-  type AuthDeviceRecord,
-  type AuthDeviceStatus,
-  type AuthDeviceType,
-  type AuthPairingClaimRequest,
-  type AuthPairingClaimResponse,
-  type AuthPairingClaimNotification,
-  type AuthPairingPayload,
-  type AuthPairingRecord,
-  type AuthPairingStatus,
-  type AuthSessionRecord,
-  type AuthSessionResponse,
-  type AuthStorePort,
-  type ClaimPairingInput,
-  type ClaimPairingResult,
-  type CreatePairingInput,
-  type CreatePairingResult,
-  type MuximodAuthContext,
-  type MuximodAuthControlPort,
-  type MuximodAuthDevice,
-  type MuximodAuthPort,
-  type PublicKeyJwk,
-  type WsTicketResponse,
-} from "./auth.js";
-export { AuthService } from "./auth-service.js";
-export type { AuthServiceOptions } from "./auth-service.js";
-export { muximodSocketReadyState, type MuximodSocket, type MuximodSocketData } from "./socket.js";
-export {
-  type AgentExecutionObservation,
-  type MuximodHostPort,
-  type MuximodLiveSnapshot,
-  type MuximodPaneRef,
-  type MuximodPaneSnapshot,
-  type MuximodViewportPort,
-  type MuximodWorkspaceCatalogPort,
-} from "./muximod-host.js";
-export {
-  type CreatePaneInput,
-  type CreateSessionInput,
-  type MuximodPanePlacement,
-  type MuximodPaneSummary,
-  type MuximodSessionSummary,
-  type MuximodTerminalEndpoint,
-  type MuximodWorkspaceDirectory,
-  type RegisterWorkspaceCommand,
-  type UpdateWorkspaceCommand,
-} from "./muximod-models.js";
+} from "./usecases/sessions/agent-status.js";
 
-export {
-  PairDevice,
-  type ApprovedDevice,
-  type PairDeviceInput,
-  type PairDeviceResult,
-  type PairingClaim,
-  type PairingControlPort,
-  type PairingDeviceType,
-  type PairingOffer,
-  type PairingPresenterPort,
-} from "./pair-device.js";
+export { AuthStoreError } from "./usecases/auth/auth-errors.js";
+export { AuthService } from "./usecases/auth/auth-service.js";
+export type { AuthServiceOptions } from "./usecases/auth/auth-service.js";
+export type {
+  AuthChallengeResponse,
+  AuthDeviceRecord,
+  AuthDeviceStatus,
+  AuthDeviceType,
+  AuthPairingClaimNotification,
+  AuthPairingClaimRequest,
+  AuthPairingClaimResponse,
+  AuthPairingPayload,
+  AuthPairingRecord,
+  AuthPairingStatus,
+  AuthSessionRecord,
+  AuthSessionResponse,
+  ClaimPairingInput,
+  ClaimPairingResult,
+  CreatePairingInput,
+  CreatePairingResult,
+  MuximodAuthContext,
+  MuximodAuthDevice,
+  PublicKeyJwk,
+  WsTicketResponse,
+} from "./models/auth.js";
+export type {
+  AuthCryptoPort,
+  AuthStorePort,
+  MuximodAuthControlPort,
+  MuximodAuthPort,
+} from "./ports/auth.js";
+
+export { muximodSocketReadyState, type MuximodSocket, type MuximodSocketData } from "./ports/socket.js";
+export type {
+  AgentExecutionObservation,
+  MuximodHostPort,
+  MuximodLiveSnapshot,
+  MuximodPaneRef,
+  MuximodPaneSnapshot,
+  MuximodViewportPort,
+  MuximodWorkspaceCatalogPort,
+} from "./ports/host.js";
+export type { TransactionManager } from "./ports/transactions.js";
+export type {
+  WorkspaceAuditPort,
+  WorkspaceDirectoryInfo,
+  WorkspaceDirectoryPort,
+} from "./ports/workspace.js";
+
+export type {
+  CreatePaneInput,
+  CreateSessionInput,
+  MuximodPanePlacement,
+  MuximodPaneSummary,
+  MuximodSessionSummary,
+  MuximodTerminalEndpoint,
+  MuximodWorkspaceDirectory,
+  RegisterWorkspaceCommand,
+  UpdateWorkspaceCommand,
+} from "./models/muximod.js";
+export type { PaneFilter } from "./models/panes.js";
+
+export { PairDevice } from "./usecases/pairing/pair-device.js";
+export type {
+  ApprovedDevice,
+  PairDeviceInput,
+  PairDeviceResult,
+  PairingClaim,
+  PairingDeviceType,
+  PairingOffer,
+} from "./models/pairing.js";
+export type { PairingControlPort, PairingPresenterPort } from "./ports/pairing.js";
 
 export {
   DeleteWorkspace,
@@ -97,80 +101,15 @@ export {
   WorkspaceRecordFactory,
   WorkspaceUpdateEmptyError,
   WorkspaceUseCaseError,
-  type RegisterWorkspaceInput,
-  type UpdateWorkspaceInput,
-  type WorkspaceAuditPort,
-  type WorkspaceDirectoryInfo,
-  type WorkspaceDirectoryPort,
-} from "./workspace.js";
+} from "./usecases/workspaces/workspace-crud.js";
+export type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "./models/workspace.js";
 
-export type PaneFilter = {
-  state?: PaneState;
-  kind?: PaneRecord["kind"];
-  sessionName?: string;
-};
-
-export interface PaneRepository {
-  list(filter?: PaneFilter): Promise<PaneRecord[]>;
-  findById(id: PaneId): Promise<PaneRecord | undefined>;
-  findByTmuxPaneId(tmuxPaneId: string): Promise<PaneRecord | undefined>;
-  findByTmuxPaneIdentity(tmuxServerId: string, tmuxPaneId: string): Promise<PaneRecord | undefined>;
-  upsert(record: PaneRecord): Promise<void>;
-  pruneStalePanes(activePaneIds: readonly PaneId[], olderThan: string, tmuxServerScope: string): Promise<number>;
-}
-
-export interface WorkspaceRepository {
-  findById(id: string): Promise<WorkspaceRecord | undefined>;
-  list(): Promise<WorkspaceRecord[]>;
-  insert(record: WorkspaceRecord): Promise<boolean>;
-  upsert(record: WorkspaceRecord): Promise<void>;
-  delete(id: string): Promise<void>;
-}
-
-export interface AgentSessionRepository {
-  findById(id: string): Promise<AgentSessionRecord | undefined>;
-  findByName(workspaceId: string, name: string): Promise<AgentSessionRecord | undefined>;
-  list(workspaceId?: string): Promise<AgentSessionRecord[]>;
-  insert(record: AgentSessionRecord): Promise<void>;
-  update(record: AgentSessionRecord): Promise<void>;
-  claimExecution(id: string, expectedExecutionPid: number | null, executionId: string, executionPid: number, executionStartedAt: string): Promise<boolean>;
-  setBackendSessionIdIfMissing(id: string, backendSessionId: string): Promise<boolean>;
-  delete(id: string): Promise<void>;
-}
-
-export interface PaneGateway {
-  sendInput(paneId: PaneId, input: string): Promise<void>;
-  resize(paneId: PaneId, cols: number, rows: number): Promise<void>;
-  close(paneId: PaneId): Promise<void>;
-}
-
-export class ListPanes {
-  public constructor(private readonly panes: PaneRepository) {}
-
-  public execute(filter?: PaneFilter): Promise<PaneRecord[]> {
-    return this.panes.list(filter);
-  }
-}
-
-export class SendPaneInput {
-  public constructor(private readonly panes: PaneRepository, private readonly gateway: PaneGateway) {}
-
-  public async execute(paneId: PaneId, input: string): Promise<void> {
-    const pane = await this.panes.findById(paneId);
-    if (!pane) throw new Error(`Pane not found: ${paneId}`);
-    await this.gateway.sendInput(paneId, input);
-  }
-}
-
-export class ResizePane {
-  public constructor(private readonly panes: PaneRepository, private readonly gateway: PaneGateway) {}
-
-  public async execute(paneId: PaneId, cols: number, rows: number): Promise<void> {
-    if (!Number.isInteger(cols) || cols < 1 || !Number.isInteger(rows) || rows < 1) {
-      throw new Error("Terminal dimensions must be positive integers");
-    }
-    const pane = await this.panes.findById(paneId);
-    if (!pane) throw new Error(`Pane not found: ${paneId}`);
-    await this.gateway.resize(paneId, cols, rows);
-  }
-}
+export type {
+  AgentSessionRepository,
+  PaneRepository,
+  WorkspaceRepository,
+} from "./ports/repositories.js";
+export type { PaneGateway } from "./ports/panes.js";
+export { ListPanes } from "./usecases/panes/list-panes.js";
+export { ResizePane } from "./usecases/panes/resize-pane.js";
+export { SendPaneInput } from "./usecases/panes/send-pane-input.js";

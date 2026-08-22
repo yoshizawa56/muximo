@@ -1,7 +1,6 @@
 import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { WorkspaceDirectory } from "@muximo/api";
-import { fetchWorkspaceDirectories, fetchWorkspaces, registerWorkspace } from "../../../../app/api/muximod-api";
+import type { WorkspaceDirectory } from "@muximo/contract";
 import { useMuximodConnection } from "../../../../app/api/use-muximod-connection";
 
 export type WorkspacePickerStatus = "loading" | "ready" | "error";
@@ -69,7 +68,7 @@ export function workspacePickerErrorMessage(error: unknown): string | null {
 
 export function useWorkspacePickerViewModel({ initialMode = "workspace" }: { initialMode?: WorkspaceSelectionMode } = {}): WorkspacePickerViewModel {
   const queryClient = useQueryClient();
-  const { connection, connectionKey } = useMuximodConnection();
+  const { connection, utils } = useMuximodConnection();
   const [workspaceId, setWorkspaceId] = useState("");
   const [mode, setMode] = useState<WorkspaceSelectionMode>(initialMode);
   const [workspaceCandidates, setWorkspaceCandidates] = useState<WorkspaceDirectory[]>([]);
@@ -84,17 +83,12 @@ export function useWorkspacePickerViewModel({ initialMode = "workspace" }: { ini
   const [registrationError, setRegistrationError] = useState<string | null>(null);
   const [isRegisteringWorkspace, setIsRegisteringWorkspace] = useState(false);
 
-  const workspacesQuery = useQuery({
-    queryKey: ["workspaces", connectionKey],
-    queryFn: () => {
-      if (!connection) throw new Error("Connection profile is not configured");
-      return fetchWorkspaces(connection);
-    },
-    enabled: Boolean(connection),
+  const workspacesQuery = useQuery(utils.workspaces.list.queryOptions({
     staleTime: 5_000,
     retry: 1,
-  });
-  const workspaces = workspacesQuery.data ?? [];
+    enabled: Boolean(connection),
+  }));
+  const workspaces = workspacesQuery.data?.workspaces ?? [];
   const effectiveWorkspaceId = workspaceId || workspaces[0]?.id || "";
 
   const browseWorkspaceDirectories = useCallback((path?: string) => {
@@ -105,9 +99,9 @@ export function useWorkspacePickerViewModel({ initialMode = "workspace" }: { ini
       setBrowserError("Connection profile is not configured");
       return;
     }
-    void fetchWorkspaceDirectories(path, connection)
-      .then((directories) => {
-        setWorkspaceCandidates(directories);
+    void utils.workspaces.browse.call(path ? { path } : {}, {})
+      .then((response) => {
+        setWorkspaceCandidates(response.directories);
         setBrowserPath(path ?? null);
         setBrowserStatus("ready");
       })
@@ -115,31 +109,37 @@ export function useWorkspacePickerViewModel({ initialMode = "workspace" }: { ini
         setBrowserError(workspacePickerErrorMessage(error) ?? "Could not browse host directories");
         setBrowserStatus("error");
       });
-  }, [connection]);
+  }, [connection, utils]);
 
   const onRegisterWorkspace = useCallback(() => {
     const directory = registrationDirectory.trim();
     if (!directory || isRegisteringWorkspace || !connection) return;
     setIsRegisteringWorkspace(true);
     setRegistrationError(null);
-    void registerWorkspace({
+    void utils.workspaces.register.call({
       directory,
       setupScriptPath: setupScriptPath.trim() || null,
       cleanupScriptPath: cleanupScriptPath.trim() || null,
       worktreeCopyPatterns: [...new Set(worktreeCopyPatterns.split(/\r?\n/).map((pattern) => pattern.trim()).filter(Boolean))],
-    }, connection)
-      .then((workspace) => {
-        queryClient.setQueryData<WorkspaceDirectory[]>(["workspaces", connectionKey], (current) => {
-          const next = [...(current ?? []).filter((candidate) => candidate.id !== workspace.id), workspace];
-          return next.sort((left, right) => left.name.localeCompare(right.name));
-        });
+    }, {})
+      .then((response) => {
+        const workspace = response.workspace;
+        queryClient.setQueryData(
+          utils.workspaces.list.queryKey({ input: {} }),
+          (current) => {
+            if (!current) return current;
+            const workspaces = [...current.workspaces.filter((candidate) => candidate.id !== workspace.id), workspace]
+              .sort((left, right) => left.name.localeCompare(right.name));
+            return { ...current, workspaces };
+          },
+        );
         setWorkspaceId(workspace.id);
         setRegistrationOpen(false);
         setRegistrationError(null);
       })
       .catch((error: unknown) => setRegistrationError(workspacePickerErrorMessage(error) ?? "Could not register workspace"))
       .finally(() => setIsRegisteringWorkspace(false));
-  }, [connection, connectionKey, isRegisteringWorkspace, queryClient, registrationDirectory, setupScriptPath, cleanupScriptPath, worktreeCopyPatterns]);
+  }, [connection, isRegisteringWorkspace, queryClient, registrationDirectory, setupScriptPath, cleanupScriptPath, worktreeCopyPatterns, utils]);
 
   return {
     workspaces,

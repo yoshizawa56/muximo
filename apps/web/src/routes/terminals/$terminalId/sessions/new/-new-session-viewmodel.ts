@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { TmuxSession } from "@muximo/api";
-import { createSession } from "../../../../../app/api/muximod-api";
+import { invalidateSessionData } from "../../../../../app/api/invalidation";
 import { useMuximodConnection } from "../../../../../app/api/use-muximod-connection";
 import type { TerminalEndpoint } from "../../../-connection-flow-viewmodel";
 import { fallbackTerminal, useTerminalResources } from "../../../-terminal-resources";
@@ -23,7 +22,7 @@ export function useNewSessionViewModel(): NewSessionViewModel {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { terminalId } = useParams({ from: "/terminals/$terminalId/sessions/new/" });
-  const { connection, connectionKey } = useMuximodConnection();
+  const { connection, utils } = useMuximodConnection();
   const { selectedTerminal } = useTerminalResources({ terminalId });
   const workspacePicker = useWorkspacePickerViewModel();
   const [name, setName] = useState("");
@@ -45,12 +44,21 @@ export function useNewSessionViewModel(): NewSessionViewModel {
       if (!connection || !name.trim() || !workspacePickerState(workspacePicker).canContinue || !workspaceId || isCreating) return;
       setIsCreating(true);
       setErrorMessage(null);
-      void createSession({ name: name.trim(), workspaceId }, connection)
-        .then((session) => {
-          queryClient.setQueryData<TmuxSession[]>(["sessions", connectionKey, terminalId], (current) => [
-            ...(current ?? []).filter((candidate) => candidate.name !== session.name),
-            session,
-          ]);
+      void utils.sessions.create.call({ name: name.trim(), workspaceId }, {})
+        .then((response) => {
+          const session = response.session;
+          queryClient.setQueryData(
+            utils.sessions.list.queryKey({ input: {} }),
+            (current) => {
+              if (!current) return current;
+              const sessions = [
+                ...current.sessions.filter((candidate) => candidate.name !== session.name),
+                session,
+              ];
+              return { ...current, sessions };
+            },
+          );
+          invalidateSessionData(queryClient, utils);
           void navigate({ to: "/terminals/$terminalId/sessions/$sessionName", params: { terminalId, sessionName: session.name } });
         })
         .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)))

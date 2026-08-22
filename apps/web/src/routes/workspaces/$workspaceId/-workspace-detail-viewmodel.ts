@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { deleteWorkspace, fetchWorkspaces, updateWorkspace } from "../../../app/api/muximod-api";
 import { useMuximodEvents } from "../../../app/api/muximod-events";
 import { useMuximodConnection } from "../../../app/api/use-muximod-connection";
 import { parseWorktreeCopyPatterns, workspaceDetailCanSave, type WorkspaceDetailViewModel } from "../-workspaces-viewmodel";
@@ -9,18 +8,13 @@ import { parseWorktreeCopyPatterns, workspaceDetailCanSave, type WorkspaceDetail
 export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetailViewModel {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { connection: muximodConnection, connectionKey } = useMuximodConnection();
-  useMuximodEvents(muximodConnection, connectionKey);
+  const { connection: muximodConnection, utils } = useMuximodConnection();
+  useMuximodEvents(muximodConnection);
 
-  const workspacesQuery = useQuery({
-    queryKey: ["workspaces", connectionKey],
-    queryFn: () => {
-      if (!muximodConnection) throw new Error("Connection profile is not configured");
-      return fetchWorkspaces(muximodConnection);
-    },
-    enabled: Boolean(muximodConnection),
+  const workspacesQuery = useQuery(utils.workspaces.list.queryOptions({
     staleTime: 5_000,
-  });
+    enabled: Boolean(muximodConnection),
+  }));
 
   const workspace = useMemo(() => (workspacesQuery.data ?? []).find((w) => w.id === workspaceId) ?? null, [workspacesQuery.data, workspaceId]);
 
@@ -42,19 +36,28 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
   const updateMutation = useMutation({
     mutationFn: () => {
       if (!muximodConnection) throw new Error("Connection profile is not configured");
-      const patterns = parseWorktreeCopyPatterns(worktreeCopyPatterns);
-      return updateWorkspace(workspaceId, {
-        name: name.trim() || undefined,
-        setupScriptPath: setupScriptPath.trim() ? setupScriptPath.trim() : null,
-        cleanupScriptPath: cleanupScriptPath.trim() ? cleanupScriptPath.trim() : null,
-        worktreeCopyPatterns: patterns,
-      }, muximodConnection);
+      return utils.workspaces.update.call({
+        workspaceId,
+        input: {
+          name: name.trim() || undefined,
+          setupScriptPath: setupScriptPath.trim() ? setupScriptPath.trim() : null,
+          cleanupScriptPath: cleanupScriptPath.trim() ? cleanupScriptPath.trim() : null,
+          worktreeCopyPatterns: parseWorktreeCopyPatterns(worktreeCopyPatterns),
+        },
+      }, {});
     },
-    onSuccess: (updated) => {
-      queryClient.setQueryData(["workspaces", connectionKey], (current: unknown) => {
-        const list = Array.isArray(current) ? current : [];
-        return (list as typeof updated[]).map((w) => w.id === updated.id ? updated : w).sort((a, b) => a.name.localeCompare(b.name));
-      });
+    onSuccess: (response) => {
+      const updated = response.workspace;
+      queryClient.setQueryData(
+        utils.workspaces.list.queryKey({ input: {} }),
+        (current) => {
+          if (!current) return current;
+          const workspaces = current.workspaces
+            .map((w) => w.id === updated.id ? updated : w)
+            .sort((a, b) => a.name.localeCompare(b.name));
+          return { ...current, workspaces };
+        },
+      );
       setSaveError(null);
     },
     onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
@@ -63,13 +66,16 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
   const deleteMutation = useMutation({
     mutationFn: () => {
       if (!muximodConnection) throw new Error("Connection profile is not configured");
-      return deleteWorkspace(workspaceId, muximodConnection);
+      return utils.workspaces.delete.call({ workspaceId }, {});
     },
     onSuccess: () => {
-      queryClient.setQueryData(["workspaces", connectionKey], (current: unknown) => {
-        const list = Array.isArray(current) ? current : [];
-        return (list as { id: string }[]).filter((w) => w.id !== workspaceId);
-      });
+      queryClient.setQueryData(
+        utils.workspaces.list.queryKey({ input: {} }),
+        (current) => {
+          if (!current) return current;
+          return { ...current, workspaces: current.workspaces.filter((w) => w.id !== workspaceId) };
+        },
+      );
       void navigate({ to: "/workspaces" });
     },
     onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
@@ -94,7 +100,7 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
 
   return {
     workspace,
-    workspaces: workspacesQuery.data ?? [],
+    workspaces: workspacesQuery.data?.workspaces ?? [],
     status: workspacesQuery.status === "pending" ? "loading" : workspacesQuery.status === "error" ? "error" : "ready",
     name,
     setupScriptPath,

@@ -4,6 +4,16 @@
   "private": true,
   "license": "MIT",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "default": "./src/runtime.ts"
+    }
+  },
   "scripts": {
     "build": "bunx --bun tsc -p tsconfig.build.json",
     "dev": "bun --watch src/index.ts",
@@ -12,9 +22,16 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@muximo/infrastructure": "workspace:*"
+    "@muximo/application": "workspace:*",
+    "@muximo/contract": "workspace:*",
+    "@muximo/domain": "workspace:*",
+    "@muximo/infrastructure": "workspace:*",
+    "@orpc/server": "^1.15.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@orpc/client": "^1.15.0",
+    "@orpc/contract": "^1.15.0",
     "@muximo/test-support": "workspace:*",
     "@types/node": "^26.1.2",
     "bun-types": "^1.3.14",

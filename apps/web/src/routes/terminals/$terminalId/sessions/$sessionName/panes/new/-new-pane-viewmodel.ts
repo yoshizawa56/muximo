@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { PanePlacement, PaneSummary } from "@muximo/api";
-import { createPane, fetchPanes } from "../../../../../../../app/api/muximod-api";
-import { paneQueryKey } from "../../../../../../../app/api/muximod-query-keys";
+import type { PanePlacement, PaneSummary } from "@muximo/contract";
+import { invalidateSessionData } from "../../../../../../../app/api/invalidation";
 import { useMuximodConnection } from "../../../../../../../app/api/use-muximod-connection";
 import type { TerminalEndpoint, TmuxSession } from "../../../../../-connection-flow-viewmodel";
 import { fallbackSession, fallbackTerminal, useTerminalResources } from "../../../../../-terminal-resources";
@@ -37,20 +36,17 @@ export function useNewPaneViewModel(): NewPaneViewModel {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { terminalId, sessionName } = useParams({ from: "/terminals/$terminalId/sessions/$sessionName/panes/new/" });
-  const { connection, connectionKey } = useMuximodConnection();
+  const { connection } = useMuximodConnection();
   const resources = useTerminalResources({ terminalId, sessionName });
   const workspacePicker = useWorkspacePickerViewModel({ initialMode: "worktree" });
-  const panesQuery = useQuery({
-    queryKey: paneQueryKey(connection, resources.selectedSession?.name ?? sessionName),
-    queryFn: () => {
-      if (!connection) throw new Error("Connection profile is not configured");
-      return fetchPanes(resources.selectedSession?.name ?? sessionName, connection);
-    },
+  const scopedSessionName = resources.selectedSession?.name ?? sessionName;
+  const panesQuery = useQuery(resources.utils.panes.list.queryOptions({
+    input: scopedSessionName ? { session: scopedSessionName } : {},
     enabled: Boolean(connection) && Boolean(sessionName),
     staleTime: 1_000,
     retry: 1,
-  });
-  const existingPanes = panesQuery.data ?? [];
+  }));
+  const existingPanes = panesQuery.data?.panes ?? [];
   const [name, setName] = useState("");
   const [kind, setKind] = useState<NewPaneKind>("agent");
   const [agentId, setAgentId] = useState<NewPaneAgent>("codex");
@@ -105,7 +101,7 @@ export function useNewPaneViewModel(): NewPaneViewModel {
       if (!connection || !resources.selectedSession || !name.trim() || (workspaceRequired && (!workspaceId || !workspacePickerState(workspacePicker).canContinue)) || (placement !== "window" && !targetPaneId) || isCreating) return;
       setIsCreating(true);
       setErrorMessage(null);
-      void createPane({
+      void resources.utils.panes.create.call({
         sessionName: resources.selectedSession.name,
         kind,
         name: name.trim(),
@@ -114,13 +110,21 @@ export function useNewPaneViewModel(): NewPaneViewModel {
         useWorktree,
         placement,
         targetPaneId: placement === "window" ? null : targetPaneId,
-      }, connection)
-        .then((pane) => {
-          queryClient.setQueryData<PaneSummary[]>(paneQueryKey(connection, resources.selectedSession?.name), (current) => [
-            ...(current ?? []).filter((candidate) => candidate.id !== pane.id),
-            pane,
-          ]);
-          void queryClient.invalidateQueries({ queryKey: paneQueryKey(connection, resources.selectedSession?.name) });
+      }, {})
+        .then((response) => {
+          const pane = response.pane;
+          queryClient.setQueryData(
+            resources.utils.panes.list.queryKey({ input: scopedSessionName ? { session: scopedSessionName } : {} }),
+            (current) => {
+              if (!current) return current;
+              const panes = [
+                ...current.panes.filter((candidate) => candidate.id !== pane.id),
+                pane,
+              ];
+              return { ...current, panes };
+            },
+          );
+          invalidateSessionData(queryClient, resources.utils);
           void navigate({ to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId", params: { terminalId, sessionName: resources.selectedSession!.name, paneId: pane.id } });
         })
         .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)))

@@ -1,6 +1,8 @@
 import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
 
+export { getLocalTerminal } from "./local-terminal.js";
+
 export type TailscaleServeConfig = {
   localPort: number;
   externalPort: number;

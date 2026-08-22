@@ -6,9 +6,9 @@ import {
   terminalProtocolVersion,
   type ClientControlMessage,
   type ServerControlMessage,
-} from "@muximo/api";
+} from "@muximo/contract";
 import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
-import { getMuximodWebSocketEndpoint, openMuximodTerminal } from "../../../../../../../app/api/muximod-api";
+import { openMuximodTerminal } from "../../../../../../../app/api/muximod-client";
 import { isMockMode, mockTerminalOutputForTarget } from "../../../../../../../mock/mock-data";
 import { muximoBridge } from "../../../../../../../platform/muximo-bridge";
 import { installTerminalFlickInput, terminalMouseWheelInput } from "./-terminal-flick";
@@ -162,7 +162,7 @@ export function usePaneViewModel({ target, connection }: { target: string; conne
       write: (data) => terminal.write(data),
     });
 
-    const endpoint = connection ? getMuximodWebSocketEndpoint(connection) : "mock";
+    const endpoint = connection ? connection.websocketUrl : "mock";
     const storageKey = terminalResumeStorageKey(endpoint, target);
     resumeRef.current = readTerminalResumeState(storageKey, target);
     terminalClosedRef.current = false;

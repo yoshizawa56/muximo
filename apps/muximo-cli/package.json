@@ -14,7 +14,12 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@muximo/infrastructure": "workspace:*"
+    "@muximo/application": "workspace:*",
+    "@muximo/contract": "workspace:*",
+    "@muximo/domain": "workspace:*",
+    "@muximo/infrastructure": "workspace:*",
+    "@muximo/muximod": "workspace:*",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",

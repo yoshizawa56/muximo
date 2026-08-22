@@ -1,14 +1,16 @@
 import { describe, it } from "vitest";
-import { muximodEventSchema } from "@muximo/api";
+import { muximodEventSchema } from "@muximo/contract";
 import {
   noFixture,
   returns,
   runOperationTable,
+  type FixtureHandle,
   type OperationCase,
   type OperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { invalidationQueryKeys } from "./muximod-events";
+import { invalidateOnMuximodEvent } from "./invalidation.js";
+import { muximodQueryUtils } from "./orpc-utils.js";
 
 const connection = {
   route: "serve" as const,
@@ -16,13 +18,37 @@ const connection = {
   websocketUrl: "ws://muximod.local/terminal",
 };
 
+type InvalidatingClient = {
+  invalidateQueries(options: { queryKey?: unknown }): Promise<void>;
+};
+
+type QueryStub = {
+  client: InvalidatingClient;
+  invalidated: unknown[];
+};
+
+const queryStubFixture = (): FixtureHandle<QueryStub> => {
+  const invalidated: unknown[] = [];
+  return {
+    fixture: {
+      invalidated,
+      client: {
+        invalidateQueries: async (options) => {
+          invalidated.push(options.queryKey);
+        },
+      },
+    },
+    cleanup: () => {},
+  };
+};
+
 type Input = { event: ReturnType<typeof muximodEventSchema.parse> };
-type Result = readonly (readonly unknown[])[];
+type Result = readonly unknown[];
 type Context = {};
 
 const cases = [
   {
-    name: "invalidates the session summary and its pane list",
+    name: "invalidates every sessions-derived cache region through contract subtree keys",
     input: {
       event: muximodEventSchema.parse({
         type: "session_updated",
@@ -33,18 +59,21 @@ const cases = [
     },
     assert: [
       returns<Context, Result>([
-        ["sessions", "serve:http://muximod.local"],
-        ["panes", "http://muximod.local", "work"],
+        [["muximod", "serve:http://muximod.local", "sessions"], {}],
+        [["muximod", "serve:http://muximod.local", "panes"], {}],
       ]),
     ],
   },
 ] satisfies readonly OperationCase<"default", Input, Result, Context>[];
 
-const table: OperationTable<undefined, "default", Input, Result, Context> = {
-  defaultFixture: noFixture(),
+const table: OperationTable<QueryStub, "default", Input, Result, Context> = {
+  defaultFixture: queryStubFixture,
   cases,
-  execute: (_fixture, input) =>
-    invalidationQueryKeys("serve:http://muximod.local", connection, input.event),
+  execute: (fixture, input) => {
+    const utils = muximodQueryUtils(connection);
+    void invalidateOnMuximodEvent(fixture.client as unknown as Parameters<typeof invalidateOnMuximodEvent>[0], utils, input.event);
+    return [...fixture.invalidated];
+  },
   observe: () => ({}),
 };
 

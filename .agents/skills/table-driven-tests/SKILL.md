@@ -63,6 +63,25 @@ Install subscriptions, spies, and recorders during fixture construction so execu
 - Use complete replacement fixtures for empty, seeded, legacy, migration, and reopen database states. Tables touching global state, ports, processes, filesystem paths, or databases run serially unless isolation is proven.
 - Integration tests keep capability checks, suite-level timeouts, and concurrency policy outside rows and use condition-based waiting.
 
+## Database table scopes
+
+Database table tests must not run migrations for every row. Use the shared
+database table-scope helper when available:
+
+- create an isolated database and apply the current migrations once per suite
+  or worker;
+- open one explicit transaction scope per row;
+- run fixture setup, execute, observation, and assertions inside that scope;
+- roll back the scope after every row, including assertion and execute errors;
+- run external-resource cleanup after the database rollback;
+- keep database rows serial unless independent isolation has been proven.
+
+The scope must use the same safe transaction shape as production SQLite:
+explicitly controlled `BEGIN IMMEDIATE`/rollback/commit on a connection owned
+by the scope. Do not pass an async callback to Bun's synchronous
+`Database.transaction(...)` API. A test scope must not hide network, PTY,
+tmux, provider, or other external side effects inside a transaction retry.
+
 ## Validation
 
 Before completing a test change:

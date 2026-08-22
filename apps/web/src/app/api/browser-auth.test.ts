@@ -8,9 +8,9 @@ import {
   type OperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { encodePairingCode } from "@muximo/api";
+import { encodePairingCode } from "@muximo/contract";
 import { parsePairingQrPayload } from "./browser-auth";
-import type { PairingCodePayload } from "@muximo/api";
+import type { PairingCodePayload } from "@muximo/contract";
 
 type EmptyContext = {};
 type PairingPayloadInput = { code: string };

@@ -1,4 +1,4 @@
-import type { PaneSummary, TmuxSession, WorkspaceDirectory } from "@muximo/api";
+import type { PaneSummary, TmuxSession, WorkspaceDirectory } from "@muximo/contract";
 import type { TerminalEndpoint } from "./-connection-flow-viewmodel";
 
 export const storyTerminal: TerminalEndpoint = {

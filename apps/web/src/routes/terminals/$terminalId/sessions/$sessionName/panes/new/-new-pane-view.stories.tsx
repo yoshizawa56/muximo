@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
-import type { PanePlacement, PaneSummary } from "@muximo/api";
+import type { PanePlacement, PaneSummary } from "@muximo/contract";
 import { NewPaneView } from "./-new-pane-view";
 import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "./-new-pane-viewmodel";
 import type { WorkspacePickerViewModel, WorkspaceSelectionMode } from "../../../-workspace-picker-viewmodel";

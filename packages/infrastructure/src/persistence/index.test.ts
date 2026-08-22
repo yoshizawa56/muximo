@@ -12,7 +12,18 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import type { AgentSessionRecord, PaneRecord, WorkspaceRecord } from "@muximo/domain";
+import {
+  AgentSession,
+  AgentSessionId,
+  clearPatch,
+  Pane,
+  PaneId,
+  Workspace,
+  WorkspaceId,
+  type AgentSessionRecord,
+  type PaneRecord,
+  type WorkspaceRecord,
+} from "@muximo/domain";
 import {
   defaultAgentMigrationsFolder,
   DrizzleAgentSessionRepository,
@@ -23,23 +34,23 @@ import {
 } from "./index.js";
 import { auditEvents } from "./schema.js";
 
-const pane: PaneRecord = {
-  id: "pane-1",
+const pane: PaneRecord = Pane.create({
+  id: PaneId.create("pane-1"),
   tmuxPaneId: "%1",
   sessionName: "muximod",
   windowId: "@0",
   kind: "agent",
   name: "review",
   cwd: "/work/repo",
-  workspaceId: "workspace-1",
+  workspaceId: WorkspaceId.create("workspace-1"),
   agentId: "codex",
   state: "waiting_input",
   title: "Review changes",
   lastSeenAt: "2026-08-09T00:00:00.000Z",
-};
+});
 
-const workspace: WorkspaceRecord = {
-  id: "workspace-1",
+const workspace: WorkspaceRecord = Workspace.create({
+  id: WorkspaceId.create("workspace-1"),
   rootPath: "/work/repo",
   name: "repo",
   isGit: true,
@@ -48,14 +59,14 @@ const workspace: WorkspaceRecord = {
   worktreeCopyPatterns: [".env", "config/*.local.json"],
   createdAt: "2026-08-09T00:00:00.000Z",
   updatedAt: "2026-08-09T00:00:00.000Z",
-};
+});
 
-const session: AgentSessionRecord = {
-  id: "session-1",
+const session: AgentSessionRecord = AgentSession.create({
+  id: AgentSessionId.create("session-1"),
   name: "review",
   backend: "codex",
   status: "running",
-  workspaceId: "workspace-1",
+  workspaceId: workspace.id,
   workspaceRoot: "/work/repo",
   workspaceName: "repo",
   worktreeRoot: "/work/repo.worktrees",
@@ -66,7 +77,6 @@ const session: AgentSessionRecord = {
   setupHook: workspace.setupScriptPath,
   cleanupHook: workspace.cleanupScriptPath,
   setupOutputFile: "/state/setup.log",
-  cleanupOutputFile: null,
   backendSessionId: "codex-session",
   codexProfile: "local-agent",
   codexRemote: "unix://",
@@ -74,10 +84,9 @@ const session: AgentSessionRecord = {
   resuming: false,
   baselineStatus: "",
   codexSessionBaseline: JSON.stringify({ codexSessions: [] }),
-  lastExitStatus: null,
   createdAt: "2026-08-09T00:00:00.000Z",
   updatedAt: "2026-08-09T00:00:00.000Z",
-};
+});
 
 type Database = ReturnType<typeof createAgentDatabase>;
 type DatabaseFixture = {
@@ -166,7 +175,7 @@ const historicalMigrationFixture = async (registerCleanup?: CleanupRegistrar): P
     await new DrizzlePaneRepository(historical.db).upsert(pane);
     historical.sqlite
       .prepare("INSERT INTO runs (id, pane_id, agent_id, profile_id, state, started_at, ended_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run("legacy-run", pane.id, pane.agentId, "legacy-profile", pane.state, pane.lastSeenAt, null, pane.lastSeenAt, pane.lastSeenAt);
+      .run("legacy-run", pane.id, pane.agentId ?? null, "legacy-profile", pane.state, pane.lastSeenAt, null, pane.lastSeenAt, pane.lastSeenAt);
     historical.sqlite.prepare("UPDATE panes SET run_id = ? WHERE id = ?").run("legacy-run", pane.id);
   } finally {
     historical.close();
@@ -286,8 +295,8 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           break;
         case "verify-generations": {
           const panes = new DrizzlePaneRepository(databases.db);
-          const oldPane = { ...pane, id: "pane-old", tmuxPaneId: "%0", tmuxServerId: "scope-current:server-old", lastSeenAt: "2026-08-01T00:00:00.000Z" } satisfies PaneRecord;
-          const currentPane = { ...pane, id: "pane-current", tmuxPaneId: "%0", tmuxServerId: "scope-current:server-current", lastSeenAt: "2026-08-10T00:00:00.000Z" } satisfies PaneRecord;
+          const oldPane = { ...pane, id: PaneId.create("pane-old"), tmuxPaneId: "%0", tmuxServerId: "scope-current:server-old", lastSeenAt: "2026-08-01T00:00:00.000Z" } satisfies PaneRecord;
+          const currentPane = { ...pane, id: PaneId.create("pane-current"), tmuxPaneId: "%0", tmuxServerId: "scope-current:server-current", lastSeenAt: "2026-08-10T00:00:00.000Z" } satisfies PaneRecord;
           await panes.upsert(oldPane);
           await panes.upsert(currentPane);
           fixture.prePruneOld = await panes.findByTmuxPaneIdentity("scope-current:server-old", "%0");
@@ -297,18 +306,18 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
         }
         case "verify-upsert-identity": {
           const panes = new DrizzlePaneRepository(databases.db);
-          await panes.upsert({ ...pane, id: "first", tmuxServerId: "server-1" });
-          await panes.upsert({ ...pane, id: "second", tmuxServerId: "server-1", name: "updated" });
+          await panes.upsert({ ...pane, id: PaneId.create("first"), tmuxServerId: "server-1" });
+          await panes.upsert({ ...pane, id: PaneId.create("second"), tmuxServerId: "server-1", name: "updated" });
           break;
         }
         case "verify-agent-association": {
           const panes = new DrizzlePaneRepository(databases.db);
-          await panes.upsert({ ...pane, id: "pane-adopted", agentSessionId: session.id, agentExecutionId: "execution-id-123456" } satisfies PaneRecord);
+          await panes.upsert({ ...pane, id: PaneId.create("pane-adopted"), agentSessionId: session.id, agentExecutionId: "execution-id-123456" } satisfies PaneRecord);
           break;
         }
         case "verify-execution-claim": {
           const sessions = new DrizzleAgentSessionRepository(databases.db);
-          await sessions.insert({ ...session, backendSessionId: null });
+          await sessions.insert(AgentSession.update(session, { backendSessionId: clearPatch }));
           fixture.claimResults.push(await sessions.claimExecution(session.id, null, "execution-1", 1001, "2026-08-14T12:00:00.000Z"));
           fixture.claimResults.push(await sessions.claimExecution(session.id, null, "execution-2", 1002, "2026-08-14T12:01:00.000Z"));
           fixture.backendResults.push(await sessions.setBackendSessionIdIfMissing(session.id, "codex-discovered"));
@@ -340,10 +349,10 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       integrityCheck: integrity.integrity_check,
       oldIdentity: fixture.prePruneOld,
       currentIdentity: fixture.prePruneCurrent,
-      oldAfterPrune: await panes.findById("pane-old"),
-      currentAfterPrune: await panes.findById("pane-current"),
+      oldAfterPrune: await panes.findById(PaneId.create("pane-old")),
+      currentAfterPrune: await panes.findById(PaneId.create("pane-current")),
       identityPane: await panes.findByTmuxPaneIdentity("server-1", pane.tmuxPaneId),
-      adoptedPane: await panes.findById("pane-adopted"),
+      adoptedPane: await panes.findById(PaneId.create("pane-adopted")),
       pruneCount: fixture.pruneCount,
       claimResults: [...fixture.claimResults],
       backendResults: [...fixture.backendResults],
