@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import {
+  type AgentStatusStore,
   AuthService,
   createMuximodApplication,
   DeleteWorkspace,
@@ -136,6 +137,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     updateWorkspace,
     deleteWorkspace,
     viewportManager,
+    agentStatus: new Map() as AgentStatusStore,
   });
   const eventHub = new MuximodEventHub();
   const hookToken = randomBytes(24).toString("hex");

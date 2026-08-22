@@ -42,7 +42,7 @@ updating this file in the same change.
   `nodeAuthCrypto` directly.
 - Biome + lefthook installed; test preload sets NO_PROXY for local servers.
 
-## Phase 1c — dissolve `usecases/muximod/muximod-service.ts` (528 lines)
+## Phase 1c — DONE — dissolve `usecases/muximod/muximod-service.ts` (528 lines)
 
 Target files (all under `usecases/<domain>/`, one operation each, deps
 injected; keep `createMuximodApplication` in place as the pure assembler that
