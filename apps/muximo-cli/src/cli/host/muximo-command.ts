@@ -23,7 +23,14 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { createInterface } from "node:readline/promises";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { type UpdateWorkspaceInput, WorkspaceCrud } from "@muximo/application";
+import {
+  DeleteWorkspace,
+  ListWorkspaces,
+  RegisterWorkspace,
+  UpdateWorkspace,
+  type UpdateWorkspaceInput,
+  WorkspaceRecordFactory,
+} from "@muximo/application";
 import type { AgentBackend, AgentSessionRecord, PaneState, WorkspaceRecord } from "@muximo/domain";
 import {
   AgentSession,
@@ -275,7 +282,10 @@ export class MuximoCommand {
   private sessions!: DrizzleAgentSessionRepository;
   private workspaces!: DrizzleWorkspaceRepository;
   private workspaceCatalog!: WorkspaceSelectionCatalog;
-  private workspaceCrud!: WorkspaceCrud;
+  private workspaceList!: ListWorkspaces;
+  private workspaceRegister!: RegisterWorkspace;
+  private workspaceUpdate!: UpdateWorkspace;
+  private workspaceDelete!: DeleteWorkspace;
 
   public constructor(options: MuximoCommandOptions = {}) {
     this.cwd = realpathSafe(options.cwd ?? process.cwd());
@@ -873,7 +883,7 @@ export class MuximoCommand {
   }
 
   private async listWorkspaces(options: WorkspaceListOptions): Promise<number> {
-    const workspaces = await this.runWorkspaceUseCase(() => this.workspaceCrud.list.execute());
+    const workspaces = await this.runWorkspaceUseCase(() => this.workspaceList.execute());
     if (options.json) {
       for (const workspace of workspaces) this.write(`${JSON.stringify(toWorkspaceJson(workspace))}\n`);
       return 0;
@@ -902,7 +912,7 @@ export class MuximoCommand {
 
   private async addWorkspace(options: WorkspaceMutationOptions): Promise<number> {
     const workspace = await this.runWorkspaceUseCase(() =>
-      this.workspaceCrud.register.execute({
+      this.workspaceRegister.execute({
         directory: options.directory!,
         name: options.nameExplicit ? options.name : undefined,
         setupHook: options.setupHookExplicit ? toWorkspacePatch(options.setupHook) : undefined,
@@ -923,13 +933,13 @@ export class MuximoCommand {
       appendCopyPatterns: options.appendCopyPatterns,
       clearCopyPatterns: options.clearCopyPatterns,
     };
-    const workspace = await this.runWorkspaceUseCase(() => this.workspaceCrud.update.execute(options.selector!, input));
+    const workspace = await this.runWorkspaceUseCase(() => this.workspaceUpdate.execute(options.selector!, input));
     this.info(`workspace '${workspace.name}' updated`);
     return 0;
   }
 
   private async deleteWorkspace(options: WorkspaceDeleteOptions): Promise<number> {
-    const workspace = await this.runWorkspaceUseCase(() => this.workspaceCrud.delete.execute(options.selector));
+    const workspace = await this.runWorkspaceUseCase(() => this.workspaceDelete.execute(options.selector));
     this.info(`workspace '${workspace.name}' unregistered; directory was not deleted`);
     return 0;
   }
@@ -2843,12 +2853,20 @@ export class MuximoCommand {
     this.sessions = new DrizzleAgentSessionRepository(this.database.db);
     this.workspaces = new DrizzleWorkspaceRepository(this.database.db);
     this.workspaceCatalog = new WorkspaceSelectionCatalog(["/"], this.cwd);
-    this.workspaceCrud = new WorkspaceCrud(this.workspaces, this.workspaceCatalog, {
-      audit: {
-        record: (eventType, entityId, payload) => this.audit(eventType, entityId, payload),
-      },
-      transactionManager: this.transactionManager,
-    });
+    const audit = {
+      record: (eventType: string, entityId: string, payload: unknown) => this.audit(eventType, entityId, payload),
+    };
+    const factory = new WorkspaceRecordFactory(this.workspaceCatalog);
+    this.workspaceList = new ListWorkspaces(this.workspaces);
+    this.workspaceRegister = new RegisterWorkspace(this.workspaces, factory, audit, this.transactionManager);
+    this.workspaceUpdate = new UpdateWorkspace(
+      this.workspaces,
+      this.workspaceCatalog,
+      factory,
+      audit,
+      this.transactionManager,
+    );
+    this.workspaceDelete = new DeleteWorkspace(this.workspaces, this.workspaceCatalog, audit, this.transactionManager);
     this.currentLogger.debug("database.opened", { databaseFile: this.databaseFile });
   }
 

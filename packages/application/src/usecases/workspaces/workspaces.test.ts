@@ -12,8 +12,12 @@ import {
 import { describe, it } from "vitest";
 import type { WorkspaceRepository } from "../../ports/repositories.js";
 import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
-import { WorkspaceCrud } from "./workspace-crud.js";
+import { DeleteWorkspace } from "./delete-workspace.js";
+import { ListWorkspaces } from "./list-workspaces.js";
+import { RegisterWorkspace } from "./register-workspace.js";
+import { UpdateWorkspace } from "./update-workspace.js";
 import type { UpdateWorkspaceInput } from "./workspace-inputs.js";
+import { WorkspaceRecordFactory } from "./workspace-record-factory.js";
 
 type WorkspaceStep =
   | { type: "register"; input: { directory: string; name?: string; worktreeCopyPatterns?: string[] } }
@@ -22,7 +26,10 @@ type WorkspaceStep =
 
 type WorkspaceFixture = {
   repository: FakeWorkspaceRepository;
-  crud: WorkspaceCrud;
+  list: ListWorkspaces;
+  register: RegisterWorkspace;
+  update: UpdateWorkspace;
+  delete: DeleteWorkspace;
   auditEvents: string[];
 };
 
@@ -36,7 +43,7 @@ type WorkspaceContext = {
 
 const scenarios = [
   {
-    name: "registers and updates metadata through the shared application service",
+    name: "registers and updates metadata through the workspace use cases",
     steps: [
       { type: "register", input: { directory: "/work/project", name: "project", worktreeCopyPatterns: [".env"] } },
       {
@@ -55,7 +62,7 @@ const scenarios = [
     ],
   },
   {
-    name: "deletes only the registered record through the shared application service",
+    name: "deletes only the registered record through the workspace use cases",
     steps: [
       { type: "register", input: { directory: "/work/project" } },
       { type: "delete", selector: "workspace-1" },
@@ -78,10 +85,10 @@ const table: ScenarioTable<WorkspaceFixture, "default", WorkspaceStep, Workspace
     for (const step of steps) {
       result =
         step.type === "register"
-          ? await fixture.crud.register.execute(step.input)
+          ? await fixture.register.execute(step.input)
           : step.type === "update"
-            ? await fixture.crud.update.execute(step.selector, step.input)
-            : await fixture.crud.delete.execute(step.selector);
+            ? await fixture.update.execute(step.selector, step.input)
+            : await fixture.delete.execute(step.selector);
     }
     return result!;
   },
@@ -98,7 +105,7 @@ const table: ScenarioTable<WorkspaceFixture, "default", WorkspaceStep, Workspace
   },
 };
 
-describe("workspace application use cases", () => {
+describe("workspace use case lifecycle", () => {
   runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
@@ -106,18 +113,21 @@ function createWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
   const repository = new FakeWorkspaceRepository();
   const directory = new FakeWorkspaceDirectory();
   const auditEvents: string[] = [];
+  const now = (): string => "2026-08-15T00:00:00.000Z";
+  const factory = new WorkspaceRecordFactory(directory, now);
+  const audit = {
+    record: (eventType: string) => {
+      auditEvents.push(eventType);
+    },
+  };
   return {
     fixture: {
       repository,
       auditEvents,
-      crud: new WorkspaceCrud(repository, directory, {
-        now: () => "2026-08-15T00:00:00.000Z",
-        audit: {
-          record: (eventType) => {
-            auditEvents.push(eventType);
-          },
-        },
-      }),
+      list: new ListWorkspaces(repository),
+      register: new RegisterWorkspace(repository, factory, audit),
+      update: new UpdateWorkspace(repository, directory, factory, audit),
+      delete: new DeleteWorkspace(repository, directory, audit),
     },
   };
 }

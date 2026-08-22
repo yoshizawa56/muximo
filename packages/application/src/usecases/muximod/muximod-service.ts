@@ -35,7 +35,10 @@ import {
   normalizeAgentStatusObservation,
   readManagedAgentObservation,
 } from "../sessions/agent-status.js";
-import type { WorkspaceCrud } from "../workspaces/workspace-crud.js";
+import type { DeleteWorkspace } from "../workspaces/delete-workspace.js";
+import type { ListWorkspaces } from "../workspaces/list-workspaces.js";
+import type { RegisterWorkspace } from "../workspaces/register-workspace.js";
+import type { UpdateWorkspace } from "../workspaces/update-workspace.js";
 
 export type MuximodApplicationResources = {
   getTerminal: () => Promise<MuximodTerminalEndpoint>;
@@ -44,7 +47,10 @@ export type MuximodApplicationResources = {
   agentSessionRepository: AgentSessionRepository;
   workspaceCatalog: MuximodWorkspaceCatalogPort;
   workspaceRepository: WorkspaceRepository;
-  workspaceCrud: WorkspaceCrud;
+  listWorkspaces: ListWorkspaces;
+  registerWorkspace: RegisterWorkspace;
+  updateWorkspace: UpdateWorkspace;
+  deleteWorkspace: DeleteWorkspace;
   viewportManager: MuximodViewportPort;
 };
 
@@ -69,17 +75,20 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
     workspaceCatalog,
     viewportManager,
     workspaceRepository,
-    workspaceCrud,
+    listWorkspaces,
+    registerWorkspace,
+    updateWorkspace,
+    deleteWorkspace,
   } = resources;
   const agentStatus: AgentStatusStore = new Map();
   return {
     terminal: { get: resources.getTerminal },
     workspaces: {
       list: async () =>
-        (await workspaceCrud.list.execute()).map((workspace) => workspaceCatalog.toDirectoryOption(workspace)),
+        (await listWorkspaces.execute()).map((workspace) => workspaceCatalog.toDirectoryOption(workspace)),
       browse: (parentPath) => workspaceCatalog.browseDirectories(parentPath),
       register: async (input) => {
-        const workspace = await workspaceCrud.register.execute({
+        const workspace = await registerWorkspace.execute({
           directory: input.directory,
           name: input.name,
           setupHook: input.setupScriptPath,
@@ -90,7 +99,7 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
       },
       update: async (workspaceId, input) =>
         workspaceCatalog.toDirectoryOption(
-          await workspaceCrud.update.execute(workspaceId, {
+          await updateWorkspace.execute(workspaceId, {
             name: input.name,
             setupHook: input.setupScriptPath,
             cleanupHook: input.cleanupScriptPath,
@@ -100,7 +109,7 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
           }),
         ),
       delete: async (workspaceId) => {
-        await workspaceCrud.delete.execute(workspaceId);
+        await deleteWorkspace.execute(workspaceId);
       },
       resolveDirectory: (workspaceId) =>
         workspaceCatalog.resolveWorkspaceDirectory(WorkspaceId.create(workspaceId), (id) =>

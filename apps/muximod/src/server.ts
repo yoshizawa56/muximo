@@ -1,5 +1,14 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { AuthService, createMuximodApplication, WorkspaceCrud } from "@muximo/application";
+import {
+  AuthService,
+  createMuximodApplication,
+  DeleteWorkspace,
+  ListWorkspaces,
+  RegisterWorkspace,
+  UpdateWorkspace,
+  type WorkspaceAuditPort,
+  WorkspaceRecordFactory,
+} from "@muximo/application";
 import {
   AuthStore,
   allowedRootsFromEnvironment,
@@ -91,12 +100,30 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
-  const workspaceCrud = new WorkspaceCrud(workspaceRepository, workspaceCatalog, {
-    audit: {
-      record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
-    },
+  const workspaceAudit: WorkspaceAuditPort = {
+    record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
+  };
+  const workspaceRecordFactory = new WorkspaceRecordFactory(workspaceCatalog);
+  const listWorkspaces = new ListWorkspaces(workspaceRepository);
+  const registerWorkspace = new RegisterWorkspace(
+    workspaceRepository,
+    workspaceRecordFactory,
+    workspaceAudit,
     transactionManager,
-  });
+  );
+  const updateWorkspace = new UpdateWorkspace(
+    workspaceRepository,
+    workspaceCatalog,
+    workspaceRecordFactory,
+    workspaceAudit,
+    transactionManager,
+  );
+  const deleteWorkspace = new DeleteWorkspace(
+    workspaceRepository,
+    workspaceCatalog,
+    workspaceAudit,
+    transactionManager,
+  );
   const application = createMuximodApplication({
     getTerminal: getLocalTerminal,
     host,
@@ -104,7 +131,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     agentSessionRepository,
     workspaceCatalog,
     workspaceRepository,
-    workspaceCrud,
+    listWorkspaces,
+    registerWorkspace,
+    updateWorkspace,
+    deleteWorkspace,
     viewportManager,
   });
   const eventHub = new MuximodEventHub();

@@ -1,3 +1,4 @@
+export { InvalidWorkspaceCopyPatternError, InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
 export type {
   CreatePaneInput,
   CreateSessionInput,
@@ -91,18 +92,15 @@ export {
   readManagedAgentObservation,
   recentAgentOutputLimits,
 } from "./usecases/sessions/agent-status.js";
+// Workspace use cases (one file per operation)
+export { DeleteWorkspace } from "./usecases/workspaces/delete-workspace.js";
+export { ListWorkspaces } from "./usecases/workspaces/list-workspaces.js";
+export { RegisterWorkspace } from "./usecases/workspaces/register-workspace.js";
+export { UpdateWorkspace } from "./usecases/workspaces/update-workspace.js";
 export {
-  DeleteWorkspace,
-  InvalidWorkspaceCopyPatternError,
-  InvalidWorkspaceNameError,
-  ListWorkspaces,
-  RegisterWorkspace,
-  UpdateWorkspace,
   WorkspaceAlreadyRegisteredError,
-  WorkspaceCrud,
   WorkspaceNotFoundError,
-  WorkspaceRecordFactory,
-  WorkspaceUpdateEmptyError,
   WorkspaceUseCaseError,
-} from "./usecases/workspaces/workspace-crud.js";
+} from "./usecases/workspaces/workspace-errors.js";
 export type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "./usecases/workspaces/workspace-inputs.js";
+export { WorkspaceRecordFactory } from "./usecases/workspaces/workspace-record-factory.js";
