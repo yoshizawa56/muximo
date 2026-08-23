@@ -73,7 +73,7 @@ Rules: no behavior changes; facade method signatures stay identical so
 4. Keep replay/rate-limit behavior identical; service.test scenarios move to
    the new files (or stay as one lifecycle scenario under usecases/auth/).
 
-## Phase 2 — slim apps/muximod
+## Phase 2 — NEXT — slim apps/muximod
 
 Allowed final set:
 
@@ -91,6 +91,10 @@ src/control/*.ts        unix-socket control handlers
 
 Moves:
 - `terminal-session.ts` (612) -> `infrastructure/src/terminal/session-gateway.ts`
+  (NOTE: file imports @muximo/contract + spawnPty/PtyProcess/PreparedViewport/
+  TmuxViewportManager/ViewportLease from @muximo/infrastructure — convert those
+  to relative imports inside infra; verify infra package.json already depends on
+  contract before moving)
   (+registry). Resume tokens stay inside the gateway (connection-level
   concern); device binding checks become injected callbacks if needed.
 - `daemon.ts` (667) triage: keep ONLY process lifecycle (foreground/background
