@@ -1,4 +1,4 @@
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   accessSync,
@@ -92,8 +92,6 @@ import {
   matchesWorktreeCopyPattern,
   normalizeSessionName,
   optionValue,
-  padHeader,
-  padRow,
   parseTmuxNewSessionOptions,
   preferredCodexSessionId,
   readCodexBaseline,
@@ -105,29 +103,24 @@ import {
   resolveFromRoot,
   runAttachedProcess,
   runCodexThreadHelper,
-  sessionHealthLabel,
-  sessionResumeLabel,
   setFallbackSessionMetadata,
   sleep,
   spawnAttached,
   stringEnvironment,
   timestamp,
-  toSessionJson,
   unlinkEmptyDirectory,
   updateSession,
   walkFiles,
 } from "./command-support.js";
+import {
+  listSessions as executeListSessions,
+  parseListOptions as parseListOptionsArgs,
+} from "./commands/list-sessions.js";
 import { executeWorkspaceCommand } from "./commands/workspace-commands.js";
 
 export { buildResumeCommand, buildRunCommand, MuximoCommandError } from "./command-support.js";
 
 import { MuximodPairingControlAdapter } from "./muximod-pairing-control-adapter.js";
-import {
-  projectAgentSession,
-  type SessionListProjection,
-  type SessionWorktreeState,
-  shouldCheckSessionWorktree,
-} from "./session-list.js";
 
 export type MuximoCommandIO = {
   out: Writable;
@@ -277,7 +270,7 @@ type SessionListOptions = {
   all: boolean;
 };
 
-type GitWorktreeRegistry = { ok: true; paths: ReadonlySet<string> } | { ok: false };
+export type GitWorktreeRegistry = { ok: true; paths: ReadonlySet<string> } | { ok: false };
 
 export const _sessionNamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]{0,63}$/u;
 const supportedCodexOriginators = new Set(["codex-tui", "codex_cli_rs", "codex_exec", "codex_chatgpt_ios_remote"]);
@@ -791,22 +784,7 @@ export class MuximoCommand {
   }
 
   private parseListOptions(args: string[]): SessionListOptions {
-    let global = false;
-    let names = false;
-    let json = false;
-    let all = false;
-    for (const argument of args) {
-      if (argument === "-g" || argument === "--global") global = true;
-      else if (argument === "--all") all = true;
-      else if (argument === "--names") names = true;
-      else if (argument === "--json") json = true;
-      else if (argument === "-h" || argument === "--help") {
-        this.write("Usage: muximo list [--global] [--all] [--names|--json]\n");
-        return { global, names: false, json: false, all: false };
-      } else throw new MuximoCommandError(`unknown list option: ${argument}`);
-    }
-    if (names && json) throw new MuximoCommandError("--names and --json cannot be combined");
-    return { global, names, json, all };
+    return parseListOptionsArgs({ write: (value) => this.write(value) }, args);
   }
 
   private parseCleanupOptions(args: string[]): { global: boolean; force: boolean; reference: string } {
@@ -1204,116 +1182,14 @@ export class MuximoCommand {
   }
 
   private async listSessions(options: SessionListOptions): Promise<number> {
-    const logger = this.currentLogger.child({ command: "list" });
-    const startedAt = Date.now();
-    logger.debug("session.list_started", {
-      global: options.global,
-      names: options.names,
-      json: options.json,
-      all: options.all,
+    return executeListSessions(options, {
+      env: this.env,
+      logger: this.currentLogger,
+      write: (value) => this.write(value),
+      info: (value) => this.info(value),
+      resolveWorkspace: async () => await this.resolveWorkspace(),
+      sessions: this.sessions,
     });
-    const workspace = options.global ? undefined : (await this.resolveWorkspace()).id;
-    const allViews = this.projectSessionList(await this.sessions.list(workspace));
-    const views = options.all ? allViews : allViews.filter((view) => view.visibleByDefault);
-    const finish = (status: number): number => {
-      logger.debug("session.list_finished", {
-        status,
-        count: views.length,
-        hiddenCount: allViews.length - views.length,
-        durationMs: Date.now() - startedAt,
-      });
-      return status;
-    };
-    if (options.names) {
-      for (const view of views) {
-        const session = view.session;
-        this.write(`${options.global ? `${session.workspaceName}/` : ""}${session.name}\n`);
-      }
-      return finish(0);
-    }
-    if (options.json) {
-      for (const view of views) this.write(`${JSON.stringify(toSessionJson(view))}\n`);
-      return finish(0);
-    }
-    if (options.global)
-      this.write(padHeader(["WORKSPACE", "NAME", "BACKEND", "STATUS", "HEALTH", "RESUME", "BRANCH", "WORKTREE"]));
-    else this.write(padHeader(["NAME", "BACKEND", "STATUS", "HEALTH", "RESUME", "BRANCH", "WORKTREE"]));
-    if (views.length === 0) {
-      this.info(
-        allViews.length === 0
-          ? "no managed sessions"
-          : "no visible managed sessions; use --all to include unavailable sessions",
-      );
-      return finish(0);
-    }
-    for (const view of views) {
-      const session = view.session;
-      const values = [
-        session.name,
-        session.backend,
-        session.status,
-        sessionHealthLabel(view.executionHealth),
-        sessionResumeLabel(view.resume),
-        session.branch ?? "-",
-        session.worktreePath ?? "-",
-      ];
-      this.write(options.global ? padRow([session.workspaceName, ...values]) : padRow(values));
-    }
-    return finish(0);
-  }
-
-  private projectSessionList(sessions: AgentSessionRecord[]): SessionListProjection[] {
-    const now = Date.now();
-    const registries = new Map<string, GitWorktreeRegistry>();
-    return sessions.map((session) => {
-      const processAlive =
-        (session.status === "running" || session.status === "resuming") && session.executionPid !== undefined
-          ? isProcessAlive(session.executionPid)
-          : undefined;
-      return projectAgentSession(session, {
-        now,
-        processAlive,
-        worktreeState: this.inspectSessionWorktree(session, now, registries),
-      });
-    });
-  }
-
-  private inspectSessionWorktree(
-    session: AgentSessionRecord,
-    now: number,
-    registries: Map<string, GitWorktreeRegistry>,
-  ): SessionWorktreeState {
-    if (!session.useWorktree) return "not_applicable";
-    if (!shouldCheckSessionWorktree(session, now)) return "unknown";
-    if (!session.worktreePath || !existsSync(session.worktreePath)) return "missing";
-
-    const workspaceRoot = realpathSafe(session.workspaceRoot);
-    let registry = registries.get(workspaceRoot);
-    if (!registry) {
-      registry = this.readGitWorktreeRegistry(workspaceRoot);
-      registries.set(workspaceRoot, registry);
-    }
-    if (!registry.ok) return "unknown";
-    return registry.paths.has(realpathSafe(session.worktreePath)) ? "available" : "unregistered";
-  }
-
-  private readGitWorktreeRegistry(workspaceRoot: string): GitWorktreeRegistry {
-    try {
-      const output = execFileSync("git", ["-C", workspaceRoot, "worktree", "list", "--porcelain"], {
-        encoding: "utf8",
-        env: this.env,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      const paths = new Set(
-        output
-          .split(/\r?\n/u)
-          .filter((line) => line.startsWith("worktree "))
-          .map((line) => realpathSafe(line.slice("worktree ".length).trim())),
-      );
-      return { ok: true, paths };
-    } catch {
-      return { ok: false };
-    }
   }
 
   private async cleanupSession(options: { global: boolean; force: boolean; reference: string }): Promise<number> {
