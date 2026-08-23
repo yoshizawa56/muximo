@@ -101,7 +101,11 @@ Moves:
   src/cli/health-diagnostics.ts and OpenCode registry cleanup to
   src/cli/opencode-registry.ts (re-exported through daemon for the runtime facade).
 
-## Phase 3 — CLI on a declarative parser
+## Phase 3 — IN PROGRESS — CLI decomposition
+
+Completed: pure helper tail extracted to `cli/host/command-support.ts`.
+Remaining: split MuximoCommand methods into commands/<group>.ts with a declarative
+parser, extract compose.ts (direct-db composition root) and presenters/.
 
 Replace `cli/host/muximo-command.ts` (3662 lines, 62 functions) with:
 
