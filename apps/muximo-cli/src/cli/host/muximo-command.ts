@@ -110,6 +110,7 @@ import {
 } from "./commands/list-sessions.js";
 import { confirmCleanup as confirmCleanupFn, runCleanupSession } from "./commands/session-lifecycle.js";
 import { executeWorkspaceCommand } from "./commands/workspace-commands.js";
+import { buildProgram } from "./program.js";
 
 export { buildResumeCommand, buildRunCommand, MuximoCommandError } from "./command-support.js";
 
@@ -343,90 +344,17 @@ export class MuximoCommand {
     return this.activeLogger ?? this.logger;
   }
 
+  private rawArgs: string[] = [];
+
   public async execute(args: string[]): Promise<number> {
-    const [command = ""] = args;
-    const logger = this.logger.child({ invocationId: randomUUID(), command: command || "help" });
+    const [head = ""] = args;
+    const logger = this.logger.child({ invocationId: randomUUID(), command: head || "help" });
     const startedAt = Date.now();
     logger.debug("command.started", { argumentCount: args.length });
     const previousLogger = this.activeLogger;
     this.activeLogger = logger;
     try {
-      let status: number;
-      switch (command) {
-        case "run": {
-          const backend = args[1];
-          if (backend !== "codex" && backend !== "claude" && backend !== "opencode")
-            throw new MuximoCommandError("run requires codex, claude, or opencode");
-          status = await this.runSession(backend, this.parseRunOptions(backend, args.slice(2)));
-          break;
-        }
-        case "shell":
-          if (args.includes("-h") || args.includes("--help")) {
-            this.write(
-              "Usage: muximo shell [--shell PATH] [--worktree [NAME]] [--exit-after-command] [-- COMMAND...]\n",
-            );
-            status = 0;
-            break;
-          }
-          status = await this.runShell(this.parseShellOptions(args.slice(1)));
-          break;
-        case "tmux":
-          status = await this.runTmux(args.slice(1));
-          break;
-        case "workspace":
-          this.ensureDatabase();
-          status = await this.runWorkspaceCommand(args.slice(1));
-          break;
-        case "session":
-          this.ensureDatabase();
-          status = await this.runSessionCommand(args.slice(1));
-          break;
-        case "resume":
-          if (args[1] === "-h" || args[1] === "--help") {
-            this.write("Usage: muximo resume [--global] NAME [-- BACKEND_ARGS...]\n");
-            status = 0;
-            break;
-          }
-          this.ensureDatabase();
-          status = await this.resumeSession(this.parseResumeOptions(args.slice(1)));
-          break;
-        case "list":
-          if (args.includes("-h") || args.includes("--help")) {
-            this.write("Usage: muximo list [--global] [--all] [--names|--json]\n");
-            status = 0;
-            break;
-          }
-          this.ensureDatabase();
-          status = await this.listSessions(this.parseListOptions(args.slice(1)));
-          break;
-        case "cleanup":
-          if (args.includes("-h") || args.includes("--help")) {
-            this.write("Usage: muximo cleanup [--global] [--force] NAME\n");
-            status = 0;
-            break;
-          }
-          this.ensureDatabase();
-          status = await this.cleanupSession(this.parseCleanupOptions(args.slice(1)));
-          break;
-        case "doctor":
-          if (args.includes("-h") || args.includes("--help")) {
-            this.write("Usage: muximo doctor [--verbose]\n");
-            status = 0;
-            break;
-          }
-          status = await this.doctor(this.parseDoctorOptions(args.slice(1)));
-          break;
-        case "help":
-        case "--help":
-        case "-h":
-          this.printUsage();
-          status = 0;
-          break;
-        default:
-          this.printUsage();
-          status = 2;
-          break;
-      }
+      const status = await this.dispatch(args);
       logger.debug("command.finished", { status, durationMs: Date.now() - startedAt });
       return status;
     } catch (error) {
@@ -438,6 +366,105 @@ export class MuximoCommand {
     } finally {
       this.activeLogger = previousLogger;
     }
+  }
+
+  private async dispatch(args: string[]): Promise<number> {
+    this.rawArgs = [];
+    const [head] = args;
+    if (!head || head === "help" || head === "--help" || head === "-h") {
+      if (head) this.printUsage();
+      return head ? 0 : 2;
+    }
+
+    let status: number | undefined;
+    try {
+      const program = buildProgram(this, (value) => {
+        status = value;
+      });
+      this.rawArgs = args.slice(1);
+      await program.parseAsync(args, { from: "user" });
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        typeof (error as { code?: string }).code === "string" &&
+        (error as { code: string }).code.startsWith("commander.")
+      ) {
+        this.printUsage();
+        return 2;
+      }
+      throw error;
+    }
+    return status ?? 0;
+  }
+
+  /** Entry adapters kept byte-compatible with the previous dispatcher. */
+  public async runCommandEntry(backend: string | undefined, rest: string[]): Promise<number> {
+    if (backend !== "codex" && backend !== "claude" && backend !== "opencode")
+      throw new MuximoCommandError("run requires codex, claude, or opencode");
+    return this.runSession(backend as AgentBackend, this.parseRunOptions(backend as AgentBackend, rest));
+  }
+
+  public async shellCommandEntry(): Promise<number> {
+    const args = this.rawArgs;
+    if (args.includes("-h") || args.includes("--help")) {
+      this.write("Usage: muximo shell [--shell PATH] [--worktree [NAME]] [--exit-after-command] [-- COMMAND...]\n");
+      return 0;
+    }
+    return this.runShell(this.parseShellOptions(args));
+  }
+
+  public async tmuxCommandEntry(): Promise<number> {
+    return this.runTmux(this.rawArgs);
+  }
+
+  public ensureDatabaseEntry(): void {
+    this.ensureDatabase();
+  }
+
+  public async workspaceCommandEntry(): Promise<number> {
+    return this.runWorkspaceCommand(this.rawArgs);
+  }
+
+  public async sessionCommandEntry(): Promise<number> {
+    return this.runSessionCommand(this.rawArgs);
+  }
+
+  public async resumeCommandEntry(): Promise<number> {
+    const args = this.rawArgs;
+    if (args[0] === "-h" || args[0] === "--help") {
+      this.write("Usage: muximo resume [--global] NAME [-- BACKEND_ARGS...]\n");
+      return 0;
+    }
+    return this.resumeSession(this.parseResumeOptions(args));
+  }
+
+  public async listCommandEntry(): Promise<number> {
+    const args = this.rawArgs;
+    if (args.includes("-h") || args.includes("--help")) {
+      this.write("Usage: muximo list [--global] [--all] [--names|--json]\n");
+      return 0;
+    }
+    return this.listSessions(this.parseListOptions(args));
+  }
+
+  public async cleanupCommandEntry(): Promise<number> {
+    const args = this.rawArgs;
+    if (args.includes("-h") || args.includes("--help")) {
+      this.write("Usage: muximo cleanup [--global] [--force] NAME\n");
+      return 0;
+    }
+    return this.cleanupSession(this.parseCleanupOptions(args));
+  }
+
+  public async doctorCommandEntry(): Promise<number> {
+    const args = this.rawArgs;
+    if (args.includes("-h") || args.includes("--help")) {
+      this.write("Usage: muximo doctor [--verbose]\n");
+      return 0;
+    }
+    return this.doctor(this.parseDoctorOptions(args));
   }
 
   private parseRunOptions(backend: AgentBackend, args: string[]): RunOptions {
