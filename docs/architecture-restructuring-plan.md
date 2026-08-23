@@ -103,9 +103,19 @@ Moves:
 
 ## Phase 3 — IN PROGRESS — CLI decomposition
 
-Completed: pure helper tail extracted to `cli/host/command-support.ts`.
-Remaining: split MuximoCommand methods into commands/<group>.ts with a declarative
-parser, extract compose.ts (direct-db composition root) and presenters/.
+Completed:
+- `cli/host/command-support.ts` — git/path/tmux-metadata/session-name/codex/process helpers
+- `cli/host/presenters.ts` — labels, JSON projections, table padding
+- `cli/host/commands/workspace-commands.ts` — full workspace CRUD group
+- `cli/host/commands/list-sessions.ts` — muximo list group
+- `cli/host/commands/doctor.ts` — doctor diagnostics
+
+Remaining (in extraction order; each becomes commands/<group>.ts taking explicit deps):
+1. session lifecycle mega-cluster: cleanupSession + removeSessionRecord + worktree
+   dispose + codex discovery/recovery chain (~600 lines, deepest this-coupling)
+2. resume + run + shell + tmux groups (backend spawn, hooks, pane adoption)
+3. compose.ts — direct-db composition root (constructor ensureDatabase block)
+4. declarative parser swap (commander) once groups are free functions
 
 Replace `cli/host/muximo-command.ts` (3662 lines, 62 functions) with:
 
