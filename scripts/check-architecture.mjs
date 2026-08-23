@@ -28,7 +28,7 @@ const packageRules = new Map([
   ["@muximo/contract", ["@muximo/domain"]],
   ["@muximo/application", ["@muximo/domain"]],
   ["@muximo/domain", []],
-  ["@muximo/infrastructure", ["@muximo/application", "@muximo/domain"]],
+  ["@muximo/infrastructure", ["@muximo/application", "@muximo/contract", "@muximo/domain"]],
   ["@muximo/test-support", []],
   [
     "@muximo/muximo-cli",
@@ -52,6 +52,8 @@ const forbiddenImports = [
   {
     root: "packages/infrastructure/src",
     packages: /^@muximo\/contract$/,
+    // The terminal session gateway implements the contract wire protocol.
+    allowedFiles: new Set(["packages/infrastructure/src/terminal/session-gateway.ts"]),
   },
   {
     root: "packages/application/src",
@@ -132,7 +134,11 @@ function inspectSource(path, relativePath) {
     const specifier = match[1];
     const line = source.slice(0, match.index).split("\n").length;
     const rule = forbiddenImports.find((candidate) => relativePath.startsWith(candidate.root));
-    if (rule && (rule.packages.test(specifier) || rule.runtimes?.test(specifier))) {
+    if (
+      rule &&
+      !rule.allowedFiles?.has(relativePath) &&
+      (rule.packages.test(specifier) || rule.runtimes?.test(specifier))
+    ) {
       errors.push(`${relativePath}:${line}: forbidden ${specifier} import for this layer`);
     }
 

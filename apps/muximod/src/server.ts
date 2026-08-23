@@ -37,6 +37,8 @@ import {
   recordAuditEvent,
   resolveMuximodPaths,
   SqliteTransactionManager,
+  TerminalSession,
+  TerminalSessionRegistry,
   TmuxAdapter,
   TmuxMuximodHostAdapter,
   TmuxStateMonitor,
@@ -46,7 +48,6 @@ import {
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
-import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
 
 export type MuximodOptions = {
   host: string;

@@ -9,14 +9,9 @@ import {
   type ServerControlMessage,
   terminalProtocolVersion,
 } from "@muximo/contract";
-import type { ImagePasteInput, ImagePasteResult } from "@muximo/infrastructure";
-import {
-  type PreparedViewport,
-  type PtyProcess,
-  spawnPty,
-  type TmuxViewportManager,
-  type ViewportLease,
-} from "@muximo/infrastructure";
+import type { ImagePasteInput, ImagePasteResult } from "./image-paste.js";
+import { type PtyProcess, spawnPty } from "./pty.js";
+import type { PreparedViewport, TmuxViewportManager, ViewportLease } from "./viewport-manager.js";
 
 type TerminalViewportManager = {
   prepare: (target: string, cwd: string, cols?: number, rows?: number) => PreparedViewport;

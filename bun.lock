@@ -135,6 +135,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@muximo/application": "workspace:*",
+        "@muximo/contract": "workspace:*",
         "@muximo/domain": "workspace:*",
         "drizzle-orm": "^0.45.2",
       },

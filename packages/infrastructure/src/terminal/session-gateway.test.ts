@@ -6,7 +6,6 @@ import {
   serverControlMessageSchema,
   terminalProtocolVersion,
 } from "@muximo/contract";
-import type { ImagePasteInput, ImagePasteResult, PtyProcess } from "@muximo/infrastructure";
 import {
   type FixtureHandle,
   hasObserved,
@@ -16,7 +15,9 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it, vi } from "vitest";
-import { TerminalSession, type TerminalSessionOptions, TerminalSessionRegistry } from "./terminal-session.js";
+import type { ImagePasteInput, ImagePasteResult } from "./image-paste.js";
+import type { PtyProcess } from "./pty.js";
+import { TerminalSession, type TerminalSessionOptions, TerminalSessionRegistry } from "./session-gateway.js";
 
 type SessionStep =
   | { type: "connect"; socket: "first" | "second"; target?: string; credentials?: "resume-first" }
