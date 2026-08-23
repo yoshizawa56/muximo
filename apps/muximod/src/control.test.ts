@@ -1,5 +1,13 @@
 import { AuthService } from "@muximo/application";
-import { AuthStore, createAgentDatabase, nodeAuthCrypto } from "@muximo/infrastructure";
+import {
+  AuthStore,
+  createAgentDatabase,
+  MemoryAuthChallengeStore,
+  MemoryAuthRateLimitStore,
+  MemoryAuthWsTicketStore,
+  MemoryTrackedSocketRegistry,
+  nodeAuthCrypto,
+} from "@muximo/infrastructure";
 import {
   type FixtureHandle,
   hasObserved,
@@ -33,6 +41,10 @@ const fixture = (): FixtureHandle<ControlFixture> => {
     store: new AuthStore(database.db, database.sqlite),
     crypto: nodeAuthCrypto,
     muximodBaseUrl: "http://127.0.0.1:4317",
+    challenges: new MemoryAuthChallengeStore(),
+    rateLimits: new MemoryAuthRateLimitStore(),
+    wsTickets: new MemoryAuthWsTicketStore(),
+    sockets: new MemoryTrackedSocketRegistry(),
   });
   const calls: string[] = [];
   const observations: string[] = [];

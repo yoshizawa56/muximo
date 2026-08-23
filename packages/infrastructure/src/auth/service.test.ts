@@ -11,6 +11,12 @@ import {
 import { describe, expect, it } from "vitest";
 import { AuthStore, createAgentDatabase } from "../persistence/index.js";
 import { nodeAuthCrypto } from "./crypto.js";
+import {
+  MemoryAuthChallengeStore,
+  MemoryAuthRateLimitStore,
+  MemoryAuthWsTicketStore,
+  MemoryTrackedSocketRegistry,
+} from "./flow-store-memory.js";
 
 type AuthFixture = {
   database: ReturnType<typeof createAgentDatabase>;
@@ -57,6 +63,10 @@ const authFixture = async (): Promise<FixtureHandle<AuthFixture>> => {
     store: new AuthStore(database.db, database.sqlite),
     crypto: nodeAuthCrypto,
     muximodBaseUrl: "http://127.0.0.1:4317",
+    challenges: new MemoryAuthChallengeStore(),
+    rateLimits: new MemoryAuthRateLimitStore(),
+    wsTickets: new MemoryAuthWsTicketStore(),
+    sockets: new MemoryTrackedSocketRegistry(),
   });
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const exported = await crypto.subtle.exportKey("jwk", keyPair.publicKey);

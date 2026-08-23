@@ -61,7 +61,7 @@ builds the `MuximodApplication` facade from these instances):
 Rules: no behavior changes; facade method signatures stay identical so
 `apps/muximod/src/http` keeps compiling. Tests move beside their use case.
 
-## Phase 1d — decompose `usecases/auth/auth-service.ts` (285 lines)
+## Phase 1d — DONE — decompose `usecases/auth/auth-service.ts` (285 lines)
 
 1. Define flow-state ports in `ports/auth.ts` (names indicative): pending
    pairing attempts, challenges, one-use WS tickets — each with TTL sweep.

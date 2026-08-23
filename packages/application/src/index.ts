@@ -12,10 +12,17 @@ export type {
 } from "./ports/application.js";
 export { ApplicationError, type MuximodApplication, type MuximodHookEvent } from "./ports/application.js";
 export type {
+  AuthChallengeStorePort,
   AuthCryptoPort,
+  AuthRateLimitStorePort,
   AuthStorePort,
+  AuthWsTicketStorePort,
+  ChallengeRateWindow,
   MuximodAuthControlPort,
   MuximodAuthPort,
+  PendingChallengeRecord,
+  PendingWsTicketRecord,
+  TrackedSocketRegistryPort,
 } from "./ports/auth.js";
 export type {
   AuthChallengeResponse,

@@ -28,6 +28,10 @@ import {
   getLocalTerminal,
   type Logger,
   type LogLevel,
+  MemoryAuthChallengeStore,
+  MemoryAuthRateLimitStore,
+  MemoryAuthWsTicketStore,
+  MemoryTrackedSocketRegistry,
   type MuximodSocket,
   nodeAuthCrypto,
   recordAuditEvent,
@@ -147,6 +151,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     crypto: nodeAuthCrypto,
     muximodBaseUrl:
       options.muximodBaseUrl ?? process.env.MUXIMOD_PAIRING_BASE_URL ?? `http://127.0.0.1:${options.port}`,
+    challenges: new MemoryAuthChallengeStore(),
+    rateLimits: new MemoryAuthRateLimitStore(),
+    wsTickets: new MemoryAuthWsTicketStore(),
+    sockets: new MemoryTrackedSocketRegistry(),
   });
   const controlServer = new MuximodControlServer({
     socketPath: paths.controlSocket,

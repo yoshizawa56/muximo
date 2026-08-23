@@ -17,6 +17,7 @@ import type {
   PublicKeyJwk,
   WsTicketResponse,
 } from "./auth-types.js";
+import type { MuximodSocket } from "./socket.js";
 
 export interface AuthStorePort {
   getServerId(): string;
@@ -73,4 +74,47 @@ export interface MuximodAuthPort {
   createSession(input: { deviceId: string; challengeId: string; signature: string }): AuthSessionResponse;
   issueWebSocketTicket(context: MuximodAuthContext, endpoint: "terminal"): WsTicketResponse;
   consumeWebSocketTicket(ticket: string | undefined, endpoint: "terminal"): MuximodAuthContext | null;
+}
+
+/** One-time challenge awaiting a signed session request. */
+export type PendingChallengeRecord = {
+  challengeId: string;
+  deviceId: string;
+  nonce: string;
+  expiresAt: string;
+};
+
+/** One-use WebSocket upgrade ticket keyed by its hash. */
+export type PendingWsTicketRecord = {
+  sessionId: string;
+  endpoint: "terminal";
+  expiresAt: string;
+};
+
+export type ChallengeRateWindow = { startedAt: number; count: number };
+
+/** Ephemeral challenge storage owned by the infrastructure layer. */
+export interface AuthChallengeStorePort {
+  put(record: PendingChallengeRecord): void;
+  /** Atomically read-and-delete (one-time use). */
+  take(challengeId: string): PendingChallengeRecord | null;
+  sweepExpired(nowIso: string): void;
+  size(): number;
+}
+
+/** Raw sliding-window buckets; the limit policy lives in the application. */
+export interface AuthRateLimitStorePort {
+  window(deviceId: string): ChallengeRateWindow | null;
+  setWindow(deviceId: string, window: ChallengeRateWindow): void;
+}
+
+export interface AuthWsTicketStorePort {
+  put(ticketHash: string, record: PendingWsTicketRecord): void;
+  take(ticketHash: string): PendingWsTicketRecord | null;
+}
+
+/** Live terminal sockets grouped by session, closed on expiry or revocation. */
+export interface TrackedSocketRegistryPort {
+  track(input: { sessionId: string; deviceId: string; socket: MuximodSocket; expiresAtMs: number }): void;
+  closeForDevice(deviceId: string, code: number, reason: string): void;
 }
