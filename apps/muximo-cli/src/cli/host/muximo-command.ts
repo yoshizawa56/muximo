@@ -13,7 +13,6 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -65,14 +64,11 @@ import {
   buildResumeCommand,
   buildRunCommand,
   clearFallbackSessionMetadata,
-  codexMeta,
   codexRemoteEndpoint,
   currentTmuxPane,
   defaultControlSocket,
-  emptyCodexDiscoveryDiagnostics,
   emptyWorktree,
   ensureCodexRemoteControl,
-  formatCodexDiscoveryDiagnostics,
   gitOutputOrEmpty,
   gitOutputRaw,
   gitRequired,
@@ -80,7 +76,6 @@ import {
   gitWorkspaceRoot,
   hasHelpBeforeDelimiter,
   hasOption,
-  inspectCodexMeta,
   isControlSocketUnavailable,
   isPathWithin,
   isProcessAlive,
@@ -91,8 +86,6 @@ import {
   normalizeSessionName,
   optionValue,
   parseTmuxNewSessionOptions,
-  preferredCodexSessionId,
-  readCodexBaseline,
   realpathAfterMkdir,
   realpathSafe,
   requireOptionValue,
@@ -102,14 +95,14 @@ import {
   runAttachedProcess,
   runCodexThreadHelper,
   setFallbackSessionMetadata,
-  sleep,
   spawnAttached,
   stringEnvironment,
   timestamp,
   unlinkEmptyDirectory,
   updateSession,
-  walkFiles,
 } from "./command-support.js";
+import type { CodexSessionDeps } from "./commands/codex-session.js";
+import * as codex from "./commands/codex-session.js";
 import { runDoctor } from "./commands/doctor.js";
 import {
   listSessions as executeListSessions,
@@ -182,7 +175,7 @@ export type CodexSessionCandidate = {
   rolloutIdMatches: boolean;
 };
 
-type CodexDiscoveryRejection =
+export type CodexDiscoveryRejection =
   | "stat_error"
   | "read_error"
   | "metadata_too_large"
@@ -211,7 +204,7 @@ export type CodexDiscoveryDiagnostics = {
   rejected: Partial<Record<CodexDiscoveryRejection, number>>;
 };
 
-type CodexDiscoveryResult = {
+export type CodexDiscoveryResult = {
   selectedId?: string;
   candidates: CodexSessionCandidate[];
   diagnostics: CodexDiscoveryDiagnostics;
@@ -273,7 +266,12 @@ type SessionListOptions = {
 export type GitWorktreeRegistry = { ok: true; paths: ReadonlySet<string> } | { ok: false };
 
 export const _sessionNamePattern = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]{0,63}$/u;
-const supportedCodexOriginators = new Set(["codex-tui", "codex_cli_rs", "codex_exec", "codex_chatgpt_ios_remote"]);
+export const _supportedCodexOriginators = new Set([
+  "codex-tui",
+  "codex_cli_rs",
+  "codex_exec",
+  "codex_chatgpt_ios_remote",
+]);
 
 /**
  * Clean TypeScript implementation of the dotfiles `muximo` wrapper.
@@ -1994,310 +1992,52 @@ export class MuximoCommand {
   private gitStatus(cwd: string): string {
     return gitOutputRaw(cwd, ["status", "--porcelain", "--untracked-files=all"]);
   }
-
   private async captureCodexSessionBaseline(session: AgentSessionRecord): Promise<boolean> {
-    if (session.backend !== "codex") return true;
-    const startedAt = Date.now();
-    const logger = this.currentLogger.child({
-      sessionId: session.id,
-      sessionName: session.name,
-      backend: session.backend,
-    });
-    logger.debug("codex.baseline_started");
-    const files = await this.codexSessionFiles();
-    const baseline = files
-      .map((file) => codexMeta(file)?.session_id)
-      .filter((value): value is string => Boolean(value));
-    // Baselines are persisted in the same database record as a newline list so
-    // a restart never depends on an auxiliary state file.
-    session = updateSession(session, { codexSessionBaseline: JSON.stringify({ codexSessions: baseline }) });
-    await this.sessions.update(session);
-    logger.debug("codex.baseline_finished", {
-      fileCount: files.length,
-      sessionCount: baseline.length,
-      durationMs: Date.now() - startedAt,
-    });
-    return true;
+    return codex.captureCodexSessionBaseline(this.codexDeps(), session);
   }
 
   private async discoverCodexSessionId(
     startedAt: number,
     runDir: string,
     sessionId: string,
-    endedAt?: number,
   ): Promise<CodexDiscoveryResult> {
-    const session = await this.sessions.findById(AgentSessionId.create(sessionId));
-    const logger = this.currentLogger.child({ sessionId, backend: "codex" });
-    const discoveryStartedAt = Date.now();
-    logger.debug("codex.session_id_discovery_started", { remote: Boolean(session?.codexRemote) });
-    const baseline = new Set<string>(readCodexBaseline(session?.codexSessionBaseline));
-    const started = Date.now();
-    const root = this.codexSessionRoot();
-    const candidates = this.codexSessionCandidates(
-      await this.codexSessionFiles(),
-      startedAt,
-      runDir,
-      baseline,
-      endedAt,
-    );
-    const safeCandidates = await this.filterCodexSessionCandidates(
-      candidates.candidates,
-      candidates.diagnostics,
-      session,
-      runDir,
-    );
-    const result = {
-      selectedId: preferredCodexSessionId(safeCandidates),
-      candidates: safeCandidates,
-      diagnostics: {
-        ...candidates.diagnostics,
-        rootExists: existsSync(root),
-        uniqueCandidates: safeCandidates.length,
-        elapsedMs: Date.now() - started,
-      },
-    };
-    logger.debug("codex.session_id_discovery_finished", {
-      found: Boolean(result.selectedId),
-      candidateCount: result.candidates.length,
-      candidateFileCount: result.diagnostics.candidateFiles,
-      durationMs: Date.now() - discoveryStartedAt,
-    });
-    return result;
-  }
-
-  private async filterCodexSessionCandidates(
-    candidates: CodexSessionCandidate[],
-    diagnostics: Omit<CodexDiscoveryDiagnostics, "rootExists" | "elapsedMs">,
-    session: AgentSessionRecord | undefined,
-    runDir: string,
-  ): Promise<CodexSessionCandidate[]> {
-    if (!session) return candidates;
-    const sessions = await this.sessions.list(session.workspaceId);
-    const otherSessions = sessions.filter((candidate) => candidate.id !== session.id);
-    const unboundSameDirectory = otherSessions.some(
-      (candidate) =>
-        candidate.backend === "codex" &&
-        !candidate.backendSessionId &&
-        (candidate.worktreePath ?? candidate.workspaceRoot) === runDir,
-    );
-    const reject = (reason: CodexDiscoveryRejection): void => {
-      diagnostics.rejected[reason] = (diagnostics.rejected[reason] ?? 0) + 1;
-    };
-    return candidates.filter((candidate) => {
-      if (otherSessions.some((other) => other.backendSessionId === candidate.id)) {
-        reject("known_to_other_session");
-        return false;
-      }
-      if (unboundSameDirectory) {
-        reject("competing_session");
-        return false;
-      }
-      return true;
-    });
+    return codex.discoverCodexSessionId(this.codexDeps(), startedAt, runDir, sessionId);
   }
 
   private async recoverCodexSessionId(session: AgentSessionRecord, runDir: string): Promise<CodexDiscoveryResult> {
-    const createdAt = Date.parse(session.createdAt);
-    if (!Number.isFinite(createdAt)) {
-      return {
-        candidates: [],
-        diagnostics: emptyCodexDiscoveryDiagnostics(existsSync(this.codexSessionRoot())),
-      };
-    }
-    const updatedAt = session.lastExitStatus === undefined ? Number.NaN : Date.parse(session.updatedAt);
-    const result = await this.discoverCodexSessionId(
-      Math.floor(createdAt / 1_000),
-      runDir,
-      session.id,
-      Number.isFinite(updatedAt) ? updatedAt / 1_000 : undefined,
-    );
-    if (result.candidates.length === 1) return { ...result, selectedId: result.candidates[0]?.id };
-    const ownershipRejected =
-      (result.diagnostics.rejected.known_to_other_session ?? 0) + (result.diagnostics.rejected.competing_session ?? 0);
-    if (result.candidates.length > 1 || ownershipRejected > 0) {
-      this.warn(
-        `cannot safely recover Codex session ID for '${session.name}'; found ${result.diagnostics.candidateFiles} matching rollouts (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`,
-      );
-    } else {
-      this.warn(
-        `cannot recover Codex session ID for '${session.name}' (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`,
-      );
-    }
-    return { ...result, selectedId: undefined };
+    return codex.recoverCodexSessionId(this.codexDeps(), session, runDir);
   }
 
   private async repairCodexSessionId(
     session: AgentSessionRecord,
     runDir: string,
-    phase: "resume",
+    phase: "run" | "resume",
   ): Promise<AgentSessionRecord> {
-    if (session.backend !== "codex" || session.backendSessionId) return session;
-    const result = await this.recoverCodexSessionId(session, runDir);
-    if (!result.selectedId) {
-      this.audit("agent_session.codex_session_id_recovery_failed", session.id, {
-        name: session.name,
-        phase,
-        runDir,
-        diagnostics: result.diagnostics,
-      });
-      return session;
-    }
-    await this.sessions.setBackendSessionIdIfMissing(session.id, result.selectedId);
-    const persisted = await this.sessions.findById(session.id);
-    if (!persisted?.backendSessionId)
-      throw new MuximoCommandError(`session '${session.name}' disappeared while repairing its backend session ID`);
-    this.info(`recovered Codex session ID for '${session.name}' during ${phase}`);
-    return persisted;
+    return codex.repairCodexSessionId(this.codexDeps(), session, runDir, phase);
   }
 
   private reportCodexDiscoveryFailure(
     session: AgentSessionRecord,
     runDir: string,
-    phase: "finalize" | "resume",
-    result: CodexDiscoveryResult,
+    phase: "finalize" | "cleanup" | "run" | "resume",
+    discovery: CodexDiscoveryResult,
   ): void {
-    const diagnostics = formatCodexDiscoveryDiagnostics(result.diagnostics);
-    this.warn(
-      `Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired (${diagnostics})`,
-    );
-    this.audit("agent_session.codex_session_id_missing", session.id, {
-      name: session.name,
-      phase,
-      runDir,
-      diagnostics: result.diagnostics,
-    });
+    codex.reportCodexDiscoveryFailure(this.codexDeps(), session, runDir, phase, discovery);
   }
 
-  private codexSessionCandidates(
-    files: string[],
-    startedAt: number,
-    runDir: string,
-    baseline: Set<string>,
-    endedAt?: number,
-  ): { candidates: CodexSessionCandidate[]; diagnostics: Omit<CodexDiscoveryDiagnostics, "rootExists" | "elapsedMs"> } {
-    const candidates = new Map<string, CodexSessionCandidate>();
-    const diagnostics: Omit<CodexDiscoveryDiagnostics, "rootExists" | "elapsedMs"> = {
-      filesScanned: files.length,
-      sessionMetaFiles: 0,
-      payloadMetadataFiles: 0,
-      flatMetadataFiles: 0,
-      baselineEntries: baseline.size,
-      candidateFiles: 0,
-      uniqueCandidates: 0,
-      rejected: {},
-    };
-    const reject = (reason: CodexDiscoveryRejection): void => {
-      diagnostics.rejected[reason] = (diagnostics.rejected[reason] ?? 0) + 1;
-    };
-    for (const file of files) {
-      let stat: ReturnType<typeof statSync>;
-      try {
-        stat = statSync(file);
-      } catch {
-        reject("stat_error");
-        continue;
-      }
-      const inspection = inspectCodexMeta(file);
-      if (!inspection.meta) {
-        reject(inspection.rejection ?? "read_error");
-        continue;
-      }
-      diagnostics.sessionMetaFiles += 1;
-      if (inspection.shape === "payload") diagnostics.payloadMetadataFiles += 1;
-      else diagnostics.flatMetadataFiles += 1;
-      const meta = inspection.meta;
-      if (!meta.session_id) {
-        reject("missing_session_id");
-        continue;
-      }
-      if (stat.mtimeMs / 1000 < startedAt) {
-        reject("before_started_at");
-        continue;
-      }
-      if (endedAt !== undefined && stat.mtimeMs / 1000 > endedAt) {
-        reject("after_session_updated_at");
-        continue;
-      }
-      if (meta.cwd !== runDir) {
-        reject("cwd_mismatch");
-        continue;
-      }
-      if (!supportedCodexOriginators.has(meta.originator ?? "")) {
-        reject("unsupported_originator");
-        continue;
-      }
-      if (meta.thread_source === "subagent") {
-        reject("subagent");
-        continue;
-      }
-      if (baseline.has(meta.session_id)) {
-        reject("baseline");
-        continue;
-      }
-      const candidate = {
-        id: meta.session_id,
-        mtime: stat.mtimeMs,
-        rolloutIdMatches: meta.session_id === meta.id,
-      };
-      diagnostics.candidateFiles += 1;
-      const previous = candidates.get(candidate.id);
-      const isPreferred = candidate.rolloutIdMatches && !previous?.rolloutIdMatches;
-      const isNewerSameKind =
-        previous && candidate.rolloutIdMatches === previous.rolloutIdMatches && candidate.mtime > previous.mtime;
-      if (!previous || isPreferred || isNewerSameKind) {
-        candidates.set(candidate.id, candidate);
-      }
-    }
-    const sorted = [...candidates.values()].sort((left, right) => {
-      if (left.rolloutIdMatches !== right.rolloutIdMatches) return left.rolloutIdMatches ? -1 : 1;
-      return right.mtime - left.mtime;
-    });
-    diagnostics.uniqueCandidates = sorted.length;
-    return { candidates: sorted, diagnostics };
+  private watchCodexSessionName(session: AgentSessionRecord, startedAt: number, runDir: string): { stop(): void } {
+    return codex.watchCodexSessionName(this.codexDeps(), session, startedAt, runDir);
   }
 
-  private codexSessionRoot(): string {
-    return join(this.env.CODEX_HOME ?? join(homedir(), ".codex"), "sessions");
-  }
-
-  private async codexSessionFiles(): Promise<string[]> {
-    const root = this.codexSessionRoot();
-    return existsSync(root) ? walkFiles(root).filter((file) => file.endsWith(".jsonl")) : [];
-  }
-
-  private watchCodexSessionName(
-    session: AgentSessionRecord,
-    startedAt: number,
-    runDir: string,
-  ): { stop: () => Promise<void> } {
-    let stopped = false;
-    const controller = new AbortController();
-    const run = async () => {
-      while (!stopped) {
-        const discovery = await this.discoverCodexSessionId(startedAt, runDir, session.id);
-        if (discovery.selectedId) {
-          try {
-            await this.sessions.setBackendSessionIdIfMissing(session.id, discovery.selectedId);
-            await this.manageRemoteThread(
-              { ...session, backendSessionId: discovery.selectedId },
-              "name",
-              controller.signal,
-            );
-            return;
-          } catch {
-            // The app-server may expose the rollout shortly after the JSONL file.
-          }
-        }
-        await sleep(200);
-      }
-    };
-    const promise = run().catch(() => undefined);
+  private codexDeps(): CodexSessionDeps {
     return {
-      stop: async () => {
-        stopped = true;
-        controller.abort();
-        await Promise.race([promise, sleep(250)]);
-      },
+      env: this.env,
+      logger: this.currentLogger,
+      sessions: this.sessions,
+      audit: (eventType, entityId, payload) => this.audit(eventType, entityId, payload),
+      warn: (value) => this.warn(value),
+      info: (value) => this.info(value),
+      manageRemoteThread: (session, operation, signal) => this.manageRemoteThread(session, operation, signal),
     };
   }
 
