@@ -111,11 +111,15 @@ Completed:
 - `cli/host/commands/doctor.ts` — doctor diagnostics
 
 Remaining (in extraction order; each becomes commands/<group>.ts taking explicit deps):
-1. session lifecycle mega-cluster: cleanupSession + removeSessionRecord + worktree
-   dispose + codex discovery/recovery chain (~600 lines, deepest this-coupling)
-2. resume + run + shell + tmux groups (backend spawn, hooks, pane adoption)
-3. compose.ts — direct-db composition root (constructor ensureDatabase block)
-4. declarative parser swap (commander) once groups are free functions
+1. worktree cluster (~300 lines: createWorktree..runHookCore + 3 predicates).
+   NOTE: a first extraction was reverted — biome check --write --unsafe truncated
+   the new module during the repair loop. Next attempt: run typecheck FIRST,
+   apply biome only after the module compiles.
+2. session lifecycle remainder: removeSessionRecord + manageRemoteThread +
+   runBackend/finalizeSession web (~700 lines, deepest coupling)
+3. resume + shell + tmux command groups
+4. compose.ts — direct-db composition root (constructor ensureDatabase block)
+5. declarative parser swap (commander) once groups are free functions
 
 Replace `cli/host/muximo-command.ts` (3662 lines, 62 functions) with:
 
