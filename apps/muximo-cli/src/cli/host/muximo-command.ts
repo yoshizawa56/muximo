@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   accessSync,
@@ -68,7 +68,6 @@ import {
   clearFallbackSessionMetadata,
   codexMeta,
   codexRemoteEndpoint,
-  commandPath,
   currentTmuxPane,
   defaultControlSocket,
   emptyCodexDiscoveryDiagnostics,
@@ -112,6 +111,7 @@ import {
   updateSession,
   walkFiles,
 } from "./command-support.js";
+import { runDoctor } from "./commands/doctor.js";
 import {
   listSessions as executeListSessions,
   parseListOptions as parseListOptionsArgs,
@@ -804,6 +804,15 @@ export class MuximoCommand {
     if (!reference) throw new MuximoCommandError("cleanup requires a session name");
     return { global, force, reference };
   }
+  private async doctor(options: { verbose: boolean }): Promise<number> {
+    return runDoctor(options, {
+      env: this.env,
+      logger: this.currentLogger,
+      write: (value, error) => this.write(value, error),
+      databaseFile: this.databaseFile,
+      defaultCodexRemote: this.defaultCodexRemote,
+    });
+  }
 
   private parseDoctorOptions(args: string[]): { verbose: boolean } {
     let verbose = false;
@@ -1229,62 +1238,6 @@ export class MuximoCommand {
     sessionLogger.debug("session.cleanup_finished", { dirty, force, durationMs: Date.now() - startedAt });
     this.info(`session '${session.name}' cleaned up`);
     return 0;
-  }
-
-  private async doctor(options: { verbose: boolean }): Promise<number> {
-    const logger = this.currentLogger.child({ command: "doctor" });
-    const startedAt = Date.now();
-    logger.debug("doctor.started", { verbose: options.verbose });
-    let status = 0;
-    for (const command of ["git", "zsh", "codex", "claude", "opencode"]) {
-      const path = commandPath(command, this.env);
-      logger.debug("doctor.command_checked", { command, available: Boolean(path) });
-      if (path) this.write(`${command}: ${path}\n`);
-      else {
-        this.write(`${command}: missing\n`, true);
-        status = 1;
-      }
-    }
-    const configuredProfile = this.env.MUXIMO_CODEX_PROFILE || null;
-    if (configuredProfile) {
-      const profilePath = join(this.env.CODEX_HOME ?? join(homedir(), ".codex"), `${configuredProfile}.config.toml`);
-      if (existsSync(profilePath)) {
-        this.write(`codex profile: ${profilePath}\n`);
-        const codex = commandPath("codex", this.env);
-        const validationStartedAt = Date.now();
-        const validation = codex
-          ? spawnSync(codex, ["--profile", configuredProfile, "--strict-config", "--help"], {
-              stdio: "ignore",
-              env: this.env,
-            })
-          : undefined;
-        logger.debug("doctor.codex_profile_checked", {
-          available: Boolean(codex),
-          exitCode: validation?.status ?? null,
-          durationMs: Date.now() - validationStartedAt,
-        });
-        if (codex && validation?.status !== 0) {
-          this.write("codex profile validation: failed\n", true);
-          status = 1;
-        } else this.write("codex profile validation: ok\n");
-      } else {
-        this.write(`codex profile: missing (${profilePath})\n`, true);
-        status = 1;
-      }
-    } else {
-      this.write("codex profile: not configured\n");
-    }
-    const mise = commandPath("mise", this.env);
-    this.write(mise ? `mise: ${mise}\n` : "mise: unavailable (not required for workspace hooks)\n");
-    if (options.verbose) {
-      this.write(`database: ${this.databaseFile}\n`);
-      this.write(`codex remote: ${this.defaultCodexRemote || "native local mode"}\n`);
-      this.write(
-        `worktree root pattern: <workspace-parent>/<workspace-name>.worktrees${this.env.MUXIMO_WORKTREE_ID ? `/${this.env.MUXIMO_WORKTREE_ID}` : ""}/<session-name>\n`,
-      );
-    }
-    logger.debug("doctor.finished", { status, durationMs: Date.now() - startedAt });
-    return status;
   }
 
   private async resolveWorkspace(): Promise<WorkspaceContext> {
