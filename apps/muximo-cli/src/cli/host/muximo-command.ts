@@ -15,7 +15,6 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { createInterface } from "node:readline/promises";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import {
@@ -116,6 +115,7 @@ import {
   listSessions as executeListSessions,
   parseListOptions as parseListOptionsArgs,
 } from "./commands/list-sessions.js";
+import { confirmCleanup as confirmCleanupFn, runCleanupSession } from "./commands/session-lifecycle.js";
 import { executeWorkspaceCommand } from "./commands/workspace-commands.js";
 
 export { buildResumeCommand, buildRunCommand, MuximoCommandError } from "./command-support.js";
@@ -786,6 +786,18 @@ export class MuximoCommand {
   private parseListOptions(args: string[]): SessionListOptions {
     return parseListOptionsArgs({ write: (value) => this.write(value) }, args);
   }
+  private async cleanupSession(options: { global: boolean; force: boolean; reference: string }): Promise<number> {
+    return runCleanupSession(options, {
+      env: this.env,
+      logger: this.currentLogger,
+      info: (value) => this.info(value),
+      locateSession: (reference, global) => this.locateSession(reference, global),
+      worktreeIsRegistered: (session) => this.worktreeIsRegistered(session),
+      worktreeHasAgentChanges: (session) => this.worktreeHasAgentChanges(session),
+      confirmCleanup: (session, dirty) => confirmCleanupFn({ env: this.env }, session, dirty),
+      removeSessionRecord: (session, force) => this.removeSessionRecord(session, force),
+    });
+  }
 
   private parseCleanupOptions(args: string[]): { global: boolean; force: boolean; reference: string } {
     let global = false;
@@ -1200,44 +1212,8 @@ export class MuximoCommand {
       sessions: this.sessions,
     });
   }
-
-  private async cleanupSession(options: { global: boolean; force: boolean; reference: string }): Promise<number> {
-    const logger = this.currentLogger.child({ command: "cleanup" });
-    const startedAt = Date.now();
-    logger.debug("session.cleanup_requested", { global: options.global, force: options.force });
-    const session = await this.locateSession(options.reference, options.global);
-    const sessionLogger = logger.child({
-      sessionId: session.id,
-      sessionName: session.name,
-      workspaceId: session.workspaceId,
-      backend: session.backend,
-    });
-    if (session.executionPid !== undefined && isProcessAlive(session.executionPid)) {
-      throw new MuximoCommandError(`session '${session.name}' is still running (pid ${session.executionPid})`);
-    }
-    if (session.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
-      if (!this.worktreeIsRegistered(session))
-        throw new MuximoCommandError(
-          `managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`,
-        );
-    }
-    const dirty = session.useWorktree && session.worktreePath ? this.worktreeHasAgentChanges(session) : false;
-    let force = options.force;
-    sessionLogger.debug("session.cleanup_decision_started", { dirty, force });
-    if (session.useWorktree && !force && !(await this.confirmCleanup(session, dirty))) {
-      sessionLogger.debug("session.cleanup_declined", { dirty });
-      this.info(`cleanup cancelled; session '${session.name}' was kept`);
-      return 0;
-    }
-    if (dirty) force = true;
-    if (!(await this.removeSessionRecord(session, force))) {
-      sessionLogger.debug("session.cleanup_failed", { dirty, force, durationMs: Date.now() - startedAt });
-      this.info(`session '${session.name}' retained because cleanup did not complete`);
-      return 1;
-    }
-    sessionLogger.debug("session.cleanup_finished", { dirty, force, durationMs: Date.now() - startedAt });
-    this.info(`session '${session.name}' cleaned up`);
-    return 0;
+  private async confirmCleanup(session: AgentSessionRecord, dirty: boolean): Promise<boolean> {
+    return confirmCleanupFn({ env: this.env }, session, dirty);
   }
 
   private async resolveWorkspace(): Promise<WorkspaceContext> {
@@ -2000,21 +1976,6 @@ export class MuximoCommand {
       }
     }
     unlinkEmptyDirectory(join(this.hookOutputRoot, session.id));
-  }
-
-  private async confirmCleanup(session: AgentSessionRecord, dirty: boolean): Promise<boolean> {
-    if (this.env.MUXIMO_ASSUME_YES === "1") return true;
-    if (!process.stdin.isTTY && !process.stdout.isTTY) return false;
-    const prompt = dirty
-      ? `Cleanup session '${session.name}' and remove worktree '${session.worktreePath}' including uncommitted changes? [y/N] `
-      : `Cleanup session '${session.name}' and remove worktree '${session.worktreePath}'? [y/N] `;
-    const readline = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      const answer = await readline.question(prompt);
-      return /^(y|yes)$/i.test(answer.trim());
-    } finally {
-      readline.close();
-    }
   }
 
   private worktreeIsRegistered(session: AgentSessionRecord): boolean {
