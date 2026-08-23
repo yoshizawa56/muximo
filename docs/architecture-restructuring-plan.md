@@ -73,7 +73,7 @@ Rules: no behavior changes; facade method signatures stay identical so
 4. Keep replay/rate-limit behavior identical; service.test scenarios move to
    the new files (or stay as one lifecycle scenario under usecases/auth/).
 
-## Phase 2 — NEXT — slim apps/muximod
+## Phase 2 — DONE — slim apps/muximod
 
 Allowed final set:
 
@@ -97,9 +97,9 @@ Moves:
   contract before moving)
   (+registry). Resume tokens stay inside the gateway (connection-level
   concern); device binding checks become injected callbacks if needed.
-- `daemon.ts` (667) triage: keep ONLY process lifecycle (foreground/background
-  spawn, signals, wait). Health diagnostics/cleanup policies move to use
-  cases or infrastructure.
+- `daemon.ts` (667→542) keeps process lifecycle only; health diagnostics moved to
+  src/cli/health-diagnostics.ts and OpenCode registry cleanup to
+  src/cli/opencode-registry.ts (re-exported through daemon for the runtime facade).
 
 ## Phase 3 — CLI on a declarative parser
 
