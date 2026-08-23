@@ -33,6 +33,8 @@ import {
   normalizeWorktreeCopyPatterns,
   WorkspaceId,
 } from "@muximo/domain";
+import type { CodexSessionDeps } from "@muximo/infrastructure";
+import * as codex from "@muximo/infrastructure";
 import {
   type AgentDatabase,
   type AgentMonitor,
@@ -49,6 +51,7 @@ import {
   errorFields,
   type Logger,
   type LogLevel,
+  manageCodexThread,
   OpenCodeServerManager,
   openCodeMonitorActions,
   recordAuditEvent,
@@ -59,7 +62,6 @@ import {
   WorkspaceSelectionCatalog,
   workspaceIdForPath,
 } from "@muximo/infrastructure";
-import { manageCodexThread } from "./codex-remote.js";
 import {
   buildResumeCommand,
   buildRunCommand,
@@ -101,8 +103,6 @@ import {
   unlinkEmptyDirectory,
   updateSession,
 } from "./command-support.js";
-import type { CodexSessionDeps } from "./commands/codex-session.js";
-import * as codex from "./commands/codex-session.js";
 import { runDoctor } from "./commands/doctor.js";
 import {
   listSessions as executeListSessions,

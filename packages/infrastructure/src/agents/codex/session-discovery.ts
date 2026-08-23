@@ -1,8 +1,14 @@
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type AgentSessionRepository, ApplicationError } from "@muximo/application";
 import { AgentSessionId, type AgentSessionRecord } from "@muximo/domain";
+import type { Logger } from "../../logging/index.js";
 import {
+  type CodexDiscoveryDiagnostics,
+  type CodexDiscoveryRejection,
+  type CodexDiscoveryResult,
+  type CodexSessionCandidate,
   codexMeta,
   emptyCodexDiscoveryDiagnostics,
   formatCodexDiscoveryDiagnostics,
@@ -10,23 +16,16 @@ import {
   preferredCodexSessionId,
   readCodexBaseline,
   sleep,
-  updateSession,
+  supportedCodexOriginators,
+  updateSessionRecord as updateSession,
   walkFiles,
-} from "../command-support.js";
-import type { CodexDiscoveryDiagnostics, CodexSessionCandidate } from "../muximo-command.js";
-import {
-  type CodexDiscoveryRejection,
-  type CodexDiscoveryResult,
-  MuximoCommandError,
-  _supportedCodexOriginators as supportedCodexOriginators,
-} from "../muximo-command.js";
+} from "./internals.js";
 
-export type LoggerLike = import("./session-lifecycle.js").LoggerLike;
-
+type LoggerLike = Pick<Logger, "debug" | "child">;
 export type CodexSessionDeps = {
   env: NodeJS.ProcessEnv;
   logger: LoggerLike;
-  sessions: import("@muximo/application").AgentSessionRepository;
+  sessions: AgentSessionRepository;
   audit(eventType: string, entityId: string, payload: unknown): void;
   warn(value: string): void;
   info(value: string): void;
@@ -191,7 +190,10 @@ export async function repairCodexSessionId(
   await deps.sessions.setBackendSessionIdIfMissing(session.id, result.selectedId);
   const persisted = await deps.sessions.findById(session.id);
   if (!persisted?.backendSessionId)
-    throw new MuximoCommandError(`session '${session.name}' disappeared while repairing its backend session ID`);
+    throw new ApplicationError(
+      "codex_session_lost",
+      `session '${session.name}' disappeared while repairing its backend session ID`,
+    );
   deps.info(`recovered Codex session ID for '${session.name}' during ${phase}`);
   return persisted;
 }

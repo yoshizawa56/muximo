@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { manageCodexThread } from "./cli/host/codex-remote.js";
+import { manageCodexThread } from "@muximo/infrastructure";
 
 const args = process.argv.slice(2);
 const usage =
