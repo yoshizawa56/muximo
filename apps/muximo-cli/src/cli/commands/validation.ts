@@ -1,7 +1,16 @@
 import { z } from "zod";
+import { resolveCliOptions, type CliOptionSpec } from "../options/index.js";
 import type { CliCommandContext } from "./types.js";
 
 export type CliSchema<TOutput> = z.ZodType<TOutput>;
+
+export function resolveCommandOptions(
+  raw: Record<string, unknown>,
+  specs: readonly CliOptionSpec[],
+  context: Pick<CliCommandContext, "args" | "environment">,
+): Record<string, unknown> {
+  return resolveCliOptions(raw, specs, context);
+}
 
 export async function invokeCliHandler<TSchema extends z.ZodType>(input: {
   schema: TSchema;

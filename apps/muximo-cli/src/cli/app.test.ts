@@ -27,17 +27,18 @@ type Fixture = {
 
 type Input = { args: readonly string[] };
 type Context = Fixture & { output: string; error: string };
+type FixtureKey = "environment";
 
 function contains<ContextType>(key: keyof ContextType, value: string) {
   return {
-    name: `contains ${String(key)} text`,
+    name: `contains ${String(key)} text: ${value}`,
     check: (context: ContextType) => {
       expect((context as Record<string, unknown>)[key as string]).toContain(value);
     },
   };
 }
 
-function createFixture() {
+function createFixture(environment: NodeJS.ProcessEnv = {}) {
   const out = new CaptureOutput();
   const err = new CaptureOutput();
   const calls: Fixture["calls"] = [];
@@ -64,7 +65,7 @@ function createFixture() {
       return 7;
     };
   }
-  const app = createCliApp({ io: { out, err }, cwd: "/workspace", handlers });
+  const app = createCliApp({ io: { out, err }, cwd: "/workspace", environment, handlers });
   return { fixture: { out, err, calls, app } };
 }
 
@@ -77,6 +78,7 @@ const cases = [
     assert: [
       returns<Context, number>(2),
       contains<Context>("output", "Usage: muximo"),
+      contains<Context>("output", "MUXIMOD_INSTANCE_DIR"),
       hasObserved<Context, number>("calls", []),
     ],
   },
@@ -173,10 +175,113 @@ const cases = [
       ]),
     ],
   },
-] satisfies readonly OperationCase<"default", Input, number, Context>[];
+  {
+    name: "resolves daemon values from the command environment",
+    fixture: "environment",
+    input: { args: ["daemon", "start"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "daemon",
+          input: {
+            command: "start",
+            foreground: false,
+            refreshServers: false,
+            host: "0.0.0.0",
+            port: 5001,
+            pidFile: "/tmp/muximod.pid",
+            controlSocket: undefined,
+            muximodBaseUrl: undefined,
+            logLevel: "debug",
+            logFile: "/tmp/muximod.log",
+            allowedOrigins: ["https://configured.example", "http://127.0.0.1:5227"],
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "resolves serve values from the command environment",
+    fixture: "environment",
+    input: { args: ["serve", "tailscale"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "serve",
+          input: {
+            provider: "tailscale",
+            muximodHost: "0.0.0.0",
+            muximodPort: 5001,
+            externalPort: 9443,
+            pidFile: "/tmp/muximod.pid",
+            logLevel: "debug",
+            logFile: "/tmp/muximod.log",
+            allowedOrigins: ["https://configured.example", "http://127.0.0.1:5227"],
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "prefers explicit serve options over environment values",
+    fixture: "environment",
+    input: {
+      args: [
+        "serve",
+        "tailscale",
+        "--port",
+        "9444",
+        "--muximod-port",
+        "5002",
+        "--muximod-host",
+        "127.0.0.1",
+        "--pid-file",
+        "/tmp/cli.pid",
+        "--log-level",
+        "warn",
+        "--log-file",
+        "/tmp/cli.log",
+        "--allowed-origin",
+        "https://cli.example",
+      ],
+    },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "serve",
+          input: {
+            provider: "tailscale",
+            muximodHost: "127.0.0.1",
+            muximodPort: 5002,
+            externalPort: 9444,
+            pidFile: "/tmp/cli.pid",
+            logLevel: "warn",
+            logFile: "/tmp/cli.log",
+            allowedOrigins: ["https://cli.example"],
+          },
+        },
+      ]),
+    ],
+  },
+] satisfies readonly OperationCase<FixtureKey, Input, number, Context>[];
 
-const table: OperationTable<AppFixture, "default", Input, number, Context> = {
-  defaultFixture: createFixture,
+const table: OperationTable<AppFixture, FixtureKey, Input, number, Context> = {
+  defaultFixture: () => createFixture(),
+  fixtures: {
+    environment: () =>
+      createFixture({
+        MUXIMOD_HOST: "0.0.0.0",
+        MUXIMOD_PORT: "5001",
+        MUXIMO_SERVE_PORT: "9443",
+        MUXIMOD_PID_FILE: "/tmp/muximod.pid",
+        MUXIMO_LOG_LEVEL: "debug",
+        MUXIMO_LOG_FILE: "/tmp/muximod.log",
+        MUXIMOD_ALLOWED_ORIGINS: "https://configured.example,http://127.0.0.1:5227",
+      }),
+  },
   cases,
   execute: (fixture, input) => fixture.app.execute(input.args),
   observe: (fixture) => ({

@@ -1,8 +1,66 @@
 import { agentBackendSchema } from "@muximo/domain";
 import type { Command } from "commander";
 import { z } from "zod";
+import { defineOptions, registerOptions } from "../options/index.js";
 import type { CliCommandContext, CliHandlers } from "./types.js";
-import { invokeCliHandler } from "./validation.js";
+import { invokeCliHandler, resolveCommandOptions } from "./validation.js";
+
+export const runOptionSpecs = defineOptions(
+  {
+    key: "name",
+    flags: ["-n, --name <name>"],
+    description: "Name the managed session.",
+    exposure: "cli",
+  },
+  {
+    key: "worktree",
+    flags: ["-w, --worktree [name]", "--no-worktree"],
+    description: "Run the session in a managed worktree.",
+    flagDescriptions: {
+      "--no-worktree": "Run the session in the current workspace.",
+    },
+    exposure: "cli",
+  },
+  {
+    key: "worktreeRoot",
+    flags: ["--worktree-root <path>"],
+    description: "Root directory in which managed worktrees are created.",
+    exposure: "cli",
+    completion: { kind: "directory" },
+  },
+  {
+    key: "setupHook",
+    flags: ["--setup-hook <path>", "--no-setup-hook"],
+    description: "Override the workspace setup hook.",
+    flagDescriptions: {
+      "--no-setup-hook": "Disable the workspace setup hook.",
+    },
+    exposure: "cli",
+    completion: { kind: "file" },
+  },
+  {
+    key: "cleanupHook",
+    flags: ["--cleanup-hook <path>", "--no-cleanup-hook"],
+    description: "Override the workspace cleanup hook.",
+    flagDescriptions: {
+      "--no-cleanup-hook": "Disable the workspace cleanup hook.",
+    },
+    exposure: "cli",
+    completion: { kind: "file" },
+  },
+  {
+    key: "setupTask",
+    flags: ["--setup-task [value]"],
+    description: "Legacy setup task option retained for a validation message.",
+    exposure: "cli",
+  },
+  {
+    key: "cleanupTask",
+    flags: ["--cleanup-task [value]"],
+    description: "Legacy cleanup task option retained for a validation message.",
+    exposure: "cli",
+  },
+);
 
 const optionalWorktreeSchema = z.union([z.string().min(1), z.boolean()]).optional();
 const optionalHookSchema = z.union([z.string(), z.literal(false)]).optional();
@@ -51,26 +109,16 @@ export const runSchema = z
   });
 
 export function registerRunCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
-  const command = parent
-    .command("run <backend> [backendArgs...]")
-    .description("Run an agent backend")
-    .option("-n, --name <name>")
-    .option("-w, --worktree [name]")
-    .option("--no-worktree")
-    .option("--worktree-root <path>")
-    .option("--setup-hook <path>")
-    .option("--no-setup-hook")
-    .option("--cleanup-hook <path>")
-    .option("--no-cleanup-hook")
-    .option("--setup-task [value]")
-    .option("--cleanup-task [value]")
-    .allowUnknownOption(true);
+  const command = parent.command("run <backend> [backendArgs...]").description("Run an agent backend");
+  registerOptions(command, runOptionSpecs);
+  command.allowUnknownOption(true);
 
   command.action(async (backend, backendArgs, options) => {
+    const resolved = resolveCommandOptions(options, runOptionSpecs, context);
     context.report(
       await invokeCliHandler({
         schema: runSchema,
-        rawInput: { ...options, backend, backendArgs },
+        rawInput: { ...resolved, backend, backendArgs },
         commandPath: ["run"],
         context,
         handler: handlers.run,

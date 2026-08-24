@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { registerDaemonCommands } from "./daemon.js";
 import { registerDevCommand } from "./dev.js";
 import { registerDoctorCommand } from "./doctor.js";
+import { registerOptions } from "../options/index.js";
 import { registerPairCommand } from "./pair.js";
 import { registerRunCommand } from "./run.js";
 import { registerServeCommand } from "./serve.js";
@@ -10,6 +11,8 @@ import { registerShellCommand } from "./shell.js";
 import { registerTmuxCommands } from "./tmux.js";
 import type { CliCommandContext, CliHandlers } from "./types.js";
 import { registerWorkspaceCommands } from "./workspace/index.js";
+import { globalOptionSpecs } from "./global.js";
+import { registerCompletionCommand } from "./completion.js";
 
 export function buildCliProgram(handlers: CliHandlers, context: CliCommandContext): Command {
   const program = new Command();
@@ -18,12 +21,12 @@ export function buildCliProgram(handlers: CliHandlers, context: CliCommandContex
     .description("A mobile control room for tmux-hosted agents and shells.")
     .exitOverride()
     .enablePositionalOptions()
-    .option("-v, --verbose", "Show detailed diagnostics on the attached terminal.")
     .addHelpCommand()
     .configureOutput({ writeErr: () => undefined, writeOut: (value) => context.io.out.write(value) });
+  registerOptions(program, globalOptionSpecs);
 
   program.action(() => {
-    context.io.out.write(program.helpInformation());
+    program.outputHelp();
     context.report(2);
   });
 
@@ -38,6 +41,7 @@ export function buildCliProgram(handlers: CliHandlers, context: CliCommandContex
   registerPairCommand(program, handlers, context);
   registerServeCommand(program, handlers, context);
   registerDevCommand(program, handlers, context);
+  registerCompletionCommand(program, context);
 
   return program;
 }

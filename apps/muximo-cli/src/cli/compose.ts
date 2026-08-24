@@ -373,6 +373,7 @@ export function createCliComposition(options: CliCompositionOptions = {}): CliCo
   const app = createCliApp({
     io,
     cwd,
+    environment,
     handlers,
     lifecycle: {
       started: (commandPath) => logger.debug("command.started", { command: commandPath.join(" ") }),

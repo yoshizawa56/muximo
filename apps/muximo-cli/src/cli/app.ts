@@ -15,6 +15,8 @@ export function createCliApp(deps: CliAppDeps): CliApp {
       const context: CliCommandContext = {
         io: deps.io,
         cwd: deps.cwd,
+        args,
+        environment: deps.environment ?? process.env,
         rootCommand,
         report: (value) => {
           status = value;

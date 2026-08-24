@@ -1,8 +1,134 @@
-import type { Command, OptionValues } from "commander";
+import type { Command } from "commander";
 import { z } from "zod";
+import { defineOptions, registerOptions } from "../../options/index.js";
 import type { CliCommandContext, CliHandlers, CliWorkspaceAddInput, CliWorkspaceUpdateInput } from "../types.js";
-import { invokeCliHandler } from "../validation.js";
-import { collectOption, firstBooleanOrString, firstString, mergeStringArrays } from "./common.js";
+import { invokeCliHandler, resolveCommandOptions } from "../validation.js";
+import { firstBooleanOrString, firstString, mergeStringArrays } from "./common.js";
+
+export const workspaceMutationOptionSpecs = defineOptions(
+  {
+    key: "directory",
+    flags: ["--directory <path>"],
+    description: "Legacy directory option; use the positional directory argument for add.",
+    exposure: "cli",
+    completion: { kind: "directory" },
+  },
+  {
+    key: "path",
+    flags: ["--path <path>"],
+    description: "Legacy path option retained for compatibility.",
+    exposure: "cli",
+    completion: { kind: "directory" },
+  },
+  {
+    key: "name",
+    flags: ["--name <name>"],
+    description: "Workspace name.",
+    exposure: "cli",
+  },
+  {
+    key: "setupHook",
+    flags: ["--setup-hook <path>", "--no-setup-hook"],
+    description: "Workspace setup hook.",
+    flagDescriptions: {
+      "--no-setup-hook": "Disable the workspace setup hook.",
+    },
+    exposure: "cli",
+    completion: { kind: "file" },
+  },
+  {
+    key: "setupScript",
+    flags: ["--setup-script <path>", "--no-setup-script"],
+    description: "Alias for the workspace setup hook.",
+    flagDescriptions: {
+      "--no-setup-script": "Disable the workspace setup script.",
+    },
+    exposure: "cli",
+    completion: { kind: "file" },
+  },
+  {
+    key: "setupScriptPath",
+    flags: ["--setup-script-path <path>"],
+    description: "Alias for the workspace setup hook path.",
+    exposure: "cli",
+    completion: { kind: "file" },
+  },
+  {
+    key: "cleanupHook",
+    flags: ["--cleanup-hook <path>", "--no-cleanup-hook"],
+    description: "Workspace cleanup hook.",
+    flagDescriptions: {
+      "--no-cleanup-hook": "Disable the workspace cleanup hook.",
+    },
+    exposure: "cli",
+    completion: { kind: "file" },
+  },
+  {
+    key: "cleanupScript",
+    flags: ["--cleanup-script <path>", "--no-cleanup-script"],
+    description: "Alias for the workspace cleanup hook.",
+    flagDescriptions: {
+      "--no-cleanup-script": "Disable the workspace cleanup script.",
+    },
+    exposure: "cli",
+    completion: { kind: "file" },
+  },
+  {
+    key: "cleanupScriptPath",
+    flags: ["--cleanup-script-path <path>"],
+    description: "Alias for the workspace cleanup hook path.",
+    exposure: "cli",
+    completion: { kind: "file" },
+  },
+  {
+    key: "copyPattern",
+    flags: ["--copy-pattern <pattern>"],
+    description: "Replace workspace copy patterns.",
+    exposure: "cli",
+    repeatable: true,
+  },
+  {
+    key: "worktreeCopyPattern",
+    flags: ["--worktree-copy-pattern <pattern>"],
+    description: "Alias for a workspace copy pattern.",
+    exposure: "cli",
+    repeatable: true,
+  },
+  {
+    key: "copy",
+    flags: ["--copy <pattern>"],
+    description: "Alias for a workspace copy pattern.",
+    exposure: "cli",
+    repeatable: true,
+  },
+  {
+    key: "addCopyPattern",
+    flags: ["--add-copy-pattern <pattern>"],
+    description: "Append a workspace copy pattern.",
+    exposure: "cli",
+    repeatable: true,
+  },
+  {
+    key: "appendCopyPattern",
+    flags: ["--append-copy-pattern <pattern>"],
+    description: "Alias for an appended workspace copy pattern.",
+    exposure: "cli",
+    repeatable: true,
+  },
+  {
+    key: "clearCopyPatterns",
+    flags: ["--clear-copy-patterns"],
+    description: "Clear all workspace copy patterns.",
+    exposure: "cli",
+    defaultValue: false,
+  },
+  {
+    key: "copyPatterns",
+    flags: ["--no-copy-patterns"],
+    description: "Clear all workspace copy patterns.",
+    exposure: "cli",
+  },
+);
 
 const mutationFields = {
   name: z.string().optional(),
@@ -88,10 +214,11 @@ export function registerWorkspaceAddCommand(
 ): Command {
   const command = configureMutationCommand(parent.command(`${commandName} [directory]`));
   command.action(async (directory, options) => {
+    const resolved = resolveCommandOptions(options, workspaceMutationOptionSpecs, context);
     context.report(
       await invokeCliHandler({
         schema: workspaceAddSchema,
-        rawInput: { directory, ...normalizeMutationOptions(options) },
+        rawInput: { directory, ...normalizeMutationOptions(resolved) },
         commandPath: ["workspace", commandName],
         context,
         handler: handlers.workspaceAdd,
@@ -108,10 +235,11 @@ export function registerWorkspaceUpdateCommand(
 ): Command {
   const command = configureMutationCommand(parent.command("update [selector]"));
   command.action(async (selector, options) => {
+    const resolved = resolveCommandOptions(options, workspaceMutationOptionSpecs, context);
     context.report(
       await invokeCliHandler({
         schema: workspaceUpdateSchema,
-        rawInput: { selector, ...normalizeMutationOptions(options) },
+        rawInput: { selector, ...normalizeMutationOptions(resolved) },
         commandPath: ["workspace", "update"],
         context,
         handler: handlers.workspaceUpdate,
@@ -122,32 +250,12 @@ export function registerWorkspaceUpdateCommand(
 }
 
 function configureMutationCommand(command: Command): Command {
-  return command
-    .description("Register or update a workspace")
-    .option("--directory <path>")
-    .option("--path <path>")
-    .option("--name <name>")
-    .option("--setup-hook <path>")
-    .option("--setup-script <path>")
-    .option("--setup-script-path <path>")
-    .option("--no-setup-hook")
-    .option("--no-setup-script")
-    .option("--cleanup-hook <path>")
-    .option("--cleanup-script <path>")
-    .option("--cleanup-script-path <path>")
-    .option("--no-cleanup-hook")
-    .option("--no-cleanup-script")
-    .option("--copy-pattern <pattern>", "", collectOption, [])
-    .option("--worktree-copy-pattern <pattern>", "", collectOption, [])
-    .option("--copy <pattern>", "", collectOption, [])
-    .option("--add-copy-pattern <pattern>", "", collectOption, [])
-    .option("--append-copy-pattern <pattern>", "", collectOption, [])
-    .option("--clear-copy-patterns")
-    .option("--no-copy-patterns")
-    .allowUnknownOption(false);
+  command.description("Register or update a workspace");
+  registerOptions(command, workspaceMutationOptionSpecs);
+  return command.allowUnknownOption(false);
 }
 
-function normalizeMutationOptions(options: OptionValues): {
+function normalizeMutationOptions(options: Record<string, unknown>): {
   directoryOption?: string;
   pathOption?: string;
   name?: string;
