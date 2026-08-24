@@ -1,7 +1,39 @@
 import type { Command } from "commander";
 import { z } from "zod";
+import { defineOptions, registerOptions } from "../../options/index.js";
 import type { CliCommandContext, CliHandlers } from "../types.js";
-import { invokeCliHandler } from "../validation.js";
+import { invokeCliHandler, resolveCommandOptions } from "../validation.js";
+
+export const sessionListOptionSpecs = defineOptions(
+  {
+    key: "global",
+    flags: ["-g, --global"],
+    description: "List sessions across all workspaces.",
+    exposure: "cli",
+    defaultValue: false,
+  },
+  {
+    key: "all",
+    flags: ["--all"],
+    description: "Include sessions that are not currently running.",
+    exposure: "cli",
+    defaultValue: false,
+  },
+  {
+    key: "names",
+    flags: ["--names"],
+    description: "Print only session names.",
+    exposure: "cli",
+    defaultValue: false,
+  },
+  {
+    key: "json",
+    flags: ["--json"],
+    description: "Print sessions as JSON.",
+    exposure: "cli",
+    defaultValue: false,
+  },
+);
 
 export const sessionListSchema = z
   .object({
@@ -33,17 +65,15 @@ export function registerSessionListCommand(
 ): Command {
   const command = parent
     .command(options.commandName)
-    .description("List managed sessions")
-    .option("-g, --global")
-    .option("--all")
-    .option("--names")
-    .option("--json");
+    .description("List managed sessions");
+  registerOptions(command, sessionListOptionSpecs);
 
   command.action(async (commandOptions) => {
+    const resolved = resolveCommandOptions(commandOptions, sessionListOptionSpecs, context);
     context.report(
       await invokeCliHandler({
         schema: sessionListSchema,
-        rawInput: commandOptions,
+        rawInput: resolved,
         commandPath: options.commandPath,
         context,
         handler: handlers.sessionList,

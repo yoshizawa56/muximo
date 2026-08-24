@@ -1,7 +1,16 @@
 import type { Command } from "commander";
 import { z } from "zod";
+import { defineOptions, registerOptions } from "../../options/index.js";
 import type { CliCommandContext, CliHandlers } from "../types.js";
-import { invokeCliHandler } from "../validation.js";
+import { invokeCliHandler, resolveCommandOptions } from "../validation.js";
+
+export const sessionResumeOptionSpecs = defineOptions({
+  key: "global",
+  flags: ["-g, --global"],
+  description: "Resume the session from the global session registry.",
+  exposure: "cli",
+  defaultValue: false,
+});
 
 export const sessionResumeSchema = z.object({
   global: z.boolean().default(false),
@@ -22,15 +31,16 @@ export function registerSessionResumeCommand(
 ): Command {
   const command = parent
     .command(`${options.commandName} <reference> [backendArgs...]`)
-    .description("Resume a managed session")
-    .option("-g, --global")
-    .allowUnknownOption(true);
+    .description("Resume a managed session");
+  registerOptions(command, sessionResumeOptionSpecs);
+  command.allowUnknownOption(true);
 
   command.action(async (reference, backendArgs, commandOptions) => {
+    const resolved = resolveCommandOptions(commandOptions, sessionResumeOptionSpecs, context);
     context.report(
       await invokeCliHandler({
         schema: sessionResumeSchema,
-        rawInput: { ...commandOptions, reference, backendArgs: backendArgs ?? [] },
+        rawInput: { ...resolved, reference, backendArgs: backendArgs ?? [] },
         commandPath: options.commandPath,
         context,
         handler: handlers.sessionResume,

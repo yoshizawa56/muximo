@@ -142,6 +142,7 @@ export type CliAppDeps = {
   io: CliIo;
   handlers: CliHandlers;
   cwd: string;
+  environment?: NodeJS.ProcessEnv;
   rootCommand?: string;
   lifecycle?: CliCommandLifecycle;
 };
@@ -154,6 +155,8 @@ export type CliCommandLifecycle = {
 export type CliCommandContext = {
   io: CliIo;
   cwd: string;
+  args: readonly string[];
+  environment: NodeJS.ProcessEnv;
   rootCommand: string;
   report(status: number): void;
   lifecycle?: CliCommandLifecycle;
