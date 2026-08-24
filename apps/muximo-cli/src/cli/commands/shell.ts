@@ -23,6 +23,9 @@ export const shellOptionSpecs = defineOptions(
     key: "worktree",
     flags: ["-w, --worktree [name]", "--no-worktree"],
     description: "Run the shell in a managed worktree.",
+    flagDescriptions: {
+      "--no-worktree": "Run the shell in the current workspace.",
+    },
     exposure: "cli",
   },
 );

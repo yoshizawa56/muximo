@@ -21,6 +21,8 @@ export type CliOptionSpec<T = unknown> = {
   key: string;
   /** Commander flags. Multiple entries describe aliases or negated forms. */
   flags?: readonly string[];
+  /** Optional descriptions for individual flags, such as a negated form. */
+  flagDescriptions?: Readonly<Record<string, string>>;
   description: string;
   exposure: CliOptionExposure;
   environment?: CliEnvironmentBinding;
@@ -50,7 +52,7 @@ export function registerOptions(command: Command, specs: readonly CliOptionSpec[
 
   for (const spec of specs) {
     for (const flags of spec.flags ?? []) {
-      const description = formatOptionDescription(spec);
+      const description = formatOptionDescription(spec, flags);
       if (spec.repeatable) {
         command.option(flags, description, collectOption);
       } else {
@@ -99,7 +101,7 @@ export function resolveOptionValues(
       continue;
     }
 
-    if (Object.prototype.hasOwnProperty.call(raw, spec.key) && raw[spec.key] !== undefined) {
+    if (Object.hasOwn(raw, spec.key) && raw[spec.key] !== undefined) {
       values[spec.key] = raw[spec.key];
       sources[spec.key] = "default";
     }
@@ -141,6 +143,7 @@ function uniqueOptionSpecs(specs: readonly CliOptionSpec[]): CliOptionSpec[] {
     byKey.set(spec.key, {
       ...existing,
       flags: [...new Set([...(existing.flags ?? []), ...(spec.flags ?? [])])],
+      flagDescriptions: { ...existing.flagDescriptions, ...spec.flagDescriptions },
       environment: existing.environment ?? spec.environment,
       defaultValue: existing.defaultValue ?? spec.defaultValue,
       completion: existing.completion ?? spec.completion,
@@ -164,16 +167,20 @@ function optionFlagNames(flags: string): string[] {
     .filter((part): part is string => Boolean(part));
 }
 
-function formatOptionDescription(spec: CliOptionSpec): string {
-  if (!spec.environment) return spec.description;
-  return `${spec.description}\nEnvironment: ${spec.environment.name} — ${spec.environment.description}`;
+function formatOptionDescription(spec: CliOptionSpec, flags: string): string {
+  const description =
+    optionFlagNames(flags)
+      .map((name) => spec.flagDescriptions?.[name])
+      .find((value): value is string => value !== undefined) ?? spec.description;
+  if (!spec.environment) return description;
+  const environmentDescription =
+    spec.environment.description === description ? "" : ` — ${spec.environment.description}`;
+  return `${description}\nEnvironment: ${spec.environment.name}${environmentDescription}`;
 }
 
 function appendEnvironmentOnlyHelp(command: Command, specs: readonly CliOptionSpec[]): void {
   if (environmentHelpByCommand.has(command)) return;
-  const environmentOnly = specs.filter(
-    (spec) => !spec.flags?.length && spec.environment && spec.exposure !== "cli",
-  );
+  const environmentOnly = specs.filter((spec) => !spec.flags?.length && spec.environment && spec.exposure !== "cli");
   if (environmentOnly.length === 0) return;
 
   command.addHelpText(

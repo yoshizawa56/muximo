@@ -6,8 +6,9 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { describe, it } from "vitest";
-import { defineOptions, resolveOptionValues, type CliOptionResolution } from "./index.js";
+import { Command } from "commander";
+import { describe, expect, it } from "vitest";
+import { type CliOptionResolution, defineOptions, registerOptions, resolveOptionValues } from "./index.js";
 
 const optionSpecs = defineOptions(
   {
@@ -122,4 +123,67 @@ const table: OperationTable<undefined, "default", Input, CliOptionResolution, Cl
 describe("CLI option resolution", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, table);
+});
+
+const helpOptionSpecs = defineOptions(
+  {
+    key: "port",
+    flags: ["--port <port>"],
+    description: "Port.",
+    exposure: "both",
+    environment: { name: "MUXIMO_PORT", description: "Port." },
+  },
+  {
+    key: "worktree",
+    flags: ["--worktree [name]", "--no-worktree"],
+    description: "Run the session in a managed worktree.",
+    flagDescriptions: { "--no-worktree": "Run the session in the current workspace." },
+    exposure: "cli",
+  },
+);
+
+type HelpInput = Record<string, never>;
+type HelpContext = { help: string };
+
+const containsHelpText = (value: string) => ({
+  name: `contains help text: ${value}`,
+  check: (context: HelpContext) => {
+    expect(context.help).toContain(value);
+  },
+});
+
+const excludesHelpText = (value: string) => ({
+  name: `excludes help text: ${value}`,
+  check: (context: HelpContext) => {
+    expect(context.help).not.toContain(value);
+  },
+});
+
+const helpCases = [
+  {
+    name: "uses the flag-specific description for a negated option",
+    input: {},
+    assert: [containsHelpText("--no-worktree"), containsHelpText("Run the session in the current workspace.")],
+  },
+  {
+    name: "does not repeat an environment description that matches the option description",
+    input: {},
+    assert: [containsHelpText("Environment: MUXIMO_PORT"), excludesHelpText("Environment: MUXIMO_PORT — Port.")],
+  },
+] satisfies readonly OperationCase<"default", HelpInput, string, HelpContext>[];
+
+const helpTable: OperationTable<undefined, "default", HelpInput, string, HelpContext> = {
+  defaultFixture: noFixture(),
+  cases: helpCases,
+  execute: () => {
+    const command = new Command().name("muximo");
+    registerOptions(command, helpOptionSpecs);
+    return command.helpInformation();
+  },
+  observe: (_fixture, result) => ({ help: result.ok ? result.value : "" }),
+};
+
+describe("CLI option help metadata", () => {
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, helpTable);
 });

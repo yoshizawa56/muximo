@@ -30,6 +30,9 @@ export const workspaceMutationOptionSpecs = defineOptions(
     key: "setupHook",
     flags: ["--setup-hook <path>", "--no-setup-hook"],
     description: "Workspace setup hook.",
+    flagDescriptions: {
+      "--no-setup-hook": "Disable the workspace setup hook.",
+    },
     exposure: "cli",
     completion: { kind: "file" },
   },
@@ -37,6 +40,9 @@ export const workspaceMutationOptionSpecs = defineOptions(
     key: "setupScript",
     flags: ["--setup-script <path>", "--no-setup-script"],
     description: "Alias for the workspace setup hook.",
+    flagDescriptions: {
+      "--no-setup-script": "Disable the workspace setup script.",
+    },
     exposure: "cli",
     completion: { kind: "file" },
   },
@@ -51,6 +57,9 @@ export const workspaceMutationOptionSpecs = defineOptions(
     key: "cleanupHook",
     flags: ["--cleanup-hook <path>", "--no-cleanup-hook"],
     description: "Workspace cleanup hook.",
+    flagDescriptions: {
+      "--no-cleanup-hook": "Disable the workspace cleanup hook.",
+    },
     exposure: "cli",
     completion: { kind: "file" },
   },
@@ -58,6 +67,9 @@ export const workspaceMutationOptionSpecs = defineOptions(
     key: "cleanupScript",
     flags: ["--cleanup-script <path>", "--no-cleanup-script"],
     description: "Alias for the workspace cleanup hook.",
+    flagDescriptions: {
+      "--no-cleanup-script": "Disable the workspace cleanup script.",
+    },
     exposure: "cli",
     completion: { kind: "file" },
   },

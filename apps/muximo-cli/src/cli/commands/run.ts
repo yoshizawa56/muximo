@@ -16,6 +16,9 @@ export const runOptionSpecs = defineOptions(
     key: "worktree",
     flags: ["-w, --worktree [name]", "--no-worktree"],
     description: "Run the session in a managed worktree.",
+    flagDescriptions: {
+      "--no-worktree": "Run the session in the current workspace.",
+    },
     exposure: "cli",
   },
   {
@@ -29,6 +32,9 @@ export const runOptionSpecs = defineOptions(
     key: "setupHook",
     flags: ["--setup-hook <path>", "--no-setup-hook"],
     description: "Override the workspace setup hook.",
+    flagDescriptions: {
+      "--no-setup-hook": "Disable the workspace setup hook.",
+    },
     exposure: "cli",
     completion: { kind: "file" },
   },
@@ -36,6 +42,9 @@ export const runOptionSpecs = defineOptions(
     key: "cleanupHook",
     flags: ["--cleanup-hook <path>", "--no-cleanup-hook"],
     description: "Override the workspace cleanup hook.",
+    flagDescriptions: {
+      "--no-cleanup-hook": "Disable the workspace cleanup hook.",
+    },
     exposure: "cli",
     completion: { kind: "file" },
   },

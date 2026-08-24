@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { getRegisteredOptions, type CliCompletionSpec, type CliOptionSpec } from "../options/index.js";
+import { type CliCompletionSpec, type CliOptionSpec, getRegisteredOptions } from "../options/index.js";
 
 type CompletionNode = {
   command: Command;
@@ -44,7 +44,10 @@ function appendNodeFunction(lines: string[], node: CompletionNode, rootFunctionN
       lines.push(`    ${shellQuote(child.command.name())}) ${childFunctionName} ;;`);
     }
     lines.push(
-      `    *) _arguments -s ${renderArguments(node.options, node.children.map((child) => child.command.name()))} ;;`,
+      `    *) _arguments -s ${renderArguments(
+        node.options,
+        node.children.map((child) => child.command.name()),
+      )} ;;`,
       "  esac",
       "}",
       "",
@@ -66,16 +69,14 @@ function renderOption(spec: CliOptionSpec): string[] {
     const valueMatch = /(?:<([^>]+)>|\[([^\]]+)\])/u.exec(flags);
     const valueName = (valueMatch?.[1] ?? valueMatch?.[2])?.replace(/\.\.\.$/u, "");
     const repeatPrefix = spec.repeatable ? "*" : "";
-    const description = escapeZshText(spec.description);
     return flags
       .split(",")
       .map((part) => part.trim().split(/\s+/u)[0])
       .filter((name) => name.length > 0)
       .map((name) => {
+        const description = escapeZshText(spec.flagDescriptions?.[name] ?? spec.description);
         const optionValueName = name.startsWith("--no-") ? undefined : valueName;
-        const completion = optionValueName
-          ? `:${optionValueName}:${renderValueCompletion(spec.completion)}`
-          : "";
+        const completion = optionValueName ? `:${optionValueName}:${renderValueCompletion(spec.completion)}` : "";
         return shellQuote(`${repeatPrefix}${name}[${description}]${completion}`);
       });
   });
@@ -106,10 +107,7 @@ function renderValueCompletion(spec: CliCompletionSpec | undefined): string {
   }
 }
 
-function mergeOptions(
-  inherited: readonly CliOptionSpec[],
-  local: readonly CliOptionSpec[],
-): CliOptionSpec[] {
+function mergeOptions(inherited: readonly CliOptionSpec[], local: readonly CliOptionSpec[]): CliOptionSpec[] {
   const options = new Map<string, CliOptionSpec>();
   for (const spec of [...inherited, ...local]) {
     const existing = options.get(spec.key);
@@ -120,6 +118,7 @@ function mergeOptions(
     options.set(spec.key, {
       ...existing,
       flags: [...new Set([...(existing.flags ?? []), ...(spec.flags ?? [])])],
+      flagDescriptions: { ...existing.flagDescriptions, ...spec.flagDescriptions },
     });
   }
   return [...options.values()];
