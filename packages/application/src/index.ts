@@ -1,6 +1,7 @@
 export { InvalidWorkspaceCopyPatternError, InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
 export type {
   AgentBackendResumeState,
+  AgentObservationPort,
   AgentSessionExecutionHealth,
   AgentSessionListInput,
   AgentSessionListObservation,
@@ -9,6 +10,7 @@ export type {
   AgentSessionResumeReason,
   AgentSessionResumeState,
   AgentSessionWorktreeState,
+  AgentStateObservation,
   CleanupAgentSessionInput,
   CleanupAgentSessionResult,
   CleanupDisposition,
@@ -49,6 +51,8 @@ export type {
   ApplicationClock,
   CreatePaneInput,
   CreateSessionInput,
+  ManageSessionInput,
+  ManageSessionResult,
   MuximodClock,
   MuximodPanePlacement,
   MuximodPaneSummary,
@@ -119,6 +123,7 @@ export type {
   MuximodHostPort,
   MuximodPaneClassification,
   MuximodPaneObservation,
+  MuximodSessionManagementPort,
   MuximodTerminalObservationPort,
   MuximodViewportPort,
   MuximodWorkspaceCatalogPort,
@@ -194,6 +199,7 @@ export {
   readManagedAgentObservation,
   recentAgentOutputLimits,
 } from "./usecases/sessions/agent-status.js";
+export { manageSession } from "./usecases/sessions/manage-session.js";
 export { RunShell, type RunShellResult } from "./usecases/shell/run-shell.js";
 // Workspace use cases (one file per operation)
 export { DeleteWorkspace } from "./usecases/workspaces/delete-workspace.js";

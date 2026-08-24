@@ -43,9 +43,10 @@ export async function createSession(
     }
     const currentPanes =
       initialPane && shellPane ? panes.map((pane) => (pane.id === initialPane.id ? shellPane : pane)) : panes;
-    const session = summarizeSessions(currentPanes.filter((pane) => pane.sessionName === input.name)).find(
-      (candidate) => candidate.name === input.name,
-    );
+    const session = summarizeSessions(
+      currentPanes.filter((pane) => pane.sessionName === input.name),
+      new Set([input.name]),
+    ).find((candidate) => candidate.name === input.name);
     if (!session || !currentPanes.some((pane) => pane.sessionName === input.name)) {
       throw new ApplicationError("session_not_visible", "terminal host created the session but it could not be read");
     }

@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   type AgentStatusStore,
   type ApplicationClock,
@@ -15,8 +15,6 @@ import {
   AuthStore,
   allowedRootsFromEnvironment,
   BunSocketAdapter,
-  buildMuximoShellCommand,
-  configureManagedTmuxSession,
   createAgentDatabase,
   createImagePaster,
   createLogger,
@@ -153,6 +151,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const application = createMuximodApplication({
     getTerminal: getLocalTerminal,
     host,
+    sessionManagement: host,
     clock,
     paneRepository,
     agentSessionRepository,
@@ -289,29 +288,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     app,
     async start(): Promise<void> {
       if (httpServer) return;
-
-      let createdDefaultSession = false;
-      try {
-        const managedSessionId = randomUUID();
-        createdDefaultSession = tmux.ensureSession(
-          defaultTarget,
-          process.cwd(),
-          buildMuximoShellCommand(undefined, {
-            MUXIMOD_MANAGED_SESSION_ID: managedSessionId,
-            MUXIMOD_MANAGED_SESSION_NAME: defaultTarget,
-          }),
-        );
-        if (createdDefaultSession) configureManagedTmuxSession(tmux, defaultTarget, managedSessionId);
-      } catch (error) {
-        if (createdDefaultSession) {
-          try {
-            tmux.killSession(defaultTarget);
-          } catch {
-            // Preserve the warning; cleanup is best effort.
-          }
-        }
-        logger.warn("tmux.default_session_failed", errorFields(error));
-      }
 
       try {
         httpServer = Bun.serve({

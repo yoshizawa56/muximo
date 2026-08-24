@@ -17,6 +17,7 @@ import { createLogger, type Logger, type LogRecord } from "../logging/index.js";
 type PaneFixture = {
   root: string;
   events: string[];
+  observations: Array<{ state: string; recentOutput?: string }>;
   paneOptions: Array<{ name: string; value: string }>;
   paneWrites: Array<{ name: string; value: string }>;
   diagnostics: LogRecord[];
@@ -27,25 +28,27 @@ type PaneFixture = {
 
 type PaneResult = {
   events: readonly string[];
+  observations: readonly { state: string; recentOutput?: string }[];
   paneOptions: readonly { name: string; value: string }[];
   diagnosticEvents: readonly string[];
 };
 
-type Input = { mode: "success" | "fallback" | "failure" };
+type Input = { mode: "success" | "fallback" | "failure"; operation: "lifecycle" | "observation" };
 
 const cases = [
   {
     name: "adopts and releases through the control socket in order",
-    input: { mode: "success" },
+    input: { mode: "success", operation: "lifecycle" },
     assert: [
       hasEvents<PaneResult, PaneResult>("events", ["connect", "adopt", "close", "connect", "release", "close"]),
+      hasObserved<PaneResult, PaneResult>("observations", []),
       hasObserved<PaneResult, PaneResult>("paneOptions", []),
       hasObserved<PaneResult, PaneResult>("diagnosticEvents", []),
     ],
   },
   {
     name: "falls back to pane metadata when the control socket is unavailable",
-    input: { mode: "fallback" },
+    input: { mode: "fallback", operation: "lifecycle" },
     assert: [
       {
         name: "writes session and execution metadata for adoption",
@@ -63,15 +66,27 @@ const cases = [
         },
       },
       hasObserved<PaneResult, PaneResult>("events", ["connect", "connect", "reset-shell-metadata"]),
+      hasObserved<PaneResult, PaneResult>("observations", []),
       hasObserved<PaneResult, PaneResult>("diagnosticEvents", []),
     ],
   },
   {
     name: "records control operation failures as structured diagnostics",
-    input: { mode: "failure" },
+    input: { mode: "failure", operation: "lifecycle" },
     assert: [
       hasObserved<PaneResult, PaneResult>("events", ["connect", "connect"]),
+      hasObserved<PaneResult, PaneResult>("observations", []),
       hasObserved<PaneResult, PaneResult>("diagnosticEvents", ["pane.adopt_failed", "pane.release_failed"]),
+    ],
+  },
+  {
+    name: "publishes provider state and recent output through the control socket",
+    input: { mode: "success", operation: "observation" },
+    assert: [
+      hasObserved<PaneResult, PaneResult>("events", ["connect", "observe", "close"]),
+      hasObserved<PaneResult, PaneResult>("observations", [{ state: "waiting_input", recentOutput: "Need input" }]),
+      hasObserved<PaneResult, PaneResult>("paneOptions", []),
+      hasObserved<PaneResult, PaneResult>("diagnosticEvents", []),
     ],
   },
 ] satisfies readonly OperationCase<"default", Input, PaneResult, PaneResult>[];
@@ -96,16 +111,22 @@ const table: OperationTable<PaneFixture, "default", Input, PaneResult, PaneResul
       createdAt: "2026-08-23T00:00:00.000Z",
       updatedAt: "2026-08-23T00:00:00.000Z",
     });
-    await fixture.adapter.adopt(session);
-    await fixture.adapter.release(session);
+    if (input.operation === "lifecycle") {
+      await fixture.adapter.adopt(session);
+      await fixture.adapter.release(session);
+    } else {
+      await fixture.adapter.observe(session, { state: "waiting_input", recentOutput: "Need input" });
+    }
     return {
       events: fixture.events,
+      observations: fixture.observations,
       paneOptions: fixture.paneWrites,
       diagnosticEvents: fixture.diagnostics.map((record) => record.event),
     };
   },
   observe: (fixture) => ({
     events: fixture.events,
+    observations: fixture.observations,
     paneOptions: fixture.paneWrites,
     diagnosticEvents: fixture.diagnostics.map((record) => record.event),
   }),
@@ -114,6 +135,7 @@ const table: OperationTable<PaneFixture, "default", Input, PaneResult, PaneResul
 function createPaneFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: PaneFixture } {
   const root = mkdtempSync(join(tmpdir(), "muximo-pane-adapter-"));
   const events: string[] = [];
+  const observations: PaneFixture["observations"] = [];
   const paneOptions: PaneFixture["paneOptions"] = [];
   const paneWrites: PaneFixture["paneWrites"] = [];
   const diagnostics: LogRecord[] = [];
@@ -128,6 +150,7 @@ function createPaneFixture(registerCleanup?: (cleanup: () => void) => void): { f
   const fixture: PaneFixture = {
     root,
     events,
+    observations,
     paneOptions,
     paneWrites,
     diagnostics,
@@ -160,8 +183,9 @@ function createAdapter(fixture: PaneFixture, mode: Input["mode"]): TmuxPanePubli
         releaseAgentSession: async () => {
           fixture.events.push("release");
         },
-        observeAgentSession: async () => {
+        observeAgentSession: async (input) => {
           fixture.events.push("observe");
+          fixture.observations.push({ state: input.state, recentOutput: input.recentOutput });
         },
         close: () => {
           fixture.events.push("close");

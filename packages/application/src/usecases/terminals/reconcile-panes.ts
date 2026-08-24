@@ -95,7 +95,18 @@ export async function reconcilePanes(
       kind !== "agent"
         ? { state: "running" as const }
         : adoptedSession?.executionId
-          ? readManagedAgentObservation(adoptedSession.id, adoptedSession.executionId, agentStatus)
+          ? readManagedAgentObservation(
+              adoptedSession.id,
+              adoptedSession.executionId,
+              agentStatus,
+              existing?.agentSessionId === adoptedSession.id &&
+                existing.agentExecutionId === hostPane.muximodExecutionId
+                ? {
+                    state: existing.state,
+                    ...(existing.recentOutput === undefined ? {} : { recentOutput: existing.recentOutput }),
+                  }
+                : undefined,
+            )
           : await host.observeUnmanagedAgent(hostPane.hostPaneId, existing?.state ?? "running");
     const name = staleAgentMetadata
       ? hostPane.title || hostPane.command || hostPane.hostPaneId
@@ -184,7 +195,7 @@ function resolvePaneKind(
   commandObservation: MuximodPaneClassification,
 ): PaneRecord["kind"] {
   if (staleAgentMetadata) return "shell";
-  if (hostPane.muximodKind === "agent" && adopted) return "agent";
+  if (adopted) return "agent";
   if (hostPane.muximodKind === "agent" && !hostPane.muximodSessionId) return "agent";
   if (hostPane.muximodKind === "shell" || hostPane.muximodKind === "unknown") return hostPane.muximodKind;
   const detected = commandObservation.kind;

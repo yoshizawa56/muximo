@@ -48,6 +48,15 @@ export type CreateSessionInput = {
   workspaceId?: string;
 };
 
+export type ManageSessionInput = {
+  name: string;
+};
+
+export type ManageSessionResult = {
+  name: string;
+  changed: boolean;
+};
+
 export type MuximodWorkspaceDirectory = {
   id: string;
   name: string;
@@ -90,6 +99,7 @@ export type MuximodSessionSummary = {
   paneCount: number;
   waitingCount: number;
   detail: string;
+  managed: boolean;
 };
 
 export type MuximodPaneSummary = PaneRecord;
@@ -112,6 +122,7 @@ export type MuximodApplication = {
   sessions: {
     list(): Promise<MuximodSessionSummary[]>;
     create(input: CreateSessionInput): Promise<MuximodSessionSummary>;
+    manage(input: ManageSessionInput): Promise<ManageSessionResult>;
   };
   panes: {
     list(sessionName?: string): Promise<MuximodPaneSummary[]>;

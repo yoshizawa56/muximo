@@ -616,10 +616,28 @@ export const tmuxSessionSchema = z.object({
   paneCount: z.number().int().min(0),
   waitingCount: z.number().int().min(0),
   detail: z.string(),
+  managed: z.boolean().default(false),
 });
 export type TmuxSession = z.infer<typeof tmuxSessionSchema>;
 
 export const sessionListResponseSchema = z.object({ sessions: z.array(tmuxSessionSchema) });
+
+export const manageSessionRequestSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .regex(/^[A-Za-z0-9._-]+$/),
+});
+export type ManageSessionRequest = z.infer<typeof manageSessionRequestSchema>;
+
+export const managedSessionResponseSchema = z.object({
+  session: z.object({
+    name: z.string().min(1),
+    changed: z.boolean(),
+  }),
+});
 
 export const createSessionRequestSchema = z
   .object({

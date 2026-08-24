@@ -2,6 +2,7 @@
 
 import {
   type FixtureHandle,
+  hasError,
   hasObserved,
   runScenarioTable,
   type ScenarioCase,
@@ -37,6 +38,7 @@ type ViewportStep =
   | { type: "reassert" }
   | { type: "poll" }
   | { type: "unfocus" };
+type ViewportFixtureKey = "default" | "missing";
 type ViewportFixture = {
   adapter: FakeTmuxAdapter;
   manager: TmuxViewportManager;
@@ -55,6 +57,7 @@ type ViewportContext = {
   events: readonly ViewportEvent[];
   refreshes: readonly string[];
   resizes: readonly [number, number][];
+  ensureSessionCalls: readonly string[];
 };
 
 const viewportFixture = (): FixtureHandle<ViewportFixture> => {
@@ -64,9 +67,24 @@ const viewportFixture = (): FixtureHandle<ViewportFixture> => {
   return { fixture, cleanup: () => manager.dispose() };
 };
 
+const missingViewportFixture = (): FixtureHandle<ViewportFixture> => {
+  const result = viewportFixture();
+  result.fixture.adapter.missingTarget = true;
+  return result;
+};
+
 const attach = { type: "attach" as const, cols: 80, rows: 24 };
 const prepare = { type: "prepare" as const };
 const cases = [
+  {
+    name: "does not create a missing target session during prepare",
+    fixture: "missing",
+    steps: [prepare],
+    assert: [
+      hasError<ViewportContext, undefined>({ message: "Could not resolve tmux pane: muximod" }),
+      hasObserved<ViewportContext, undefined>("ensureSessionCalls", []),
+    ],
+  },
   {
     name: "enters a phone-sized zoomed viewport without changing desktop state",
     steps: [prepare, attach],
@@ -222,10 +240,11 @@ const cases = [
       hasObserved<ViewportContext, undefined>("refreshes", ["/dev/mobile", "/dev/desktop", "/dev/mobile"]),
     ],
   },
-] satisfies readonly ScenarioCase<"default", ViewportStep, undefined, ViewportContext>[];
+] satisfies readonly ScenarioCase<ViewportFixtureKey, ViewportStep, undefined, ViewportContext>[];
 
-const table: ScenarioTable<ViewportFixture, "default", ViewportStep, undefined, ViewportContext> = {
+const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, undefined, ViewportContext> = {
   defaultFixture: viewportFixture,
+  fixtures: { default: viewportFixture, missing: missingViewportFixture },
   cases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
@@ -269,6 +288,7 @@ const table: ScenarioTable<ViewportFixture, "default", ViewportStep, undefined, 
     events: [...fixture.events],
     refreshes: [...fixture.adapter.refreshes],
     resizes: [...fixture.adapter.resizeCalls],
+    ensureSessionCalls: fixture.adapter.ensureSessionCalls.map(({ target }) => target),
   }),
 };
 
@@ -277,6 +297,8 @@ describe("tmux viewport manager", () => {
 });
 
 class FakeTmuxAdapter extends TmuxAdapter {
+  public missingTarget = false;
+  public readonly ensureSessionCalls: Array<{ target: string; cwd: string }> = [];
   public readonly state = {
     width: 120,
     height: 40,
@@ -315,8 +337,13 @@ class FakeTmuxAdapter extends TmuxAdapter {
   public constructor() {
     super("/private/tmp/muximo-fake.sock");
   }
-  public override resolvePane(_target: string): TmuxPaneRef {
+  public override resolvePane(target: string): TmuxPaneRef {
+    if (this.missingTarget) throw new Error(`Could not resolve tmux pane: ${target}`);
     return { paneId: "%0", windowId: "@0", sessionName: "muximod" };
+  }
+  public override ensureSession(target: string, cwd: string): boolean {
+    this.ensureSessionCalls.push({ target, cwd });
+    return false;
   }
   public override snapshotWindow(pane: TmuxPaneRef): TmuxWindowSnapshot {
     return {

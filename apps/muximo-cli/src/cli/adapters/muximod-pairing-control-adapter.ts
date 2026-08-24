@@ -120,6 +120,7 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     tmuxPaneId: string;
     executionId: string;
     state: AgentStatus;
+    recentOutput?: string;
   }): Promise<void> {
     const response = await this.request({ type: "observe_agent_session", ...input });
     if (

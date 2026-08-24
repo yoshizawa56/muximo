@@ -2,6 +2,7 @@ import type {
   AuthPairingClaimRequest as ApplicationAuthPairingClaimRequest,
   CreatePaneInput,
   CreateSessionInput,
+  ManageSessionInput,
   MuximodPaneSummary,
   MuximodSessionSummary,
   MuximodTerminalEndpoint,
@@ -13,6 +14,7 @@ import {
   authInfoSchema,
   type CreatePaneRequest,
   type CreateSessionRequest,
+  type ManageSessionRequest,
   muximodCapabilitiesSchema,
   muximodContract,
   type pairingClaimRequestSchema,
@@ -113,6 +115,10 @@ function toApplicationCreateSession(input: CreateSessionRequest): CreateSessionI
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
   };
+}
+
+function toApplicationManageSession(input: ManageSessionRequest): ManageSessionInput {
+  return { name: input.name };
 }
 
 function toApplicationPairingClaim(
@@ -334,6 +340,12 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
           const session = await deps.application.sessions.create(toApplicationCreateSession(input));
           return { session: toProtocolSession(session) };
         }, context),
+      ),
+      manage: os.sessions.manage.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () => ({ session: await deps.application.sessions.manage(toApplicationManageSession(input)) }),
+          context,
+        ),
       ),
     },
     panes: {

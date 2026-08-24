@@ -47,6 +47,7 @@ function createFixture(environment: NodeJS.ProcessEnv = {}) {
     "run",
     "shell",
     "tmuxNewSession",
+    "tmuxManageSession",
     "sessionList",
     "sessionResume",
     "sessionCleanup",
@@ -128,6 +129,19 @@ const cases = [
             cleanupHookExplicit: false,
             backendArgs: ["--profile", "review"],
           },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches existing tmux session adoption through the typed handler",
+    input: { args: ["tmux", "manage-session", "--name", "desktop"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "tmuxManageSession",
+          input: { name: "desktop" },
         },
       ]),
     ],

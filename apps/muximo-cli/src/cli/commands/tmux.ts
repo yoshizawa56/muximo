@@ -34,6 +34,17 @@ export const tmuxNewSessionSchema = z.object({
   detached: z.boolean().default(false),
 });
 
+export const tmuxManageSessionOptionSpecs = defineOptions({
+  key: "name",
+  flags: ["-s, --name <name>"],
+  description: "Name of the existing tmux session.",
+  exposure: "cli",
+});
+
+export const tmuxManageSessionSchema = z.object({
+  name: z.string().trim().min(1, { error: "tmux session name is required" }),
+});
+
 export function registerTmuxCommands(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
   const command = parent.command("tmux").description("Manage muximo tmux sessions");
   command.action(() => {
@@ -55,6 +66,21 @@ export function registerTmuxCommands(parent: Command, handlers: CliHandlers, con
         commandPath: ["tmux", "new-session"],
         context,
         handler: handlers.tmuxNewSession,
+      }),
+    );
+  });
+
+  const manageSession = command.command("manage-session").description("Adopt an existing tmux session into muximo");
+  registerOptions(manageSession, tmuxManageSessionOptionSpecs);
+  manageSession.action(async (options) => {
+    const resolved = resolveCommandOptions(options, tmuxManageSessionOptionSpecs, context);
+    context.report(
+      await invokeCliHandler({
+        schema: tmuxManageSessionSchema,
+        rawInput: { ...resolved, name: resolved.name ?? "" },
+        commandPath: ["tmux", "manage-session"],
+        context,
+        handler: handlers.tmuxManageSession,
       }),
     );
   });

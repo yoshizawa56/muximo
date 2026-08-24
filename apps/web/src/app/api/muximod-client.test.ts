@@ -29,7 +29,7 @@ const workspace = {
   cleanupScriptPath: null,
   worktreeCopyPatterns: [],
 };
-const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell" };
+const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", managed: true };
 const pane = {
   id: "pane-1",
   tmuxPaneId: "%0",
@@ -51,6 +51,7 @@ type RpcOperation =
   | "workspaces"
   | "browse-workspaces"
   | "invalid-session"
+  | "manage-session"
   | "update-workspace"
   | "delete-workspace";
 type RpcInput = {
@@ -163,6 +164,16 @@ const rpcTable: OperationTable<RpcFixture, "default", RpcInput, unknown, RpcCont
 
 const mutationCases = [
   {
+    name: "adopts an existing session through the typed RPC procedure",
+    input: { operation: "manage-session", path: "/rpc/sessions/manage", sessionName: "integration" },
+    assert: [
+      returns<RpcContext, unknown>({ name: "integration", changed: true }),
+      hasObserved<RpcContext, unknown>("requests", [
+        { method: "POST", url: "http://muximod.local/rpc/sessions/manage" },
+      ]),
+    ],
+  },
+  {
     name: "updates a workspace through the typed RPC procedure",
     input: { operation: "update-workspace", path: "/rpc/workspaces/update", workspaceId: "workspace-1" },
     assert: [
@@ -189,6 +200,7 @@ const mutationTable: OperationTable<RpcFixture, "default", RpcInput, unknown, Rp
   cases: mutationCases,
   execute: async (_fixture, input) => {
     const rpc = muximodRpc({ httpBaseUrl: "http://muximod.local", websocketUrl: "ws://muximod.local/terminal" });
+    if (input.operation === "manage-session") return (await rpc.sessions.manage({ name: input.sessionName! })).session;
     if (input.operation === "update-workspace")
       return (await rpc.workspaces.update({ workspaceId: input.workspaceId!, input: { name: "renamed" } })).workspace;
     await rpc.workspaces.delete({ workspaceId: input.workspaceId! });
@@ -334,6 +346,7 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
           return { sessions: [session] };
         }),
         create: os.sessions.create.handler(() => ({ session })),
+        manage: os.sessions.manage.handler(() => ({ session: { name: session.name, changed: true } })),
       },
       panes: {
         list: os.panes.list.handler(() => ({ panes: [pane] })),
