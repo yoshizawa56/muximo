@@ -36,7 +36,10 @@ export function SettingsView({ viewModel }: { viewModel: SettingsViewModel }) {
         </div>
 
         {viewModel.errorMessage && !viewModel.isPairingQr ? (
-          <p className="mb-4 rounded-xl border border-red/38 bg-red/30 p-[0.85rem_1rem] text-[#ffb0aa]" role="alert">
+          <p
+            className="mb-4 rounded-xl border border-red/38 bg-red/30 p-[0.85rem_1rem] whitespace-pre-wrap break-words text-[#ffb0aa]"
+            role="alert"
+          >
             {viewModel.errorMessage}
           </p>
         ) : null}

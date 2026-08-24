@@ -53,6 +53,15 @@ export const InvalidPairingCode: Story = {
   args: { viewModel: buildViewModel({ errorMessage: "QR code does not contain a valid muximo pairing code" }) },
 };
 
+export const MuximodConnectionFailed: Story = {
+  args: {
+    viewModel: buildViewModel({
+      errorMessage:
+        "Could not communicate with muximod while requesting server information.\nEndpoint: https://muximo-host.tailnet.ts.net:8444/rpc\nDetails: TypeError: Load failed",
+    }),
+  },
+};
+
 export const PairingInProgress: Story = {
   args: {
     viewModel: buildViewModel({
