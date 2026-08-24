@@ -1,5 +1,6 @@
 import { BrowserQRCodeReader } from "@zxing/browser";
 import { useEffect, useRef, useState } from "react";
+import { appendCameraErrorDetails, cameraErrorName } from "./-qr-pairing-scanner-error";
 
 type ScannerControls = { stop: () => void };
 
@@ -27,12 +28,12 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
     };
 
     const setCameraError = (cause: unknown) => {
-      const name =
-        cause && typeof cause === "object" && "name" in cause && typeof cause.name === "string" ? cause.name : "";
+      const name = cameraErrorName(cause);
+      const setDetailedError = (message: string) => setError(appendCameraErrorDetails(message, cause));
 
       if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
         const secureContext = typeof window !== "undefined" && window.isSecureContext;
-        setError(
+        setDetailedError(
           secureContext
             ? "Camera access is unavailable in this environment."
             : "Camera access requires HTTPS or localhost.",
@@ -40,18 +41,18 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
         return;
       }
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        setError("Camera permission was denied. Allow camera access in your browser or device settings.");
+        setDetailedError("Camera permission was denied. Allow camera access in your browser or device settings.");
         return;
       }
       if (name === "NotFoundError") {
-        setError("No camera was found.");
+        setDetailedError("No camera was found.");
         return;
       }
       if (name === "NotReadableError" || name === "AbortError") {
-        setError("Could not start the camera. Make sure another app is not using it.");
+        setDetailedError("Could not start the camera. Make sure another app is not using it.");
         return;
       }
-      setError("Camera access failed.");
+      setDetailedError("Camera access failed.");
     };
 
     const start = async () => {
@@ -92,7 +93,7 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
         <video className="block size-full object-cover" ref={videoRef} autoPlay muted playsInline />
         <span className="pointer-events-none absolute inset-[16%] rounded-[0.7rem] border-2 border-white/80 shadow-[0_0_0_999px_rgb(0_0_0_/_20%)]" />
       </div>
-      <p className="m-0 text-[0.82rem] text-[#638f6b]">
+      <p className="m-0 text-[0.82rem] text-[#638f6b]" role={error ? "alert" : undefined}>
         {error ?? "Scan the QR code shown by muximo pair in this app."}
       </p>
       <button

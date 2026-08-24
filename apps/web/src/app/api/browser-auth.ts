@@ -16,6 +16,7 @@ import {
   type MuximodRpcClient,
   muximodRpc,
 } from "./muximod-client.js";
+import { withMuximodRequest } from "./muximod-connection-error.js";
 
 type StoredBrowserDevice = {
   serverId: string;
@@ -69,8 +70,11 @@ export async function pairBrowserFromQr(
 ): Promise<BrowserPairingResult> {
   const payload = parsePairingQrPayload(value);
   const connection = createServeConnection(payload.muximodBaseUrl);
+  const rpcEndpoint = `${connection.httpBaseUrl.replace(/\/+$/, "")}/rpc`;
   const client: MuximodRpcClient = muximodRpc(connection);
-  const info = await client.auth.info({});
+  const info = await withMuximodRequest(rpcEndpoint, "requesting server information", () =>
+    client.auth.info({}),
+  );
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const publicKey = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   const parsedPublicKey = publicKeyJwk(publicKey);
@@ -96,12 +100,14 @@ export async function pairBrowserFromQr(
     clientNonce,
     signature: await signEcdsa(keyPair.privateKey, claimMessage),
   };
-  const claim = await client.auth.claimPairing({ pairingId: payload.pairingId, request: claimRequest });
+  const claim = await withMuximodRequest(rpcEndpoint, "claiming the QR pairing", () =>
+    client.auth.claimPairing({ pairingId: payload.pairingId, request: claimRequest }),
+  );
   if (claim.serverId !== info.serverId || claim.pairingId !== payload.pairingId)
     throw new Error("muximod returned an unexpected pairing identity");
   options.onProgress?.({ phase: "awaiting_approval", fingerprint: claim.keyFingerprint });
 
-  const status = await waitForPairingApproval(client, payload.pairingId, claim.claimToken);
+  const status = await waitForPairingApproval(client, rpcEndpoint, payload.pairingId, claim.claimToken);
   if (status.status !== "approved" || !status.deviceId) throw new Error(`Pairing was ${status.status}`);
   await saveBrowserDevice({
     serverId: info.serverId,
@@ -165,14 +171,17 @@ export function createBrowserMuximodAuth(connection: MuximodConnection): Muximod
 
 async function waitForPairingApproval(
   client: MuximodRpcClient,
+  endpoint: string,
   pairingId: string,
   claimToken: string,
 ): Promise<{ status: "offered" | "awaiting_approval" | "approved" | "rejected" | "expired"; deviceId: string | null }> {
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
-    const status = await client.auth.pairingStatus(
-      { pairingId, claimToken },
-      { context: { pairingToken: claimToken } },
+    const status = await withMuximodRequest(endpoint, "checking pairing approval", () =>
+      client.auth.pairingStatus(
+        { pairingId, claimToken },
+        { context: { pairingToken: claimToken } },
+      ),
     );
     if (status.status === "approved" || status.status === "rejected" || status.status === "expired") return status;
     await wait(1_000);
