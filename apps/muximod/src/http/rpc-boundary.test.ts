@@ -14,7 +14,7 @@ import {
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
 import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
-import { createOriginPolicy } from "./middleware.js";
+import { createOriginPolicy, muximoCapacitorOrigin } from "./middleware.js";
 import { createHttpTestClient } from "./test-client.js";
 import { createTestMuximodSocketFactory } from "./test-socket.js";
 
@@ -72,7 +72,7 @@ type HttpResult = { status: number; body: unknown; allowOrigin: string | null; v
 type HttpContext = { events: readonly { event: string; client: string }[] };
 type HttpInput =
   | { operation: "health" | "unknown" | "hook" }
-  | { operation: "preflight"; origin: "allowed" | "denied" };
+  | { operation: "preflight"; origin: "allowed" | "capacitor" | "denied" };
 type RpcInput =
   | { operation: "info" | "authorized-sessions" | "unauthorized-sessions" }
   | { operation: "list-panes" }
@@ -189,6 +189,21 @@ const httpCases = [
     ],
   },
   {
+    name: "answers a first-party Capacitor RPC preflight with an exact origin and Vary header",
+    input: { operation: "preflight", origin: "capacitor" },
+    assert: [
+      responseMatches(204),
+      {
+        name: "returns the Capacitor origin",
+        check: (_context, result) => {
+          if (!result.ok) throw result.error;
+          expect(result.value.allowOrigin).toBe(muximoCapacitorOrigin);
+          expect(result.value.vary).toBe("Origin");
+        },
+      },
+    ],
+  },
+  {
     name: "rejects a denied RPC preflight without CORS headers",
     input: { operation: "preflight", origin: "denied" },
     assert: [
@@ -211,7 +226,13 @@ const httpTable: OperationTable<AppFixture, "default" | "not-ready", HttpInput, 
   cases: httpCases,
   execute: async (fixture, input) => {
     const preflightOrigin =
-      input.operation === "preflight" && input.origin === "denied" ? "http://evil.example" : "http://web.example";
+      input.operation !== "preflight"
+        ? "http://web.example"
+        : input.origin === "allowed"
+          ? "http://web.example"
+          : input.origin === "capacitor"
+            ? muximoCapacitorOrigin
+            : "http://evil.example";
     const request =
       input.operation === "health"
         ? new Request("http://muximod.local/health")

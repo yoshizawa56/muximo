@@ -63,9 +63,9 @@ export type MuximodOptions = {
   controlSocket?: string;
   muximodBaseUrl?: string;
   /**
-   * Exact browser origins allowed to call muximod. If omitted, browser
-   * requests are denied; configure this option or MUXIMOD_ALLOWED_ORIGINS.
-   * Requests without Origin remain allowed for trusted local clients.
+   * Additional exact browser origins allowed to call muximod. The bundled
+   * Capacitor shell origin is always allowed. Requests without Origin remain
+   * allowed for trusted local clients.
    */
   allowedOrigins?: readonly string[];
   originPolicy?: MuximodOriginPolicy;
