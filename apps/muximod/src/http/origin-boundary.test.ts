@@ -9,11 +9,12 @@ import {
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
 import { createMuximodApp, type MuximodApp } from "./app.js";
-import { createOriginPolicy } from "./middleware.js";
+import { createOriginPolicy, muximoCapacitorOrigin } from "./middleware.js";
 import { createHttpTestClient } from "./test-client.js";
 import { createTestMuximodSocketFactory } from "./test-socket.js";
 
 const allowedOrigin = "http://web.example";
+const customOrigin = "capacitor://evil.example";
 const deniedOrigin = "http://evil.example";
 const authContext = {
   sessionId: "session-origin-test-000000",
@@ -36,7 +37,7 @@ const authContext = {
 
 type OriginInput = {
   route: "rpc" | "events" | "terminal";
-  origin: "allowed" | "denied" | "none";
+  origin: "allowed" | "capacitor" | "custom" | "denied" | "none";
 };
 type OriginResult = { status: number; body: unknown };
 type OriginFixture = {
@@ -173,6 +174,24 @@ const cases = [
     ],
   },
   {
+    name: "dispatches protected RPC from the first-party Capacitor origin",
+    input: { route: "rpc", origin: "capacitor" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 200),
+      hasObserved<OriginContext, OriginResult>("sessionsCalls", 1),
+      hasObserved<OriginContext, OriginResult>("authCalls", 1),
+    ],
+  },
+  {
+    name: "rejects a non-first-party custom origin before auth",
+    input: { route: "rpc", origin: "custom" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 403),
+      hasObserved<OriginContext, OriginResult>("sessionsCalls", 0),
+      hasObserved<OriginContext, OriginResult>("authCalls", 0),
+    ],
+  },
+  {
     name: "allows a protected RPC from a trusted no-Origin client",
     input: { route: "rpc", origin: "none" },
     assert: [
@@ -209,6 +228,14 @@ const cases = [
     ],
   },
   {
+    name: "dispatches authenticated SSE from the first-party Capacitor origin",
+    input: { route: "events", origin: "capacitor" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 200),
+      hasObserved<OriginContext, OriginResult>("subscriptions", 1),
+    ],
+  },
+  {
     name: "upgrades a terminal WebSocket from an allowlisted origin",
     input: { route: "terminal", origin: "allowed" },
     assert: [
@@ -224,6 +251,15 @@ const cases = [
       hasObserved<OriginContext, OriginResult>("status", 403),
       hasObserved<OriginContext, OriginResult>("consumedTickets", 0),
       hasObserved<OriginContext, OriginResult>("upgrades", 0),
+    ],
+  },
+  {
+    name: "upgrades a terminal WebSocket from the first-party Capacitor origin",
+    input: { route: "terminal", origin: "capacitor" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 101),
+      hasObserved<OriginContext, OriginResult>("consumedTickets", 1),
+      hasObserved<OriginContext, OriginResult>("upgrades", 1),
     ],
   },
   {
@@ -252,7 +288,16 @@ const table: OperationTable<OriginFixture, "default" | "no-origin-denied", Origi
   fixtures: { default: () => fixture(true), "no-origin-denied": () => fixture(false) },
   cases,
   execute: async (testFixture, input) => {
-    const origin = input.origin === "none" ? undefined : input.origin === "allowed" ? allowedOrigin : deniedOrigin;
+    const origin =
+      input.origin === "none"
+        ? undefined
+        : input.origin === "allowed"
+          ? allowedOrigin
+          : input.origin === "capacitor"
+            ? muximoCapacitorOrigin
+            : input.origin === "custom"
+              ? customOrigin
+              : deniedOrigin;
     if (input.route === "terminal") {
       const headers = new Headers({ upgrade: "websocket" });
       if (origin) headers.set("origin", origin);

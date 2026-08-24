@@ -101,13 +101,18 @@ export function createOriginPolicy(input: {
   if (input.allowedOrigins.some((origin) => origin === "*")) {
     throw new Error("wildcard origins are not allowed for authenticated routes");
   }
-  const allowedOrigins = new Set(input.allowedOrigins.map((origin) => normalizeOrigin(origin)));
+  const allowedOrigins = new Set(
+    [muximoCapacitorOrigin, ...input.allowedOrigins].map((origin) => normalizeOrigin(origin)),
+  );
   return {
     allows(origin) {
       return origin === null ? input.allowNoOrigin : allowedOrigins.has(origin);
     },
   };
 }
+
+/** Fixed origin used by the bundled iOS Capacitor shell. */
+export const muximoCapacitorOrigin = "capacitor://localhost";
 
 export function errorResponse(error: unknown, request: Request, originPolicy: MuximodOriginPolicy): Response {
   const mapped = mapError(error);
@@ -166,6 +171,7 @@ export function originDeniedResponse(): Response {
 
 function normalizeOrigin(origin: string): string {
   if (!origin || origin.trim() !== origin) throw new Error("allowed origins must be non-empty exact origins");
+  if (origin === muximoCapacitorOrigin) return origin;
   let parsed: URL;
   try {
     parsed = new URL(origin);
@@ -173,7 +179,7 @@ function normalizeOrigin(origin: string): string {
     throw new Error(`invalid allowed origin: ${origin}`);
   }
   if (parsed.origin !== origin || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
-    throw new Error(`allowed origin must be an exact http or https origin: ${origin}`);
+    throw new Error(`allowed origin must be an exact supported origin: ${origin}`);
   }
   return origin;
 }
