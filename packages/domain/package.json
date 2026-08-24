@@ -15,6 +15,9 @@
     "test": "bun test src",
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",
     "typescript": "^7.0.2",

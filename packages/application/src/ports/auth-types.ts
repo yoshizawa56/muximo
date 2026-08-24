@@ -1,0 +1,152 @@
+// Auth-flow boundary data owned by the auth ports and auth use cases.
+import type { PublicKeyJwk } from "@muximo/domain";
+
+export type { PublicKeyJwk } from "@muximo/domain";
+
+export type AuthDeviceType = "browser" | "native" | "cli";
+export type AuthDeviceStatus = "active" | "revoked";
+export type AuthPairingStatus = "offered" | "awaiting_approval" | "approved" | "rejected" | "expired";
+
+export type AuthDeviceRecord = {
+  deviceId: string;
+  serverId: string;
+  publicKey: PublicKeyJwk;
+  keyFingerprint: string;
+  displayName: string;
+  deviceType: AuthDeviceType;
+  platform?: string;
+  clientVersion?: string;
+  status: AuthDeviceStatus;
+  createdAt: string;
+  approvedAt: string;
+  lastSeenAt?: string;
+  revokedAt?: string;
+};
+
+export type AuthPairingRecord = {
+  pairingId: string;
+  serverId: string;
+  muximodBaseUrl: string;
+  status: AuthPairingStatus;
+  offeredAt: string;
+  expiresAt: string;
+  claimExpiresAt?: string;
+  claimedAt?: string;
+  approvedAt?: string;
+  pendingPublicKey?: PublicKeyJwk;
+  pendingFingerprint?: string;
+  pendingDisplayName?: string;
+  pendingDeviceType?: AuthDeviceType;
+  pendingPlatform?: string;
+  pendingClientVersion?: string;
+  deviceId?: string;
+};
+
+export type AuthSessionRecord = {
+  sessionId: string;
+  serverId: string;
+  deviceId: string;
+  issuedAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+};
+
+export type CreatePairingInput = {
+  muximodBaseUrl: string;
+  expiresAt: string;
+  secret: string;
+};
+
+export type CreatePairingResult = {
+  pairingId: string;
+  serverId: string;
+  secret: string;
+  muximodBaseUrl: string;
+  expiresAt: string;
+};
+
+export type ClaimPairingInput = {
+  pairingId: string;
+  secretHash: string;
+  claimToken: string;
+  claimExpiresAt: string;
+  publicKey: PublicKeyJwk;
+  keyFingerprint: string;
+  displayName: string;
+  deviceType: AuthDeviceType;
+  platform?: string;
+  clientVersion?: string;
+};
+
+export type ClaimPairingResult = {
+  pairing: AuthPairingRecord;
+  claimToken: string;
+};
+
+export type AuthPairingClaimRequest = {
+  pairingSecret: string;
+  publicKey: PublicKeyJwk;
+  deviceName: string;
+  deviceType: AuthDeviceType;
+  platform?: string;
+  clientVersion?: string;
+  clientNonce: string;
+  signature: string;
+};
+
+export type AuthPairingClaimResponse = {
+  serverId: string;
+  pairingId: string;
+  claimToken: string;
+  status: "awaiting_approval";
+  expiresAt: string;
+  keyFingerprint: string;
+};
+
+export type AuthPairingPayload = {
+  v: 2;
+  muximodBaseUrl: string;
+  serverId: string;
+  pairingId: string;
+  pairingSecret: string;
+  expiresAt: number;
+};
+
+export type AuthPairingClaimNotification = {
+  pairingId: string;
+  serverId: string;
+  deviceName: string;
+  deviceType: AuthDeviceType;
+  platform?: string;
+  clientVersion?: string;
+  keyFingerprint: string;
+  expiresAt: string;
+};
+
+export type AuthChallengeResponse = {
+  serverId: string;
+  deviceId: string;
+  challengeId: string;
+  nonce: string;
+  expiresAt: string;
+};
+
+export type AuthSessionResponse = {
+  serverId: string;
+  deviceId: string;
+  sessionId: string;
+  accessToken: string;
+  expiresAt: string;
+};
+
+export type WsTicketResponse = {
+  ticket: string;
+  endpoint: "terminal";
+  expiresAt: string;
+};
+
+export type MuximodAuthDevice = AuthDeviceRecord;
+
+export type MuximodAuthContext = AuthSessionRecord & {
+  device: MuximodAuthDevice;
+};

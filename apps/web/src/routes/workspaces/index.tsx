@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { WorkspacesListView } from "../../features/workspace/workspaces-list-view";
+import { WorkspacesListView } from "./-workspaces-view";
 import { useWorkspacesListViewModel } from "./-workspaces-viewmodel";
 
 export const Route = createFileRoute("/workspaces/")({

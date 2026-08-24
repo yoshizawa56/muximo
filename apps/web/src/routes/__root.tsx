@@ -1,6 +1,6 @@
-import { Outlet, createRootRoute, type ErrorComponentProps } from "@tanstack/react-router";
-import { MobileExperienceProvider } from "../app/mobile-experience-context";
+import { createRootRoute, type ErrorComponentProps, Outlet } from "@tanstack/react-router";
 import { AppErrorView } from "../app/app-error-view";
+import { useMobileViewportHeight } from "../app/mobile-viewport";
 
 export const Route = createRootRoute({
   component: RootRoute,
@@ -9,11 +9,8 @@ export const Route = createRootRoute({
 });
 
 function RootRoute() {
-  return (
-    <MobileExperienceProvider>
-      <Outlet />
-    </MobileExperienceProvider>
-  );
+  useMobileViewportHeight();
+  return <Outlet />;
 }
 
 function RootError({ error, reset }: ErrorComponentProps) {

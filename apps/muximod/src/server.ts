@@ -1,23 +1,59 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
-import { isIP } from "node:net";
-import { hostname, platform } from "node:os";
-import { muximodWebsocket, createMuximodApp, type MuximodSocket } from "@muximo/muximod-http";
-import { WorkspaceCrud } from "@muximo/application";
-import { createLogger, errorFields, type Logger, type LogLevel } from "@muximo/logging";
-import type { TerminalEndpoint } from "@muximo/protocol";
-import { AuthStore, createAgentDatabase, DrizzleAgentSessionRepository, DrizzlePaneRepository, DrizzleWorkspaceRepository, recordAuditEvent, resolveMuximodPaths } from "@muximo/persistence";
-import { buildTailscaleInvocation } from "@muximo/tailscale";
-import { MuximodControlServer } from "./auth/control.js";
-import { AuthService } from "./auth/service.js";
-import { createMuximodApplication } from "./application/muximod.js";
+import {
+  type AgentStatusStore,
+  type ApplicationClock,
+  AuthService,
+  createMuximodApplication,
+  DeleteWorkspace,
+  ListWorkspaces,
+  RegisterWorkspace,
+  UpdateWorkspace,
+  type WorkspaceAuditPort,
+  WorkspaceRecordFactory,
+} from "@muximo/application";
+import {
+  AuthStore,
+  allowedRootsFromEnvironment,
+  BunSocketAdapter,
+  buildMuximoShellCommand,
+  configureManagedTmuxSession,
+  createAgentDatabase,
+  createImagePaster,
+  createLogger,
+  DrizzleAgentSessionRepository,
+  DrizzlePaneRepository,
+  DrizzleWorkspaceRepository,
+  defaultPaneCleanupIntervalMs,
+  defaultPaneRetentionMs,
+  defaultTmuxPollIntervalMs,
+  errorFields,
+  getLocalTerminal,
+  type Logger,
+  type LogLevel,
+  MemoryAuthChallengeStore,
+  MemoryAuthenticatedConnectionRegistry,
+  MemoryAuthFlowLifecycle,
+  MemoryAuthRateLimitStore,
+  MemoryAuthWsTicketStore,
+  type MuximodSocket,
+  mapTmuxSnapshotToTerminalHostSnapshot,
+  nodeAuthCrypto,
+  recordAuditEvent,
+  resolveMuximodPaths,
+  SqliteTransactionManager,
+  spawnPty,
+  TmuxAdapter,
+  TmuxMuximodHostAdapter,
+  TmuxStateMonitor,
+  TmuxViewportManager,
+  WorkspaceSelectionCatalog,
+} from "@muximo/infrastructure";
+import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
-import { createImagePaster } from "./image-paste.js";
-import { TerminalSession, TerminalSessionRegistry } from "./terminal-session.js";
-import { buildMuximoShellCommand, configureManagedTmuxSession, TmuxAdapter } from "./tmux.js";
-import { defaultPaneCleanupIntervalMs, defaultPaneRetentionMs, defaultTmuxPollIntervalMs, TmuxStateMonitor } from "./tmux-state.js";
-import { TmuxViewportManager } from "./viewport-manager.js";
-import { allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./workspace-selection.js";
+import { createMuximodApp, type MuximodApp } from "./http/app.js";
+import { createOriginPolicy } from "./http/middleware.js";
+import { TerminalSession, TerminalSessionRegistry } from "./http/terminal-session.js";
+import type { MuximodOriginPolicy } from "./http/types.js";
 
 export type MuximodOptions = {
   host: string;
@@ -26,6 +62,14 @@ export type MuximodOptions = {
   allowedRoots?: string[];
   controlSocket?: string;
   muximodBaseUrl?: string;
+  /**
+   * Exact browser origins allowed to call muximod. If omitted, browser
+   * requests are denied; configure this option or MUXIMOD_ALLOWED_ORIGINS.
+   * Requests without Origin remain allowed for trusted local clients.
+   */
+  allowedOrigins?: readonly string[];
+  originPolicy?: MuximodOriginPolicy;
+  authSweepIntervalMs?: number;
   tmuxPollIntervalMs?: number;
   paneCleanupIntervalMs?: number;
   paneRetentionMs?: number;
@@ -34,60 +78,123 @@ export type MuximodOptions = {
   logFile?: string;
 };
 
-export type { MuximodApp } from "@muximo/muximod-http";
-export { MuximodHttpError, createMuximodApp } from "@muximo/muximod-http";
-export { TmuxAdapter } from "./tmux.js";
-export type { TmuxPane } from "./tmux.js";
+export type { MuximodApp } from "./http/app.js";
+export { createMuximodApp, MuximodHttpError } from "./http/app.js";
 
-export function createMuximodServer(options: MuximodOptions) {
+export type MuximodServer = {
+  app: MuximodApp;
+  start(): Promise<void>;
+  stop(): void;
+};
+
+export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const ownsLogger = !options.logger;
-  const logger = options.logger ?? createLogger({
-    service: "muximod",
-    mode: options.logFile ? "background" : "attached",
-    level: options.logLevel ?? "info",
-    logFile: options.logFile,
-    output: process.stderr,
-    showStack: options.logLevel === "debug",
-  });
+  const logger =
+    options.logger ??
+    createLogger({
+      service: "muximod",
+      mode: options.logFile ? "background" : "attached",
+      level: options.logLevel ?? "info",
+      logFile: options.logFile,
+      output: process.stderr,
+      showStack: options.logLevel === "debug",
+    });
   const tmux = new TmuxAdapter();
+  const host = new TmuxMuximodHostAdapter(tmux);
   const viewportManager = new TmuxViewportManager(tmux);
+  const applicationViewportManager = {
+    handleTerminalHostHook: (event: Parameters<typeof viewportManager.handleTmuxHook>[0], client: string) =>
+      viewportManager.handleTmuxHook(event, client),
+    reassertMobileViewport: (target: string) => viewportManager.reassertMobileViewport(target),
+  };
   const paths = resolveMuximodPaths(process.env, {
     databaseFile: options.databaseFile,
     controlSocket: options.controlSocket,
   });
   const databaseFile = paths.databaseFile;
-  const configuredDatabaseFile = options.databaseFile ?? process.env.MUXIMOD_DB_FILE ?? process.env.MUXIMO_DATABASE_FILE;
-  const usePrivateInstanceDirectory = Boolean(process.env.MUXIMOD_INSTANCE_DIR?.trim()) || !configuredDatabaseFile?.trim();
+  const configuredDatabaseFile =
+    options.databaseFile ?? process.env.MUXIMOD_DB_FILE ?? process.env.MUXIMO_DATABASE_FILE;
+  const usePrivateInstanceDirectory =
+    Boolean(process.env.MUXIMOD_INSTANCE_DIR?.trim()) || !configuredDatabaseFile?.trim();
   const database = createAgentDatabase(databaseFile, {
-    instanceDirectory: databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
+    instanceDirectory:
+      databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
   });
+  const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots ?? allowedRootsFromEnvironment());
-  const workspaceCrud = new WorkspaceCrud(workspaceRepository, workspaceCatalog, {
-    audit: {
-      record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
-    },
-  });
+  const clock: ApplicationClock = { now: () => new Date().toISOString() };
+  const workspaceAudit: WorkspaceAuditPort = {
+    record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
+  };
+  const workspaceRecordFactory = new WorkspaceRecordFactory(workspaceCatalog, clock);
+  const listWorkspaces = new ListWorkspaces(workspaceRepository);
+  const registerWorkspace = new RegisterWorkspace(
+    workspaceRepository,
+    workspaceRecordFactory,
+    workspaceAudit,
+    transactionManager,
+  );
+  const updateWorkspace = new UpdateWorkspace(
+    workspaceRepository,
+    workspaceCatalog,
+    workspaceRecordFactory,
+    workspaceAudit,
+    transactionManager,
+  );
+  const deleteWorkspace = new DeleteWorkspace(
+    workspaceRepository,
+    workspaceCatalog,
+    workspaceAudit,
+    transactionManager,
+  );
   const application = createMuximodApplication({
     getTerminal: getLocalTerminal,
-    tmux,
+    host,
+    clock,
     paneRepository,
     agentSessionRepository,
     workspaceCatalog,
     workspaceRepository,
-    workspaceCrud,
-    viewportManager,
+    listWorkspaces,
+    registerWorkspace,
+    updateWorkspace,
+    deleteWorkspace,
+    viewportManager: applicationViewportManager,
+    agentStatus: new Map() as AgentStatusStore,
   });
   const eventHub = new MuximodEventHub();
   const hookToken = randomBytes(24).toString("hex");
   const defaultTarget = process.env.MUXIMOD_DEFAULT_TMUX_TARGET ?? "muximod";
-  const auth = new AuthService({
-    store: new AuthStore(database.sqlite),
-    muximodBaseUrl: options.muximodBaseUrl ?? process.env.MUXIMOD_PAIRING_BASE_URL ?? `http://127.0.0.1:${options.port}`,
+  const authStore = new AuthStore(database.db, database.sqlite);
+  const authChallenges = new MemoryAuthChallengeStore();
+  const authRateLimits = new MemoryAuthRateLimitStore();
+  const authWsTickets = new MemoryAuthWsTicketStore();
+  const authenticatedConnections = new MemoryAuthenticatedConnectionRegistry();
+  const authFlowLifecycle = new MemoryAuthFlowLifecycle({
+    challenges: authChallenges,
+    rateLimits: authRateLimits,
+    wsTickets: authWsTickets,
+    clock: { now: () => new Date() },
+    intervalMs: options.authSweepIntervalMs,
   });
-  const controlServer = new MuximodControlServer({
+  let controlServer!: MuximodControlServer;
+  const auth = new AuthService({
+    store: authStore,
+    serverId: authStore.serverId,
+    crypto: nodeAuthCrypto,
+    clock: { now: () => new Date() },
+    claimSink: { publish: (notification) => controlServer.notifyPairingClaim(notification) },
+    muximodBaseUrl:
+      options.muximodBaseUrl ?? process.env.MUXIMOD_PAIRING_BASE_URL ?? `http://127.0.0.1:${options.port}`,
+    challenges: authChallenges,
+    rateLimits: authRateLimits,
+    wsTickets: authWsTickets,
+    connections: authenticatedConnections,
+  });
+  controlServer = new MuximodControlServer({
     socketPath: paths.controlSocket,
     auth,
     adoptAgentSession: (request) => application.adoptAgentSession(request),
@@ -95,18 +202,35 @@ export function createMuximodServer(options: MuximodOptions) {
     releaseAgentSession: (request) => application.releaseAgentSession(request),
   });
   let controlReady = false;
-  const tmuxPollIntervalMs = durationOption(options.tmuxPollIntervalMs, "MUXIMOD_TMUX_POLL_INTERVAL_MS", defaultTmuxPollIntervalMs, 1);
-  const paneCleanupIntervalMs = durationOption(options.paneCleanupIntervalMs, "MUXIMOD_PANE_CLEANUP_INTERVAL_MS", defaultPaneCleanupIntervalMs, 1);
-  const paneRetentionMs = durationOption(options.paneRetentionMs, "MUXIMOD_PANE_RETENTION_MS", defaultPaneRetentionMs, 0);
+  const tmuxPollIntervalMs = durationOption(
+    options.tmuxPollIntervalMs,
+    "MUXIMOD_TMUX_POLL_INTERVAL_MS",
+    defaultTmuxPollIntervalMs,
+    1,
+  );
+  const paneCleanupIntervalMs = durationOption(
+    options.paneCleanupIntervalMs,
+    "MUXIMOD_PANE_CLEANUP_INTERVAL_MS",
+    defaultPaneCleanupIntervalMs,
+    1,
+  );
+  const paneRetentionMs = durationOption(
+    options.paneRetentionMs,
+    "MUXIMOD_PANE_RETENTION_MS",
+    defaultPaneRetentionMs,
+    0,
+  );
   let eventRevision = 0;
   const tmuxStateMonitor = new TmuxStateMonitor({
     readPanes: () => tmux.listPanesSnapshot(),
-    synchronize: (snapshot) => application.reconcile(snapshot).then((records) => ({
-      activePaneIds: records.map((record) => record.id),
-      paneStates: new Map(records.map((record) => [record.tmuxPaneId, record.state])),
-      paneRecentOutputs: new Map(records.map((record) => [record.tmuxPaneId, record.recentOutput])),
-    })),
-    cleanup: (activePaneIds, olderThan, tmuxServerScope) => paneRepository.pruneStalePanes(activePaneIds, olderThan, tmuxServerScope).then(() => undefined),
+    synchronize: (snapshot) =>
+      application.reconcile(mapTmuxSnapshotToTerminalHostSnapshot(snapshot)).then((records) => ({
+        activePaneIds: records.map((record) => record.id),
+        paneStates: new Map(records.map((record) => [record.hostPaneId, record.state])),
+        paneRecentOutputs: new Map(records.map((record) => [record.hostPaneId, record.recentOutput])),
+      })),
+    cleanup: (activePaneIds, olderThan, hostServerScope) =>
+      paneRepository.pruneStalePanes(activePaneIds, olderThan, hostServerScope).then(() => undefined),
     onChange: (changes) => {
       const revision = ++eventRevision;
       for (const change of changes) {
@@ -129,23 +253,34 @@ export function createMuximodServer(options: MuximodOptions) {
     auth,
     application,
     isReady: () => controlReady,
-    corsOrigin: "*",
+    originPolicy:
+      options.originPolicy ??
+      createOriginPolicy({
+        allowedOrigins: options.allowedOrigins ?? configuredOrigins(process.env.MUXIMOD_ALLOWED_ORIGINS),
+        allowNoOrigin: true,
+      }),
     hookToken,
+    socketFactory: (transport) => new BunSocketAdapter(transport),
     onTerminalConnection: (socket: MuximodSocket, context) => {
-      auth.trackSocket(context, socket);
+      authenticatedConnections.register({
+        sessionId: context.sessionId,
+        deviceId: context.deviceId,
+        expiresAt: context.expiresAt,
+        socket,
+      });
       new TerminalSession(socket, {
         cwd: process.cwd(),
         defaultTarget,
         viewportManager,
+        spawnPty,
         sessions: terminalSessions,
         authDeviceId: context.deviceId,
-        imagePaster,
+        imagePaster: async (input) => {
+          await imagePaster({ ...input, bytes: Buffer.from(input.bytes) });
+        },
       });
     },
-    onEventsConnection: (socket: MuximodSocket, context) => {
-      auth.trackSocket(context, socket);
-      eventHub.add(socket);
-    },
+    subscribeEvents: (signal) => eventHub.subscribe(signal),
     logger,
   });
   let httpServer: ReturnType<typeof Bun.serve> | undefined;
@@ -183,15 +318,17 @@ export function createMuximodServer(options: MuximodOptions) {
           hostname: options.host,
           port: options.port,
           fetch: app.fetch,
-          websocket: muximodWebsocket,
+          websocket: app.websocket,
         });
         tmuxStateMonitor.start();
         viewportManager.configureHooks(`http://127.0.0.1:${httpServer.port}/internal/tmux-hook`, hookToken);
         await controlServer.start();
         controlReady = true;
+        authFlowLifecycle.start();
         logger.info("daemon.listening", { host: options.host, port: httpServer.port });
       } catch (error) {
         controlReady = false;
+        authFlowLifecycle.stop();
         tmuxStateMonitor.stop();
         controlServer.stop();
         httpServer?.stop(true);
@@ -204,6 +341,7 @@ export function createMuximodServer(options: MuximodOptions) {
     stop() {
       controlReady = false;
       logger.info("daemon.stopping");
+      authFlowLifecycle.stop();
       tmuxStateMonitor.stop();
       terminalSessions.closeAll();
       viewportManager.dispose();
@@ -211,43 +349,26 @@ export function createMuximodServer(options: MuximodOptions) {
       controlServer.stop();
       httpServer?.stop(true);
       httpServer = undefined;
+      transactionManager?.close();
       database.close();
       if (ownsLogger) logger.close();
     },
   };
 }
 
-async function getLocalTerminal(): Promise<TerminalEndpoint> {
-  const host = hostname();
-  return {
-    id: host,
-    name: host.split(".")[0] || host,
-    host,
-    tailnetIp: tailscaleIp() ?? host,
-    state: "online",
-    detail: `muximod · ${platform()}`,
-    lastSeen: "online now",
-  };
-}
-
-function tailscaleIp(): string | undefined {
-  const invocation = buildTailscaleInvocation(process.env.TAILSCALE_BIN ?? "tailscale", ["ip", "-4"], process.env, process.platform, {
-    allowShellFallback: false,
-  });
-  const result = spawnSync(invocation.command, invocation.args, {
-    encoding: "utf8",
-    env: invocation.environment,
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 500,
-  });
-  const address = result.status === 0 ? result.stdout.trim().split("\n")[0] : "";
-  return isIP(address) === 4 ? address : undefined;
-}
-
 function durationOption(value: number | undefined, environmentName: string, fallback: number, minimum: number): number {
-  const configured = value ?? (process.env[environmentName] === undefined ? fallback : Number(process.env[environmentName]));
+  const configured =
+    value ?? (process.env[environmentName] === undefined ? fallback : Number(process.env[environmentName]));
   if (!Number.isFinite(configured) || !Number.isInteger(configured) || configured < minimum) {
     throw new Error(`${environmentName} must be an integer >= ${minimum}`);
   }
   return configured;
+}
+
+function configuredOrigins(value: string | undefined): readonly string[] {
+  if (!value?.trim()) return [];
+  return value
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 }

@@ -1,9 +1,42 @@
-import { useMobileExperience } from "../../../../app/mobile-experience-context";
-import type { ConnectionFlowViewModel } from "../../../../features/connection/connection-flow-viewmodel";
+import type { TerminalEndpoint, TmuxSession } from "@muximo/contract";
+import { useNavigate, useParams } from "@tanstack/react-router";
+import { useTerminalResources } from "../../-terminal-resources";
 
-export type SessionsViewModel = Omit<ConnectionFlowViewModel, "stage"> & { stage: "sessions" };
+export type SessionsViewModel = {
+  terminals: TerminalEndpoint[];
+  sessions: TmuxSession[];
+  selectedTerminal: TerminalEndpoint | null;
+  selectedSession: TmuxSession | null;
+  status: "loading" | "ready" | "error" | undefined;
+  errorMessage: string | null;
+  onSelectSession: (session: TmuxSession) => void;
+  onCreateSession: () => void;
+  onBack: () => void;
+};
 
 export function useSessionsViewModel(): SessionsViewModel {
-  const { connection } = useMobileExperience();
-  return { ...connection, stage: "sessions" };
+  const navigate = useNavigate();
+  const { terminalId } = useParams({ from: "/terminals/$terminalId/sessions/" });
+  const resources = useTerminalResources({ terminalId, pollSessions: true });
+
+  return {
+    terminals: resources.terminals,
+    sessions: resources.sessions,
+    selectedTerminal: resources.selectedTerminal,
+    selectedSession: resources.selectedSession,
+    status: resources.sessionsStatus,
+    errorMessage: resources.sessionsError,
+    onSelectSession: (session) => {
+      void navigate({
+        to: "/terminals/$terminalId/sessions/$sessionName/connecting",
+        params: { terminalId, sessionName: session.name },
+      });
+    },
+    onCreateSession: () => {
+      void navigate({ to: "/terminals/$terminalId/sessions/new", params: { terminalId } });
+    },
+    onBack: () => {
+      void navigate({ to: "/terminals" });
+    },
+  };
 }

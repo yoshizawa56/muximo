@@ -1,57 +1,27 @@
-import { muximodSocketReadyState, type MuximodSocket } from "@muximo/application";
-import { muximodEventSchema, type MuximodEvent } from "@muximo/protocol";
+import { type MuximodEvent, muximodEventSchema } from "@muximo/contract";
+import { EventPublisher } from "@orpc/server";
 
 /**
- * Publishes small, non-authoritative invalidation events to connected clients.
+ * Publishes small, non-authoritative invalidation events to SSE subscribers.
  *
- * Event consumers must refetch the corresponding HTTP resource. The hub does
- * not retain events, so reconnecting clients always start with a fresh API
- * read instead of trying to replay an event log.
+ * Event consumers must refetch the corresponding resource. The publisher
+ * keeps only the latest pending event for a subscriber, so reconnecting
+ * clients always start with a fresh API read instead of replaying an event
+ * log.
  */
 export class MuximodEventHub {
-  private readonly clients = new Set<MuximodSocket>();
+  private readonly publisher = new EventPublisher<{ muximod: MuximodEvent }>({ maxBufferedEvents: 1 });
 
-  public add(socket: MuximodSocket): void {
-    this.clients.add(socket);
-    const remove = () => this.clients.delete(socket);
-    let removeCloseListener: () => void = () => undefined;
-    let removeErrorListener: () => void = () => undefined;
-    removeCloseListener = socket.onClose(() => {
-      remove();
-      removeCloseListener();
-      removeErrorListener();
-    });
-    removeErrorListener = socket.onError(() => {
-      remove();
-      removeCloseListener();
-      removeErrorListener();
-    });
+  public subscribe(signal: AbortSignal): AsyncIteratorObject<MuximodEvent> {
+    return this.publisher.subscribe("muximod", { signal });
   }
 
   public publish(event: MuximodEvent): void {
-    const payload = JSON.stringify(muximodEventSchema.parse(event));
-    for (const client of this.clients) {
-      if (client.readyState !== muximodSocketReadyState.open) {
-        this.clients.delete(client);
-        continue;
-      }
-
-      try {
-        client.send(payload);
-      } catch {
-        this.clients.delete(client);
-      }
-    }
+    this.publisher.publish("muximod", muximodEventSchema.parse(event));
   }
 
   public close(): void {
-    for (const client of this.clients) {
-      try {
-        client.close(1001, "muximod stopped");
-      } catch {
-        // The peer may already have closed while muximod is shutting down.
-      }
-    }
-    this.clients.clear();
+    // EventPublisher subscribers are owned by the request AbortSignal. The
+    // server closes those signals when the SSE response is disconnected.
   }
 }

@@ -7,26 +7,36 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const self = path.relative(root, fileURLToPath(import.meta.url)).split(path.sep).join("/");
+const self = path
+  .relative(root, fileURLToPath(import.meta.url))
+  .split(path.sep)
+  .join("/");
 const maximumFileBytes = 10 * 1024 * 1024;
 
 function gitFiles(args) {
-  return execFileSync("git", args, { cwd: root, encoding: "utf8" })
-    .split("\0")
-    .filter(Boolean);
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean);
 }
 
-const files = [...new Set([
-  ...gitFiles(["ls-files", "-z"]),
-  ...gitFiles(["ls-files", "--others", "--exclude-standard", "-z"]),
-])];
+const files = [
+  ...new Set([...gitFiles(["ls-files", "-z"]), ...gitFiles(["ls-files", "--others", "--exclude-standard", "-z"])]),
+];
 
 const forbiddenFilePatterns = [
   { label: "environment file", pattern: /(^|\/)\.env(?:$|\.)(?!example$)/i },
-  { label: "credential-like file", pattern: /(^|\/)(?:id_(?:rsa|dsa|ecdsa|ed25519)|known_hosts|credentials?(?:\.[^/]+)?|secrets?(?:\.[^/]+)?)(?:$|\/)/i },
-  { label: "private/certificate material", pattern: /\.(?:pem|key|p12|pfx|mobileprovision|provisionprofile|der|kdbx)$/i },
+  {
+    label: "credential-like file",
+    pattern:
+      /(^|\/)(?:id_(?:rsa|dsa|ecdsa|ed25519)|known_hosts|credentials?(?:\.[^/]+)?|secrets?(?:\.[^/]+)?)(?:$|\/)/i,
+  },
+  {
+    label: "private/certificate material",
+    pattern: /\.(?:pem|key|p12|pfx|mobileprovision|provisionprofile|der|kdbx)$/i,
+  },
   { label: "local database", pattern: /\.(?:sqlite|sqlite3|db)(?:[-.]|$)/i },
-  { label: "generated or runtime artifact", pattern: /(^|\/)(?:node_modules|dist|coverage|storybook-static|\.turbo)(?:\/|$)|\.(?:log|dump)$/i },
+  {
+    label: "generated or runtime artifact",
+    pattern: /(^|\/)(?:node_modules|dist|coverage|storybook-static|\.turbo)(?:\/|$)|\.(?:log|dump)$/i,
+  },
 ];
 
 const forbiddenContentPatterns = [
@@ -37,7 +47,10 @@ const forbiddenContentPatterns = [
   { label: "Slack token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/ },
   { label: "Tailscale auth key", pattern: /\btskey-(?:auth|client)-[A-Za-z0-9_-]{20,}\b/ },
   { label: "npm token", pattern: /\bnpm_[A-Za-z0-9]{30,}\b/ },
-  { label: "quoted credential assignment", pattern: /\b(?:api[_-]?key|secret|password|token)\s*[:=]\s*["'`][^"'`\n]{16,}["'`]/i },
+  {
+    label: "quoted credential assignment",
+    pattern: /\b(?:api[_-]?key|secret|password|token)\s*[:=]\s*["'`][^"'`\n]{16,}["'`]/i,
+  },
 ];
 
 const failures = [];
@@ -97,7 +110,9 @@ for (const relativeFile of files) {
       const ref = atIndex === -1 ? "" : actionReference.slice(atIndex + 1);
       const line = text.slice(0, match.index).split("\n").length;
       if (!/^[0-9a-f]{40}$/i.test(ref)) {
-        failures.push(`${normalizedFile}:${line}: GitHub Action is not pinned to a full commit SHA (${actionReference})`);
+        failures.push(
+          `${normalizedFile}:${line}: GitHub Action is not pinned to a full commit SHA (${actionReference})`,
+        );
       }
     }
   }

@@ -1,18 +1,16 @@
 export type MaybePromise<T> = T | PromiseLike<T>;
 export type Cleanup = () => MaybePromise<void>;
 export type CleanupRegistrar = (cleanup: Cleanup) => void;
+export type CaseScope = <Result>(operation: () => MaybePromise<Result>) => MaybePromise<Result>;
 
-export type Outcome<Result> =
-  | { ok: true; value: Result }
-  | { ok: false; error: unknown };
+export type Outcome<Result> = { ok: true; value: Result } | { ok: false; error: unknown };
 
 export type FixtureHandle<Fixture> = {
   fixture: Fixture;
   cleanup?: Cleanup;
 };
 
-export type FixtureFactory<Fixture> =
-  (registerCleanup?: CleanupRegistrar) => MaybePromise<FixtureHandle<Fixture>>;
+export type FixtureFactory<Fixture> = (registerCleanup?: CleanupRegistrar) => MaybePromise<FixtureHandle<Fixture>>;
 
 export function noFixture(): FixtureFactory<undefined> {
   return () => ({ fixture: undefined });
@@ -22,81 +20,45 @@ export type Assertion<Context, Result> = {
   name: string;
   /** Set this only when this assertion explicitly handles an execute failure. */
   allowsOutcomeError?: boolean;
-  check: (
-    ctx: Context,
-    result: Outcome<Result>,
-  ) => MaybePromise<void>;
+  check: (ctx: Context, result: Outcome<Result>) => MaybePromise<void>;
 };
 
 export type NonEmptyArray<T> = readonly [T, ...T[]];
 
-export type TestRegistrar = (
-  name: string,
-  handler: () => MaybePromise<void>,
-) => unknown;
+export type TestRegistrar = (name: string, handler: () => MaybePromise<void>) => unknown;
 
-export type OperationCase<
-  FixtureKey extends string,
-  Input,
-  Result,
-  Context,
-> = {
+export type OperationCase<FixtureKey extends string, Input, Result, Context> = {
   name: string;
   fixture?: FixtureKey;
   input: Input;
   assert: NonEmptyArray<Assertion<Context, Result>>;
 };
 
-export type OperationTable<
-  Fixture,
-  FixtureKey extends string,
-  Input,
-  Result,
-  Context,
-> = {
+export type OperationTable<Fixture, FixtureKey extends string, Input, Result, Context> = {
   defaultFixture: FixtureFactory<Fixture>;
   fixtures?: Readonly<Record<FixtureKey, FixtureFactory<Fixture>>>;
+  /** Wraps fixture setup, execution, observation, and assertions in one case scope. */
+  caseScope?: CaseScope;
   cases: readonly OperationCase<FixtureKey, Input, Result, Context>[];
-  execute: (
-    fixture: Fixture,
-    input: Input,
-  ) => MaybePromise<Result>;
-  observe: (
-    fixture: Fixture,
-    result: Outcome<Result>,
-  ) => MaybePromise<Context>;
+  execute: (fixture: Fixture, input: Input) => MaybePromise<Result>;
+  observe: (fixture: Fixture, result: Outcome<Result>) => MaybePromise<Context>;
 };
 
-export type ScenarioCase<
-  FixtureKey extends string,
-  Step,
-  Result,
-  Context,
-> = {
+export type ScenarioCase<FixtureKey extends string, Step, Result, Context> = {
   name: string;
   fixture?: FixtureKey;
   steps: readonly Step[];
   assert: NonEmptyArray<Assertion<Context, Result>>;
 };
 
-export type ScenarioTable<
-  Fixture,
-  FixtureKey extends string,
-  Step,
-  Result,
-  Context,
-> = {
+export type ScenarioTable<Fixture, FixtureKey extends string, Step, Result, Context> = {
   defaultFixture: FixtureFactory<Fixture>;
   fixtures?: Readonly<Record<FixtureKey, FixtureFactory<Fixture>>>;
+  /** Wraps fixture setup, execution, observation, and assertions in one case scope. */
+  caseScope?: CaseScope;
   cases: readonly ScenarioCase<FixtureKey, Step, Result, Context>[];
-  execute: (
-    fixture: Fixture,
-    steps: readonly Step[],
-  ) => MaybePromise<Result>;
-  observe: (
-    fixture: Fixture,
-    result: Outcome<Result>,
-  ) => MaybePromise<Context>;
+  execute: (fixture: Fixture, steps: readonly Step[]) => MaybePromise<Result>;
+  observe: (fixture: Fixture, result: Outcome<Result>) => MaybePromise<Context>;
 };
 
 export class TableAssertionError extends AggregateError {
@@ -106,13 +68,8 @@ export class TableAssertionError extends AggregateError {
     error: unknown;
   }[];
 
-  public constructor(
-    caseName: string,
-    failures: readonly { name: string; error: unknown }[],
-  ) {
-    const details = failures
-      .map(({ name, error }) => `[${name}]\n${formatError(error)}`)
-      .join("\n\n");
+  public constructor(caseName: string, failures: readonly { name: string; error: unknown }[]) {
+    const details = failures.map(({ name, error }) => `[${name}]\n${formatError(error)}`).join("\n\n");
     super(
       failures.map(({ error }) => error),
       `${caseName}: ${failures.length} assertion(s) failed\n\n${details}`,
@@ -129,10 +86,7 @@ export class TableCleanupError extends AggregateError {
   public readonly cleanupErrors: readonly unknown[];
 
   public constructor(primaryError: unknown, cleanupErrors: readonly unknown[]) {
-    const errors = [
-      ...(primaryError === undefined ? [] : [primaryError]),
-      ...cleanupErrors,
-    ];
+    const errors = [...(primaryError === undefined ? [] : [primaryError]), ...cleanupErrors];
     super(
       errors,
       `${primaryError === undefined ? "cleanup failed" : "test and cleanup both failed"}\n\n${
@@ -146,13 +100,7 @@ export class TableCleanupError extends AggregateError {
   }
 }
 
-export function runOperationTable<
-  Fixture,
-  FixtureKey extends string,
-  Input,
-  Result,
-  Context,
->(
+export function runOperationTable<Fixture, FixtureKey extends string, Input, Result, Context>(
   register: TestRegistrar,
   table: OperationTable<Fixture, FixtureKey, Input, Result, Context>,
 ): void {
@@ -163,6 +111,7 @@ export function runOperationTable<
       await runCase({
         caseName: testCase.name,
         fixtureFactory: selectFixtureFactory(table, testCase.fixture),
+        caseScope: table.caseScope,
         assert: testCase.assert,
         execute: (fixture) => table.execute(fixture, testCase.input),
         observe: table.observe,
@@ -171,13 +120,7 @@ export function runOperationTable<
   }
 }
 
-export function runScenarioTable<
-  Fixture,
-  FixtureKey extends string,
-  Step,
-  Result,
-  Context,
->(
+export function runScenarioTable<Fixture, FixtureKey extends string, Step, Result, Context>(
   register: TestRegistrar,
   table: ScenarioTable<Fixture, FixtureKey, Step, Result, Context>,
 ): void {
@@ -188,6 +131,7 @@ export function runScenarioTable<
       await runCase({
         caseName: testCase.name,
         fixtureFactory: selectFixtureFactory(table, testCase.fixture),
+        caseScope: table.caseScope,
         assert: testCase.assert,
         execute: (fixture) => table.execute(fixture, testCase.steps),
         observe: table.observe,
@@ -199,32 +143,38 @@ export function runScenarioTable<
 async function runCase<Fixture, Result, Context>({
   caseName,
   fixtureFactory,
+  caseScope,
   assert,
   execute,
   observe,
 }: {
   caseName: string;
   fixtureFactory: FixtureFactory<Fixture>;
+  caseScope?: CaseScope;
   assert: NonEmptyArray<Assertion<Context, Result>>;
   execute: (fixture: Fixture) => MaybePromise<Result>;
-  observe: (
-    fixture: Fixture,
-    result: Outcome<Result>,
-  ) => MaybePromise<Context>;
+  observe: (fixture: Fixture, result: Outcome<Result>) => MaybePromise<Context>;
 }): Promise<void> {
-  let setup: FixtureHandle<Fixture> | undefined;
   const cleanups: Cleanup[] = [];
   let failed = false;
   let failure: unknown;
 
-  try {
-    setup = await fixtureFactory((cleanup) => {
+  const body = async (): Promise<void> => {
+    const current = await fixtureFactory((cleanup) => {
       cleanups.push(cleanup);
     });
-    if (setup.cleanup) cleanups.push(setup.cleanup);
-    const result = await captureOutcome(() => execute(setup!.fixture));
-    const ctx = await observe(setup.fixture, result);
+    if (current.cleanup) cleanups.push(current.cleanup);
+    const result = await captureOutcome(() => execute(current.fixture));
+    const ctx = await observe(current.fixture, result);
     await assertAll(caseName, assert, ctx, result);
+  };
+
+  try {
+    if (caseScope) {
+      await caseScope(body);
+    } else {
+      await body();
+    }
   } catch (error) {
     failed = true;
     failure = error;
@@ -247,9 +197,7 @@ async function runCase<Fixture, Result, Context>({
   }
 }
 
-async function captureOutcome<Result>(
-  execute: () => MaybePromise<Result>,
-): Promise<Outcome<Result>> {
+async function captureOutcome<Result>(execute: () => MaybePromise<Result>): Promise<Outcome<Result>> {
   try {
     return { ok: true, value: await execute() };
   } catch (error) {
@@ -285,23 +233,11 @@ export async function assertAll<Context, Result>(
   }
 }
 
-function selectFixtureFactory<
-  Fixture,
-  FixtureKey extends string,
-  Input,
-  Result,
-  Context,
->(
+function selectFixtureFactory<Fixture, FixtureKey extends string, Input, Result, Context>(
   table: OperationTable<Fixture, FixtureKey, Input, Result, Context>,
   key: FixtureKey | undefined,
 ): FixtureFactory<Fixture>;
-function selectFixtureFactory<
-  Fixture,
-  FixtureKey extends string,
-  Step,
-  Result,
-  Context,
->(
+function selectFixtureFactory<Fixture, FixtureKey extends string, Step, Result, Context>(
   table: ScenarioTable<Fixture, FixtureKey, Step, Result, Context>,
   key: FixtureKey | undefined,
 ): FixtureFactory<Fixture>;
@@ -323,9 +259,7 @@ function selectFixtureFactory<Fixture, FixtureKey extends string>(
   return fixtureFactory;
 }
 
-function validateCases(
-  cases: readonly { name: string; assert: readonly unknown[] }[],
-): void {
+function validateCases(cases: readonly { name: string; assert: readonly unknown[] }[]): void {
   const names = new Set<string>();
 
   for (const testCase of cases) {

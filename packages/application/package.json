@@ -16,8 +16,7 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@muximo/domain": "workspace:*",
-    "@muximo/protocol": "workspace:*"
+    "@muximo/domain": "workspace:*"
   },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",

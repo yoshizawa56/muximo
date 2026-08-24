@@ -14,14 +14,13 @@
     "typecheck": "bunx --bun tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@muximo/muximod": "workspace:*",
-    "@muximo/agents": "workspace:*",
     "@muximo/application": "workspace:*",
-    "@muximo/cli-adapters": "workspace:*",
+    "@muximo/contract": "workspace:*",
     "@muximo/domain": "workspace:*",
-    "@muximo/logging": "workspace:*",
-    "@muximo/persistence": "workspace:*",
-    "@muximo/tailscale": "workspace:*"
+    "@muximo/infrastructure": "workspace:*",
+    "commander": "^15.0.0",
+    "qrcode": "^1.5.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { NewSessionRouteView } from "./-new-session-view";
+import { NewSessionView } from "./-new-session-view";
 import { useNewSessionViewModel } from "./-new-session-viewmodel";
 
 export const Route = createFileRoute("/terminals/$terminalId/sessions/new/")({
@@ -7,5 +7,5 @@ export const Route = createFileRoute("/terminals/$terminalId/sessions/new/")({
 });
 
 function NewSessionRoute() {
-  return <NewSessionRouteView viewModel={useNewSessionViewModel()} />;
+  return <NewSessionView viewModel={useNewSessionViewModel()} />;
 }

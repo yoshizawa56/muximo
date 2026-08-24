@@ -3,10 +3,16 @@ import { execFile, execFileSync, spawn as spawnChild } from "node:child_process"
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { createConnection, createServer } from "node:net";
-import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildServeArgs, buildServeHttpUrl, buildTailscaleInvocation, normalizeTailscaleStdout, parseTailscaleHostname } from "../packages/tailscale/src/index.ts";
+import { promisify } from "node:util";
+import {
+  buildServeArgs,
+  buildServeHttpUrl,
+  buildTailscaleInvocation,
+  normalizeTailscaleStdout,
+  parseTailscaleHostname,
+} from "../packages/infrastructure/src/tailscale/index.ts";
 import { applyDevWorktreeProfile } from "./worktree-profile.mjs";
 
 export const DEFAULT_DEV_CONFIG = {
@@ -51,9 +57,17 @@ function readDuration(name, fallback, environment) {
 export function resolveDevConfig(environment = process.env, cwd = process.cwd()) {
   let baseEnvironment = applyDevWorktreeProfile(environment, cwd);
   const muximodHost = baseEnvironment.MUXIMOD_HOST ?? DEFAULT_DEV_CONFIG.muximodHost;
-  const muximodPort = readPort("MUXIMOD_PORT", baseEnvironment.MUXIMOD_PORT ?? DEFAULT_DEV_CONFIG.muximodPort, baseEnvironment);
+  const muximodPort = readPort(
+    "MUXIMOD_PORT",
+    baseEnvironment.MUXIMOD_PORT ?? DEFAULT_DEV_CONFIG.muximodPort,
+    baseEnvironment,
+  );
   const webHost = baseEnvironment.VITE_DEV_HOST ?? DEFAULT_DEV_CONFIG.webHost;
-  const webPort = readPort("VITE_DEV_PORT", baseEnvironment.VITE_DEV_PORT ?? DEFAULT_DEV_CONFIG.webPort, baseEnvironment);
+  const webPort = readPort(
+    "VITE_DEV_PORT",
+    baseEnvironment.VITE_DEV_PORT ?? DEFAULT_DEV_CONFIG.webPort,
+    baseEnvironment,
+  );
   const muximodProbeHost = probeHostForBind(muximodHost);
   const serveProvider = baseEnvironment.MUXIMO_DEV_SERVE_PROVIDER;
   const servePort = serveProvider
@@ -69,6 +83,17 @@ export function resolveDevConfig(environment = process.env, cwd = process.cwd())
       };
     }
   }
+
+  baseEnvironment = {
+    ...baseEnvironment,
+    MUXIMOD_ALLOWED_ORIGINS: resolveDevBrowserOrigins({
+      environment: baseEnvironment,
+      webHost,
+      webPort,
+      serveProvider,
+      servePort,
+    }),
+  };
 
   return {
     ...DEFAULT_DEV_CONFIG,
@@ -86,7 +111,11 @@ export function resolveDevConfig(environment = process.env, cwd = process.cwd())
     // to direct supervisor tests and explicitly constructed configurations.
     adoptExistingServices: false,
     readyTimeoutMs: readDuration("MUXIMO_DEV_READY_TIMEOUT_MS", DEFAULT_DEV_CONFIG.readyTimeoutMs, baseEnvironment),
-    shutdownTimeoutMs: readDuration("MUXIMO_DEV_SHUTDOWN_TIMEOUT_MS", DEFAULT_DEV_CONFIG.shutdownTimeoutMs, baseEnvironment),
+    shutdownTimeoutMs: readDuration(
+      "MUXIMO_DEV_SHUTDOWN_TIMEOUT_MS",
+      DEFAULT_DEV_CONFIG.shutdownTimeoutMs,
+      baseEnvironment,
+    ),
   };
 }
 
@@ -130,9 +159,47 @@ function normalizeHostname(value) {
 }
 
 function appendAllowedHost(value, hostname) {
-  const hosts = (value ?? "").split(",").map((host) => host.trim()).filter(Boolean);
+  const hosts = (value ?? "")
+    .split(",")
+    .map((host) => host.trim())
+    .filter(Boolean);
   if (!hosts.includes(hostname)) hosts.push(hostname);
   return hosts.join(",");
+}
+
+function resolveDevBrowserOrigins({ environment, webHost, webPort, serveProvider, servePort }) {
+  const configured = environment.MUXIMOD_ALLOWED_ORIGINS;
+  if (configured !== undefined) return normalizeBrowserOrigins(configured.split(","));
+
+  const localHost = browserHost(webHost);
+  const origins = [`http://${formatHost(localHost)}:${webPort}`];
+  if (serveProvider === "tailscale" && environment.MUXIMO_TAILSCALE_HOSTNAME) {
+    const port = servePort ?? 443;
+    origins.push(
+      port === 443
+        ? `https://${environment.MUXIMO_TAILSCALE_HOSTNAME}`
+        : `https://${environment.MUXIMO_TAILSCALE_HOSTNAME}:${port}`,
+    );
+  }
+  return normalizeBrowserOrigins(origins);
+}
+
+function normalizeBrowserOrigins(values) {
+  const origins = new Set();
+  for (const value of values) {
+    const origin = value.trim();
+    if (!origin) continue;
+    if (origin === "*") throw new DevRuntimeError("wildcard browser origins are not allowed");
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new DevRuntimeError(`browser origin must use http or https: ${origin}`);
+    }
+    if (parsed.origin !== origin.replace(/\/$/u, "")) {
+      throw new DevRuntimeError(`browser origin must not include a path: ${origin}`);
+    }
+    origins.add(parsed.origin);
+  }
+  return [...origins].sort().join(",");
 }
 
 function endpoint(host, port, pathname = "/") {
@@ -201,7 +268,9 @@ export async function configureDevServe(config, runCommand = runExternalCommand)
   let hostname = config.baseEnvironment.MUXIMO_TAILSCALE_HOSTNAME;
   if (!hostname) {
     try {
-      hostname = parseTailscaleHostname((await runCommand(binary, ["status", "--json"], { env: config.baseEnvironment })).stdout);
+      hostname = parseTailscaleHostname(
+        (await runCommand(binary, ["status", "--json"], { env: config.baseEnvironment })).stdout,
+      );
     } catch {
       // The Serve route is configured even when the optional display lookup
       // is unavailable. Users can inspect it with `tailscale serve status`.
@@ -374,9 +443,9 @@ export function probeWebSocket(url, options = {}) {
   const parsed = new URL(url);
   const requestUrl = new URL(parsed);
   requestUrl.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
-  const requestImplementation = options.request ?? ((target, requestOptions) => (
-    target.protocol === "https:" ? httpsRequest : httpRequest
-  )(target, requestOptions));
+  const requestImplementation =
+    options.request ??
+    ((target, requestOptions) => (target.protocol === "https:" ? httpsRequest : httpRequest)(target, requestOptions));
   const request = requestImplementation(requestUrl, {
     method: "GET",
     headers: {
@@ -432,9 +501,8 @@ function jsonBody(body) {
 
 function responseSummary(response) {
   const body = typeof response?.body === "string" ? response.body : "";
-  const contentType = typeof response?.headers?.["content-type"] === "string"
-    ? ` contentType=${response.headers["content-type"]}`
-    : "";
+  const contentType =
+    typeof response?.headers?.["content-type"] === "string" ? ` contentType=${response.headers["content-type"]}` : "";
   return `HTTP ${response?.statusCode ?? 0}${contentType} bodyBytes=${Buffer.byteLength(body, "utf8")}`;
 }
 
@@ -488,7 +556,10 @@ function redactDiagnosticText(value) {
   return value
     .replace(/\bCommand failed:[\s\S]*/gi, "Command failed: [REDACTED]")
     .replace(/(--(?:prompt|token|secret|password|api[-_]?key))(?:=|\s+)("[^"]*"|'[^']*'|\S+)/gi, "$1=[REDACTED]")
-    .replace(/\b(authorization|cookie|password|passphrase|secret|token|api[-_]?key)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi, "$1=[REDACTED]")
+    .replace(
+      /\b(authorization|cookie|password|passphrase|secret|token|api[-_]?key)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi,
+      "$1=[REDACTED]",
+    )
     .replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]");
 }
 
@@ -501,11 +572,13 @@ function normalizeOwners(owners) {
 function ownersEqual(left, right) {
   const normalizedLeft = normalizeOwners(left);
   const normalizedRight = normalizeOwners(right);
-  return normalizedLeft.length === normalizedRight.length
-    && normalizedLeft.every((owner, index) => {
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((owner, index) => {
       const other = normalizedRight[index];
       return owner.pid === other.pid && owner.command === other.command;
-    });
+    })
+  );
 }
 
 export function formatPortOwners(owners) {
@@ -598,7 +671,10 @@ class DevSupervisor {
     this.state = "starting";
     this.log("info", "[dev] starting local stack (Tailscale Serve is opt-in)");
     this.log("info", `[dev] worktree=${this.config.baseEnvironment.MUXIMO_WORKTREE_ID ?? "unknown"}`);
-    this.log("info", `[dev] instance=${this.config.baseEnvironment.MUXIMOD_INSTANCE_DIR ?? "default"} tmux socket=${this.config.baseEnvironment.MUXIMOD_TMUX_SOCKET ?? "default"} (shared)`);
+    this.log(
+      "info",
+      `[dev] instance=${this.config.baseEnvironment.MUXIMOD_INSTANCE_DIR ?? "default"} tmux socket=${this.config.baseEnvironment.MUXIMOD_TMUX_SOCKET ?? "default"} (shared)`,
+    );
     this.log("info", `[dev] muximod target: ${this.services.muximod.url}`);
     this.log("info", `[dev] web target: ${this.services.web.url}`);
 
@@ -616,7 +692,10 @@ class DevSupervisor {
       this.log("info", `[dev] ready: ${this.services.muximod.healthUrl} is healthy`);
       this.log("info", `[dev] ready: ${this.services.web.url} serves the Web UI`);
       if (serve) {
-        this.log("info", `[dev] Tailscale Serve: ${serve.url ?? `HTTPS port ${serve.externalPort}`} -> http://127.0.0.1:${serve.localPort}`);
+        this.log(
+          "info",
+          `[dev] Tailscale Serve: ${serve.url ?? `HTTPS port ${serve.externalPort}`} -> http://127.0.0.1:${serve.localPort}`,
+        );
         this.log("info", "[dev] Tailscale Serve is left running; rerun the command to retarget it");
       }
       this.log("info", "[dev] press Ctrl-C to stop processes started by this supervisor");
@@ -647,9 +726,10 @@ class DevSupervisor {
       let finalExitCode = exitCode;
       for (const result of results) {
         if (result.status !== "rejected") continue;
-        const error = result.reason instanceof DevRuntimeError
-          ? result.reason
-          : new DevRuntimeError(errorMessage(result.reason), { cause: result.reason });
+        const error =
+          result.reason instanceof DevRuntimeError
+            ? result.reason
+            : new DevRuntimeError(errorMessage(result.reason), { cause: result.reason });
         this.failure ??= error;
         this.log("error", error.message);
       }
@@ -666,7 +746,10 @@ class DevSupervisor {
     const definition = this.services[name];
     this.log("debug", `[dev] checking ${name} on ${definition.host}:${definition.port}`);
     const inspection = await this.inspectPort(definition.host, definition.port);
-    this.log("debug", `[dev] ${name} port inspection available=${inspection.available} owners=${formatPortOwners(inspection.owners)}`);
+    this.log(
+      "debug",
+      `[dev] ${name} port inspection available=${inspection.available} owners=${formatPortOwners(inspection.owners)}`,
+    );
     if (inspection.available) {
       this.log("info", `[dev] ${name} port ${definition.host}:${definition.port} is free; starting ${name}`);
       const record = this.launch(definition);
@@ -678,7 +761,9 @@ class DevSupervisor {
     if (this.config.adoptExistingServices === false) {
       throw this.withPortRecovery(
         definition,
-        new DevRuntimeError(`existing ${name} adoption is disabled for the current worktree profile`, { service: name }),
+        new DevRuntimeError(`existing ${name} adoption is disabled for the current worktree profile`, {
+          service: name,
+        }),
         inspection,
       );
     }
@@ -691,7 +776,10 @@ class DevSupervisor {
     } catch (error) {
       throw this.withPortRecovery(definition, error, inspection);
     }
-    this.log("info", `[dev] reusing healthy ${name} on ${definition.host}:${definition.port} (${formatPortOwners(record.ownerSnapshot)})`);
+    this.log(
+      "info",
+      `[dev] reusing healthy ${name} on ${definition.host}:${definition.port} (${formatPortOwners(record.ownerSnapshot)})`,
+    );
     return record;
   }
 
@@ -709,7 +797,10 @@ class DevSupervisor {
   }
 
   launch(definition) {
-    this.log("debug", `[dev] spawning ${definition.name}: executable=${definition.command} argumentCount=${definition.args.length}`);
+    this.log(
+      "debug",
+      `[dev] spawning ${definition.name}: executable=${definition.command} argumentCount=${definition.args.length}`,
+    );
     const child = this.spawnProcess(definition.command, definition.args, {
       cwd: definition.cwd,
       env: definition.environment,
@@ -742,7 +833,10 @@ class DevSupervisor {
       record.exitCode = code;
       record.exitSignal = signal;
       record.resolveExit?.();
-      this.log("debug", `[dev] ${definition.name} exited code=${code ?? "null"} signal=${signal ?? "none"} intentional=${record.intentionalStop}`);
+      this.log(
+        "debug",
+        `[dev] ${definition.name} exited code=${code ?? "null"} signal=${signal ?? "none"} intentional=${record.intentionalStop}`,
+      );
       if (this.state === "running" && !record.intentionalStop) {
         void this.handleUnexpectedExit(record, code, signal);
       }
@@ -765,20 +859,28 @@ class DevSupervisor {
         });
       }
       if (record.exited) {
-        throw new DevRuntimeError(`${record.name} exited before becoming ready (exit ${record.exitCode ?? "unknown"}${record.exitSignal ? `, ${record.exitSignal}` : ""})`, {
-          service: record.name,
-        });
+        throw new DevRuntimeError(
+          `${record.name} exited before becoming ready (exit ${record.exitCode ?? "unknown"}${record.exitSignal ? `, ${record.exitSignal}` : ""})`,
+          {
+            service: record.name,
+          },
+        );
       }
 
       lastInspection = await this.inspectPort(record.definition.host, record.definition.port);
       if (lastInspection.available) {
-        lastHealth = failedHealth(`${record.name} is not listening on ${record.definition.host}:${record.definition.port}`);
+        lastHealth = failedHealth(
+          `${record.name} is not listening on ${record.definition.host}:${record.definition.port}`,
+        );
       } else {
         if (record.ownerSnapshot && !ownersEqual(record.ownerSnapshot, lastInspection.owners)) {
           throw this.replacedProcessError(record.definition, record.ownerSnapshot, lastInspection.owners);
         }
         lastHealth = await this.checkHealth(record.definition);
-        this.log("debug", `[dev] ${record.name} readiness probe attempt=${attempt} healthy=${lastHealth.ok} detail=${lastHealth.detail}`);
+        this.log(
+          "debug",
+          `[dev] ${record.name} readiness probe attempt=${attempt} healthy=${lastHealth.ok} detail=${lastHealth.detail}`,
+        );
         if (lastHealth.ok) {
           if (lastInspection.owners?.length) record.ownerSnapshot = normalizeOwners(lastInspection.owners);
           return lastHealth;
@@ -836,14 +938,19 @@ class DevSupervisor {
         try {
           portStatus = await this.waitForPortToFree(record.definition);
         } catch (error) {
-          this.log("warn", `[dev] could not verify that ${record.name} released its port after SIGKILL: ${errorMessage(error)}`);
+          this.log(
+            "warn",
+            `[dev] could not verify that ${record.name} released its port after SIGKILL: ${errorMessage(error)}`,
+          );
         }
       }
     }
-    const replacementListener = Boolean(!portStatus.released
-      && record.ownerSnapshot?.length
-      && portStatus.owners?.length
-      && !ownersEqual(record.ownerSnapshot, portStatus.owners));
+    const replacementListener = Boolean(
+      !portStatus.released &&
+        record.ownerSnapshot?.length &&
+        portStatus.owners?.length &&
+        !ownersEqual(record.ownerSnapshot, portStatus.owners),
+    );
     if (!record.exited || (!portStatus.released && !replacementListener)) {
       const error = new DevRuntimeError(
         `[dev] ${record.name} may still be running (PID ${record.child?.pid ?? "unknown"}); inspect its port with ${recoveryHint(record.definition)}`,
@@ -852,7 +959,10 @@ class DevSupervisor {
       this.failure ??= error;
       this.log("error", error.message);
     }
-    this.log("debug", `[dev] stopped ${record.name} exited=${record.exited} portReleased=${portStatus.released} durationMs=${Date.now() - startedAt}`);
+    this.log(
+      "debug",
+      `[dev] stopped ${record.name} exited=${record.exited} portReleased=${portStatus.released} durationMs=${Date.now() - startedAt}`,
+    );
   }
 
   async waitForRecordExit(record, timeoutMs) {
@@ -943,6 +1053,7 @@ if (resolve(process.argv[1] ?? "") === scriptPath) {
 }
 
 function formatDevError(error) {
-  if (process.env.MUXIMO_DEV_VERBOSE === "1" && error instanceof Error && error.stack) return redactDiagnosticText(error.stack);
+  if (process.env.MUXIMO_DEV_VERBOSE === "1" && error instanceof Error && error.stack)
+    return redactDiagnosticText(error.stack);
   return `[dev] ${errorMessage(error)}`;
 }

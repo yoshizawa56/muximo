@@ -1,18 +1,18 @@
-import { describe, it } from "vitest";
 import {
+  type FixtureHandle,
   hasObserved,
   noFixture,
+  type OperationCase,
+  type OperationTable,
   returns,
   runOperationTable,
   runScenarioTable,
-  type FixtureHandle,
-  type OperationCase,
-  type OperationTable,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { createMuximoBridge, muximoFallbackAppInfo, type MuximoAppInfo, type MuximoBridge } from "./muximo-bridge";
+import { describe, it } from "vitest";
+import { createMuximoBridge, type MuximoAppInfo, type MuximoBridge, muximoFallbackAppInfo } from "./muximo-bridge";
 
 type BridgeContext = {
   platform: string;
@@ -43,8 +43,23 @@ const bridgeTable: OperationTable<undefined, "default", {}, MuximoBridge, Bridge
   cases: bridgeCases,
   execute: () => createMuximoBridge(),
   observe: (_fixture, result) => {
-    if (!result.ok) return { platform: "", isNative: false, capabilities: { appLifecycle: true, routeProvider: false, keychain: false, notifications: false, liveActivities: false } };
-    return { platform: result.value.platform, isNative: result.value.isNative, capabilities: result.value.capabilities };
+    if (!result.ok)
+      return {
+        platform: "",
+        isNative: false,
+        capabilities: {
+          appLifecycle: true,
+          routeProvider: false,
+          keychain: false,
+          notifications: false,
+          liveActivities: false,
+        },
+      };
+    return {
+      platform: result.value.platform,
+      isNative: result.value.isNative,
+      capabilities: result.value.capabilities,
+    };
   },
 };
 
@@ -63,7 +78,10 @@ const appInfoTable: OperationTable<undefined, "default", {}, MuximoAppInfo, unde
   observe: () => undefined,
 };
 
-type VisibilityStep = { type: "set-visibility"; value: DocumentVisibilityState } | { type: "dispatch" } | { type: "unsubscribe" };
+type VisibilityStep =
+  | { type: "set-visibility"; value: DocumentVisibilityState }
+  | { type: "dispatch" }
+  | { type: "unsubscribe" };
 type VisibilityContext = { states: readonly string[] };
 type VisibilityFixture = {
   documentStub: {
@@ -83,7 +101,9 @@ const visibilityFixture = (): FixtureHandle<VisibilityFixture> => {
     visibilityState: "visible",
     addEventListener: (_eventName, listener) => listeners.add(listener as () => void),
     removeEventListener: (_eventName, listener) => listeners.delete(listener as () => void),
-    dispatchVisibilityChange: () => { for (const listener of listeners) listener(); },
+    dispatchVisibilityChange: () => {
+      for (const listener of listeners) listener();
+    },
   };
   Object.defineProperty(globalThis, "document", { configurable: true, value: documentStub });
   const fixture: VisibilityFixture = { documentStub, states: [], unsubscribe: null };
@@ -93,7 +113,8 @@ const visibilityFixture = (): FixtureHandle<VisibilityFixture> => {
     fixture,
     cleanup: () => {
       fixture.unsubscribe?.();
-      if (originalDocument) Object.defineProperty(globalThis, "document", { configurable: true, value: originalDocument });
+      if (originalDocument)
+        Object.defineProperty(globalThis, "document", { configurable: true, value: originalDocument });
       else Reflect.deleteProperty(globalThis, "document");
     },
   };

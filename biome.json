@@ -1,0 +1,80 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": ["**", "!**/*.css", "!**/routeTree.gen.ts", "!**/embedded-migrations.generated.ts"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "correctness": { "noUnusedVariables": "error", "noUnusedImports": "error" },
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "noControlCharactersInRegex": "off"
+      },
+      "style": { "useConst": "error", "noNonNullAssertion": "warn" }
+    }
+  },
+  "javascript": {
+    "formatter": { "quoteStyle": "double", "semicolons": "always" }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/*.stories.tsx"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noExplicitAny": "off" },
+          "complexity": { "noBannedTypes": "off" },
+          "style": { "noNonNullAssertion": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["scripts/**"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noUndeclaredEnvVars": "off", "noAssignInExpressions": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.d.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noShadowRestrictedNames": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/src/app/components/app-icon.tsx"],
+      "linter": {
+        "rules": {
+          "a11y": { "noSvgWithoutTitle": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/-pane-layout-overlay-view.tsx"],
+      "linter": {
+        "rules": {
+          "a11y": { "useAriaPropsSupportedByRole": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.test.ts", "**/*.test.mjs"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noAssignInExpressions": "off" }
+        }
+      }
+    }
+  ]
+}

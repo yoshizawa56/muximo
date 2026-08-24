@@ -1,77 +1,117 @@
-import { useCallback, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import type { WorkspaceDirectory } from "@muximo/contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMobileExperience } from "../../app/mobile-experience-context";
-import { fetchWorkspaces, registerWorkspace } from "../../features/api/muximod-api";
-import { connectionForProfile, readBrowserConnectionProfile } from "../../features/connection/connection-profile-store";
-import { workspaceDetailPath } from "../../app/workspace-routes";
-import type { WorkspacesListViewModel } from "../../features/workspace/workspaces-viewmodel";
+import { useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
+import { invalidateWorkspaceData } from "../../app/api/invalidation";
+import { useMuximodEvents } from "../../app/api/muximod-events";
+import { useMuximodConnection } from "../../app/api/use-muximod-connection";
+
+export type WorkspacesStatus = "loading" | "ready" | "error";
+
+export type WorkspacesListViewModel = {
+  workspaces: WorkspaceDirectory[];
+  status: WorkspacesStatus;
+  query: string;
+  errorMessage: string | null;
+  isRegistering: boolean;
+  onQueryChange: (value: string) => void;
+  onSelectWorkspace: (workspaceId: string) => void;
+  onRegister: (input: { directory: string; name?: string }) => void;
+  onOpenCreate: () => void;
+  onBack: () => void;
+};
+
+export type WorkspaceDetailViewModel = {
+  workspace: WorkspaceDirectory | null;
+  workspaces: WorkspaceDirectory[];
+  status: WorkspacesStatus;
+  name: string;
+  setupScriptPath: string;
+  cleanupScriptPath: string;
+  worktreeCopyPatterns: string;
+  isSaving: boolean;
+  isDeleting: boolean;
+  errorMessage: string | null;
+  saveError: string | null;
+  canSave: boolean;
+  onNameChange: (value: string) => void;
+  onSetupScriptPathChange: (value: string) => void;
+  onCleanupScriptPathChange: (value: string) => void;
+  onWorktreeCopyPatternsChange: (value: string) => void;
+  onSave: () => void;
+  onDelete: () => void;
+  onBack: () => void;
+};
+
+export function filterWorkspaces(workspaces: WorkspaceDirectory[], query: string): WorkspaceDirectory[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return workspaces;
+  return workspaces.filter(
+    (workspace) => workspace.name.toLowerCase().includes(needle) || workspace.directory.toLowerCase().includes(needle),
+  );
+}
+
+export function workspaceDetailCanSave(name: string): boolean {
+  return name.trim().length > 0 && name.trim().length <= 120 && !/[\u0000\r\n\t]/.test(name);
+}
+
+export function parseWorktreeCopyPatterns(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/\r?\n/)
+        .map((pattern) => pattern.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
 
 export function useWorkspacesListViewModel(): WorkspacesListViewModel {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { connection } = useMobileExperience();
-  const profile = readBrowserConnectionProfile();
-  const muximodConnection = connectionForProfile(profile);
-  const connectionKey = muximodConnection ? `${muximodConnection.route ?? "custom"}:${muximodConnection.httpBaseUrl}` : "unconfigured";
-
+  const { connection, utils } = useMuximodConnection();
+  useMuximodEvents(connection);
   const [query, setQuery] = useState("");
-  const workspacesQuery = useQuery({
-    queryKey: ["workspaces", connectionKey],
-    queryFn: () => {
-      if (!muximodConnection) throw new Error("Connection profile is not configured");
-      return fetchWorkspaces(muximodConnection);
-    },
-    enabled: Boolean(muximodConnection),
-    staleTime: 5_000,
-  });
-
+  const workspacesQuery = useQuery(
+    utils.workspaces.list.queryOptions({
+      input: {},
+      staleTime: 5_000,
+      enabled: Boolean(connection),
+    }),
+  );
   const registerMutation = useMutation({
     mutationFn: (input: { directory: string; name?: string }) => {
-      if (!muximodConnection) throw new Error("Connection profile is not configured");
-      return registerWorkspace(input, muximodConnection);
+      if (!connection) throw new Error("Connection profile is not configured");
+      return utils.workspaces.register.call(input, {});
     },
-    onSuccess: (workspace) => {
-      queryClient.setQueryData(["workspaces", connectionKey], (current: unknown) => {
-        const list = Array.isArray(current) ? current : [];
-        const next = [...(list as typeof workspace[]).filter((w) => w.id !== workspace.id), workspace];
-        return next.sort((a, b) => a.name.localeCompare(b.name));
-      });
-      void navigate({ to: workspaceDetailPath(workspace.id) });
+    onSuccess: (response) => {
+      const workspace = response.workspace;
+      invalidateWorkspaceData(queryClient, utils);
+      void navigate({ to: "/workspaces/$workspaceId", params: { workspaceId: workspace.id } });
     },
   });
 
-  const onSelectWorkspace = useCallback((workspaceId: string) => {
-    void navigate({ to: workspaceDetailPath(workspaceId) });
-  }, [navigate]);
-
-  const onBack = useCallback(() => {
-    void navigate({ to: "/terminals" });
-  }, [navigate]);
-
-  const onOpenCreate = useCallback(() => {
-    // Reuse existing picker flow: navigate to detail with empty id handled as create
-    // For now prompt for directory; full browse UI can be integrated later
-    const directory = window.prompt("Workspace directory (host absolute path)");
-    if (!directory?.trim()) return;
-    registerMutation.mutate({ directory: directory.trim() });
-  }, [registerMutation]);
-
   return {
-    workspaces: workspacesQuery.data ?? [],
+    workspaces: workspacesQuery.data?.workspaces ?? [],
     status: workspacesQuery.status === "pending" ? "loading" : workspacesQuery.status === "error" ? "error" : "ready",
     query,
-    errorMessage: workspacesQuery.error instanceof Error ? workspacesQuery.error.message : workspacesQuery.error ? String(workspacesQuery.error) : null,
+    errorMessage: errorMessage(workspacesQuery.error),
     isRegistering: registerMutation.isPending,
     onQueryChange: setQuery,
-    onSelectWorkspace,
+    onSelectWorkspace: (workspaceId) => {
+      void navigate({ to: "/workspaces/$workspaceId", params: { workspaceId } });
+    },
     onRegister: (input) => registerMutation.mutate(input),
-    onOpenCreate,
-    onBack,
+    onOpenCreate: () => {
+      const directory = window.prompt("Workspace directory (host absolute path)");
+      if (directory?.trim()) registerMutation.mutate({ directory: directory.trim() });
+    },
+    onBack: () => {
+      void navigate({ to: "/terminals" });
+    },
   };
 }
 
-// Keep compatibility for routeTree expectations
-export function useWorkspacesViewModel() {
-  return useWorkspacesListViewModel();
+function errorMessage(error: unknown): string | null {
+  return error instanceof Error ? error.message : error ? String(error) : null;
 }

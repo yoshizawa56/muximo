@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { NewPaneRouteView } from "./-new-pane-view";
+import { NewPaneView } from "./-new-pane-view";
 import { useNewPaneViewModel } from "./-new-pane-viewmodel";
 
 export const Route = createFileRoute("/terminals/$terminalId/sessions/$sessionName/panes/new/")({
@@ -7,5 +7,5 @@ export const Route = createFileRoute("/terminals/$terminalId/sessions/$sessionNa
 });
 
 function NewPaneRoute() {
-  return <NewPaneRouteView viewModel={useNewPaneViewModel()} />;
+  return <NewPaneView viewModel={useNewPaneViewModel()} />;
 }

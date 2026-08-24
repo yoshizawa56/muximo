@@ -1,13 +1,13 @@
-import { describe, it } from "vitest";
 import {
   hasError,
   noFixture,
-  returns,
-  runOperationTable,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { describe, it } from "vitest";
 import { normalizeAgentSessionName } from "./index.js";
 
 type EmptyContext = {};

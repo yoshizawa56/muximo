@@ -1,218 +1,271 @@
-import { describe, expect, it } from "vitest";
-import { ApplicationError } from "@muximo/application";
-import { muximodHealthSchema, paneListResponseSchema, sessionListResponseSchema, workspaceBrowseResponseSchema, workspaceListResponseSchema, type RegisterWorkspaceRequest, type UpdateWorkspaceRequest } from "@muximo/protocol";
+import type { MuximodApplication } from "@muximo/application";
+import type { MuximodSocket } from "@muximo/infrastructure";
 import {
-  runOperationTable,
-  hasObserved,
   type Assertion,
   type FixtureHandle,
+  hasObserved,
   type OperationCase,
   type OperationTable,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
-import { InvalidWorkspaceDirectoryError } from "../workspace-selection.js";
+import { describe, expect, it } from "vitest";
+import type { MuximodApp } from "./app.js";
+import { createMuximodApp } from "./app.js";
+import { createOriginPolicy } from "./middleware.js";
+import { TestMuximodSocketAdapter } from "./test-socket.js";
+import type { MuximodAuthPort } from "./types.js";
 
-const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell" };
-const pane = { id: "pane-1", tmuxPaneId: "%0", sessionName: "integration", windowId: "@0", kind: "shell" as const, name: "shell", cwd: "/tmp", workspaceId: null, agentId: null, state: "running" as const, title: null, lastSeenAt: "2026-08-10T00:00:00.000Z" };
-const workspace = { id: "workspace-1", name: "muximo", directory: "/work/muximo", isGit: true, setupScriptPath: null, cleanupScriptPath: null, worktreeCopyPatterns: [] };
-const testAuthContext = {
-  sessionId: "session-test-000000000000",
-  serverId: "server-test-000000000000",
-  deviceId: "device-test-000000000000",
-  issuedAt: "2026-08-10T00:00:00.000Z",
-  expiresAt: "2099-08-10T00:00:00.000Z",
-  revokedAt: null,
+const authContext = {
+  sessionId: "session-http-test-00000000",
+  serverId: "server-http-test-00000000",
+  deviceId: "device-http-test-00000000",
+  issuedAt: "2026-08-15T00:00:00.000Z",
+  expiresAt: "2099-08-15T00:00:00.000Z",
   device: {
-    deviceId: "device-test-000000000000",
-    serverId: "server-test-000000000000",
-    publicKeyJwk: "{}",
-    keyFingerprint: "fingerprint-test",
-    displayName: "test",
+    deviceId: "device-http-test-00000000",
+    serverId: "server-http-test-00000000",
+    publicKey: { kty: "EC" as const, crv: "P-256" as const, x: "x", y: "y" },
+    keyFingerprint: "fingerprint-http-test",
+    displayName: "HTTP test",
     deviceType: "browser" as const,
-    platform: null,
-    clientVersion: null,
     status: "active" as const,
-    createdAt: "2026-08-10T00:00:00.000Z",
-    approvedAt: "2026-08-10T00:00:00.000Z",
-    lastSeenAt: null,
-    revokedAt: null,
+    createdAt: "2026-08-15T00:00:00.000Z",
+    approvedAt: "2026-08-15T00:00:00.000Z",
   },
 };
-const testAuth: MuximodAuthPort = {
-  serverId: testAuthContext.serverId,
-  authenticateAccessToken: () => testAuthContext,
-  claimPairing: () => { throw new Error("not used"); },
-  pairingStatus: () => { throw new Error("not used"); },
-  createChallenge: () => { throw new Error("not used"); },
-  createSession: () => { throw new Error("not used"); },
-  issueWebSocketTicket: () => { throw new Error("not used"); },
-  consumeWebSocketTicket: () => null,
+
+type SocketInput = { kind: "plain" } | { kind: "websocket"; ticket: string; payload?: readonly number[] };
+
+type SocketResult =
+  | { kind: "response"; status: number; body: unknown }
+  | { kind: "websocket"; opened: boolean; received: number[] };
+
+type SocketFixture = {
+  app: MuximodApp;
+  server: ReturnType<typeof Bun.serve>;
+  consumedTickets: string[];
+  terminalConnections: number;
+  socketFactoryCalls: number;
 };
 
-type RequestInput = { url: string; method?: string; headers?: HeadersInit; body?: string };
-type HttpResult = { status: number; body: unknown };
-type HttpContext = { events: readonly { event: string; client: string }[] };
-type AppKey = "default" | "not-ready" | "register" | "update" | "session-error" | "directory-error";
-type AppFixture = { app: MuximodApp; events: Array<{ event: string; client: string }> };
-const jsonHeaders: HeadersInit = { "content-type": "application/json" };
-const hookHeaders: HeadersInit = { "x-muximod-hook-token": "test-token", "content-type": "application/x-www-form-urlencoded" };
+type SocketContext = {
+  consumedTickets: readonly string[];
+  terminalConnections: number;
+  socketFactoryCalls: number;
+  idleTimeout: number;
+};
 
-const responseMatches = (status: number, expectedBody?: unknown, schema?: { safeParse: (value: unknown) => { success: boolean } }): Assertion<HttpContext, HttpResult> => ({
+const responseIs = (status: number, body: unknown): Assertion<SocketContext, SocketResult> => ({
   name: `returns HTTP ${status}`,
   check: (_ctx, result) => {
-    if (!result.ok) throw result.error;
-    expect(result.value.status).toBe(status);
-    if (schema) expect(schema.safeParse(result.value.body).success).toBe(true);
-    if (expectedBody !== undefined) expect(result.value.body).toMatchObject(expectedBody as object);
+    expect(result).toEqual({ ok: true, value: { kind: "response", status, body } });
   },
 });
 
-const exactResponse = (status: number, body: unknown): Assertion<HttpContext, HttpResult> => ({
-  name: `returns exact HTTP ${status} response`,
+const websocketIs = (expected: { opened: boolean; received: number[] }): Assertion<SocketContext, SocketResult> => ({
+  name: "returns the expected WebSocket observation",
   check: (_ctx, result) => {
-    if (!result.ok) throw result.error;
-    expect(result.value.status).toBe(status);
-    expect(result.value.body).toEqual(body);
+    expect(result).toEqual({ ok: true, value: { kind: "websocket", ...expected } });
   },
 });
 
-const appFixture = (kind: AppKey): (() => FixtureHandle<AppFixture>) => () => {
-  const events: Array<{ event: string; client: string }> = [];
-  const overrides = kind === "not-ready"
-    ? { isReady: () => false }
-    : kind === "register"
-      ? { application: { workspaces: { register: async (input: RegisterWorkspaceRequest) => ({ ...workspace, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? [] }) } } }
-      : kind === "update"
-        ? { application: { workspaces: { update: async (workspaceId: string, input: UpdateWorkspaceRequest) => ({ ...workspace, id: workspaceId, name: input.name ?? workspace.name, setupScriptPath: input.setupScriptPath ?? null, cleanupScriptPath: input.cleanupScriptPath ?? null, worktreeCopyPatterns: input.worktreeCopyPatterns ?? workspace.worktreeCopyPatterns }) } } }
-        : kind === "session-error"
-          ? { application: { sessions: { create: async () => { throw new ApplicationError("session_exists", "tmux session already exists: integration"); } } } }
-          : kind === "directory-error"
-            ? { application: { workspaces: { resolveDirectory: async () => { throw new InvalidWorkspaceDirectoryError("/private/secret", "outside_allowed_root", ["/work"]); } } } }
-            : {};
-  return { fixture: { app: createTestApp(events, overrides), events } };
+const fixture = (): FixtureHandle<SocketFixture> => {
+  const consumedTickets: string[] = [];
+  const validTickets = new Set(["ticket-terminal"]);
+  let terminalConnections = 0;
+  let socketFactoryCalls = 0;
+  const auth: MuximodAuthPort = {
+    serverId: authContext.serverId,
+    authenticateAccessToken: async () => authContext,
+    claimPairing: async () => {
+      throw new Error("not used");
+    },
+    pairingStatus: async () => {
+      throw new Error("not used");
+    },
+    createChallenge: async () => {
+      throw new Error("not used");
+    },
+    createSession: async () => {
+      throw new Error("not used");
+    },
+    issueWebSocketTicket: async () => {
+      throw new Error("not used");
+    },
+    consumeWebSocketTicket: async (ticket, endpoint) => {
+      const expected = `ticket-${endpoint}`;
+      if (!ticket || ticket !== expected || !validTickets.has(ticket)) return undefined;
+      consumedTickets.push(`${endpoint}:${ticket}`);
+      validTickets.delete(ticket);
+      return authContext;
+    },
+  };
+  const application: MuximodApplication = {
+    terminal: {
+      get: async () => ({
+        id: "terminal",
+        name: "terminal",
+        host: "host",
+        tailnetIp: "100.64.0.1",
+        state: "online",
+        detail: "test",
+        lastSeen: "now",
+      }),
+    },
+    workspaces: {
+      list: async () => [],
+      browse: async () => [],
+      register: async () => {
+        throw new Error("not used");
+      },
+      update: async () => {
+        throw new Error("not used");
+      },
+      delete: async () => {
+        throw new Error("not used");
+      },
+    },
+    sessions: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
+    panes: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
+    hooks: { handleTerminalHostHook: async () => undefined },
+  };
+  const echo = (socket: MuximodSocket): void => {
+    socket.onMessage((data, isBinary) => {
+      if (isBinary) socket.send(data);
+    });
+  };
+  const app = createMuximodApp({
+    auth,
+    application,
+    originPolicy: createOriginPolicy({ allowedOrigins: ["http://client.test"], allowNoOrigin: true }),
+    hookToken: "hook",
+    socketFactory: (transport) => {
+      socketFactoryCalls += 1;
+      return new TestMuximodSocketAdapter(transport);
+    },
+    onTerminalConnection: (socket) => {
+      terminalConnections += 1;
+      echo(socket);
+    },
+  });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: app.fetch,
+    websocket: app.websocket,
+  });
+  return {
+    fixture: {
+      app,
+      server,
+      consumedTickets,
+      get terminalConnections() {
+        return terminalConnections;
+      },
+      get socketFactoryCalls() {
+        return socketFactoryCalls;
+      },
+    },
+    cleanup: () => server.stop(true),
+  };
 };
 
 const cases = [
-  { name: "returns a typed health response", input: { url: "http://muximod.local/health" }, assert: [responseMatches(200, { service: "muximod", protocolVersion: 1 }, muximodHealthSchema)] },
-  { name: "does not report health before the control server is ready", fixture: "not-ready", input: { url: "http://muximod.local/health" }, assert: [exactResponse(503, { error: "muximod_unavailable", message: "muximod is still starting" })] },
-  { name: "lists sessions through the injected use case", input: { url: "http://muximod.local/api/sessions" }, assert: [responseMatches(200, { sessions: [{ name: "integration" }] }, sessionListResponseSchema)] },
-  { name: "lists allowed workspace directories through the injected catalog", input: { url: "http://muximod.local/api/workspaces" }, assert: [responseMatches(200, { workspaces: [workspace] }, workspaceListResponseSchema)] },
-  { name: "browses host workspace directories through the injected catalog", input: { url: "http://muximod.local/api/workspace-directories" }, assert: [responseMatches(200, { directories: [workspace] }, workspaceBrowseResponseSchema)] },
   {
-    name: "registers a workspace with host-side hook paths",
-    fixture: "register",
-    input: { url: "http://muximod.local/api/workspaces", method: "POST", headers: jsonHeaders, body: JSON.stringify({ directory: "/work/muximo", setupScriptPath: "/Users/me/.config/muximo/setup", cleanupScriptPath: null, worktreeCopyPatterns: [".env", "config/*.local.json"] }) },
-    assert: [responseMatches(201, { workspace: { id: workspace.id, setupScriptPath: "/Users/me/.config/muximo/setup", worktreeCopyPatterns: [".env", "config/*.local.json"] } })],
+    name: "rejects an ordinary HTTP request before attempting an upgrade",
+    input: { kind: "plain" },
+    assert: [
+      responseIs(426, { error: "upgrade_required", message: "WebSocket upgrade is required" }),
+      hasObserved<SocketContext, SocketResult>("consumedTickets", []),
+      hasObserved<SocketContext, SocketResult>("idleTimeout", 0),
+    ],
   },
   {
-    name: "updates a workspace through the transport adapter",
-    fixture: "update",
-    input: { url: "http://muximod.local/api/workspaces/workspace-1", method: "PATCH", headers: jsonHeaders, body: JSON.stringify({ name: "renamed", setupScriptPath: null, worktreeCopyPatterns: [".env"] }) },
-    assert: [responseMatches(200, { workspace: { id: workspace.id, name: "renamed", setupScriptPath: null, worktreeCopyPatterns: [".env"] } })],
+    name: "rejects an invalid ticket without opening an application connection",
+    input: { kind: "websocket", ticket: "invalid-ticket" },
+    assert: [
+      websocketIs({ opened: false, received: [] }),
+      hasObserved<SocketContext, SocketResult>("consumedTickets", []),
+      hasObserved<SocketContext, SocketResult>("terminalConnections", 0),
+    ],
   },
   {
-    name: "deletes a workspace through the transport adapter",
-    input: { url: "http://muximod.local/api/workspaces/workspace-1", method: "DELETE" },
-    assert: [responseMatches(204)],
+    name: "forwards binary terminal data through the injected socket adapter",
+    input: { kind: "websocket", ticket: "ticket-terminal", payload: [0, 1, 255] },
+    assert: [
+      websocketIs({ opened: true, received: [0, 1, 255] }),
+      hasObserved<SocketContext, SocketResult>("consumedTickets", ["terminal:ticket-terminal"]),
+      hasObserved<SocketContext, SocketResult>("terminalConnections", 1),
+      hasObserved<SocketContext, SocketResult>("socketFactoryCalls", 1),
+    ],
   },
-  { name: "filters panes with the session query", input: { url: "http://muximod.local/api/panes?session=integration" }, assert: [responseMatches(200, { panes: [{ tmuxPaneId: "%0" }] }, paneListResponseSchema)] },
-  { name: "returns the shared validation error for invalid request JSON", input: { url: "http://muximod.local/api/sessions", method: "POST", headers: jsonHeaders, body: JSON.stringify({ name: "", cwd: "/tmp" }) }, assert: [responseMatches(400, { error: "invalid_request" })] },
-  { name: "returns the shared error shape for an unknown route", input: { url: "http://muximod.local/api/does-not-exist" }, assert: [exactResponse(404, { error: "not_found", message: "Route not found" })] },
-  {
-    name: "returns a domain error from session creation",
-    fixture: "session-error",
-    input: { url: "http://muximod.local/api/sessions", method: "POST", headers: jsonHeaders, body: JSON.stringify({ name: "integration", cwd: "/tmp" }) },
-    assert: [exactResponse(409, { error: "session_exists", message: "tmux session already exists: integration" })],
-  },
-  {
-    name: "returns structured invalid-directory details for an unselectable workspace",
-    fixture: "directory-error",
-    input: { url: "http://muximod.local/api/sessions", method: "POST", headers: jsonHeaders, body: JSON.stringify({ name: "integration", workspaceId: "workspace-secret" }) },
-    assert: [exactResponse(400, { error: "invalid_directory", message: "Directory is outside the allowed workspace roots: /private/secret", details: { directory: "/private/secret", reason: "outside_allowed_root", allowedRoots: ["/work"] } })],
-  },
-  {
-    name: "resolves a workspace before creating a pane",
-    input: { url: "http://muximod.local/api/panes", method: "POST", headers: jsonHeaders, body: JSON.stringify({ sessionName: "integration", kind: "agent", name: "review", workspaceId: workspace.id, agentId: "codex", useWorktree: true, placement: "window", targetPaneId: null }) },
-    assert: [responseMatches(201, { pane: { tmuxPaneId: "%0" } })],
-  },
-  {
-    name: "creates a pane through the injected pane use case",
-    input: { url: "http://muximod.local/api/panes", method: "POST", headers: jsonHeaders, body: JSON.stringify({ sessionName: "integration", kind: "agent", name: "review", cwd: "/tmp", agentId: "codex", useWorktree: false, placement: "window", targetPaneId: null }) },
-    assert: [responseMatches(201, { pane: { tmuxPaneId: "%0", name: "shell" } })],
-  },
-  {
-    name: "creates a shell split without overriding the target cwd",
-    input: { url: "http://muximod.local/api/panes", method: "POST", headers: jsonHeaders, body: JSON.stringify({ sessionName: "integration", kind: "shell", name: "shell", agentId: null, useWorktree: false, placement: "right", targetPaneId: "%0" }) },
-    assert: [responseMatches(201, { pane: { tmuxPaneId: "%0" } })],
-  },
-  {
-    name: "accepts a signed tmux hook and forwards it to the viewport service",
-    input: { url: "http://muximod.local/internal/tmux-hook", method: "POST", headers: hookHeaders, body: "event=client-active&client=%2Fdev%2Fdesktop" },
-    assert: [responseMatches(204), hasObserved<HttpContext, HttpResult>("events", [{ event: "client-active", client: "/dev/desktop" }])],
-  },
-] satisfies readonly OperationCase<AppKey, RequestInput, HttpResult, HttpContext>[];
+] satisfies readonly OperationCase<"default", SocketInput, SocketResult, SocketContext>[];
 
-const table: OperationTable<AppFixture, AppKey, RequestInput, HttpResult, HttpContext> = {
-  defaultFixture: appFixture("default"),
-  fixtures: { default: appFixture("default"), "not-ready": appFixture("not-ready"), register: appFixture("register"), update: appFixture("update"), "session-error": appFixture("session-error"), "directory-error": appFixture("directory-error") },
+const table: OperationTable<SocketFixture, "default", SocketInput, SocketResult, SocketContext> = {
+  defaultFixture: fixture,
   cases,
-  execute: async (fixture, input) => {
-    const headers = new Headers(input.headers);
-    if (!headers.has("authorization")) headers.set("authorization", "Bearer test-token");
-    const response = await fixture.app.request(new Request(input.url, { method: input.method, headers, body: input.body }));
-    const body = response.status === 204 ? null : await response.json();
-    return { status: response.status, body };
+  execute: async (world, input) => {
+    const url = `http://127.0.0.1:${world.server.port}/terminal`;
+    if (input.kind === "plain") {
+      const response = await fetch(url);
+      return { kind: "response", status: response.status, body: await response.json() };
+    }
+    const ticket = encodeURIComponent(input.ticket);
+    return { kind: "websocket", ...(await openWebSocket(`${url}?ticket=${ticket}`, input.payload)) };
   },
-  observe: (fixture) => ({ events: [...fixture.events] }),
+  observe: (world) => ({
+    consumedTickets: [...world.consumedTickets],
+    terminalConnections: world.terminalConnections,
+    socketFactoryCalls: world.socketFactoryCalls,
+    idleTimeout: world.app.websocket.idleTimeout,
+  }),
 };
 
-describe("muximod HTTP app", () => {
+describe("muximod Bun WebSocket boundary", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
-type MuximodDependencies = Parameters<typeof createMuximodApp>[0];
-type MuximodApplication = MuximodDependencies["application"];
-type ApplicationOverrides = {
-  terminal?: Partial<MuximodApplication["terminal"]>;
-  workspaces?: Partial<MuximodApplication["workspaces"]>;
-  sessions?: Partial<MuximodApplication["sessions"]>;
-  panes?: Partial<MuximodApplication["panes"]>;
-  hooks?: Partial<MuximodApplication["hooks"]>;
-};
-
-type AppOverrides = Omit<Partial<Parameters<typeof createMuximodApp>[0]>, "application"> & { application?: ApplicationOverrides };
-
-function createTestApp(events: Array<{ event: string; client: string }>, overrides: AppOverrides = {}): MuximodApp {
-  const application = {
-    terminal: { get: async () => ({ id: "mac", name: "Mac", host: "mac.local", tailnetIp: "100.64.0.1", state: "online" as const, detail: "muximod · darwin", lastSeen: "online now" }) },
-    workspaces: {
-      list: async () => [workspace],
-      browse: async () => [workspace],
-      register: async () => workspace,
-      update: async (workspaceId: string) => ({ ...workspace, id: workspaceId }),
-      delete: async () => undefined,
-      resolveDirectory: async (workspaceId: string) => ({ id: workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
-      resolveSelection: async (selection: { workspaceId: string }) => ({ id: selection.workspaceId, rootPath: workspace.directory, name: workspace.name, isGit: workspace.isGit, setupScriptPath: workspace.setupScriptPath, cleanupScriptPath: workspace.cleanupScriptPath, worktreeCopyPatterns: workspace.worktreeCopyPatterns, createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" }),
-    },
-    sessions: { list: async () => [session], create: async () => session },
-    panes: { list: async () => [pane], create: async () => pane },
-    hooks: { handleTmux: (event: string, client: string) => events.push({ event, client }) },
-  };
-  const applicationOverrides = overrides.application;
-  return createMuximodApp({
-    ...overrides,
-    auth: testAuth,
-    application: {
-      ...application,
-      ...applicationOverrides,
-      terminal: { ...application.terminal, ...applicationOverrides?.terminal },
-      workspaces: { ...application.workspaces, ...applicationOverrides?.workspaces },
-      sessions: { ...application.sessions, ...applicationOverrides?.sessions },
-      panes: { ...application.panes, ...applicationOverrides?.panes },
-      hooks: { ...application.hooks, ...applicationOverrides?.hooks },
-    },
-    corsOrigin: "*",
-    hookToken: "test-token",
+function openWebSocket(url: string, payload?: readonly number[]): Promise<{ opened: boolean; received: number[] }> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url);
+    socket.binaryType = "arraybuffer";
+    let opened = false;
+    let received: number[] = [];
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error(`WebSocket test timed out: ${url}`));
+    }, 2_000);
+    const finish = (): void => {
+      clearTimeout(timeout);
+      resolve({ opened, received });
+    };
+    socket.onopen = () => {
+      opened = true;
+      if (payload) {
+        socket.send(new Uint8Array(payload));
+      } else {
+        socket.close(1000, "test complete");
+      }
+    };
+    socket.onmessage = async (event) => {
+      if (event.data instanceof ArrayBuffer) received = [...new Uint8Array(event.data)];
+      else if (event.data instanceof Blob) received = [...new Uint8Array(await event.data.arrayBuffer())];
+      socket.close(1000, "test complete");
+    };
+    socket.onerror = () => {
+      if (!opened) finish();
+    };
+    socket.onclose = finish;
   });
 }
