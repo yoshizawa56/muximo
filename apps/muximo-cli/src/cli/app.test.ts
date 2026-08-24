@@ -27,11 +27,11 @@ type Fixture = {
 
 type Input = { args: readonly string[] };
 type Context = Fixture & { output: string; error: string };
-type FixtureKey = "default" | "environment";
+type FixtureKey = "environment";
 
 function contains<ContextType>(key: keyof ContextType, value: string) {
   return {
-    name: `contains ${String(key)} text`,
+    name: `contains ${String(key)} text: ${value}`,
     check: (context: ContextType) => {
       expect((context as Record<string, unknown>)[key as string]).toContain(value);
     },
@@ -269,7 +269,7 @@ const cases = [
 ] satisfies readonly OperationCase<FixtureKey, Input, number, Context>[];
 
 const table: OperationTable<AppFixture, FixtureKey, Input, number, Context> = {
-  defaultFixture: createFixture,
+  defaultFixture: () => createFixture(),
   fixtures: {
     environment: () =>
       createFixture({

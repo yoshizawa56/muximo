@@ -29,7 +29,7 @@ function createFixture() {
 
 function containsOutput(key: "output" | "error", value: string) {
   return {
-    name: `contains ${key} text`,
+    name: `contains ${key} text: ${value}`,
     check: (context: Context) => {
       expect(context[key]).toContain(value);
     },

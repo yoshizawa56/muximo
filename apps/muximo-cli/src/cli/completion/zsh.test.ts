@@ -1,14 +1,8 @@
+import { type OperationCase, type OperationTable, runOperationTable, type TestRegistrar } from "@muximo/test-support";
 import { Command } from "commander";
-import {
-  noFixture,
-  type OperationCase,
-  type OperationTable,
-  runOperationTable,
-  type TestRegistrar,
-} from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
-import { generateZshCompletion } from "./zsh.js";
 import { defineOptions, registerOptions } from "../options/index.js";
+import { generateZshCompletion } from "./zsh.js";
 
 const rootOptions = defineOptions({
   key: "verbose",
@@ -60,7 +54,7 @@ const cases = [
     assert: [
       containsText("#compdef muximo"),
       containsText("compdef _muximo muximo"),
-      containsText("-v[Show diagnostics.]"),
+      containsText("-v[Show\\ diagnostics.]"),
       containsText("serve"),
     ],
   },
@@ -69,9 +63,9 @@ const cases = [
     input: { command: "serve" },
     assert: [
       containsText("_muximo_serve()"),
-      containsText("--verbose[Show diagnostics.]"),
+      containsText("--verbose[Show\\ diagnostics.]"),
       containsText("--port[Port.]:port:"),
-      containsText("--log-level[Log level.]:level:(error warn info debug)"),
+      containsText("--log-level[Log\\ level.]:level:(error warn info debug)"),
     ],
   },
 ] satisfies readonly OperationCase<"default", Input, string, Context>[];
