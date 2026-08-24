@@ -1,9 +1,8 @@
-import type { WorkspaceRecord } from "@muximo/domain";
-import { normalizeAgentSessionName, Pane, WorkspaceId } from "@muximo/domain";
-import type { CreatePaneInput } from "../../ports/application.js";
+import { clearPatch, normalizeAgentSessionName, Pane, WorkspaceId } from "@muximo/domain";
+import type { CreatePaneInput, MuximodClock } from "../../ports/application.js";
 import { ApplicationError, type MuximodPaneSummary } from "../../ports/application.js";
 import type { MuximodHostPort, MuximodViewportPort, MuximodWorkspaceCatalogPort } from "../../ports/host.js";
-import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
+import type { AgentSessionRepository, PaneRepository, WorkspaceRepository } from "../../ports/repositories.js";
 import type { AgentStatusStore } from "../sessions/agent-status.js";
 import { reconcilePanes } from "../terminals/reconcile-panes.js";
 
@@ -14,11 +13,21 @@ export async function createPane(
   agentSessionRepository: AgentSessionRepository,
   viewportManager: MuximodViewportPort,
   workspaceCatalog: MuximodWorkspaceCatalogPort,
-  agentStatus: AgentStatusStore = new Map(),
-  workspace?: WorkspaceRecord,
+  workspaceRepository: WorkspaceRepository,
+  agentStatus: AgentStatusStore,
+  clock: MuximodClock,
 ): Promise<MuximodPaneSummary> {
-  if (!host.hasSession(input.sessionName)) {
-    throw new ApplicationError("session_not_found", `tmux session does not exist: ${input.sessionName}`);
+  const workspace = input.workspaceId
+    ? await workspaceCatalog.resolveSelection(
+        {
+          workspaceId: WorkspaceId.create(input.workspaceId),
+          mode: input.useWorktree ? "worktree" : "workspace",
+        },
+        (id) => workspaceRepository.findById(id),
+      )
+    : undefined;
+  if (!(await host.hasSession(input.sessionName))) {
+    throw new ApplicationError("session_not_found", `terminal host session does not exist: ${input.sessionName}`);
   }
   if (input.placement !== "window" && (input.cwd || (input.workspaceId && !input.useWorktree))) {
     throw new ApplicationError(
@@ -42,30 +51,36 @@ export async function createPane(
 
   const paneName = input.kind === "agent" ? normalizeAgentSessionName(input.name) : input.name;
   const commandInput = paneName === input.name ? input : { ...input, name: paneName };
-  const tmuxPaneId = host.createManagedPane(commandInput, workspace, cwd);
+  const hostPaneId = await host.createManagedPane(commandInput, workspace, cwd);
+  await host.setAgentPaneMetadata(hostPaneId, "pane_name", paneName);
+  await host.setAgentPaneMetadata(hostPaneId, "kind", input.kind);
+  await host.setAgentPaneMetadata(hostPaneId, "agent_id", input.agentId ?? "");
+  await host.setAgentPaneMetadata(hostPaneId, "workspace_id", input.workspaceId ?? "");
   if (input.placement !== "window" && input.targetPaneId) {
-    viewportManager.reassertMobileViewport(input.targetPaneId);
+    await viewportManager.reassertMobileViewport(input.targetPaneId);
   }
-  const panes = await reconcilePanes(host, repository, agentSessionRepository, undefined, agentStatus);
-  const current = panes.find((pane) => pane.tmuxPaneId === tmuxPaneId);
+  const panes = await reconcilePanes(host, repository, agentSessionRepository, agentStatus, clock);
+  const current = panes.find((pane) => pane.hostPaneId === hostPaneId);
   if (!current) {
-    throw new ApplicationError("pane_not_visible", "tmux created the pane but muximod could not read it");
+    throw new ApplicationError("pane_not_visible", "terminal host created the pane but it could not be read");
   }
 
   const workspaceId = input.workspaceId === undefined ? current.workspaceId : WorkspaceId.create(input.workspaceId);
-  const record: MuximodPaneSummary = Pane.create({
-    ...current,
+  let record: MuximodPaneSummary = Pane.update(current, {
     kind: input.kind,
     name: paneName,
     workspaceId,
-    agentId: input.agentId ?? undefined,
-    state: input.kind === "agent" ? "starting" : "running",
+    agentId: input.agentId ?? clearPatch,
   });
+  const desiredState = input.kind === "agent" ? "starting" : "running";
+  if (record.state !== desiredState) {
+    record = Pane.transitionState(record, desiredState, "pane created", clock.now());
+  }
   await repository.upsert(record);
-  host.setAgentPaneMetadata(tmuxPaneId, "pane_id", record.id);
-  host.setAgentPaneMetadata(tmuxPaneId, "pane_name", paneName);
-  host.setAgentPaneMetadata(tmuxPaneId, "agent_id", input.agentId ?? "");
-  host.setAgentPaneMetadata(tmuxPaneId, "kind", input.kind);
-  host.setAgentPaneMetadata(tmuxPaneId, "workspace_id", input.workspaceId ?? "");
+  await host.setAgentPaneMetadata(hostPaneId, "pane_id", record.id);
+  await host.setAgentPaneMetadata(hostPaneId, "pane_name", paneName);
+  await host.setAgentPaneMetadata(hostPaneId, "agent_id", input.agentId ?? "");
+  await host.setAgentPaneMetadata(hostPaneId, "kind", input.kind);
+  await host.setAgentPaneMetadata(hostPaneId, "workspace_id", input.workspaceId ?? "");
   return record;
 }

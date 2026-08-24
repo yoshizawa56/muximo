@@ -40,7 +40,7 @@ export {
   DrizzleWorkspaceRepository,
   recordAuditEvent,
 } from "./repositories/sqlite/index.js";
-export { agentSessions, auditEvents, panes, workspaces } from "./schema.js";
+export { agentSessions, auditEvents, codexSessionStates, panes, workspaces } from "./schema.js";
 export type { SqliteRetryOptions } from "./transaction.js";
 export { isRetryableSqliteBusy, runSqliteTransaction, SqliteTransactionManager } from "./transaction.js";
 

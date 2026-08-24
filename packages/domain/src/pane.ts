@@ -21,8 +21,8 @@ export type PaneState = z.infer<typeof paneStateSchema>;
 const paneSchema = z
   .object({
     id: PaneId.schema,
-    tmuxPaneId: z.string().min(1),
-    tmuxServerId: z.string().min(1).optional(),
+    hostPaneId: z.string().min(1),
+    hostServerId: z.string().min(1).optional(),
     agentSessionId: AgentSessionId.schema.optional(),
     agentExecutionId: z.string().min(1).optional(),
     sessionName: z.string().min(1),
@@ -50,7 +50,37 @@ const paneSchema = z
 
 export type Pane = z.infer<typeof paneSchema>;
 export type PaneRecord = Pane;
-export type PaneUpdateInput = ObjectPatch<Pane>;
+
+export type PaneCreateInput = {
+  id: PaneId;
+  hostPaneId: string;
+  hostServerId?: string;
+  agentSessionId?: AgentSessionId;
+  agentExecutionId?: string;
+  sessionName: string;
+  windowId: string;
+  kind: PaneKind;
+  name: string;
+  cwd: string;
+  workspaceId?: WorkspaceId;
+  agentId?: string;
+  initialState: PaneState;
+  title?: string;
+  recentOutput?: string;
+  lastSeenAt: string;
+  windowName?: string;
+  windowIndex?: number;
+  paneIndex?: number;
+  left?: number;
+  top?: number;
+  width?: number;
+  height?: number;
+  windowWidth?: number;
+  windowHeight?: number;
+};
+
+type PaneMutableFields = Omit<Pane, "id" | "hostPaneId" | "hostServerId" | "state">;
+export type PaneUpdateInput = ObjectPatch<PaneMutableFields>;
 
 export type PaneStateTransition = {
   from: PaneState;
@@ -60,6 +90,7 @@ export type PaneStateTransition = {
 };
 
 const terminalStates = new Set<PaneState>(["failed", "completed", "stopped"]);
+const immutablePaneUpdateKeys = new Set(["id", "hostPaneId", "hostServerId", "state"]);
 
 const parsePane = (input: unknown): Pane => paneSchema.parse(input);
 
@@ -71,19 +102,24 @@ export const Pane = {
     return parsePane(input);
   },
 
-  create(input: Pane): Pane {
-    return parsePane(input);
+  create(input: PaneCreateInput): Pane {
+    const { initialState, ...record } = input;
+    return parsePane({ ...record, state: initialState });
   },
 
   update(entity: Pane, input: PaneUpdateInput): Pane {
     const current = parsePane(entity);
+    for (const key of Object.keys(input)) {
+      if (immutablePaneUpdateKeys.has(key)) {
+        throw new Error(`Pane update cannot change immutable field: ${key}`);
+      }
+    }
     return parsePane(applyObjectPatch(current, input));
   },
 
   canTransitionState: canTransitionPaneState,
-  transitionState: transitionPaneState,
+  transitionState: transitionPane,
   isAttentionState,
-  kindForCommand,
 } as const;
 
 export function canTransitionPaneState(from: PaneState, to: PaneState): boolean {
@@ -99,24 +135,23 @@ export function transitionPaneState(
   current: PaneState,
   next: PaneState,
   reason: string,
-  at = new Date().toISOString(),
+  at: string,
 ): PaneStateTransition {
+  if (!reason.trim()) throw new Error("Pane state transition requires a reason");
+  if (!at.trim()) throw new Error("Pane state transition requires a time");
   if (!canTransitionPaneState(current, next)) {
     throw new Error(`Invalid pane state transition: ${current} -> ${next}`);
   }
   return { from: current, to: next, reason, at };
 }
 
+export function transitionPane(entity: Pane, next: PaneState, reason: string, at: string): Pane {
+  const current = parsePane(entity);
+  const transition = transitionPaneState(current.state, next, reason, at);
+  return parsePane({ ...current, state: transition.to, lastSeenAt: at });
+}
+
 export function isAttentionState(state: PaneState): boolean {
   paneStateSchema.parse(state);
   return state === "waiting_input" || state === "waiting_approval" || state === "failed";
-}
-
-export function kindForCommand(command: string): PaneKind {
-  const executable = command.trim().toLowerCase().split(/\s+/, 1)[0]?.split("/").at(-1) ?? "";
-  if (!executable || executable === "zsh" || executable === "bash" || executable === "fish" || executable === "sh") {
-    return "shell";
-  }
-  if (["agent", "codex", "claude", "aider", "opencode", "gemini"].includes(executable)) return "agent";
-  return "unknown";
 }

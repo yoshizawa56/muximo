@@ -1,16 +1,39 @@
-import type { MuximodSocket, MuximodSocketData } from "@muximo/application";
+export const muximodSocketReadyState = {
+  connecting: 0,
+  open: 1,
+  closing: 2,
+  closed: 3,
+} as const;
 
-export type { MuximodSocket, MuximodSocketData } from "@muximo/application";
-export { muximodSocketReadyState } from "@muximo/application";
+export type MuximodSocketData = string | Uint8Array;
 
-type BunSocketContext = {
+export type MuximodSocketTransport = {
   readonly readyState: number;
-  send(data: string | Uint8Array): number | undefined;
+  send(data: MuximodSocketData): number | undefined;
   close(code?: number, reason?: string): void;
 };
 
-/** Adapts Bun's `ServerWebSocket` to the transport-neutral application port. */
-export class BunSocketAdapter implements MuximodSocket {
+export interface MuximodSocket {
+  readonly readyState: number;
+  send(data: MuximodSocketData): void;
+  close(code?: number, reason?: string): void;
+  onMessage(listener: (data: MuximodSocketData, isBinary: boolean) => void): () => void;
+  onClose(listener: () => void): () => void;
+  onError(listener: (error: Error) => void): () => void;
+}
+
+export interface MuximodSocketAdapter extends MuximodSocket {
+  receive(data: unknown): void;
+  receiveClose(): void;
+  receiveError(error: unknown): void;
+}
+
+export type MuximodSocketFactory = (transport: MuximodSocketTransport) => MuximodSocketAdapter;
+
+export type BunSocketContext = MuximodSocketTransport;
+
+/** Adapts Bun's `ServerWebSocket` to the muximod terminal transport. */
+export class BunSocketAdapter implements MuximodSocketAdapter {
   private readonly messageListeners = new Set<(data: MuximodSocketData, isBinary: boolean) => void>();
   private readonly closeListeners = new Set<() => void>();
   private readonly errorListeners = new Set<(error: Error) => void>();

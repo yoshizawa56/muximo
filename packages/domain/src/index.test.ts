@@ -12,7 +12,6 @@ import {
   canTransitionPaneState,
   isAttentionState,
   type PaneState,
-  paneKindForCommand,
   transitionPaneState,
   validateWorkspaceSelection,
   type WorkspaceDirectoryOption,
@@ -97,37 +96,6 @@ const attentionTable: OperationTable<undefined, "default", AttentionInput, boole
   observe: () => ({}),
 };
 
-type CommandInput = { command: string };
-const commandCases = [
-  {
-    name: "classifies zsh as a shell",
-    input: { command: "/bin/zsh -l" },
-    assert: [returns<EmptyContext, string>("shell")],
-  },
-  {
-    name: "classifies a bare zsh as a shell",
-    input: { command: "zsh" },
-    assert: [returns<EmptyContext, string>("shell")],
-  },
-  {
-    name: "classifies codex as an agent",
-    input: { command: "codex --profile local-agent" },
-    assert: [returns<EmptyContext, string>("agent")],
-  },
-  {
-    name: "classifies claude as an agent",
-    input: { command: "claude --session-id example" },
-    assert: [returns<EmptyContext, string>("agent")],
-  },
-] satisfies readonly OperationCase<"default", CommandInput, string, EmptyContext>[];
-
-const commandTable: OperationTable<undefined, "default", CommandInput, string, EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases: commandCases,
-  execute: (_fixture, input) => paneKindForCommand(input.command),
-  observe: () => ({}),
-};
-
 const workspace: WorkspaceDirectoryOption = {
   id: WorkspaceId.create("workspace-1"),
   name: "muximo",
@@ -174,6 +142,5 @@ describe("domain rules", () => {
   runOperationTable(register, transitionTable);
   runOperationTable(register, recordTable);
   runOperationTable(register, attentionTable);
-  runOperationTable(register, commandTable);
   runOperationTable(register, workspaceTable);
 });

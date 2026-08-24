@@ -89,41 +89,64 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
     ): Promise<LaunchPlan> {
       const root = input.cwd;
       const entry = await manager.ensure(root);
-      const baseUrl = `http://127.0.0.1:${entry.port}`;
-      const client = options.clientFactory?.(baseUrl) ?? new OpenCodeClient(baseUrl, { onLog: options.onLog });
-      const sessionId = await resolveSessionId(client, entry, input.resumeSessionId ?? null, input.name);
-      const monitor =
-        options.monitorFactory?.({
-          baseUrl,
-          sessionId,
-          workspaceRoot: root,
-          client,
-        }) ?? new OpenCodeMonitor({ baseUrl, sessionId, workspaceRoot: root, client });
-      const attachExecutable = options.attachExecutable ?? "opencode";
-
-      return {
-        primary: {
-          command: attachExecutable,
-          args: ["attach", baseUrl, "--dir", root, "--session", sessionId],
-          cwd: root,
-          environment: { ...input.environment },
-        },
-        monitor,
-        backendSessionId: sessionId,
-        sidecars: [
-          {
-            kind: "opencode-serve",
-            pid: entry.pid,
-            health: () => manager.isHealthy(entry.port),
-            stop: async () => {
-              await manager.dispose(root);
-            },
-          },
-        ],
-        dispose: async () => {
-          await manager.dispose(root);
-        },
+      let disposed = false;
+      let disposal: Promise<void> | undefined;
+      const disposeOwnedServer = (): Promise<void> => {
+        if (disposed) return Promise.resolve();
+        if (disposal) return disposal;
+        // A host may release a sidecar through both the sidecar hook and the
+        // plan hook. Share one promise so the owned process is disposed once.
+        disposal = manager
+          .dispose(root)
+          .then(() => {
+            disposed = true;
+          })
+          .catch((error) => {
+            disposal = undefined;
+            throw error;
+          });
+        return disposal;
       };
+
+      try {
+        const baseUrl = `http://127.0.0.1:${entry.port}`;
+        const client = options.clientFactory?.(baseUrl) ?? new OpenCodeClient(baseUrl, { onLog: options.onLog });
+        const sessionId = await resolveSessionId(client, entry, input.resumeSessionId ?? null, input.name);
+        const monitor =
+          options.monitorFactory?.({
+            baseUrl,
+            sessionId,
+            workspaceRoot: root,
+            client,
+          }) ?? new OpenCodeMonitor({ baseUrl, sessionId, workspaceRoot: root, client });
+        const attachExecutable = options.attachExecutable ?? "opencode";
+
+        return {
+          primary: {
+            command: attachExecutable,
+            args: ["attach", baseUrl, "--dir", root, "--session", sessionId],
+            cwd: root,
+            environment: { ...input.environment },
+          },
+          monitor,
+          backendSessionId: sessionId,
+          sidecars: [
+            {
+              kind: "opencode-serve",
+              pid: entry.pid,
+              health: () => manager.isHealthy(entry.port),
+              stop: disposeOwnedServer,
+            },
+          ],
+          dispose: disposeOwnedServer,
+        };
+      } catch (error) {
+        // Preparation owns the server until a plan is returned. If plan
+        // construction fails, release that ownership before propagating the
+        // preparation error.
+        await disposeOwnedServer();
+        throw error;
+      }
     },
 
     actions() {

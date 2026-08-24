@@ -2,7 +2,7 @@
 export const embeddedMigrationFiles = [
   {
     "path": "meta/_journal.json",
-    "contents": "{\n  \"version\": \"7\",\n  \"dialect\": \"sqlite\",\n  \"entries\": [\n    {\n      \"idx\": 0,\n      \"version\": \"6\",\n      \"when\": 1786542385624,\n      \"tag\": \"0000_fair_shinko_yamashiro\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 1,\n      \"version\": \"6\",\n      \"when\": 1786617782309,\n      \"tag\": \"0001_adorable_omega_sentinel\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 2,\n      \"version\": \"6\",\n      \"when\": 1786668549000,\n      \"tag\": \"0002_tmux_server_identity\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 3,\n      \"version\": \"6\",\n      \"when\": 1786672149000,\n      \"tag\": \"0003_agent_session_adoption\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 4,\n      \"version\": \"6\",\n      \"when\": 1786797339000,\n      \"tag\": \"0004_remove_legacy_runs\",\n      \"breakpoints\": true\n    }\n  ]\n}\n"
+    "contents": "{\n  \"version\": \"7\",\n  \"dialect\": \"sqlite\",\n  \"entries\": [\n    {\n      \"idx\": 0,\n      \"version\": \"6\",\n      \"when\": 1786542385624,\n      \"tag\": \"0000_fair_shinko_yamashiro\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 1,\n      \"version\": \"6\",\n      \"when\": 1786617782309,\n      \"tag\": \"0001_adorable_omega_sentinel\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 2,\n      \"version\": \"6\",\n      \"when\": 1786668549000,\n      \"tag\": \"0002_tmux_server_identity\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 3,\n      \"version\": \"6\",\n      \"when\": 1786672149000,\n      \"tag\": \"0003_agent_session_adoption\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 4,\n      \"version\": \"6\",\n      \"when\": 1786797339000,\n      \"tag\": \"0004_remove_legacy_runs\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 5,\n      \"version\": \"6\",\n      \"when\": 1787000000000,\n      \"tag\": \"0005_codex_session_state\",\n      \"breakpoints\": true\n    }\n  ]\n}\n"
   },
   {
     "path": "0000_fair_shinko_yamashiro.sql",
@@ -23,5 +23,9 @@ export const embeddedMigrationFiles = [
   {
     "path": "0004_remove_legacy_runs.sql",
     "contents": "ALTER TABLE `panes` DROP COLUMN `run_id`;\n--> statement-breakpoint\nDROP TABLE `runs`;\n"
+  },
+  {
+    "path": "0005_codex_session_state.sql",
+    "contents": "CREATE TABLE `codex_session_states` (\n\t`agent_session_id` text PRIMARY KEY NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,\n\t`profile` text,\n\t`remote` text,\n\t`session_baseline` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n);\n--> statement-breakpoint\nINSERT INTO `codex_session_states` (\n\t`agent_session_id`,\n\t`profile`,\n\t`remote`,\n\t`session_baseline`,\n\t`created_at`,\n\t`updated_at`\n)\nSELECT\n\t`id`,\n\t`codex_profile`,\n\t`codex_remote`,\n\t`codex_session_baseline`,\n\t`created_at`,\n\t`updated_at`\nFROM `agent_sessions`\nWHERE `codex_profile` IS NOT NULL\n\tOR `codex_remote` IS NOT NULL\n\tOR `codex_session_baseline` IS NOT NULL;\n--> statement-breakpoint\nALTER TABLE `agent_sessions` DROP COLUMN `codex_profile`;\n--> statement-breakpoint\nALTER TABLE `agent_sessions` DROP COLUMN `codex_remote`;\n--> statement-breakpoint\nALTER TABLE `agent_sessions` DROP COLUMN `codex_session_baseline`;\n"
   }
 ] as const;

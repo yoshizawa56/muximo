@@ -110,11 +110,14 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
   /** Lists directory candidates for the host-side registration browser. */
   public async browseDirectories(parentPath?: string): Promise<MuximodWorkspaceDirectory[]> {
     const bases = parentPath ? [this.policy.assertDirectory(parentPath)] : this.policy.roots.filter(isDirectory);
-    const candidates = parentPath
-      ? safeReadDirectory(bases[0]!)
-          .map((entry) => resolve(bases[0]!, entry))
-          .filter(isDirectory)
-      : bases;
+    let candidates = bases;
+    if (parentPath) {
+      const [base] = bases;
+      if (!base) throw new Error("workspace directory parent path has no base directory");
+      candidates = safeReadDirectory(base)
+        .map((entry) => resolve(base, entry))
+        .filter(isDirectory);
+    }
 
     return candidates
       .filter((directory) => this.policy.contains(directory))

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { invalidateWorkspaceData } from "../../../app/api/invalidation";
 import { useMuximodEvents } from "../../../app/api/muximod-events";
 import { useMuximodConnection } from "../../../app/api/use-muximod-connection";
 import {
@@ -59,15 +60,8 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
         {},
       );
     },
-    onSuccess: (response) => {
-      const updated = response.workspace;
-      queryClient.setQueryData(utils.workspaces.list.queryKey({ input: {} }), (current) => {
-        if (!current) return current;
-        const workspaces = current.workspaces
-          .map((w) => (w.id === updated.id ? updated : w))
-          .sort((a, b) => a.name.localeCompare(b.name));
-        return { ...current, workspaces };
-      });
+    onSuccess: () => {
+      invalidateWorkspaceData(queryClient, utils);
       setSaveError(null);
     },
     onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
@@ -79,10 +73,7 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
       return utils.workspaces.delete.call({ workspaceId }, {});
     },
     onSuccess: () => {
-      queryClient.setQueryData(utils.workspaces.list.queryKey({ input: {} }), (current) => {
-        if (!current) return current;
-        return { ...current, workspaces: current.workspaces.filter((w) => w.id !== workspaceId) };
-      });
+      invalidateWorkspaceData(queryClient, utils);
       void navigate({ to: "/workspaces" });
     },
     onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),

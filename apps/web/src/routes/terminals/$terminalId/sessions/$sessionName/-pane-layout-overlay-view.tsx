@@ -365,22 +365,31 @@ function windowIdNumber(id: string): string {
 
 export function hasPaneGeometry(
   pane: Pick<PaneSummary, "left" | "top" | "width" | "height" | "windowWidth" | "windowHeight">,
-): boolean {
-  if (![pane.left, pane.top].every((value) => typeof value === "number" && value >= 0)) return false;
+): pane is Pick<PaneSummary, "left" | "top" | "width" | "height" | "windowWidth" | "windowHeight"> & {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  windowWidth: number;
+  windowHeight: number;
+} {
+  const { left, top, width, height, windowWidth, windowHeight } = pane;
+  if (typeof left !== "number" || typeof top !== "number") return false;
+  if (!(left >= 0) || !(top >= 0)) return false;
   if (
-    ![pane.width, pane.height, pane.windowWidth, pane.windowHeight].every(
-      (value) => typeof value === "number" && value > 0,
-    )
+    typeof width !== "number" ||
+    typeof height !== "number" ||
+    typeof windowWidth !== "number" ||
+    typeof windowHeight !== "number"
   )
     return false;
+  if (!(width > 0) || !(height > 0) || !(windowWidth > 0) || !(windowHeight > 0)) return false;
   // Pane must fit inside the window; a wider pane indicates a stale window
   // size (mobile/desktop viewport race) and should fall back to grid layout.
-  if (typeof pane.width === "number" && typeof pane.windowWidth === "number" && pane.width > pane.windowWidth)
-    return false;
-  if (typeof pane.height === "number" && typeof pane.windowHeight === "number" && pane.height > pane.windowHeight)
-    return false;
-  if (typeof pane.windowWidth === "number" && (pane.windowWidth < 20 || pane.windowWidth > 500)) return false;
-  if (typeof pane.windowHeight === "number" && (pane.windowHeight < 5 || pane.windowHeight > 300)) return false;
+  if (width > windowWidth) return false;
+  if (height > windowHeight) return false;
+  if (windowWidth < 20 || windowWidth > 500) return false;
+  if (windowHeight < 5 || windowHeight > 300) return false;
   return true;
 }
 
@@ -396,8 +405,7 @@ export function paneLayoutNeedsCompactTargets(
   return panes.some((pane) => {
     if (!hasPaneGeometry(pane)) return false;
     return (
-      pane.width! / windowWidth < MIN_TOUCH_PANE_WIDTH_RATIO ||
-      pane.height! / windowHeight < MIN_TOUCH_PANE_HEIGHT_RATIO
+      pane.width / windowWidth < MIN_TOUCH_PANE_WIDTH_RATIO || pane.height / windowHeight < MIN_TOUCH_PANE_HEIGHT_RATIO
     );
   });
 }
@@ -406,12 +414,13 @@ function paneGeometryStyle(
   pane: PaneSummary,
   window: { windowWidth?: number; windowHeight?: number },
 ): CSSProperties | undefined {
-  if (!hasPaneGeometry(pane) || !window.windowWidth || !window.windowHeight) return undefined;
+  const { windowWidth, windowHeight } = window;
+  if (!hasPaneGeometry(pane) || !windowWidth || !windowHeight) return undefined;
   const clamp = (value: number) => Math.max(0, Math.min(100, value));
-  const left = clamp((pane.left! / window.windowWidth) * 100);
-  const top = clamp((pane.top! / window.windowHeight) * 100);
-  const width = clamp((pane.width! / window.windowWidth) * 100);
-  const height = clamp((pane.height! / window.windowHeight) * 100);
+  const left = clamp((pane.left / windowWidth) * 100);
+  const top = clamp((pane.top / windowHeight) * 100);
+  const width = clamp((pane.width / windowWidth) * 100);
+  const height = clamp((pane.height / windowHeight) * 100);
   // Prevent panes from overflowing the window due to rounding errors.
   return {
     left: `${left}%`,

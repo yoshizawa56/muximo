@@ -11,18 +11,23 @@ import {
 import type { PaneState } from "@muximo/domain";
 import { validateMuximodControlSocketPath } from "@muximo/infrastructure";
 
+type AgentSessionControlRequest = {
+  agentSessionId: string;
+  hostPaneId: string;
+  executionId: string;
+};
+
+type AgentSessionObservationRequest = AgentSessionControlRequest & {
+  state: PaneState;
+  recentOutput?: string;
+};
+
 export type MuximodControlServerOptions = {
   socketPath: string;
   auth: MuximodAuthControlPort;
-  adoptAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
-  observeAgentSession?: (request: {
-    agentSessionId: string;
-    tmuxPaneId: string;
-    executionId: string;
-    state: PaneState;
-    recentOutput?: string;
-  }) => Promise<void>;
-  releaseAgentSession?: (request: { agentSessionId: string; tmuxPaneId: string; executionId: string }) => Promise<void>;
+  adoptAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
+  observeAgentSession?: (request: AgentSessionObservationRequest) => Promise<void>;
+  releaseAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
 };
 
 export class MuximodControlServer {
@@ -31,16 +36,15 @@ export class MuximodControlServer {
   private server: Server | undefined;
   private started = false;
 
-  public constructor(private readonly options: MuximodControlServerOptions) {
-    this.options.auth.setPairingClaimListener((notification) => this.notifyClaim(notification));
-  }
+  public constructor(private readonly options: MuximodControlServerOptions) {}
 
   public start(): Promise<void> {
     ensureSocketPathIsSafe(this.options.socketPath);
     mkdirSync(dirname(this.options.socketPath), { recursive: true, mode: 0o700 });
     this.server = createServer((socket) => this.handleConnection(socket));
     return new Promise((resolve, reject) => {
-      const server = this.server!;
+      const server = this.server;
+      if (!server) throw new Error("control server was not initialized");
       const onError = (error: Error) => {
         server.removeListener("listening", onListening);
         this.server = undefined;
@@ -84,7 +88,7 @@ export class MuximodControlServer {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
         newline = buffer.indexOf("\n");
-        if (line.trim()) this.handleRequest(socket, line);
+        if (line.trim()) void this.handleRequest(socket, line);
       }
     });
     socket.on("close", () => {
@@ -92,17 +96,15 @@ export class MuximodControlServer {
       for (const [pairingId, owner] of this.pairingOwners) {
         if (owner !== socket) continue;
         this.pairingOwners.delete(pairingId);
-        try {
-          this.options.auth.rejectPairing(pairingId);
-        } catch {
+        void this.options.auth.rejectPairing(pairingId).catch(() => {
           // The pairing may already have been approved, rejected, or expired.
-        }
+        });
       }
     });
     socket.on("error", () => socket.destroy());
   }
 
-  private handleRequest(socket: Socket, line: string): void {
+  private async handleRequest(socket: Socket, line: string): Promise<void> {
     const parsedRequest = decodeMuximodControlRequest(line);
     if (!parsedRequest.ok) {
       this.send(socket, {
@@ -116,7 +118,7 @@ export class MuximodControlServer {
 
     try {
       if (request.type === "create_pairing") {
-        const payload = this.options.auth.createPairing({ muximodBaseUrl: request.muximodBaseUrl });
+        const payload = await this.options.auth.createPairing({ muximodBaseUrl: request.muximodBaseUrl });
         this.pairingOwners.set(payload.pairingId, socket);
         this.send(socket, {
           type: "pairing_created",
@@ -127,7 +129,7 @@ export class MuximodControlServer {
         return;
       }
       if (request.type === "approve_pairing") {
-        const device = this.options.auth.approvePairing(request.pairingId);
+        const device = await this.options.auth.approvePairing(request.pairingId);
         this.send(socket, {
           type: "pairing_result",
           pairingId: request.pairingId,
@@ -137,7 +139,7 @@ export class MuximodControlServer {
         return;
       }
       if (request.type === "reject_pairing") {
-        this.options.auth.rejectPairing(request.pairingId);
+        await this.options.auth.rejectPairing(request.pairingId);
         this.send(socket, { type: "pairing_result", pairingId: request.pairingId, status: "rejected" });
         return;
       }
@@ -145,13 +147,13 @@ export class MuximodControlServer {
         if (!this.options.adoptAgentSession)
           throw controlError("agent_session_adoption_unavailable", "agent session adoption is unavailable");
         void this.options
-          .adoptAgentSession(request)
+          .adoptAgentSession(toApplicationAgentSessionRequest(request))
           .then(() => this.send(socket, { ...request, type: "agent_session_adopted" }))
           .catch((error) =>
             this.send(socket, {
               type: "error",
               code: errorCode(error),
-              message: error instanceof Error ? error.message : String(error),
+              message: errorMessage(error),
             }),
           );
         return;
@@ -160,13 +162,13 @@ export class MuximodControlServer {
         if (!this.options.releaseAgentSession)
           throw controlError("agent_session_release_unavailable", "agent session release is unavailable");
         void this.options
-          .releaseAgentSession(request)
+          .releaseAgentSession(toApplicationAgentSessionRequest(request))
           .then(() => this.send(socket, { ...request, type: "agent_session_released" }))
           .catch((error) =>
             this.send(socket, {
               type: "error",
               code: errorCode(error),
-              message: error instanceof Error ? error.message : String(error),
+              message: errorMessage(error),
             }),
           );
         return;
@@ -175,7 +177,7 @@ export class MuximodControlServer {
         if (!this.options.observeAgentSession)
           throw controlError("agent_session_observation_unavailable", "agent session observation is unavailable");
         void this.options
-          .observeAgentSession(request)
+          .observeAgentSession(toApplicationAgentSessionObservationRequest(request))
           .then(() =>
             this.send(socket, {
               type: "agent_session_observed",
@@ -189,7 +191,7 @@ export class MuximodControlServer {
             this.send(socket, {
               type: "error",
               code: errorCode(error),
-              message: error instanceof Error ? error.message : String(error),
+              message: errorMessage(error),
             }),
           );
         return;
@@ -199,14 +201,21 @@ export class MuximodControlServer {
       this.send(socket, {
         type: "error",
         code: errorCode(error),
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
       });
     }
   }
 
-  private notifyClaim(notification: AuthPairingClaimNotification): void {
+  public notifyPairingClaim(notification: AuthPairingClaimNotification): void {
     const owner = this.pairingOwners.get(notification.pairingId);
-    if (owner && !owner.destroyed) this.send(owner, { type: "pairing_claimed", ...notification });
+    if (owner && !owner.destroyed) {
+      this.send(owner, {
+        type: "pairing_claimed",
+        ...notification,
+        platform: notification.platform ?? null,
+        clientVersion: notification.clientVersion ?? null,
+      });
+    }
   }
 
   private send(socket: Socket, response: MuximodControlResponse): void {
@@ -226,8 +235,45 @@ function ensureSocketPathIsSafe(path: string): void {
 }
 
 function errorCode(error: unknown): string {
-  if (error && typeof error === "object" && "code" in error && typeof error.code === "string") return error.code;
+  if (error && typeof error === "object" && "code" in error && typeof error.code === "string") {
+    if (error.code === "terminal_host_unavailable") return "tmux_unavailable";
+    if (error.code === "terminal_host_pane_not_found") return "tmux_pane_not_found";
+    return error.code;
+  }
   return "control_error";
+}
+
+function errorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === "terminal host is unavailable") return "tmux is unavailable";
+  if (message.startsWith("terminal host pane not found: ")) return message.replace("terminal host ", "tmux ");
+  return message;
+}
+
+function toApplicationAgentSessionRequest(request: {
+  agentSessionId: string;
+  tmuxPaneId: string;
+  executionId: string;
+}): AgentSessionControlRequest {
+  return {
+    agentSessionId: request.agentSessionId,
+    hostPaneId: request.tmuxPaneId,
+    executionId: request.executionId,
+  };
+}
+
+function toApplicationAgentSessionObservationRequest(request: {
+  agentSessionId: string;
+  tmuxPaneId: string;
+  executionId: string;
+  state: PaneState;
+  recentOutput?: string;
+}): AgentSessionObservationRequest {
+  return {
+    ...toApplicationAgentSessionRequest(request),
+    state: request.state,
+    ...(request.recentOutput === undefined ? {} : { recentOutput: request.recentOutput }),
+  };
 }
 
 function controlError(code: string, message: string): Error & { code: string } {

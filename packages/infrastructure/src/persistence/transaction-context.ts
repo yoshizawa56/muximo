@@ -4,6 +4,8 @@ import type { AgentDrizzleDatabase } from "./database-types.js";
 
 export type SqliteTransactionScope = {
   owner: object;
+  rootDatabase: AgentDrizzleDatabase;
+  rootSqlite: Database;
   database: AgentDrizzleDatabase;
   sqlite: Database;
 };
@@ -15,13 +17,34 @@ export function currentSqliteTransaction(): SqliteTransactionScope | undefined {
 }
 
 export function ambientDatabase(root: AgentDrizzleDatabase): AgentDrizzleDatabase {
-  return storage.getStore()?.database ?? root;
+  const scope = storage.getStore();
+  if (!scope) return root;
+  if (scope.rootDatabase !== root) throw new Error("SQLite transaction database identity mismatch");
+  return scope.database;
 }
 
 export function ambientSqlite(root: Database): Database {
-  return storage.getStore()?.sqlite ?? root;
+  const scope = storage.getStore();
+  if (!scope) return root;
+  if (scope.rootSqlite !== root) throw new Error("SQLite transaction database identity mismatch");
+  return scope.sqlite;
+}
+
+export function assertSqliteTransactionIdentity(
+  scope: SqliteTransactionScope,
+  rootDatabase: AgentDrizzleDatabase,
+  rootSqlite: Database,
+): void {
+  if (scope.rootDatabase !== rootDatabase || scope.rootSqlite !== rootSqlite)
+    throw new Error("SQLite transaction database identity mismatch");
 }
 
 export function runWithSqliteTransaction<T>(scope: SqliteTransactionScope, operation: () => Promise<T>): Promise<T> {
+  const current = storage.getStore();
+  if (current) {
+    if (current.owner !== scope.owner) throw new Error("SQLite transaction owner mismatch");
+    if (current.rootDatabase !== scope.rootDatabase || current.rootSqlite !== scope.rootSqlite)
+      throw new Error("SQLite transaction database identity mismatch");
+  }
   return storage.run(scope, operation);
 }

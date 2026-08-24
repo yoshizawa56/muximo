@@ -28,7 +28,9 @@ type PasteCall = { kind: "set" | "paste" | "delete"; name: string; target?: stri
 type PasteFixture = {
   adapter: ImagePasteAdapter;
   calls: PasteCall[];
-  paster: (input: ImagePasteInput) => ImagePasteResult;
+  stagePaths: string[];
+  cleanupPaths: string[];
+  paster: (input: ImagePasteInput) => Promise<ImagePasteResult>;
   runOsascript?: ReturnType<typeof vi.fn<(script: string) => { status: number | null }>>;
 };
 
@@ -48,12 +50,18 @@ type PasteContext = {
   osascriptCalls: number;
   osascriptIncludesAppKit: boolean;
   osascriptReferencesTempFile: boolean;
+  stageCount: number;
+  stagePaths: readonly string[];
+  cleanupCount: number;
+  cleanupPaths: readonly string[];
 };
 
 const createPasteFixture = (
   options: { platform?: NodeJS.Platform; osascriptStatus?: number | null; pasteFails?: boolean } = {},
 ): FixtureHandle<PasteFixture> => {
   const calls: PasteCall[] = [];
+  const stagePaths: string[] = [];
+  const cleanupPaths: string[] = [];
   const adapter: ImagePasteAdapter = {
     setBuffer: vi.fn<(name: string, _data: Buffer) => void>((name) => {
       calls.push({ kind: "set", name });
@@ -74,10 +82,17 @@ const createPasteFixture = (
     tmux: adapter,
     platform: options.platform ?? "linux",
     tempDir: "/tmp",
-    stageImage: (input) => `/tmp/${input.name}`,
+    stageImage: (input) => {
+      const path = `/tmp/${input.name}`;
+      stagePaths.push(path);
+      return path;
+    },
+    cleanupImage: (path) => {
+      cleanupPaths.push(path);
+    },
     ...(runOsascript ? { runOsascript } : {}),
   });
-  return { fixture: { adapter, calls, paster, runOsascript } };
+  return { fixture: { adapter, calls, stagePaths, cleanupPaths, paster, runOsascript } };
 };
 
 const pasteCases = [
@@ -93,18 +108,21 @@ const pasteCases = [
         `\x1b]1337;file=inline=1;name=photo.png:${bytes.toString("base64")}\x07`,
       ),
       hasObserved<PasteContext, PasteResult>("deleteCount", 1),
+      hasObserved<PasteContext, PasteResult>("stageCount", 0),
+      hasObserved<PasteContext, PasteResult>("cleanupCount", 0),
     ],
   },
   {
-    name: "reports the staged temp file and the pasted byte count",
+    name: "reports the pasted byte count without staging a file off macOS",
     input: { paneId: "%3", name: "photo.png", mimeType: "image/png", bytes },
     assert: [
       hasObserved<PasteContext, PasteResult>("result", {
         bytes: bytes.length,
         name: "photo.png",
-        tempFilePath: "/tmp/photo.png",
         clipboard: "unavailable",
       }),
+      hasObserved<PasteContext, PasteResult>("stageCount", 0),
+      hasObserved<PasteContext, PasteResult>("cleanupPaths", []),
     ],
   },
   {
@@ -116,6 +134,8 @@ const pasteCases = [
       hasObserved<PasteContext, PasteResult>("osascriptCalls", 1),
       hasObserved<PasteContext, PasteResult>("osascriptIncludesAppKit", true),
       hasObserved<PasteContext, PasteResult>("osascriptReferencesTempFile", true),
+      hasObserved<PasteContext, PasteResult>("stageCount", 1),
+      hasObserved<PasteContext, PasteResult>("cleanupCount", 1),
     ],
   },
   {
@@ -126,6 +146,8 @@ const pasteCases = [
       hasObserved<PasteContext, PasteResult>("clipboard", "failed"),
       hasObserved<PasteContext, PasteResult>("pastedTarget", "%3"),
       hasObserved<PasteContext, PasteResult>("deleteCount", 1),
+      hasObserved<PasteContext, PasteResult>("stageCount", 1),
+      hasObserved<PasteContext, PasteResult>("cleanupCount", 1),
     ],
   },
   {
@@ -134,6 +156,8 @@ const pasteCases = [
     assert: [
       hasObserved<PasteContext, PasteResult>("clipboard", "unavailable"),
       hasObserved<PasteContext, PasteResult>("osascriptCalls", 0),
+      hasObserved<PasteContext, PasteResult>("stageCount", 0),
+      hasObserved<PasteContext, PasteResult>("cleanupCount", 0),
     ],
   },
   {
@@ -144,6 +168,8 @@ const pasteCases = [
       hasError<PasteContext, PasteResult>({ message: "tmux paste failed" }),
       hasObserved<PasteContext, PasteResult>("setCount", 1),
       hasObserved<PasteContext, PasteResult>("deleteCount", 1),
+      hasObserved<PasteContext, PasteResult>("stageCount", 0),
+      hasObserved<PasteContext, PasteResult>("cleanupCount", 0),
     ],
   },
 ] satisfies readonly OperationCase<PasteFixtureKey, PasteInput, PasteResult, PasteContext>[];
@@ -173,10 +199,11 @@ const pasteTable: OperationTable<PasteFixture, PasteFixtureKey, PasteInput, Past
       clipboard: result.ok ? result.value.clipboard : undefined,
       osascriptCalls: fixture.runOsascript?.mock.calls.length ?? 0,
       osascriptIncludesAppKit: osascriptScript?.includes("ObjC.import('AppKit')") ?? false,
-      osascriptReferencesTempFile: osascriptScript
-        ? (result.ok && osascriptScript.includes(result.value.tempFilePath)) ||
-          osascriptScript.includes("/tmp/photo.png")
-        : false,
+      osascriptReferencesTempFile: osascriptScript?.includes("/tmp/photo.png") ?? false,
+      stageCount: fixture.stagePaths.length,
+      stagePaths: [...fixture.stagePaths],
+      cleanupCount: fixture.cleanupPaths.length,
+      cleanupPaths: [...fixture.cleanupPaths],
     };
   },
 };

@@ -1,4 +1,5 @@
-import type { MuximodApplication, MuximodSocket } from "@muximo/application";
+import type { MuximodApplication } from "@muximo/application";
+import type { MuximodSocket } from "@muximo/infrastructure";
 import {
   type Assertion,
   type FixtureHandle,
@@ -11,6 +12,8 @@ import {
 import { describe, expect, it } from "vitest";
 import type { MuximodApp } from "./app.js";
 import { createMuximodApp } from "./app.js";
+import { createOriginPolicy } from "./middleware.js";
+import { TestMuximodSocketAdapter } from "./test-socket.js";
 import type { MuximodAuthPort } from "./types.js";
 
 const authContext = {
@@ -19,21 +22,16 @@ const authContext = {
   deviceId: "device-http-test-00000000",
   issuedAt: "2026-08-15T00:00:00.000Z",
   expiresAt: "2099-08-15T00:00:00.000Z",
-  revokedAt: null,
   device: {
     deviceId: "device-http-test-00000000",
     serverId: "server-http-test-00000000",
-    publicKeyJwk: "{}",
+    publicKey: { kty: "EC" as const, crv: "P-256" as const, x: "x", y: "y" },
     keyFingerprint: "fingerprint-http-test",
     displayName: "HTTP test",
     deviceType: "browser" as const,
-    platform: null,
-    clientVersion: null,
     status: "active" as const,
     createdAt: "2026-08-15T00:00:00.000Z",
     approvedAt: "2026-08-15T00:00:00.000Z",
-    lastSeenAt: null,
-    revokedAt: null,
   },
 };
 
@@ -48,11 +46,13 @@ type SocketFixture = {
   server: ReturnType<typeof Bun.serve>;
   consumedTickets: string[];
   terminalConnections: number;
+  socketFactoryCalls: number;
 };
 
 type SocketContext = {
   consumedTickets: readonly string[];
   terminalConnections: number;
+  socketFactoryCalls: number;
   idleTimeout: number;
 };
 
@@ -74,27 +74,28 @@ const fixture = (): FixtureHandle<SocketFixture> => {
   const consumedTickets: string[] = [];
   const validTickets = new Set(["ticket-terminal"]);
   let terminalConnections = 0;
+  let socketFactoryCalls = 0;
   const auth: MuximodAuthPort = {
     serverId: authContext.serverId,
-    authenticateAccessToken: () => authContext,
-    claimPairing: () => {
+    authenticateAccessToken: async () => authContext,
+    claimPairing: async () => {
       throw new Error("not used");
     },
-    pairingStatus: () => {
+    pairingStatus: async () => {
       throw new Error("not used");
     },
-    createChallenge: () => {
+    createChallenge: async () => {
       throw new Error("not used");
     },
-    createSession: () => {
+    createSession: async () => {
       throw new Error("not used");
     },
-    issueWebSocketTicket: () => {
+    issueWebSocketTicket: async () => {
       throw new Error("not used");
     },
-    consumeWebSocketTicket: (ticket, endpoint) => {
+    consumeWebSocketTicket: async (ticket, endpoint) => {
       const expected = `ticket-${endpoint}`;
-      if (!ticket || ticket !== expected || !validTickets.has(ticket)) return null;
+      if (!ticket || ticket !== expected || !validTickets.has(ticket)) return undefined;
       consumedTickets.push(`${endpoint}:${ticket}`);
       validTickets.delete(ticket);
       return authContext;
@@ -124,12 +125,6 @@ const fixture = (): FixtureHandle<SocketFixture> => {
       delete: async () => {
         throw new Error("not used");
       },
-      resolveDirectory: async () => {
-        throw new Error("not used");
-      },
-      resolveSelection: async () => {
-        throw new Error("not used");
-      },
     },
     sessions: {
       list: async () => [],
@@ -143,7 +138,7 @@ const fixture = (): FixtureHandle<SocketFixture> => {
         throw new Error("not used");
       },
     },
-    hooks: { handleTmux: () => undefined },
+    hooks: { handleTerminalHostHook: async () => undefined },
   };
   const echo = (socket: MuximodSocket): void => {
     socket.onMessage((data, isBinary) => {
@@ -153,8 +148,12 @@ const fixture = (): FixtureHandle<SocketFixture> => {
   const app = createMuximodApp({
     auth,
     application,
-    corsOrigin: "http://client.test",
+    originPolicy: createOriginPolicy({ allowedOrigins: ["http://client.test"], allowNoOrigin: true }),
     hookToken: "hook",
+    socketFactory: (transport) => {
+      socketFactoryCalls += 1;
+      return new TestMuximodSocketAdapter(transport);
+    },
     onTerminalConnection: (socket) => {
       terminalConnections += 1;
       echo(socket);
@@ -173,6 +172,9 @@ const fixture = (): FixtureHandle<SocketFixture> => {
       consumedTickets,
       get terminalConnections() {
         return terminalConnections;
+      },
+      get socketFactoryCalls() {
+        return socketFactoryCalls;
       },
     },
     cleanup: () => server.stop(true),
@@ -199,12 +201,13 @@ const cases = [
     ],
   },
   {
-    name: "forwards binary terminal data through the Bun adapter",
+    name: "forwards binary terminal data through the injected socket adapter",
     input: { kind: "websocket", ticket: "ticket-terminal", payload: [0, 1, 255] },
     assert: [
       websocketIs({ opened: true, received: [0, 1, 255] }),
       hasObserved<SocketContext, SocketResult>("consumedTickets", ["terminal:ticket-terminal"]),
       hasObserved<SocketContext, SocketResult>("terminalConnections", 1),
+      hasObserved<SocketContext, SocketResult>("socketFactoryCalls", 1),
     ],
   },
 ] satisfies readonly OperationCase<"default", SocketInput, SocketResult, SocketContext>[];
@@ -224,6 +227,7 @@ const table: OperationTable<SocketFixture, "default", SocketInput, SocketResult,
   observe: (world) => ({
     consumedTickets: [...world.consumedTickets],
     terminalConnections: world.terminalConnections,
+    socketFactoryCalls: world.socketFactoryCalls,
     idleTimeout: world.app.websocket.idleTimeout,
   }),
 };

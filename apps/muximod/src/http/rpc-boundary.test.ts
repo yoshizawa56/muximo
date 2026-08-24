@@ -1,6 +1,6 @@
-import type { MuximodApplication } from "@muximo/application";
+import type { CreatePaneInput, CreateSessionInput, MuximodApplication } from "@muximo/application";
 import { type AuthInfo, muximodHealthSchema } from "@muximo/contract";
-import { Workspace, WorkspaceId } from "@muximo/domain";
+import { Pane, PaneId } from "@muximo/domain";
 import {
   type Assertion,
   type FixtureHandle,
@@ -14,7 +14,9 @@ import {
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
 import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
+import { createOriginPolicy } from "./middleware.js";
 import { createHttpTestClient } from "./test-client.js";
+import { createTestMuximodSocketFactory } from "./test-socket.js";
 
 const authContext = {
   sessionId: "session-http-test-00000000",
@@ -22,21 +24,16 @@ const authContext = {
   deviceId: "device-http-test-00000000",
   issuedAt: "2026-08-15T00:00:00.000Z",
   expiresAt: "2099-08-15T00:00:00.000Z",
-  revokedAt: null,
   device: {
     deviceId: "device-http-test-00000000",
     serverId: "server-http-test-00000000",
-    publicKeyJwk: "{}",
+    publicKey: { kty: "EC" as const, crv: "P-256" as const, x: "x", y: "y" },
     keyFingerprint: "fingerprint-http-test",
     displayName: "HTTP test",
     deviceType: "browser" as const,
-    platform: null,
-    clientVersion: null,
     status: "active" as const,
     createdAt: "2026-08-15T00:00:00.000Z",
     approvedAt: "2026-08-15T00:00:00.000Z",
-    lastSeenAt: null,
-    revokedAt: null,
   },
 };
 const workspace = {
@@ -48,27 +45,58 @@ const workspace = {
   cleanupScriptPath: null,
   worktreeCopyPatterns: [],
 };
-const workspaceRecord = Workspace.create({
-  id: WorkspaceId.create(workspace.id),
-  rootPath: workspace.directory,
-  name: workspace.name,
-  isGit: workspace.isGit,
-  worktreeCopyPatterns: workspace.worktreeCopyPatterns,
-  createdAt: "2026-08-15T00:00:00.000Z",
-  updatedAt: "2026-08-15T00:00:00.000Z",
-});
 const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell" };
+const pane = Pane.create({
+  id: PaneId.create("pane-1"),
+  hostPaneId: "%1",
+  sessionName: "integration",
+  windowId: "@1",
+  kind: "shell",
+  name: "shell",
+  cwd: "/work/muximo",
+  workspaceId: undefined,
+  agentId: undefined,
+  initialState: "running",
+  title: undefined,
+  lastSeenAt: "2026-08-15T00:00:00.000Z",
+});
 
 type AppFixture = {
   app: MuximodApp;
   events: Array<{ event: string; client: string }>;
+  sessionInputs: CreateSessionInput[];
+  paneInputs: CreatePaneInput[];
   originalFetch: typeof globalThis.fetch;
 };
-type HttpResult = { status: number; body: unknown; allowOrigin: string | null };
+type HttpResult = { status: number; body: unknown; allowOrigin: string | null; vary: string | null };
 type HttpContext = { events: readonly { event: string; client: string }[] };
-type HttpInput = { operation: "health" | "unknown" | "hook" | "preflight" };
-type RpcInput = { operation: "info" | "authorized-sessions" | "unauthorized-sessions" };
-type RpcContext = {};
+type HttpInput =
+  | { operation: "health" | "unknown" | "hook" }
+  | { operation: "preflight"; origin: "allowed" | "denied" };
+type RpcInput =
+  | { operation: "info" | "authorized-sessions" | "unauthorized-sessions" }
+  | { operation: "list-panes" }
+  | {
+      operation: "create-session";
+      input: { name: string; workspaceId: string };
+    }
+  | {
+      operation: "create-pane";
+      input: {
+        sessionName: string;
+        kind: "shell";
+        name: string;
+        workspaceId: string;
+        agentId: null;
+        useWorktree: true;
+        placement: "bottom";
+        targetPaneId: "%1";
+      };
+    };
+type RpcContext = {
+  sessionInputs: readonly CreateSessionInput[];
+  paneInputs: readonly CreatePaneInput[];
+};
 
 const responseMatches = (
   status: number,
@@ -88,20 +116,23 @@ const appFixture =
   (ready: boolean): (() => FixtureHandle<AppFixture>) =>
   () => {
     const events: Array<{ event: string; client: string }> = [];
+    const sessionInputs: CreateSessionInput[] = [];
+    const paneInputs: CreatePaneInput[] = [];
     const originalFetch = globalThis.fetch;
     const app = createMuximodApp({
       auth: testAuth,
-      application: createTestApplication(events),
+      application: createTestApplication(events, { sessionInputs, paneInputs }),
       isReady: () => ready,
-      corsOrigin: "http://web.example",
+      originPolicy: createOriginPolicy({ allowedOrigins: ["http://web.example"], allowNoOrigin: true }),
       hookToken: "test-token",
+      socketFactory: createTestMuximodSocketFactory(),
     });
     globalThis.fetch = (async (input, init) => {
       const response = await app.fetch(new Request(input, init));
       return response ?? new Response(null, { status: 101 });
     }) as typeof globalThis.fetch;
     return {
-      fixture: { app, events, originalFetch },
+      fixture: { app, events, sessionInputs, paneInputs, originalFetch },
       cleanup: () => {
         globalThis.fetch = originalFetch;
       },
@@ -143,8 +174,8 @@ const httpCases = [
     ],
   },
   {
-    name: "answers RPC preflight requests at the transport boundary",
-    input: { operation: "preflight" },
+    name: "answers an allowlisted RPC preflight with an exact origin and Vary header",
+    input: { operation: "preflight", origin: "allowed" },
     assert: [
       responseMatches(204),
       {
@@ -152,6 +183,22 @@ const httpCases = [
         check: (_context, result) => {
           if (!result.ok) throw result.error;
           expect(result.value.allowOrigin).toBe("http://web.example");
+          expect(result.value.vary).toBe("Origin");
+        },
+      },
+    ],
+  },
+  {
+    name: "rejects a denied RPC preflight without CORS headers",
+    input: { operation: "preflight", origin: "denied" },
+    assert: [
+      responseMatches(403, { error: "origin_not_allowed" }),
+      {
+        name: "does not reflect the denied origin",
+        check: (_context, result) => {
+          if (!result.ok) throw result.error;
+          expect(result.value.allowOrigin).toBe(null);
+          expect(result.value.vary).toBe(null);
         },
       },
     ],
@@ -163,6 +210,8 @@ const httpTable: OperationTable<AppFixture, "default" | "not-ready", HttpInput, 
   fixtures: { default: appFixture(true), "not-ready": appFixture(false) },
   cases: httpCases,
   execute: async (fixture, input) => {
+    const preflightOrigin =
+      input.operation === "preflight" && input.origin === "denied" ? "http://evil.example" : "http://web.example";
     const request =
       input.operation === "health"
         ? new Request("http://muximod.local/health")
@@ -176,13 +225,17 @@ const httpTable: OperationTable<AppFixture, "default" | "not-ready", HttpInput, 
               })
             : new Request("http://muximod.local/rpc/sessions/list", {
                 method: "OPTIONS",
-                headers: { origin: "http://web.example", "access-control-request-method": "POST" },
+                headers: {
+                  origin: preflightOrigin,
+                  "access-control-request-method": "POST",
+                },
               });
     const response = await fixture.app.request(request);
     return {
       status: response.status,
       body: response.status === 204 ? null : await response.json(),
       allowOrigin: response.headers.get("access-control-allow-origin"),
+      vary: response.headers.get("vary"),
     };
   },
   observe: (fixture) => ({ events: [...fixture.events] }),
@@ -210,9 +263,73 @@ const rpcCases = [
     assert: [returns<RpcContext, unknown>([session])],
   },
   {
+    name: "maps the application host pane identity to the stable wire field",
+    input: { operation: "list-panes" },
+    assert: [
+      {
+        name: "returns tmuxPaneId without leaking hostPaneId",
+        check: (_context, result) => {
+          if (!result.ok) throw result.error;
+          const panes = result.value as Array<Record<string, unknown>>;
+          expect(panes).toEqual([expect.objectContaining({ tmuxPaneId: "%1" })]);
+          expect(panes[0]).not.toHaveProperty("hostPaneId");
+        },
+      },
+    ],
+  },
+  {
     name: "rejects a protected session query without a bearer token",
     input: { operation: "unauthorized-sessions" },
     assert: [hasError<RpcContext, unknown>({ status: 401, message: "Bearer authentication is required" })],
+  },
+  {
+    name: "passes session workspace selection to one application usecase",
+    input: { operation: "create-session", input: { name: "integration", workspaceId: "workspace-1" } },
+    assert: [
+      {
+        name: "keeps workspace resolution inside the application",
+        check: (context, result) => {
+          if (!result.ok) throw result.error;
+          expect(context.sessionInputs).toEqual([{ name: "integration", workspaceId: "workspace-1" }]);
+        },
+      },
+    ],
+  },
+  {
+    name: "passes pane workspace and worktree policy inputs to one application usecase",
+    input: {
+      operation: "create-pane",
+      input: {
+        sessionName: "integration",
+        kind: "shell",
+        name: "shell",
+        workspaceId: "workspace-1",
+        agentId: null,
+        useWorktree: true,
+        placement: "bottom",
+        targetPaneId: "%1",
+      },
+    },
+    assert: [
+      {
+        name: "keeps pane selection and worktree resolution inside the application",
+        check: (context, result) => {
+          if (!result.ok) throw result.error;
+          expect(context.paneInputs).toEqual([
+            {
+              sessionName: "integration",
+              kind: "shell",
+              name: "shell",
+              workspaceId: "workspace-1",
+              agentId: null,
+              useWorktree: true,
+              placement: "bottom",
+              targetPaneId: "%1",
+            },
+          ]);
+        },
+      },
+    ],
   },
 ] satisfies readonly OperationCase<"default", RpcInput, unknown, RpcContext>[];
 
@@ -222,13 +339,24 @@ const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcCont
   execute: async (_fixture, input) => {
     const connection = {
       httpBaseUrl: "http://muximod.local",
-      ...(input.operation === "authorized-sessions" ? { auth: { getAccessToken: async () => "test-token" } } : {}),
+      origin: "http://web.example",
+      ...(input.operation === "authorized-sessions" ||
+      input.operation === "list-panes" ||
+      input.operation === "create-session" ||
+      input.operation === "create-pane"
+        ? { auth: { getAccessToken: async () => "test-token" } }
+        : {}),
     };
     const client = createHttpTestClient(connection);
     if (input.operation === "info") return client.authInfo();
-    return client.sessions();
+    if (input.operation === "authorized-sessions" || input.operation === "unauthorized-sessions")
+      return client.sessions();
+    if (input.operation === "list-panes") return client.panes();
+    if (input.operation === "create-session") return client.createSession(input.input);
+    if (input.operation === "create-pane") return client.createPane(input.input);
+    throw new Error(`unsupported RPC test operation: ${input.operation}`);
   },
-  observe: () => ({}),
+  observe: (fixture) => ({ sessionInputs: [...fixture.sessionInputs], paneInputs: [...fixture.paneInputs] }),
 };
 
 describe("muximod transport boundary", () => {
@@ -239,26 +367,29 @@ describe("muximod transport boundary", () => {
 
 const testAuth: MuximodAuthPort = {
   serverId: authContext.serverId,
-  authenticateAccessToken: (token) => (token === "test-token" ? authContext : null),
-  claimPairing: () => {
+  authenticateAccessToken: async (token) => (token === "test-token" ? authContext : undefined),
+  claimPairing: async () => {
     throw new Error("not used");
   },
-  pairingStatus: () => {
+  pairingStatus: async () => {
     throw new Error("not used");
   },
-  createChallenge: () => {
+  createChallenge: async () => {
     throw new Error("not used");
   },
-  createSession: () => {
+  createSession: async () => {
     throw new Error("not used");
   },
-  issueWebSocketTicket: () => {
+  issueWebSocketTicket: async () => {
     throw new Error("not used");
   },
-  consumeWebSocketTicket: () => null,
+  consumeWebSocketTicket: async () => undefined,
 };
 
-function createTestApplication(events: Array<{ event: string; client: string }>): MuximodApplication {
+function createTestApplication(
+  events: Array<{ event: string; client: string }>,
+  calls: { sessionInputs: CreateSessionInput[]; paneInputs: CreatePaneInput[] },
+): MuximodApplication {
   return {
     terminal: {
       get: async () => ({
@@ -277,16 +408,25 @@ function createTestApplication(events: Array<{ event: string; client: string }>)
       register: async () => workspace,
       update: async () => workspace,
       delete: async () => undefined,
-      resolveDirectory: async () => workspaceRecord,
-      resolveSelection: async () => workspaceRecord,
     },
-    sessions: { list: async () => [session], create: async () => session },
-    panes: {
-      list: async () => [],
-      create: async () => {
-        throw new Error("not used");
+    sessions: {
+      list: async () => [session],
+      create: async (input) => {
+        calls.sessionInputs.push(input);
+        return session;
       },
     },
-    hooks: { handleTmux: (event, client) => events.push({ event, client }) },
+    panes: {
+      list: async () => [pane],
+      create: async (input) => {
+        calls.paneInputs.push(input);
+        return pane;
+      },
+    },
+    hooks: {
+      handleTerminalHostHook: async (event, client) => {
+        events.push({ event, client });
+      },
+    },
   };
 }

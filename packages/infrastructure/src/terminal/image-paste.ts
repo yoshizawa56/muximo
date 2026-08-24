@@ -2,9 +2,12 @@
 
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ImagePasteInput } from "./contracts.js";
+
+export type { ImagePasteInput, ImagePaster } from "./contracts.js";
 
 /**
  * Host-side delivery for images pasted from the mobile app.
@@ -14,26 +17,21 @@ import { join } from "node:path";
  * application, which agent CLIs parse to attach the image. muximod reproduces
  * that behavior for a tmux pane:
  *
- * 1. The bytes are staged in a temp file so tools that need a path can use it.
- * 2. The OSC 1337 sequence is stored in a tmux buffer and pasted into the
+ * 1. The OSC 1337 sequence is stored in a tmux buffer and pasted into the
  *    pane. `tmux paste-buffer` writes raw bytes into the pane's PTY, so the
  *    sequence reaches the foreground application unparsed by tmux.
- * 3. On macOS the image is also written to the system pasteboard, which makes
- *    it available to clipboard-reading agent CLIs and to the desktop user.
+ * 2. On macOS the image is staged immediately before it is written to the
+ *    system pasteboard, which makes it available to clipboard-reading agent
+ *    CLIs and to the desktop user. The staged file is removed after the
+ *    synchronous clipboard consumer finishes.
+ *
+ * The OSC/tmux path is independent of temporary-file staging, and non-macOS
+ * platforms do not create a temporary file.
  */
-
-export type ImagePasteInput = {
-  paneId: string;
-  name: string;
-  mimeType?: string;
-  bytes: Buffer;
-};
 
 export type ImagePasteResult = {
   bytes: number;
   name: string;
-  /** Path of the staged image file; left in the system temp directory. */
-  tempFilePath: string;
   clipboard: "set" | "unavailable" | "failed";
 };
 
@@ -52,15 +50,17 @@ export type ImagePasterOptions = {
   runOsascript?: (script: string) => CommandResult;
   /** Injectable file staging for tests; production writes to the temp dir. */
   stageImage?: (input: ImagePasteInput, tempDir: string) => string;
+  /** Injectable cleanup for tests; production removes the staged file. */
+  cleanupImage?: (path: string) => void;
 };
 
-export function createImagePaster(options: ImagePasterOptions): (input: ImagePasteInput) => ImagePasteResult {
+export function createImagePaster(options: ImagePasterOptions): (input: ImagePasteInput) => Promise<ImagePasteResult> {
   const platform = options.platform ?? process.platform;
   const runOsascript = options.runOsascript ?? runOsascriptCommand;
   const stageImage = options.stageImage ?? stageTempImage;
+  const cleanupImage = options.cleanupImage ?? unlinkSync;
 
-  return (input) => {
-    const tempFilePath = stageImage(input, options.tempDir ?? tmpdir());
+  return async (input) => {
     const bufferName = `muximod-paste-${randomBytes(6).toString("hex")}`;
     const sequence = inlineImageSequence(input.name, input.bytes);
 
@@ -82,8 +82,10 @@ export function createImagePaster(options: ImagePasterOptions): (input: ImagePas
     return {
       bytes: input.bytes.length,
       name: input.name,
-      tempFilePath,
-      clipboard: setSystemClipboardImage(tempFilePath, platform, runOsascript),
+      clipboard:
+        platform === "darwin"
+          ? setDarwinClipboardImage(input, options.tempDir ?? tmpdir(), runOsascript, stageImage, cleanupImage)
+          : "unavailable",
     };
   };
 }
@@ -132,17 +134,26 @@ function extensionForMimeType(mimeType: string | undefined): string {
   }
 }
 
-function setSystemClipboardImage(
-  path: string,
-  platform: NodeJS.Platform,
+function setDarwinClipboardImage(
+  input: ImagePasteInput,
+  tempDir: string,
   runOsascript: (script: string) => CommandResult,
+  stageImage: (input: ImagePasteInput, tempDir: string) => string,
+  cleanupImage: (path: string) => void,
 ): ImagePasteResult["clipboard"] {
-  if (platform !== "darwin") return "unavailable";
+  const path = stageImage(input, tempDir);
   try {
     const result = runOsascript(osascriptClipboardScript(path));
     return result.status === 0 ? "set" : "failed";
   } catch {
     return "failed";
+  } finally {
+    try {
+      cleanupImage(path);
+    } catch {
+      // The synchronous clipboard consumer has finished. Cleanup is best
+      // effort so a filesystem race cannot turn a successful paste into a retry.
+    }
   }
 }
 

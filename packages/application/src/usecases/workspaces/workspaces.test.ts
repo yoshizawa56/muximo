@@ -1,7 +1,8 @@
 import type { WorkspaceRecord } from "@muximo/domain";
-import { WorkspaceId } from "@muximo/domain";
+import { Workspace, WorkspaceId } from "@muximo/domain";
 import {
   type FixtureHandle,
+  hasError,
   hasNoError,
   hasObserved,
   runScenarioTable,
@@ -10,6 +11,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
+import type { ApplicationClock } from "../../ports/application.js";
 import type { WorkspaceRepository } from "../../ports/repositories.js";
 import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
 import { DeleteWorkspace } from "./delete-workspace.js";
@@ -38,7 +40,10 @@ type WorkspaceContext = {
   recordName: string;
   rootPath: string;
   patterns: readonly string[];
+  updatedAt: string;
   auditEvents: readonly string[];
+  insertCalls: number;
+  upsertCalls: number;
 };
 
 const scenarios = [
@@ -58,6 +63,7 @@ const scenarios = [
       hasObserved<WorkspaceContext, WorkspaceRecord>("recordName", "renamed"),
       hasObserved<WorkspaceContext, WorkspaceRecord>("rootPath", "/work/project"),
       hasObserved<WorkspaceContext, WorkspaceRecord>("patterns", [".env", "config/**/*.local.json"]),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("updatedAt", "2026-08-16T00:00:00.000Z"),
       hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", ["workspace.created", "workspace.updated"]),
     ],
   },
@@ -75,10 +81,23 @@ const scenarios = [
       hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", ["workspace.created", "workspace.deleted"]),
     ],
   },
-] satisfies readonly ScenarioCase<"default", WorkspaceStep, WorkspaceRecord, WorkspaceContext>[];
+  {
+    name: "rejects a duplicate registration with one insert and no upsert or audit",
+    fixture: "duplicate",
+    steps: [{ type: "register", input: { directory: "/work/project" } }],
+    assert: [
+      hasError<WorkspaceContext, WorkspaceRecord>({ code: "workspace_already_registered" }),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("recordCount", 1),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("insertCalls", 1),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("upsertCalls", 0),
+      hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", []),
+    ],
+  },
+] satisfies readonly ScenarioCase<"duplicate", WorkspaceStep, WorkspaceRecord, WorkspaceContext>[];
 
-const table: ScenarioTable<WorkspaceFixture, "default", WorkspaceStep, WorkspaceRecord, WorkspaceContext> = {
+const table: ScenarioTable<WorkspaceFixture, "duplicate", WorkspaceStep, WorkspaceRecord, WorkspaceContext> = {
   defaultFixture: createWorkspaceFixture,
+  fixtures: { duplicate: createDuplicateWorkspaceFixture },
   cases: scenarios,
   execute: async (fixture, steps) => {
     let result: WorkspaceRecord | undefined;
@@ -100,7 +119,10 @@ const table: ScenarioTable<WorkspaceFixture, "default", WorkspaceStep, Workspace
       recordName: record?.name ?? "",
       rootPath: record?.rootPath ?? "",
       patterns: record?.worktreeCopyPatterns ?? [],
+      updatedAt: record?.updatedAt ?? "",
       auditEvents: [...fixture.auditEvents],
+      insertCalls: fixture.repository.insertCalls,
+      upsertCalls: fixture.repository.upsertCalls,
     };
   },
 };
@@ -113,8 +135,12 @@ function createWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
   const repository = new FakeWorkspaceRepository();
   const directory = new FakeWorkspaceDirectory();
   const auditEvents: string[] = [];
-  const now = (): string => "2026-08-15T00:00:00.000Z";
-  const factory = new WorkspaceRecordFactory(directory, now);
+  const timestamps = ["2026-08-15T00:00:00.000Z", "2026-08-16T00:00:00.000Z"];
+  let timestampIndex = 0;
+  const clock: ApplicationClock = {
+    now: () => timestamps[Math.min(timestampIndex++, timestamps.length - 1)]!,
+  };
+  const factory = new WorkspaceRecordFactory(directory, clock);
   const audit = {
     record: (eventType: string) => {
       auditEvents.push(eventType);
@@ -132,8 +158,31 @@ function createWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
   };
 }
 
+function createDuplicateWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
+  const handle = createWorkspaceFixture();
+  handle.fixture.repository.seed(
+    Workspace.create({
+      id: WorkspaceId.create("workspace-1"),
+      rootPath: "/work/project",
+      name: "project",
+      isGit: true,
+      worktreeCopyPatterns: [],
+      createdAt: "2026-08-14T00:00:00.000Z",
+      updatedAt: "2026-08-14T00:00:00.000Z",
+    }),
+  );
+  return handle;
+}
+
 class FakeWorkspaceRepository implements WorkspaceRepository {
   private records: WorkspaceRecord[] = [];
+
+  public insertCalls = 0;
+  public upsertCalls = 0;
+
+  public seed(record: WorkspaceRecord): void {
+    this.records.push(record);
+  }
 
   public async findById(id: string): Promise<WorkspaceRecord | undefined> {
     return this.records.find((record) => record.id === id);
@@ -144,12 +193,14 @@ class FakeWorkspaceRepository implements WorkspaceRepository {
   }
 
   public async insert(record: WorkspaceRecord): Promise<boolean> {
+    this.insertCalls += 1;
     if (this.records.some((candidate) => candidate.id === record.id)) return false;
     this.records.push(record);
     return true;
   }
 
   public async upsert(record: WorkspaceRecord): Promise<void> {
+    this.upsertCalls += 1;
     this.records = [...this.records.filter((candidate) => candidate.id !== record.id), record];
   }
 

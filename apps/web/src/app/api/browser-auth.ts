@@ -1,4 +1,5 @@
 import {
+  canonicalPublicJwk,
   decodePairingCode,
   encodeJsonBase64Url,
   type PairingClaimRequest,
@@ -6,10 +7,7 @@ import {
   type PublicKeyJwk,
   pairingClaimMessage,
   pairingCodePayloadSchema,
-  publicKeyFingerprint,
   sessionMessage,
-  sha256Hex,
-  signEcdsa,
 } from "@muximo/contract";
 import {
   createServeConnection,
@@ -200,6 +198,38 @@ function defaultDeviceName(): string {
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function publicKeyFingerprint(jwk: PublicKeyJwk): Promise<string> {
+  return sha256Base64Url(canonicalPublicJwk(jwk));
+}
+
+async function sha256Base64Url(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return encodeBase64Url(new Uint8Array(digest));
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function signEcdsa(privateKey: CryptoKey, message: string): Promise<string> {
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    privateKey,
+    new TextEncoder().encode(message),
+  );
+  return encodeBase64Url(new Uint8Array(signature));
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function openAuthDatabase(): Promise<IDBDatabase> {

@@ -20,7 +20,13 @@ export function createSqliteRollbackScope(root: AgentDatabase): { caseScope: Cas
     const release = await acquire();
     try {
       sqlite.exec("BEGIN IMMEDIATE");
-      const scope: SqliteTransactionScope = { owner, database, sqlite };
+      const scope: SqliteTransactionScope = {
+        owner,
+        rootDatabase: root.db,
+        rootSqlite: root.sqlite,
+        database,
+        sqlite,
+      };
       try {
         const result = await runWithSqliteTransaction(scope, async () => await operation());
         rollback(sqlite);

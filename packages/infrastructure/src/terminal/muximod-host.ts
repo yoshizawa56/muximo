@@ -1,12 +1,23 @@
 // This class translates the host port into tmux and process operations.
 import { randomUUID } from "node:crypto";
-import { ApplicationError, type CreatePaneInput, type MuximodHostPort } from "@muximo/application";
+import {
+  ApplicationError,
+  type CreatePaneInput,
+  type HostPaneReference,
+  type HostPaneSnapshot,
+  type MuximodHostPort,
+  type MuximodPaneClassification,
+  type MuximodPaneObservation,
+  type TerminalHostSnapshot,
+} from "@muximo/application";
 import type { AgentBackend, WorkspaceRecord } from "@muximo/domain";
+import { classifyTerminalCommand, classifyUnmanagedAgentOutput, executableName } from "./observation.js";
 import {
   buildMuximoShellCommand,
   configureManagedTmuxSession,
   resolveMuximoCommand,
   type TmuxAdapter,
+  type TmuxLiveSnapshot,
   type TmuxPaneRef,
 } from "./tmux.js";
 
@@ -20,11 +31,11 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     return randomUUID();
   }
 
-  public hasSession(target: string): boolean {
+  public async hasSession(target: string): Promise<boolean> {
     return this.adapter.hasSession(target);
   }
 
-  public createManagedSession(target: string, cwd: string): string {
+  public async createManagedSession(target: string, cwd: string): Promise<string> {
     const managedSessionId = randomUUID();
     const binary = resolveMuximoCommand(this.environment);
     let created = false;
@@ -52,19 +63,19 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     }
   }
 
-  public killSession(target: string): void {
+  public async killSession(target: string): Promise<void> {
     this.adapter.killSession(target);
   }
 
-  public attachSession(target: string): number {
+  public async attachSession(target: string): Promise<number> {
     return this.adapter.attachSession(target);
   }
 
-  public createManagedPane(
+  public async createManagedPane(
     input: CreatePaneInput,
     workspace: WorkspaceRecord | undefined,
     cwd: string | undefined,
-  ): string {
+  ): Promise<string> {
     const paneName = input.name;
     const command = buildMuximoShellCommand(
       resolveMuximoCommand(this.environment),
@@ -90,52 +101,63 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     return this.adapter.splitWindow(command, input.placement, input.targetPaneId, snapshot.zoomed);
   }
 
-  public resolvePane(target: string): TmuxPaneRef {
-    return this.adapter.resolvePane(target);
+  public async resolvePane(target: string): Promise<HostPaneReference> {
+    return toHostPaneReference(this.adapter.resolvePane(target));
   }
 
-  public isWindowZoomed(pane: TmuxPaneRef): boolean {
-    return this.adapter.snapshotWindow(pane).zoomed;
+  public async isWindowZoomed(pane: HostPaneReference): Promise<boolean> {
+    return this.adapter.snapshotWindow(toTmuxPaneRef(pane)).zoomed;
   }
 
-  public splitPane(
+  public async splitPane(
     command: string | undefined,
     placement: "right" | "bottom",
     targetPaneId: string,
     zoomed: boolean,
-  ): string {
+  ): Promise<string> {
     return this.adapter.splitWindow(command, placement, targetPaneId, zoomed);
   }
 
-  public listPanesSnapshot() {
-    return this.adapter.listPanesSnapshot();
+  public async listPanesSnapshot(): Promise<TerminalHostSnapshot> {
+    return mapTmuxSnapshotToTerminalHostSnapshot(this.adapter.listPanesSnapshot());
   }
 
-  public setAgentPaneMetadata(
+  public async classifyCommand(command: string): Promise<MuximodPaneClassification> {
+    return classifyTerminalCommand(command);
+  }
+
+  public async observeUnmanagedAgent(
+    paneId: string,
+    fallbackState: Parameters<typeof classifyUnmanagedAgentOutput>[1],
+  ): Promise<MuximodPaneObservation> {
+    try {
+      return classifyUnmanagedAgentOutput(this.adapter.capturePane(paneId), fallbackState);
+    } catch {
+      return { state: fallbackState };
+    }
+  }
+
+  public async setAgentPaneMetadata(
     paneId: string,
     field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id",
     value: string,
-  ): void {
+  ): Promise<void> {
     this.adapter.setAgentPaneMetadata(paneId, field, value);
   }
 
-  public setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): void {
+  public async setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): Promise<void> {
     this.adapter.setAgentExecutionMetadata(paneId, agentSessionId, executionId);
   }
 
-  public clearAgentExecutionMetadata(paneId: string, expectedExecutionId = ""): boolean {
+  public async clearAgentExecutionMetadata(paneId: string, expectedExecutionId = ""): Promise<boolean> {
     return this.adapter.clearAgentExecutionMetadata(paneId, expectedExecutionId);
   }
 
-  public resetAgentPaneMetadata(paneId: string): void {
+  public async resetAgentPaneMetadata(paneId: string): Promise<void> {
     this.adapter.resetAgentPaneMetadata(paneId);
   }
 
-  public capturePane(paneId: string, lines = 48): string {
-    return this.adapter.capturePane(paneId, lines);
-  }
-
-  public isManagedMuximoCommand(command: string, backend: AgentBackend): boolean {
+  public async isManagedAgentExecution(command: string, backend: AgentBackend): Promise<boolean> {
     const executable = executableName(command);
     const configuredMuximo = executableName(this.environment.MUXIMOD_MUXIMO_COMMAND ?? "muximo");
     const resolvedMuximo = executableName(resolveMuximoCommand(this.environment));
@@ -148,7 +170,7 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     );
   }
 
-  public isProcessAlive(pid: number): boolean {
+  public async isProcessAlive(pid: number): Promise<boolean> {
     try {
       process.kill(pid, 0);
       return true;
@@ -159,7 +181,8 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
 
   private buildAgentCommand(input: CreatePaneInput, workspace: WorkspaceRecord | undefined): string {
     const binary = resolveMuximoCommand(this.environment);
-    const args = [binary, "run", input.agentId!, "--no-worktree", "--name", input.name];
+    if (!input.agentId) throw new ApplicationError("agent_required", "agentId is required for an agent pane");
+    const args = [binary, "run", input.agentId, "--no-worktree", "--name", input.name];
     if (input.useWorktree) {
       args.splice(3, 1, "--worktree");
       if (workspace?.setupScriptPath) args.push("--setup-hook", workspace.setupScriptPath);
@@ -169,10 +192,61 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
   }
 }
 
-function executableName(command: string): string {
-  return command.trim().split(/\s+/, 1)[0]?.split("/").at(-1)?.toLowerCase() ?? "";
-}
-
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function toHostPaneReference(pane: TmuxPaneRef): HostPaneReference {
+  return {
+    hostPaneId: pane.paneId,
+    windowId: pane.windowId,
+    sessionName: pane.sessionName,
+  };
+}
+
+function toTmuxPaneRef(pane: HostPaneReference): TmuxPaneRef {
+  return {
+    paneId: pane.hostPaneId,
+    windowId: pane.windowId,
+    sessionName: pane.sessionName,
+  };
+}
+
+export function mapTmuxSnapshotToTerminalHostSnapshot(snapshot: TmuxLiveSnapshot): TerminalHostSnapshot {
+  return {
+    panes: snapshot.panes.map(toHostPaneSnapshot),
+    available: snapshot.available,
+    hostServerId: snapshot.tmuxServerId,
+    hostServerScope: snapshot.tmuxServerScope,
+  };
+}
+
+function toHostPaneSnapshot(pane: TmuxLiveSnapshot["panes"][number]): HostPaneSnapshot {
+  return {
+    hostPaneId: pane.paneId,
+    windowId: pane.windowId,
+    sessionName: pane.sessionName,
+    ...(pane.tmuxServerId ? { hostServerId: pane.tmuxServerId } : {}),
+    muximodSessionId: pane.muximodSessionId,
+    muximodExecutionId: pane.muximodExecutionId,
+    windowName: pane.windowName,
+    windowIndex: pane.windowIndex,
+    paneIndex: pane.paneIndex,
+    cwd: pane.cwd,
+    command: pane.command,
+    title: pane.title,
+    active: pane.active,
+    left: pane.left,
+    top: pane.top,
+    width: pane.width,
+    height: pane.height,
+    windowWidth: pane.windowWidth,
+    windowHeight: pane.windowHeight,
+    muximodPaneId: pane.muximodPaneId,
+    muximodName: pane.muximodName,
+    muximodKind: pane.muximodKind,
+    muximodAgentId: pane.muximodAgentId,
+    muximodWorkspaceId: pane.muximodWorkspaceId,
+    muximodManagedSessionId: pane.muximodManagedSessionId,
+  };
 }

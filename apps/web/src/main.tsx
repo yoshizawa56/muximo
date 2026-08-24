@@ -9,7 +9,12 @@ import { router } from "./router";
 
 const queryClient = new QueryClient();
 
-createRoot(document.getElementById("root")!).render(
+const rootElement = document.getElementById("root");
+if (!rootElement) {
+  throw new Error('Unable to start Muximo: the root element "#root" was not found.');
+}
+
+createRoot(rootElement).render(
   <StrictMode>
     <AppErrorBoundary>
       <QueryClientProvider client={queryClient}>

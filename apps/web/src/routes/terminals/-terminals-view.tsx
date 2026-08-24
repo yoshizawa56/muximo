@@ -1,5 +1,5 @@
+import type { TerminalEndpoint } from "@muximo/contract";
 import { ConnectionFlowLayout, FlowIntro } from "./-connection-flow-layout";
-import type { TerminalEndpoint } from "./-connection-flow-viewmodel";
 import type { TerminalsViewModel } from "./-terminals-viewmodel";
 
 export function TerminalsView({ viewModel }: { viewModel: TerminalsViewModel }) {

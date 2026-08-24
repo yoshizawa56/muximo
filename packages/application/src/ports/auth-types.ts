@@ -10,17 +10,17 @@ export type AuthPairingStatus = "offered" | "awaiting_approval" | "approved" | "
 export type AuthDeviceRecord = {
   deviceId: string;
   serverId: string;
-  publicKeyJwk: string;
+  publicKey: PublicKeyJwk;
   keyFingerprint: string;
   displayName: string;
   deviceType: AuthDeviceType;
-  platform: string | null;
-  clientVersion: string | null;
+  platform?: string;
+  clientVersion?: string;
   status: AuthDeviceStatus;
   createdAt: string;
   approvedAt: string;
-  lastSeenAt: string | null;
-  revokedAt: string | null;
+  lastSeenAt?: string;
+  revokedAt?: string;
 };
 
 export type AuthPairingRecord = {
@@ -30,16 +30,16 @@ export type AuthPairingRecord = {
   status: AuthPairingStatus;
   offeredAt: string;
   expiresAt: string;
-  claimExpiresAt: string | null;
-  claimedAt: string | null;
-  approvedAt: string | null;
-  pendingPublicKeyJwk: string | null;
-  pendingFingerprint: string | null;
-  pendingDisplayName: string | null;
-  pendingDeviceType: AuthDeviceType | null;
-  pendingPlatform: string | null;
-  pendingClientVersion: string | null;
-  deviceId: string | null;
+  claimExpiresAt?: string;
+  claimedAt?: string;
+  approvedAt?: string;
+  pendingPublicKey?: PublicKeyJwk;
+  pendingFingerprint?: string;
+  pendingDisplayName?: string;
+  pendingDeviceType?: AuthDeviceType;
+  pendingPlatform?: string;
+  pendingClientVersion?: string;
+  deviceId?: string;
 };
 
 export type AuthSessionRecord = {
@@ -48,7 +48,7 @@ export type AuthSessionRecord = {
   deviceId: string;
   issuedAt: string;
   expiresAt: string;
-  revokedAt: string | null;
+  revokedAt?: string;
 };
 
 export type CreatePairingInput = {
@@ -70,12 +70,12 @@ export type ClaimPairingInput = {
   secretHash: string;
   claimToken: string;
   claimExpiresAt: string;
-  publicKeyJwk: string;
+  publicKey: PublicKeyJwk;
   keyFingerprint: string;
   displayName: string;
   deviceType: AuthDeviceType;
-  platform: string | null;
-  clientVersion: string | null;
+  platform?: string;
+  clientVersion?: string;
 };
 
 export type ClaimPairingResult = {
@@ -117,8 +117,8 @@ export type AuthPairingClaimNotification = {
   serverId: string;
   deviceName: string;
   deviceType: AuthDeviceType;
-  platform: string | null;
-  clientVersion: string | null;
+  platform?: string;
+  clientVersion?: string;
   keyFingerprint: string;
   expiresAt: string;
 };

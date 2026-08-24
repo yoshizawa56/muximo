@@ -2,47 +2,27 @@
 
 import { spawnSync } from "node:child_process";
 import { randomInt } from "node:crypto";
+import type {
+  AttachViewportOptions,
+  PreparedViewport,
+  TerminalProcessSpec,
+  ViewportEvent,
+  ViewportLease,
+  ViewportOwner,
+  ViewportReason,
+} from "./contracts.js";
 import { TmuxAdapter, type TmuxClient, type TmuxPaneRef, type TmuxWindowSnapshot } from "./tmux.js";
 
-export type ViewportOwner = "mobile" | "desktop";
-export type ViewportReason =
-  | "attached"
-  | "mobile_claim"
-  | "desktop_activity"
-  | "desktop_resize"
-  | "desktop_focus"
-  | "detached";
-
-export type ViewportEvent = {
-  owner: ViewportOwner;
-  reason: ViewportReason;
-};
-
-export type PreparedViewport = {
-  readonly target: string;
-  readonly pane: TmuxPaneRef;
-  readonly snapshot: TmuxWindowSnapshot;
-  attach: (options: AttachViewportOptions) => Promise<ViewportLease>;
-  release: () => void;
-};
-
-export type AttachViewportOptions = {
-  ptyPid: number;
-  cols: number;
-  rows: number;
-  onEvent: (event: ViewportEvent) => void;
-};
-
-export type ViewportLease = {
-  readonly id: string;
-  readonly target: string;
-  readonly paneId: string;
-  readonly windowId: string;
-  readonly sessionName: string;
-  claimMobile: (cols?: number, rows?: number) => void;
-  resize: (cols: number, rows: number) => void;
-  release: () => void;
-};
+export type {
+  AttachViewportOptions,
+  PreparedViewport,
+  TerminalProcessSpec,
+  TerminalViewportPort,
+  ViewportEvent,
+  ViewportLease,
+  ViewportOwner,
+  ViewportReason,
+} from "./contracts.js";
 
 type LeaseRecord = {
   id: string;
@@ -86,12 +66,16 @@ export class TmuxViewportManager {
     return this.adapter;
   }
 
+  public buildAttachProcess(target: string): TerminalProcessSpec {
+    return { file: "tmux", args: this.adapter.attachArgs(target) };
+  }
+
   /**
    * Reasserts the mobile zoom after a topology-changing tmux command such as
    * split-window. tmux may clear the zoom flag while creating the new pane,
    * even though the existing mobile client is still attached.
    */
-  public reassertMobileViewport(target: string): void {
+  public async reassertMobileViewport(target: string): Promise<void> {
     let pane: TmuxPaneRef;
     try {
       pane = this.adapter.resolvePane(target);
@@ -110,7 +94,7 @@ export class TmuxViewportManager {
     }
   }
 
-  public prepare(target: string, cwd: string, cols = 80, rows = 24): PreparedViewport {
+  public async prepare(target: string, cwd: string, cols = 80, rows = 24): Promise<PreparedViewport> {
     if (this.disposed) throw new Error("Viewport manager has been disposed");
 
     let pane: TmuxPaneRef;
@@ -157,7 +141,7 @@ export class TmuxViewportManager {
       pane,
       snapshot,
       attach: (options) => this.attach(record, options),
-      release: () => this.releaseRecord(record),
+      release: async () => this.releaseRecord(record),
     };
   }
 
@@ -165,7 +149,7 @@ export class TmuxViewportManager {
    * Receives notifications from tmux hooks. Polling remains as a fallback for
    * environments where the user's tmux cannot execute the local hook command.
    */
-  public handleTmuxHook(event: TmuxHookEvent, clientName: string): void {
+  public async handleTmuxHook(event: TmuxHookEvent, clientName: string): Promise<void> {
     if (this.disposed || !clientName) return;
 
     const lease = [...this.leases.values()].find((candidate) => candidate.mobileClient?.name === clientName);
@@ -310,13 +294,13 @@ export class TmuxViewportManager {
       paneId: record.pane.paneId,
       windowId: record.pane.windowId,
       sessionName: record.pane.sessionName,
-      claimMobile: (cols, rows) => {
+      claimMobile: async (cols, rows) => {
         this.claimMobile(record, cols, rows);
       },
-      resize: (cols, rows) => {
-        this.resizeMobile(record, cols, rows);
+      resize: async (cols, rows) => {
+        this.resizeMobile(record, cols ?? record.mobileCols, rows ?? record.mobileRows);
       },
-      release: () => this.releaseRecord(record),
+      release: async () => this.releaseRecord(record),
     };
   }
 
@@ -516,7 +500,7 @@ export class TmuxViewportManager {
   private startMonitor(): void {
     if (this.monitorTimer || this.disposed) return;
     this.monitorTimer = setInterval(() => {
-      void this.pollDesktopClients();
+      void this.pollDesktopClients().catch(() => undefined);
     }, 250);
     this.monitorTimer.unref?.();
   }

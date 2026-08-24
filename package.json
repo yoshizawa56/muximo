@@ -33,8 +33,8 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test:table": "node scripts/check-table-tests.mjs",
-    "test": "bun run check:architecture && bun run test:table && bun test scripts/dev.test.ts && bunx --no-install turbo run test",
-    "test:local": "bun test packages/domain/src packages/application/src packages/contract/src packages/test-support/src packages/infrastructure/src apps/muximod/src apps/muximo-cli/src apps/web/src scripts/dev.test.ts",
+    "test": "bun run check:architecture && bun run test:table && bun test scripts/dev.test.ts scripts/build-muximo.test.ts && bunx --no-install turbo run test",
+    "test:local": "bun test packages/domain/src packages/application/src packages/contract/src packages/test-support/src packages/infrastructure/src apps/muximod/src apps/muximo-cli/src apps/web/src scripts/dev.test.ts scripts/build-muximo.test.ts",
     "typecheck": "bun run check:architecture && bunx --no-install turbo run typecheck",
     "prepare": "lefthook install"
   },

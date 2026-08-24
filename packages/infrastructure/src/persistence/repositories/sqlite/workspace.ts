@@ -1,15 +1,10 @@
 import type { WorkspaceRepository } from "@muximo/application";
 import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
 import { asc, eq } from "drizzle-orm";
-import type { AgentDrizzleDatabase } from "../../database-types.js";
 import { type WorkspaceRow, workspaces } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
 export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements WorkspaceRepository {
-  public constructor(database: AgentDrizzleDatabase) {
-    super(database);
-  }
-
   public async findById(id: WorkspaceId): Promise<WorkspaceRecord | undefined> {
     const row = this.db().select().from(workspaces).where(eq(workspaces.id, id)).get();
     return row ? toWorkspaceRecord(row) : undefined;
@@ -22,7 +17,7 @@ export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements
   public async insert(record: WorkspaceRecord): Promise<boolean> {
     const inserted = this.db()
       .insert(workspaces)
-      .values(toWorkspaceRow(record, new Date().toISOString()))
+      .values(toWorkspaceRow(record))
       .onConflictDoNothing({ target: workspaces.id })
       .returning({ id: workspaces.id })
       .all();
@@ -30,8 +25,7 @@ export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements
   }
 
   public async upsert(record: WorkspaceRecord): Promise<void> {
-    const now = new Date().toISOString();
-    const row = toWorkspaceRow(record, now);
+    const row = toWorkspaceRow(record);
     this.db()
       .insert(workspaces)
       .values(row)
@@ -44,7 +38,7 @@ export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements
           setupScriptPath: row.setupScriptPath,
           cleanupScriptPath: row.cleanupScriptPath,
           worktreeCopyPatterns: row.worktreeCopyPatterns,
-          updatedAt: now,
+          updatedAt: row.updatedAt,
         },
       })
       .run();
@@ -55,7 +49,7 @@ export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements
   }
 }
 
-function toWorkspaceRow(record: WorkspaceRecord, now: string): typeof workspaces.$inferInsert {
+function toWorkspaceRow(record: WorkspaceRecord): typeof workspaces.$inferInsert {
   const workspace = Workspace.restore(record);
   return {
     id: workspace.id,
@@ -65,8 +59,8 @@ function toWorkspaceRow(record: WorkspaceRecord, now: string): typeof workspaces
     setupScriptPath: workspace.setupScriptPath ?? null,
     cleanupScriptPath: workspace.cleanupScriptPath ?? null,
     worktreeCopyPatterns: JSON.stringify(workspace.worktreeCopyPatterns),
-    createdAt: workspace.createdAt || now,
-    updatedAt: now,
+    createdAt: workspace.createdAt,
+    updatedAt: workspace.updatedAt,
   };
 }
 

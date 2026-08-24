@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { MuximodHttpStatus } from "./types.js";
+import type { MuximodHttpStatus, MuximodOriginPolicy } from "./types.js";
 
 export class MuximodHttpError extends Error {
   public constructor(
@@ -17,11 +17,36 @@ export function mapError(error: unknown): MuximodHttpError {
   if (error instanceof MuximodHttpError) return error;
   if (error instanceof z.ZodError) return new MuximodHttpError(400, "invalid_request", "Request validation failed");
   if (isRecord(error) && typeof error.code === "string" && typeof error.message === "string") {
-    const status = errorStatus(error.code, error.status);
+    const compatibility = mapExternalCompatibility(error.code, error.message);
+    const status = errorStatus(compatibility.code, error.status);
     const details = isRecord(error.details) ? error.details : undefined;
-    return new MuximodHttpError(status, error.code, error.message, details);
+    return new MuximodHttpError(status, compatibility.code, compatibility.message, details);
   }
   return new MuximodHttpError(503, "muximod_unavailable", "muximod could not complete the request");
+}
+
+/**
+ * The HTTP protocol historically exposed provider-specific failures. Keep
+ * those wire names at this outer adapter while application errors stay neutral.
+ */
+function mapExternalCompatibility(code: string, message: string): { code: string; message: string } {
+  if (code === "terminal_host_unavailable") return { code: "tmux_unavailable", message: "tmux is unavailable" };
+  if (code === "terminal_host_pane_not_found") {
+    return { code: "tmux_pane_not_found", message: message.replace("terminal host ", "tmux ") };
+  }
+  if (code === "session_not_found") {
+    return { code, message: message.replace("terminal host session", "tmux session") };
+  }
+  if (code === "session_exists") {
+    return { code, message: message.replace("terminal host session", "tmux session") };
+  }
+  if (code === "session_not_visible") {
+    return { code, message: "tmux created the session but muximod could not read it" };
+  }
+  if (code === "pane_not_visible") {
+    return { code, message: "tmux created the pane but muximod could not read it" };
+  }
+  return { code, message };
 }
 
 export function errorStatus(code: string, status: unknown): MuximodHttpStatus {
@@ -69,9 +94,24 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function errorResponse(error: unknown, origin: string): Response {
+export function createOriginPolicy(input: {
+  allowedOrigins: readonly string[];
+  allowNoOrigin: boolean;
+}): MuximodOriginPolicy {
+  if (input.allowedOrigins.some((origin) => origin === "*")) {
+    throw new Error("wildcard origins are not allowed for authenticated routes");
+  }
+  const allowedOrigins = new Set(input.allowedOrigins.map((origin) => normalizeOrigin(origin)));
+  return {
+    allows(origin) {
+      return origin === null ? input.allowNoOrigin : allowedOrigins.has(origin);
+    },
+  };
+}
+
+export function errorResponse(error: unknown, request: Request, originPolicy: MuximodOriginPolicy): Response {
   const mapped = mapError(error);
-  return corsResponse(errorBody(mapped), origin, mapped.status);
+  return corsResponse(errorBody(mapped), request, originPolicy, mapped.status);
 }
 
 export function errorBody(error: MuximodHttpError): {
@@ -82,12 +122,17 @@ export function errorBody(error: MuximodHttpError): {
   return { error: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) };
 }
 
-export function notFound(origin: string): Response {
-  return corsResponse({ error: "not_found", message: "Route not found" }, origin, 404);
+export function notFound(request: Request, originPolicy: MuximodOriginPolicy): Response {
+  return corsResponse({ error: "not_found", message: "Route not found" }, request, originPolicy, 404);
 }
 
-export function corsResponse(body: unknown, origin: string, status = 200): Response {
-  return withCors(jsonResponse(body, status), origin);
+export function corsResponse(
+  body: unknown,
+  request: Request,
+  originPolicy: MuximodOriginPolicy,
+  status = 200,
+): Response {
+  return withCors(jsonResponse(body, status), request, originPolicy);
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {
@@ -98,7 +143,9 @@ export function jsonResponse(body: unknown, status = 200): Response {
   return response;
 }
 
-export function withCors(response: Response, origin: string): Response {
+export function withCors(response: Response, request: Request, originPolicy: MuximodOriginPolicy): Response {
+  const origin = request.headers.get("origin");
+  if (!origin || !originPolicy.allows(origin)) return response;
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", origin);
   headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
@@ -108,4 +155,25 @@ export function withCors(response: Response, origin: string): Response {
   );
   headers.set("vary", "Origin");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+export function originDeniedResponse(): Response {
+  return new Response(JSON.stringify({ error: "origin_not_allowed", message: "Request origin is not allowed" }), {
+    status: 403,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function normalizeOrigin(origin: string): string {
+  if (!origin || origin.trim() !== origin) throw new Error("allowed origins must be non-empty exact origins");
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    throw new Error(`invalid allowed origin: ${origin}`);
+  }
+  if (parsed.origin !== origin || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+    throw new Error(`allowed origin must be an exact http or https origin: ${origin}`);
+  }
+  return origin;
 }

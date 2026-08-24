@@ -1,7 +1,6 @@
-import type { PaneSummary } from "@muximo/contract";
+import type { PaneSummary, TerminalEndpoint, TmuxSession } from "@muximo/contract";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import type { TerminalEndpoint, TmuxSession } from "../../../-connection-flow-viewmodel";
 import { fallbackSession, fallbackTerminal, useTerminalResources } from "../../../-terminal-resources";
 
 export type SessionOverviewViewModel = {

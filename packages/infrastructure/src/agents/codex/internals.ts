@@ -1,6 +1,5 @@
 import { closeSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
-import { AgentSession, type AgentSessionRecord, type AgentSessionUpdateInput } from "@muximo/domain";
 
 // Shared codex session-file vocabulary and pure helpers.
 export type CodexDiscoveryResult = {
@@ -86,10 +85,6 @@ export function readFirstLine(file: string): { line?: string; tooLarge: boolean 
 
 export function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-export function updateSessionRecord(session: AgentSessionRecord, changes: AgentSessionUpdateInput): AgentSessionRecord {
-  return AgentSession.update(session, { ...changes, updatedAt: timestamp() });
 }
 
 export function codexMeta(file: string): CodexMeta | undefined {
@@ -199,7 +194,3 @@ export const supportedCodexOriginators = new Set([
  * state files. It owns the backend process, managed git worktree, workspace
  * hooks, resume metadata, and Codex Remote Control lifecycle as one unit.
  */
-
-export function timestamp(): string {
-  return new Date().toISOString();
-}

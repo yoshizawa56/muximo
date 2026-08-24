@@ -17,30 +17,46 @@ import type {
   PublicKeyJwk,
   WsTicketResponse,
 } from "./auth-types.js";
-import type { MuximodSocket } from "./socket.js";
+
+export interface Clock {
+  now(): Date;
+}
+
+/** Semantic capability for disconnecting active authenticated connections. */
+export interface AuthConnectionPort {
+  disconnectDevice(deviceId: string): Promise<void>;
+  disconnectSession(sessionId: string): Promise<void>;
+}
 
 export interface AuthStorePort {
-  getServerId(): string;
-  createPairing(input: CreatePairingInput): CreatePairingResult;
-  findPairing(pairingId: string): AuthPairingRecord | null;
-  claimPairing(input: ClaimPairingInput): ClaimPairingResult;
-  getPairingStatus(pairingId: string, claimToken: string): { status: AuthPairingStatus; deviceId: string | null };
-  approvePairing(pairingId: string): AuthDeviceRecord;
-  rejectPairing(pairingId: string): void;
-  findDevice(deviceId: string): AuthDeviceRecord | null;
-  createSession(input: { sessionId: string; token: string; deviceId: string; expiresAt: string }): AuthSessionRecord;
-  findSession(token: string): AuthSessionRecord | null;
-  findSessionById(sessionId: string): AuthSessionRecord | null;
-  revokeSession(sessionId: string): void;
-  revokeDevice(deviceId: string): void;
-  listDevices(): AuthDeviceRecord[];
+  createPairing(input: CreatePairingInput): Promise<CreatePairingResult>;
+  findPairing(pairingId: string): Promise<AuthPairingRecord | undefined>;
+  claimPairing(input: ClaimPairingInput): Promise<ClaimPairingResult>;
+  getPairingStatus(pairingId: string, claimToken: string): Promise<{ status: AuthPairingStatus; deviceId?: string }>;
+  approvePairing(pairingId: string): Promise<AuthDeviceRecord>;
+  rejectPairing(pairingId: string): Promise<void>;
+  findDevice(deviceId: string): Promise<AuthDeviceRecord | undefined>;
+  createSession(input: {
+    sessionId: string;
+    token: string;
+    deviceId: string;
+    expiresAt: string;
+  }): Promise<AuthSessionRecord>;
+  findSession(token: string): Promise<AuthSessionRecord | undefined>;
+  findSessionById(sessionId: string): Promise<AuthSessionRecord | undefined>;
+  revokeSession(sessionId: string): Promise<void>;
+  revokeDevice(deviceId: string): Promise<void>;
+  listDevices(): Promise<AuthDeviceRecord[]>;
+}
+
+export interface AuthPairingClaimSinkPort {
+  publish(notification: AuthPairingClaimNotification): void | Promise<void>;
 }
 
 export interface MuximodAuthControlPort {
-  createPairing(overrides?: { muximodBaseUrl?: string }): AuthPairingPayload;
-  approvePairing(pairingId: string): AuthDeviceRecord;
-  rejectPairing(pairingId: string): void;
-  setPairingClaimListener(listener: ((notification: AuthPairingClaimNotification) => void) | undefined): void;
+  createPairing(overrides?: { muximodBaseUrl?: string }): Promise<AuthPairingPayload>;
+  approvePairing(pairingId: string): Promise<AuthDeviceRecord>;
+  rejectPairing(pairingId: string): Promise<void>;
 }
 
 export interface AuthCryptoPort {
@@ -62,18 +78,17 @@ export interface AuthCryptoPort {
     expiresAt: string;
   }): string;
   verifyPublicKeySignature(publicKey: PublicKeyJwk, message: string, signature: string): boolean;
-  parsePublicKey(value: string): PublicKeyJwk;
 }
 
 export interface MuximodAuthPort {
   readonly serverId: string;
-  authenticateAccessToken(token: string | undefined): MuximodAuthContext | null;
-  claimPairing(pairingId: string, request: AuthPairingClaimRequest): AuthPairingClaimResponse;
-  pairingStatus(pairingId: string, claimToken: string): { status: AuthPairingStatus; deviceId: string | null };
-  createChallenge(deviceId: string): AuthChallengeResponse;
-  createSession(input: { deviceId: string; challengeId: string; signature: string }): AuthSessionResponse;
-  issueWebSocketTicket(context: MuximodAuthContext, endpoint: "terminal"): WsTicketResponse;
-  consumeWebSocketTicket(ticket: string | undefined, endpoint: "terminal"): MuximodAuthContext | null;
+  authenticateAccessToken(token: string | undefined): Promise<MuximodAuthContext | undefined>;
+  claimPairing(pairingId: string, request: AuthPairingClaimRequest): Promise<AuthPairingClaimResponse>;
+  pairingStatus(pairingId: string, claimToken: string): Promise<{ status: AuthPairingStatus; deviceId?: string }>;
+  createChallenge(deviceId: string): Promise<AuthChallengeResponse>;
+  createSession(input: { deviceId: string; challengeId: string; signature: string }): Promise<AuthSessionResponse>;
+  issueWebSocketTicket(context: MuximodAuthContext, endpoint: "terminal"): Promise<WsTicketResponse>;
+  consumeWebSocketTicket(ticket: string | undefined, endpoint: "terminal"): Promise<MuximodAuthContext | undefined>;
 }
 
 /** One-time challenge awaiting a signed session request. */
@@ -97,24 +112,20 @@ export type ChallengeRateWindow = { startedAt: number; count: number };
 export interface AuthChallengeStorePort {
   put(record: PendingChallengeRecord): void;
   /** Atomically read-and-delete (one-time use). */
-  take(challengeId: string): PendingChallengeRecord | null;
+  take(challengeId: string): PendingChallengeRecord | undefined;
   sweepExpired(nowIso: string): void;
   size(): number;
 }
 
 /** Raw sliding-window buckets; the limit policy lives in the application. */
 export interface AuthRateLimitStorePort {
-  window(deviceId: string): ChallengeRateWindow | null;
+  window(deviceId: string): ChallengeRateWindow | undefined;
   setWindow(deviceId: string, window: ChallengeRateWindow): void;
+  sweepExpired(nowMs: number): void;
 }
 
 export interface AuthWsTicketStorePort {
   put(ticketHash: string, record: PendingWsTicketRecord): void;
-  take(ticketHash: string): PendingWsTicketRecord | null;
-}
-
-/** Live terminal sockets grouped by session, closed on expiry or revocation. */
-export interface TrackedSocketRegistryPort {
-  track(input: { sessionId: string; deviceId: string; socket: MuximodSocket; expiresAtMs: number }): void;
-  closeForDevice(deviceId: string, code: number, reason: string): void;
+  take(ticketHash: string): PendingWsTicketRecord | undefined;
+  sweepExpired(nowIso: string): void;
 }

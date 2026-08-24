@@ -17,7 +17,12 @@ import {
   type TmuxWindowSize,
   type TmuxWindowSnapshot,
 } from "./tmux.js";
-import { TmuxViewportManager, type ViewportEvent } from "./viewport-manager.js";
+import {
+  type PreparedViewport,
+  TmuxViewportManager,
+  type ViewportEvent,
+  type ViewportLease,
+} from "./viewport-manager.js";
 
 type ViewportStep =
   | { type: "prepare"; cols?: number; rows?: number }
@@ -36,8 +41,8 @@ type ViewportFixture = {
   adapter: FakeTmuxAdapter;
   manager: TmuxViewportManager;
   events: ViewportEvent[];
-  prepared?: ReturnType<TmuxViewportManager["prepare"]>;
-  lease?: Awaited<ReturnType<ReturnType<TmuxViewportManager["prepare"]>["attach"]>>;
+  prepared?: PreparedViewport;
+  lease?: ViewportLease;
 };
 type ViewportContext = {
   width: number;
@@ -224,7 +229,8 @@ const table: ScenarioTable<ViewportFixture, "default", ViewportStep, undefined, 
   cases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
-      if (step.type === "prepare") fixture.prepared = fixture.manager.prepare("muximod", "/tmp", step.cols, step.rows);
+      if (step.type === "prepare")
+        fixture.prepared = await fixture.manager.prepare("muximod", "/tmp", step.cols, step.rows);
       if (step.type === "attach")
         fixture.lease = await fixture.prepared!.attach({
           ptyPid: 200,
@@ -232,20 +238,20 @@ const table: ScenarioTable<ViewportFixture, "default", ViewportStep, undefined, 
           rows: step.rows,
           onEvent: (event) => fixture.events.push(event),
         });
-      if (step.type === "claim") fixture.lease?.claimMobile();
-      if (step.type === "resize") fixture.lease?.resize(step.cols, step.rows);
+      if (step.type === "claim") await fixture.lease?.claimMobile();
+      if (step.type === "resize") await fixture.lease?.resize(step.cols, step.rows);
       if (step.type === "desktop-activity") fixture.adapter.desktop.activity += 1;
       if (step.type === "desktop-size") {
         fixture.adapter.desktop.width = step.width;
         fixture.adapter.desktop.height = step.height;
       }
-      if (step.type === "hook") fixture.manager.handleTmuxHook(step.event, fixture.adapter.desktop.name);
-      if (step.type === "release") fixture.lease?.release();
+      if (step.type === "hook") await fixture.manager.handleTmuxHook(step.event, fixture.adapter.desktop.name);
+      if (step.type === "release") await fixture.lease?.release();
       if (step.type === "clear-mobile-zoom") {
         fixture.adapter.state.zoomed = false;
         fixture.adapter.state.activePaneId = "%1";
       }
-      if (step.type === "reassert") fixture.manager.reassertMobileViewport("%0");
+      if (step.type === "reassert") await fixture.manager.reassertMobileViewport("%0");
       if (step.type === "poll")
         await (fixture.manager as unknown as { pollDesktopClients: () => Promise<void> }).pollDesktopClients();
       if (step.type === "unfocus")

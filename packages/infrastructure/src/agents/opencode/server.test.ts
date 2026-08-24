@@ -21,6 +21,7 @@ type SpawnRecord = {
 
 type Harness = {
   registryFile: string;
+  now: number;
   nextPid: number;
   ports: number[];
   healthyPorts: Set<number>;
@@ -32,8 +33,19 @@ type Harness = {
   markHealthyOnSpawn: boolean;
 };
 
+type ProcessExitMode = "term" | "kill" | "never";
+type SeededEntry = {
+  root?: string;
+  pid: number;
+  port: number;
+  alive?: boolean;
+  healthy?: boolean;
+  portAvailable?: boolean;
+};
+
 type ServerInput = {
-  seededEntry?: { root?: string; pid: number; port: number };
+  seededEntry?: SeededEntry;
+  seededEntries?: readonly SeededEntry[];
   seededAlive?: boolean;
   seededHealthy?: boolean;
   seededPortAvailable?: boolean;
@@ -41,9 +53,17 @@ type ServerInput = {
   portSequence?: number[];
   startupTimeoutMs?: number;
   healthPollIntervalMs?: number;
-  operation: "ensure" | "dispose" | "dispose-missing" | "refresh-all";
+  shutdownTimeoutMs?: number;
+  shutdownGracePeriodMs?: number;
+  shutdownPollIntervalMs?: number;
+  registryLockTimeoutMs?: number;
+  registryLockPollIntervalMs?: number;
+  operation: "ensure" | "dispose" | "dispose-all" | "dispose-missing" | "refresh-all";
   staleLock?: boolean;
+  contendedLock?: boolean;
   unownedKillThrows?: boolean;
+  processExit?: ProcessExitMode;
+  processExitByPid?: Readonly<Record<number, ProcessExitMode>>;
   childrenDieImmediately?: boolean;
 };
 
@@ -53,12 +73,21 @@ type ServerResult = {
   spawned: readonly SpawnRecord[];
   killed: readonly { pid: number; signal: string }[];
   registry: Record<string, unknown>;
-  failure: "health_timeout" | "server_exited" | "none";
+  errorCode?: string;
+  retryable?: boolean;
+  failure:
+    | "health_timeout"
+    | "server_exited"
+    | "registry_lock_timeout"
+    | "disposal_timeout"
+    | "disposal_failed"
+    | "none";
 };
 
 function createHarness(): Harness {
   return {
     registryFile: join(mkdtempSync(join(tmpdir(), "muximo-opencode-server-")), "opencode-servers.json"),
+    now: 0,
     nextPid: 1_000,
     ports: [],
     healthyPorts: new Set(),
@@ -97,8 +126,20 @@ function createManager(harness: Harness, input: ServerInput): OpenCodeServerMana
       kill: (pid, signal) => {
         if (input.unownedKillThrows) throw new Error("EPERM: operation not permitted");
         harness.killed.push({ pid, signal });
-        harness.alivePids.delete(pid);
+        const processExit = input.processExitByPid?.[pid] ?? input.processExit;
+        if (processExit !== "never" && (processExit !== "kill" || signal === "SIGKILL")) {
+          harness.alivePids.delete(pid);
+        }
       },
+    },
+    shutdownTimeoutMs: input.shutdownTimeoutMs,
+    shutdownGracePeriodMs: input.shutdownGracePeriodMs,
+    shutdownPollIntervalMs: input.shutdownPollIntervalMs,
+    registryLockTimeoutMs: input.registryLockTimeoutMs,
+    registryLockPollIntervalMs: input.registryLockPollIntervalMs,
+    now: () => harness.now,
+    sleep: async (milliseconds) => {
+      harness.now += milliseconds;
     },
   });
 }
@@ -267,8 +308,62 @@ const cases = [
         entry: undefined,
         spawned: [],
         killed: [],
+        registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        errorCode: "opencode_process_disposal_failed",
+        retryable: false,
+        failure: "disposal_failed",
+      }),
+    ],
+  },
+  {
+    name: "dispose waits for confirmed process exit before reporting success",
+    input: {
+      operation: "dispose" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: true,
+      seededHealthy: true,
+      processExit: "kill" as const,
+      shutdownTimeoutMs: 60,
+      shutdownGracePeriodMs: 10,
+      shutdownPollIntervalMs: 5,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [
+          { pid: 42, signal: "SIGTERM" },
+          { pid: 42, signal: "SIGKILL" },
+        ],
         registry: {},
         failure: "none",
+      }),
+    ],
+  },
+  {
+    name: "dispose reports a retryable timeout while the process remains alive",
+    input: {
+      operation: "dispose" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: true,
+      seededHealthy: true,
+      processExit: "never" as const,
+      shutdownTimeoutMs: 40,
+      shutdownGracePeriodMs: 10,
+      shutdownPollIntervalMs: 5,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [
+          { pid: 42, signal: "SIGTERM" },
+          { pid: 42, signal: "SIGKILL" },
+        ],
+        registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        errorCode: "opencode_process_disposal_timeout",
+        retryable: true,
+        failure: "disposal_timeout",
       }),
     ],
   },
@@ -353,6 +448,130 @@ const cases = [
     ],
   },
   {
+    name: "fails retryably without mutating when the registry lock remains contended",
+    input: {
+      operation: "ensure" as const,
+      contendedLock: true,
+      registryLockTimeoutMs: 30,
+      registryLockPollIntervalMs: 5,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [],
+        registry: {},
+        errorCode: "opencode_registry_lock_timeout",
+        retryable: true,
+        failure: "registry_lock_timeout",
+      }),
+    ],
+  },
+  {
+    name: "disposeAll clears the registry only after every process exits",
+    input: {
+      operation: "dispose-all" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: true,
+      seededHealthy: true,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        entries: [],
+        spawned: [],
+        killed: [{ pid: 42, signal: "SIGTERM" }],
+        registry: {},
+        failure: "none",
+      }),
+    ],
+  },
+  {
+    name: "disposeAll reports a timeout and retains ownership while a process remains alive",
+    input: {
+      operation: "dispose-all" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: true,
+      seededHealthy: true,
+      processExit: "never" as const,
+      shutdownTimeoutMs: 40,
+      shutdownGracePeriodMs: 10,
+      shutdownPollIntervalMs: 5,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        entries: [{ workspaceRoot: "/ws", pid: 42, port: 7_000, version: "1.2.3" }],
+        spawned: [],
+        killed: [
+          { pid: 42, signal: "SIGTERM" },
+          { pid: 42, signal: "SIGKILL" },
+        ],
+        registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        errorCode: "opencode_process_disposal_timeout",
+        retryable: true,
+        failure: "disposal_timeout",
+      }),
+    ],
+  },
+  {
+    name: "disposeAll removes successful entries before retaining a failed owner",
+    input: {
+      operation: "dispose-all" as const,
+      seededEntries: [
+        { root: "/finished", pid: 42, port: 7_000, alive: true, healthy: true },
+        { root: "/stuck", pid: 43, port: 7_001, alive: true, healthy: true },
+      ],
+      processExitByPid: { 42: "term", 43: "never" },
+      shutdownTimeoutMs: 40,
+      shutdownGracePeriodMs: 10,
+      shutdownPollIntervalMs: 5,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        entries: [{ workspaceRoot: "/stuck", pid: 43, port: 7_001, version: "1.2.3" }],
+        spawned: [],
+        killed: [
+          { pid: 42, signal: "SIGTERM" },
+          { pid: 43, signal: "SIGTERM" },
+          { pid: 43, signal: "SIGKILL" },
+        ],
+        registry: { "/stuck": { pid: 43, port: 7_001, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        errorCode: "opencode_process_disposal_timeout",
+        retryable: true,
+        failure: "disposal_timeout",
+      }),
+    ],
+  },
+  {
+    name: "replacement refuses to start while the previous process remains alive",
+    input: {
+      operation: "ensure" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededAlive: true,
+      seededHealthy: false,
+      processExit: "never" as const,
+      shutdownTimeoutMs: 40,
+      shutdownGracePeriodMs: 10,
+      shutdownPollIntervalMs: 5,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [
+          { pid: 42, signal: "SIGTERM" },
+          { pid: 42, signal: "SIGKILL" },
+        ],
+        registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        errorCode: "opencode_process_disposal_timeout",
+        retryable: true,
+        failure: "disposal_timeout",
+      }),
+    ],
+  },
+  {
     name: "refreshAll restarts every owned server on its registered port",
     input: {
       operation: "refresh-all" as const,
@@ -427,22 +646,32 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
     const harness = createHarness();
     try {
       if (input.staleLock) writeFileSync(`${harness.registryFile}.lock`, "999999\n");
-      if (input.seededEntry) {
-        const root = input.seededEntry.root ?? "/ws";
-        writeFileSync(
-          harness.registryFile,
-          JSON.stringify({
-            [root]: {
-              pid: input.seededEntry.pid,
-              port: input.seededEntry.port,
+      if (input.contendedLock) {
+        writeFileSync(`${harness.registryFile}.lock`, `${process.pid}\n`);
+        harness.alivePids.add(process.pid);
+      }
+      const seededEntries = input.seededEntries ?? (input.seededEntry ? [input.seededEntry] : []);
+      if (seededEntries.length > 0) {
+        const registry = Object.fromEntries(
+          seededEntries.map((seeded) => [
+            seeded.root ?? "/ws",
+            {
+              pid: seeded.pid,
+              port: seeded.port,
               version: "1.2.3",
               startedAt: "2026-08-15T00:00:00.000Z",
             },
-          }),
+          ]),
         );
-        if (input.seededAlive) harness.alivePids.add(input.seededEntry.pid);
-        if (input.seededHealthy) harness.healthyPorts.add(input.seededEntry.port);
-        if (input.seededPortAvailable !== false) harness.availablePorts.add(input.seededEntry.port);
+        writeFileSync(harness.registryFile, JSON.stringify(registry));
+        for (const seeded of seededEntries) {
+          const alive = seeded.alive ?? input.seededAlive ?? false;
+          const healthy = seeded.healthy ?? input.seededHealthy ?? false;
+          const portAvailable = seeded.portAvailable ?? input.seededPortAvailable !== false;
+          if (alive) harness.alivePids.add(seeded.pid);
+          if (healthy) harness.healthyPorts.add(seeded.port);
+          if (portAvailable) harness.availablePorts.add(seeded.port);
+        }
       }
       if (input.healthOnSpawn === false) harness.healthyPorts.clear();
       harness.childrenDieImmediately = input.childrenDieImmediately ?? false;
@@ -451,10 +680,14 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
       const manager = createManager(harness, input);
       let entry: OpenCodeServerEntry | undefined;
       let failure: ServerResult["failure"] = "none";
+      let errorCode: string | undefined;
+      let retryable: boolean | undefined;
       try {
         if (input.operation === "dispose") {
           const disposed = await manager.dispose("/ws");
           if (!disposed) throw new Error("dispose returned false");
+        } else if (input.operation === "dispose-all") {
+          await manager.disposeAll();
         } else if (input.operation === "dispose-missing") {
           const disposed = await manager.dispose("/ws");
           if (disposed) throw new Error("dispose returned true");
@@ -465,7 +698,25 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        failure = message.includes("exited before") ? "server_exited" : "health_timeout";
+        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+        if (
+          code === "opencode_registry_lock_timeout" ||
+          code === "opencode_process_disposal_timeout" ||
+          code === "opencode_process_disposal_failed"
+        ) {
+          errorCode = code;
+          retryable = error && typeof error === "object" && "retryable" in error ? error.retryable === true : false;
+        }
+        failure =
+          code === "opencode_registry_lock_timeout"
+            ? "registry_lock_timeout"
+            : code === "opencode_process_disposal_timeout"
+              ? "disposal_timeout"
+              : code === "opencode_process_disposal_failed"
+                ? "disposal_failed"
+                : message.includes("exited before")
+                  ? "server_exited"
+                  : "health_timeout";
       }
       const registry = existsSync(harness.registryFile)
         ? (JSON.parse(readFileSync(harness.registryFile, "utf8")) as Record<string, unknown>)
@@ -478,9 +729,17 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         spawned: harness.spawnRecords,
         killed: harness.killed,
         registry: normalizedRegistry,
+        ...(errorCode ? { errorCode, retryable } : {}),
         failure,
       };
       if (input.operation === "refresh-all") {
+        result.entries = Object.entries(normalizedRegistry).map(([root, value]) => ({
+          workspaceRoot: root,
+          pid: (value as { pid: number }).pid,
+          port: (value as { port: number }).port,
+          version: (value as { version: string }).version,
+        }));
+      } else if (input.operation === "dispose-all") {
         result.entries = Object.entries(normalizedRegistry).map(([root, value]) => ({
           workspaceRoot: root,
           pid: (value as { pid: number }).pid,

@@ -1,15 +1,22 @@
-import type { AgentBackend, AgentSessionRecord, PaneState, WorkspaceId, WorkspaceRecord } from "@muximo/domain";
+import type {
+  AgentBackend,
+  AgentSessionRecord,
+  PaneKind,
+  PaneState,
+  WorkspaceId,
+  WorkspaceRecord,
+} from "@muximo/domain";
 import type { CreatePaneInput, MuximodPanePlacement, MuximodWorkspaceDirectory } from "./application.js";
 import type { WorkspaceDirectoryPort } from "./workspace.js";
 
-export type MuximodPaneRef = {
-  paneId: string;
+export type HostPaneReference = {
+  hostPaneId: string;
   windowId: string;
   sessionName: string;
 };
 
-export type MuximodPaneSnapshot = MuximodPaneRef & {
-  tmuxServerId?: string;
+export type HostPaneSnapshot = HostPaneReference & {
+  hostServerId?: string;
   muximodSessionId?: string;
   muximodExecutionId?: string;
   windowName: string;
@@ -33,49 +40,68 @@ export type MuximodPaneSnapshot = MuximodPaneRef & {
   muximodManagedSessionId?: string;
 };
 
-export type MuximodLiveSnapshot = {
-  panes: MuximodPaneSnapshot[];
+export type TerminalHostSnapshot = {
+  panes: HostPaneSnapshot[];
   available: boolean;
-  tmuxServerId: string | null;
-  tmuxServerScope: string | null;
+  hostServerId: string | null;
+  hostServerScope: string | null;
 };
 
+export type MuximodPaneClassification = {
+  kind: PaneKind;
+  agentId?: string;
+};
+
+export type MuximodPaneObservation = {
+  state: PaneState;
+};
+
+/** Provider-neutral terminal observation and classification owned by application. */
+export interface MuximodTerminalObservationPort {
+  classifyCommand(command: string): Promise<MuximodPaneClassification>;
+  observeUnmanagedAgent(paneId: string, fallbackState: PaneState): Promise<MuximodPaneObservation>;
+  isManagedAgentExecution(command: string, backend: AgentBackend): Promise<boolean>;
+}
+
 /** Host operations required by muximod use cases. */
-export interface MuximodHostPort {
+export interface MuximodHostPort extends MuximodTerminalObservationPort {
+  /** UUID generation is local identity construction and has no host I/O. */
   newId(): string;
-  hasSession(target: string): boolean;
-  createManagedSession(target: string, cwd: string): string;
-  killSession(target: string): void;
-  attachSession(target: string): number;
-  createManagedPane(input: CreatePaneInput, workspace: WorkspaceRecord | undefined, cwd: string | undefined): string;
-  resolvePane(target: string): MuximodPaneRef;
-  isWindowZoomed(pane: MuximodPaneRef): boolean;
+  hasSession(target: string): Promise<boolean>;
+  createManagedSession(target: string, cwd: string): Promise<string>;
+  killSession(target: string): Promise<void>;
+  attachSession(target: string): Promise<number>;
+  createManagedPane(
+    input: CreatePaneInput,
+    workspace: WorkspaceRecord | undefined,
+    cwd: string | undefined,
+  ): Promise<string>;
+  resolvePane(target: string): Promise<HostPaneReference>;
+  isWindowZoomed(pane: HostPaneReference): Promise<boolean>;
   splitPane(
     command: string | undefined,
     placement: Exclude<MuximodPanePlacement, "window">,
     targetPaneId: string,
     zoomed: boolean,
-  ): string;
-  listPanesSnapshot(): MuximodLiveSnapshot;
+  ): Promise<string>;
+  listPanesSnapshot(): Promise<TerminalHostSnapshot>;
   setAgentPaneMetadata(
     paneId: string,
     field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id",
     value: string,
-  ): void;
-  setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): void;
-  clearAgentExecutionMetadata(paneId: string, expectedExecutionId?: string): boolean;
-  resetAgentPaneMetadata(paneId: string): void;
-  capturePane(paneId: string, lines?: number): string;
-  isManagedMuximoCommand(command: string, backend: AgentBackend): boolean;
-  isProcessAlive(pid: number): boolean;
+  ): Promise<void>;
+  setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): Promise<void>;
+  clearAgentExecutionMetadata(paneId: string, expectedExecutionId?: string): Promise<boolean>;
+  resetAgentPaneMetadata(paneId: string): Promise<void>;
+  isProcessAlive(pid: number): Promise<boolean>;
 }
 
 export interface MuximodViewportPort {
-  handleTmuxHook(
+  handleTerminalHostHook(
     event: "client-attached" | "client-active" | "client-resized" | "client-focus-in" | "client-detached",
     client: string,
-  ): void;
-  reassertMobileViewport(target: string): void;
+  ): Promise<void>;
+  reassertMobileViewport(target: string): Promise<void>;
 }
 
 export interface MuximodWorkspaceCatalogPort extends WorkspaceDirectoryPort {

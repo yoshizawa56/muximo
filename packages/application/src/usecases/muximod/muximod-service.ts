@@ -1,10 +1,10 @@
-import { type PaneRecord, type PaneState, WorkspaceId } from "@muximo/domain";
-import type { MuximodApplication, MuximodTerminalEndpoint } from "../../ports/application.js";
+import type { PaneRecord, PaneState } from "@muximo/domain";
+import type { MuximodApplication, MuximodClock, MuximodTerminalEndpoint } from "../../ports/application.js";
 import type {
   MuximodHostPort,
-  MuximodLiveSnapshot,
   MuximodViewportPort,
   MuximodWorkspaceCatalogPort,
+  TerminalHostSnapshot,
 } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository, WorkspaceRepository } from "../../ports/repositories.js";
 import { adoptAgentSession } from "../agents/adopt-agent-session.js";
@@ -24,6 +24,7 @@ import type { UpdateWorkspace } from "../workspaces/update-workspace.js";
 export type MuximodApplicationResources = {
   getTerminal: () => Promise<MuximodTerminalEndpoint>;
   host: MuximodHostPort;
+  clock: MuximodClock;
   paneRepository: PaneRepository;
   agentSessionRepository: AgentSessionRepository;
   workspaceCatalog: MuximodWorkspaceCatalogPort;
@@ -38,16 +39,16 @@ export type MuximodApplicationResources = {
 };
 
 export type MuximodApplicationRuntime = MuximodApplication & {
-  reconcile(live?: MuximodLiveSnapshot): Promise<PaneRecord[]>;
-  adoptAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
+  reconcile(live?: TerminalHostSnapshot): Promise<PaneRecord[]>;
+  adoptAgentSession(request: { agentSessionId: string; hostPaneId: string; executionId: string }): Promise<void>;
   observeAgentSession(request: {
     agentSessionId: string;
-    tmuxPaneId: string;
+    hostPaneId: string;
     executionId: string;
     state: PaneState;
     recentOutput?: string;
   }): Promise<void>;
-  releaseAgentSession(request: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
+  releaseAgentSession(request: { agentSessionId: string; hostPaneId: string; executionId: string }): Promise<void>;
 };
 
 /**
@@ -57,6 +58,7 @@ export type MuximodApplicationRuntime = MuximodApplication & {
 export function createMuximodApplication(resources: MuximodApplicationResources): MuximodApplicationRuntime {
   const {
     host,
+    clock,
     paneRepository,
     agentSessionRepository,
     workspaceCatalog,
@@ -98,24 +100,25 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
       delete: async (workspaceId) => {
         await deleteWorkspace.execute(workspaceId);
       },
-      resolveDirectory: (workspaceId) =>
-        workspaceCatalog.resolveWorkspaceDirectory(WorkspaceId.create(workspaceId), (id) =>
-          workspaceRepository.findById(id),
-        ),
-      resolveSelection: (selection) =>
-        workspaceCatalog.resolveSelection(
-          { workspaceId: WorkspaceId.create(selection.workspaceId), mode: selection.mode },
-          (id) => workspaceRepository.findById(id),
-        ),
     },
     sessions: {
-      list: () => listSessions(host, paneRepository, agentSessionRepository, agentStatus),
+      list: () => listSessions(host, paneRepository, agentSessionRepository, agentStatus, clock),
       create: (input) =>
-        createSession(input, host, paneRepository, agentSessionRepository, workspaceCatalog, agentStatus),
+        createSession(
+          input,
+          host,
+          paneRepository,
+          agentSessionRepository,
+          workspaceCatalog,
+          workspaceRepository,
+          agentStatus,
+          clock,
+        ),
     },
     panes: {
-      list: (sessionName) => listCurrentPanes(host, paneRepository, agentSessionRepository, agentStatus, sessionName),
-      create: (input, workspace) =>
+      list: (sessionName) =>
+        listCurrentPanes(host, paneRepository, agentSessionRepository, agentStatus, clock, sessionName),
+      create: (input) =>
         createPane(
           input,
           host,
@@ -123,17 +126,22 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
           agentSessionRepository,
           viewportManager,
           workspaceCatalog,
+          workspaceRepository,
           agentStatus,
-          workspace,
+          clock,
         ),
     },
-    hooks: { handleTmux: (event, client) => viewportManager.handleTmuxHook(event, client) },
-    reconcile: (live) => reconcilePanes(host, paneRepository, agentSessionRepository, live, agentStatus),
+    hooks: {
+      handleTerminalHostHook: async (event, client) => {
+        await viewportManager.handleTerminalHostHook(event, client);
+      },
+    },
+    reconcile: (live) => reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock, live),
     adoptAgentSession: (request) =>
-      adoptAgentSession(host, paneRepository, agentSessionRepository, agentStatus, request),
+      adoptAgentSession(host, paneRepository, agentSessionRepository, agentStatus, clock, request),
     observeAgentSession: (request) =>
-      observeAgentSession(host, paneRepository, agentSessionRepository, agentStatus, request),
+      observeAgentSession(host, paneRepository, agentSessionRepository, agentStatus, clock, request),
     releaseAgentSession: (request) =>
-      releaseAgentSession(host, paneRepository, agentSessionRepository, agentStatus, request),
+      releaseAgentSession(host, paneRepository, agentSessionRepository, agentStatus, clock, request),
   };
 }

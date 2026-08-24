@@ -17,18 +17,19 @@ import {
   readCodexBaseline,
   sleep,
   supportedCodexOriginators,
-  updateSessionRecord as updateSession,
   walkFiles,
 } from "./internals.js";
+import type { CodexSessionStateRepository } from "./state.js";
 
-type LoggerLike = Pick<Logger, "debug" | "child">;
+type LoggerLike = Pick<Logger, "debug"> & {
+  child(context: Record<string, unknown>): Pick<Logger, "debug" | "info" | "warn">;
+};
 export type CodexSessionDeps = {
   env: NodeJS.ProcessEnv;
-  logger: LoggerLike;
+  logger: Pick<Logger, "debug" | "info" | "warn"> & LoggerLike;
   sessions: AgentSessionRepository;
+  state: CodexSessionStateRepository;
   audit(eventType: string, entityId: string, payload: unknown): void;
-  warn(value: string): void;
-  info(value: string): void;
   manageRemoteThread(
     session: AgentSessionRecord,
     operation: "name" | "archive" | "unarchive",
@@ -36,30 +37,13 @@ export type CodexSessionDeps = {
   ): Promise<boolean>;
 };
 
-export async function captureCodexSessionBaseline(
+/** Collects provider metadata without mutating or persisting an application record. */
+export async function collectCodexSessionBaseline(
   deps: CodexSessionDeps,
-  session: AgentSessionRecord,
-): Promise<boolean> {
-  if (session.backend !== "codex") return true;
-  const startedAt = Date.now();
-  const logger = deps.logger.child({
-    sessionId: session.id,
-    sessionName: session.name,
-    backend: session.backend,
-  });
-  logger.debug("codex.baseline_started");
+): Promise<{ files: string[]; baseline: string }> {
   const files = await codexSessionFiles(deps);
-  const baseline = files.map((file) => codexMeta(file)?.session_id).filter((value): value is string => Boolean(value));
-  // Baselines are persisted in the same database record as a newline list so
-  // a restart never depends on an auxiliary state file.
-  session = updateSession(session, { codexSessionBaseline: JSON.stringify({ codexSessions: baseline }) });
-  await deps.sessions.update(session);
-  logger.debug("codex.baseline_finished", {
-    fileCount: files.length,
-    sessionCount: baseline.length,
-    durationMs: Date.now() - startedAt,
-  });
-  return true;
+  const ids = files.map((file) => codexMeta(file)?.session_id).filter((value): value is string => Boolean(value));
+  return { files, baseline: JSON.stringify({ codexSessions: ids }) };
 }
 
 export async function discoverCodexSessionId(
@@ -70,10 +54,11 @@ export async function discoverCodexSessionId(
   endedAt?: number,
 ): Promise<CodexDiscoveryResult> {
   const session = await deps.sessions.findById(AgentSessionId.create(sessionId));
+  const state = await deps.state.find(AgentSessionId.create(sessionId));
   const logger = deps.logger.child({ sessionId, backend: "codex" });
   const discoveryStartedAt = Date.now();
-  logger.debug("codex.session_id_discovery_started", { remote: Boolean(session?.codexRemote) });
-  const baseline = new Set<string>(readCodexBaseline(session?.codexSessionBaseline));
+  logger.debug("codex.session_id_discovery_started", { remote: Boolean(state?.remote) });
+  const baseline = new Set<string>(readCodexBaseline(state?.sessionBaseline));
   const started = Date.now();
   const root = codexSessionRoot(deps);
   const candidates = codexSessionCandidates(deps, await codexSessionFiles(deps), startedAt, runDir, baseline, endedAt);
@@ -159,13 +144,16 @@ export async function recoverCodexSessionId(
   const ownershipRejected =
     (result.diagnostics.rejected.known_to_other_session ?? 0) + (result.diagnostics.rejected.competing_session ?? 0);
   if (result.candidates.length > 1 || ownershipRejected > 0) {
-    deps.warn(
-      `cannot safely recover Codex session ID for '${session.name}'; found ${result.diagnostics.candidateFiles} matching rollouts (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`,
-    );
+    deps.logger.warn("codex.session_id_recovery_ambiguous", {
+      sessionName: session.name,
+      candidateFileCount: result.diagnostics.candidateFiles,
+      diagnostics: result.diagnostics,
+    });
   } else {
-    deps.warn(
-      `cannot recover Codex session ID for '${session.name}' (${formatCodexDiscoveryDiagnostics(result.diagnostics)})`,
-    );
+    deps.logger.warn("codex.session_id_recovery_missing", {
+      sessionName: session.name,
+      diagnostics: result.diagnostics,
+    });
   }
   return { ...result, selectedId: undefined };
 }
@@ -194,7 +182,7 @@ export async function repairCodexSessionId(
       "codex_session_lost",
       `session '${session.name}' disappeared while repairing its backend session ID`,
     );
-  deps.info(`recovered Codex session ID for '${session.name}' during ${phase}`);
+  deps.logger.info("codex.session_id_recovered", { sessionName: session.name, phase });
   return persisted;
 }
 
@@ -206,9 +194,12 @@ export function reportCodexDiscoveryFailure(
   result: CodexDiscoveryResult,
 ): void {
   const diagnostics = formatCodexDiscoveryDiagnostics(result.diagnostics);
-  deps.warn(
-    `Codex session ID could not be found; '${session.name}' cannot be resumed until the mapping is repaired (${diagnostics})`,
-  );
+  deps.logger.warn("codex.session_id_missing", {
+    sessionName: session.name,
+    phase,
+    diagnostics: result.diagnostics,
+    formattedDiagnostics: diagnostics,
+  });
   deps.audit("agent_session.codex_session_id_missing", session.id, {
     name: session.name,
     phase,

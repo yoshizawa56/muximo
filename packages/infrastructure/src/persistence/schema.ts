@@ -9,8 +9,8 @@ export const panes = sqliteTable(
   "panes",
   {
     id: text("id").primaryKey(),
-    tmuxPaneId: text("tmux_pane_id").notNull(),
-    tmuxServerId: text("tmux_server_id").notNull().default("legacy"),
+    hostPaneId: text("tmux_pane_id").notNull(),
+    hostServerId: text("tmux_server_id").notNull().default("legacy"),
     agentSessionId: text("agent_session_id"),
     agentExecutionId: text("agent_execution_id"),
     sessionName: text("session_name").notNull(),
@@ -28,7 +28,7 @@ export const panes = sqliteTable(
     ...timestamps,
   },
   (table) => ({
-    tmuxPaneIndex: uniqueIndex("panes_tmux_server_pane_id_index").on(table.tmuxServerId, table.tmuxPaneId),
+    hostPaneIndex: uniqueIndex("panes_tmux_server_pane_id_index").on(table.hostServerId, table.hostPaneId),
     agentSessionIndex: index("panes_agent_session_index").on(table.agentSessionId),
   }),
 );
@@ -74,12 +74,9 @@ export const agentSessions = sqliteTable(
     setupOutputFile: text("setup_output_file"),
     cleanupOutputFile: text("cleanup_output_file"),
     backendSessionId: text("backend_session_id"),
-    codexProfile: text("codex_profile"),
-    codexRemote: text("codex_remote"),
     setupRan: integer("setup_ran", { mode: "boolean" }).notNull(),
     resuming: integer("resuming", { mode: "boolean" }).notNull(),
     baselineStatus: text("baseline_status"),
-    codexSessionBaseline: text("codex_session_baseline"),
     lastExitStatus: integer("last_exit_status"),
     executionId: text("execution_id"),
     executionPid: integer("execution_pid"),
@@ -92,6 +89,19 @@ export const agentSessions = sqliteTable(
   }),
 );
 
+/** Provider-owned Codex implementation state; it is intentionally outside the domain aggregate. */
+export const codexSessionStates = sqliteTable("codex_session_states", {
+  agentSessionId: text("agent_session_id")
+    .primaryKey()
+    .references(() => agentSessions.id, { onDelete: "cascade" }),
+  profile: text("profile"),
+  remote: text("remote"),
+  sessionBaseline: text("session_baseline"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export type PaneRow = typeof panes.$inferSelect;
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type AgentSessionRow = typeof agentSessions.$inferSelect;
+export type CodexSessionStateRow = typeof codexSessionStates.$inferSelect;

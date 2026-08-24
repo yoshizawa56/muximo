@@ -1,9 +1,9 @@
+import type { TerminalEndpoint } from "@muximo/contract";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useState } from "react";
 import { invalidateSessionData } from "../../../../../app/api/invalidation";
 import { useMuximodConnection } from "../../../../../app/api/use-muximod-connection";
-import type { TerminalEndpoint } from "../../../-connection-flow-viewmodel";
 import { fallbackTerminal, useTerminalResources } from "../../../-terminal-resources";
 import {
   useWorkspacePickerViewModel,

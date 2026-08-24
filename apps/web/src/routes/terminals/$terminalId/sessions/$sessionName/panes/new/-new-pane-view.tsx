@@ -2,7 +2,8 @@ import type { AppIconName } from "../../../../../../../app/components/app-icon";
 import { AppIcon } from "../../../../../../../app/components/app-icon";
 import { WorkspacePickerView } from "../../../-workspace-picker-view";
 import { workspacePickerState } from "../../../-workspace-picker-viewmodel";
-import type { NewPaneAgent, NewPaneViewModel } from "./-new-pane-viewmodel";
+import { agentOptions } from "./-agent-options";
+import type { NewPaneViewModel } from "./-new-pane-viewmodel";
 
 const placementCardBase =
   "flex min-w-0 cursor-pointer flex-col items-center justify-center gap-[6px] rounded-lg border border-[#1e4828] bg-[rgb(7_24_11_/_70%)] p-2 text-[#82b488] transition-colors max-[920px]:min-h-[62px]";
@@ -21,27 +22,6 @@ const placementDescription: Record<"window" | "right" | "bottom", string> = {
   right: "Place it beside an existing pane.",
   bottom: "Place it beneath an existing pane.",
 };
-
-const agentOptions: { value: NewPaneAgent; label: string; monogram: string; badgeClass: string }[] = [
-  {
-    value: "codex",
-    label: "Codex",
-    monogram: "C",
-    badgeClass: "border-[#2b6f8a] bg-[rgb(21_94_117_/_24%)] text-[#7dd3fc]",
-  },
-  {
-    value: "claude",
-    label: "Claude",
-    monogram: "C",
-    badgeClass: "border-[#9a5b3c] bg-[rgb(154_52_18_/_22%)] text-[#fdba74]",
-  },
-  {
-    value: "opencode",
-    label: "OpenCode",
-    monogram: "O",
-    badgeClass: "border-[#3d8b4c] bg-[rgb(57_214_91_/_14%)] text-lime",
-  },
-];
 
 export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
   const usesWorktree = viewModel.workspacePicker.mode === "worktree";

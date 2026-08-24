@@ -1,15 +1,10 @@
-import type { AgentSessionRepository } from "@muximo/application";
+import type { AgentSessionRepository, ClaimExecutionInput } from "@muximo/application";
 import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
 import { and, asc, eq, isNull } from "drizzle-orm";
-import type { AgentDrizzleDatabase } from "../../database-types.js";
 import { type AgentSessionRow, agentSessions } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
 export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase implements AgentSessionRepository {
-  public constructor(database: AgentDrizzleDatabase) {
-    super(database);
-  }
-
   public async findById(id: AgentSessionId): Promise<AgentSessionRecord | undefined> {
     const row = this.db().select().from(agentSessions).where(eq(agentSessions.id, id)).get();
     return row ? toAgentSessionRecord(row) : undefined;
@@ -37,23 +32,22 @@ export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase impleme
   }
 
   public async insert(record: AgentSessionRecord): Promise<void> {
-    const now = new Date().toISOString();
-    this.db().insert(agentSessions).values(toAgentSessionRow(record, now)).run();
+    this.db().insert(agentSessions).values(toAgentSessionRow(record)).run();
   }
 
   public async update(record: AgentSessionRecord): Promise<void> {
-    const now = new Date().toISOString();
-    const row = toAgentSessionRow(record, now);
+    const row = toAgentSessionRow(record);
     this.db().update(agentSessions).set(row).where(eq(agentSessions.id, record.id)).run();
   }
 
-  public async claimExecution(
-    id: AgentSessionId,
-    expectedExecutionPid: number | null,
-    executionId: string,
-    executionPid: number,
-    executionStartedAt: string,
-  ): Promise<boolean> {
+  public async claimExecution({
+    id,
+    expectedExecutionPid,
+    executionId,
+    executionPid,
+    executionStartedAt,
+    updatedAt,
+  }: ClaimExecutionInput): Promise<boolean> {
     const predicate =
       expectedExecutionPid === null
         ? and(eq(agentSessions.id, id), isNull(agentSessions.executionPid))
@@ -66,7 +60,7 @@ export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase impleme
         executionStartedAt,
         status: "resuming",
         resuming: true,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
       })
       .where(predicate)
       .returning({ id: agentSessions.id })
@@ -89,7 +83,7 @@ export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase impleme
   }
 }
 
-function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agentSessions.$inferInsert {
+function toAgentSessionRow(record: AgentSessionRecord): typeof agentSessions.$inferInsert {
   const session = AgentSession.restore(record);
   return {
     id: session.id,
@@ -109,18 +103,15 @@ function toAgentSessionRow(record: AgentSessionRecord, now: string): typeof agen
     setupOutputFile: session.setupOutputFile ?? null,
     cleanupOutputFile: session.cleanupOutputFile ?? null,
     backendSessionId: session.backendSessionId ?? null,
-    codexProfile: session.codexProfile ?? null,
-    codexRemote: session.codexRemote ?? null,
     setupRan: session.setupRan,
     resuming: session.resuming,
     baselineStatus: session.baselineStatus ?? null,
-    codexSessionBaseline: session.codexSessionBaseline ?? null,
     lastExitStatus: session.lastExitStatus ?? null,
     executionId: session.executionId ?? null,
     executionPid: session.executionPid ?? null,
     executionStartedAt: session.executionStartedAt ?? null,
-    createdAt: session.createdAt || now,
-    updatedAt: now,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
   };
 }
 
@@ -143,12 +134,9 @@ function toAgentSessionRecord(row: AgentSessionRow): AgentSessionRecord {
     ...(row.setupOutputFile !== null ? { setupOutputFile: row.setupOutputFile } : {}),
     ...(row.cleanupOutputFile !== null ? { cleanupOutputFile: row.cleanupOutputFile } : {}),
     ...(row.backendSessionId !== null ? { backendSessionId: row.backendSessionId } : {}),
-    ...(row.codexProfile !== null ? { codexProfile: row.codexProfile } : {}),
-    ...(row.codexRemote !== null ? { codexRemote: row.codexRemote } : {}),
     setupRan: row.setupRan,
     resuming: row.resuming,
     ...(row.baselineStatus !== null ? { baselineStatus: row.baselineStatus } : {}),
-    ...(row.codexSessionBaseline !== null ? { codexSessionBaseline: row.codexSessionBaseline } : {}),
     ...(row.lastExitStatus !== null ? { lastExitStatus: row.lastExitStatus } : {}),
     ...(row.executionId ? { executionId: row.executionId } : {}),
     ...(row.executionPid !== null ? { executionPid: row.executionPid } : {}),

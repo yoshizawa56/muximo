@@ -127,7 +127,12 @@ class CodexRpcClient {
       header.writeBigUInt64BE(BigInt(length), 2);
     }
     const masked = Buffer.alloc(length);
-    for (let index = 0; index < length; index += 1) masked[index] = payload[index]! ^ mask[index % 4]!;
+    for (let index = 0; index < length; index += 1) {
+      const payloadByte = payload[index];
+      const maskByte = mask[index % 4];
+      if (payloadByte === undefined || maskByte === undefined) throw new Error("Codex frame mask is incomplete");
+      masked[index] = payloadByte ^ maskByte;
+    }
     this.socket.write(Buffer.concat([header, mask, masked]));
   }
 
@@ -176,7 +181,9 @@ class CodexRpcClient {
   }
 
   private async readByte(): Promise<number> {
-    return (await this.readBytes(1))[0]!;
+    const value = (await this.readBytes(1))[0];
+    if (value === undefined) throw new Error("Codex frame ended before a byte was read");
+    return value;
   }
 
   private async readBytes(size: number): Promise<Buffer> {
@@ -192,7 +199,12 @@ class CodexRpcClient {
 
 function unmask(payload: Buffer, mask: Buffer): Buffer {
   const result = Buffer.alloc(payload.byteLength);
-  for (let index = 0; index < payload.byteLength; index += 1) result[index] = payload[index]! ^ mask[index % 4]!;
+  for (let index = 0; index < payload.byteLength; index += 1) {
+    const payloadByte = payload[index];
+    const maskByte = mask[index % 4];
+    if (payloadByte === undefined || maskByte === undefined) throw new Error("Codex frame mask is incomplete");
+    result[index] = payloadByte ^ maskByte;
+  }
   return result;
 }
 

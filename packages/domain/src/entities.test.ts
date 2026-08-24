@@ -50,7 +50,8 @@ const workspace: WorkspaceRecord = Workspace.create({
 
 const pane: PaneRecord = Pane.create({
   id: PaneId.create("pane-1"),
-  tmuxPaneId: "%1",
+  hostPaneId: "%1",
+  hostServerId: "host-1",
   sessionName: "muximod",
   windowId: "@0",
   kind: "shell",
@@ -58,7 +59,7 @@ const pane: PaneRecord = Pane.create({
   cwd: "/work/project",
   workspaceId: workspace.id,
   agentId: undefined,
-  state: "running",
+  initialState: "running",
   title: "Shell",
   lastSeenAt: "2026-08-15T00:00:00.000Z",
 });
@@ -81,6 +82,7 @@ const agentSession: AgentSessionRecord = AgentSession.create({
 type WorkspaceOperation =
   | { kind: "create"; input: WorkspaceCreateInput }
   | { kind: "clear-cleanup-hook" }
+  | { kind: "update-timestamp" }
   | { kind: "reject-invalid-current" };
 
 const workspaceCases = [
@@ -101,6 +103,11 @@ const workspaceCases = [
     assert: [returns<EmptyContext, WorkspaceRecord>({ ...workspace, cleanupScriptPath: undefined })],
   },
   {
+    name: "updates only an explicit timestamp while preserving identity and creation time",
+    input: { kind: "update-timestamp" },
+    assert: [returns<EmptyContext, WorkspaceRecord>({ ...workspace, updatedAt: "2026-08-16T00:00:00.000Z" })],
+  },
+  {
     name: "rejects an invalid current workspace before applying an update",
     input: { kind: "reject-invalid-current" },
     assert: [hasError<EmptyContext, WorkspaceRecord>({ name: "ZodError" })],
@@ -113,12 +120,23 @@ const workspaceTable: OperationTable<undefined, "default", WorkspaceOperation, W
   execute: (_fixture, input) => {
     if (input.kind === "create") return Workspace.create(input.input);
     if (input.kind === "clear-cleanup-hook") return Workspace.update(workspace, { cleanupScriptPath: clearPatch });
+    if (input.kind === "update-timestamp") {
+      return Workspace.update(workspace, { updatedAt: "2026-08-16T00:00:00.000Z" });
+    }
     return Workspace.update({ ...workspace, name: "" } as WorkspaceRecord, { name: "renamed" });
   },
   observe: () => ({}),
 };
 
-type PaneOperation = { kind: "create" } | { kind: "clear-title" } | { kind: "reject-invalid-current" };
+type PaneOperation =
+  | { kind: "create" }
+  | { kind: "clear-title" }
+  | { kind: "reject-invalid-current" }
+  | { kind: "reject-immutable-update" }
+  | { kind: "reject-host-pane-identity-update" }
+  | { kind: "reject-host-server-identity-update" }
+  | { kind: "reject-state-update" }
+  | { kind: "transition-state" };
 
 const paneCases = [
   {
@@ -136,15 +154,66 @@ const paneCases = [
     input: { kind: "reject-invalid-current" },
     assert: [hasError<EmptyContext, PaneRecord>({ name: "ZodError" })],
   },
+  {
+    name: "rejects an immutable identity update",
+    input: { kind: "reject-immutable-update" },
+    assert: [hasError<EmptyContext, PaneRecord>({ message: "Pane update cannot change immutable field: id" })],
+  },
+  {
+    name: "rejects a host pane identity update",
+    input: { kind: "reject-host-pane-identity-update" },
+    assert: [hasError<EmptyContext, PaneRecord>({ message: "Pane update cannot change immutable field: hostPaneId" })],
+  },
+  {
+    name: "rejects a host server identity update",
+    input: { kind: "reject-host-server-identity-update" },
+    assert: [
+      hasError<EmptyContext, PaneRecord>({ message: "Pane update cannot change immutable field: hostServerId" }),
+    ],
+  },
+  {
+    name: "rejects a direct state update",
+    input: { kind: "reject-state-update" },
+    assert: [hasError<EmptyContext, PaneRecord>({ message: "Pane update cannot change immutable field: state" })],
+  },
+  {
+    name: "transitions state with an explicit reason and time",
+    input: { kind: "transition-state" },
+    assert: [
+      returns<EmptyContext, PaneRecord>({
+        ...pane,
+        state: "waiting_input",
+        lastSeenAt: "2026-08-15T00:01:00.000Z",
+      }),
+    ],
+  },
 ] satisfies readonly OperationCase<"default", PaneOperation, PaneRecord, EmptyContext>[];
 
 const paneTable: OperationTable<undefined, "default", PaneOperation, PaneRecord, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: paneCases,
   execute: (_fixture, input) => {
-    if (input.kind === "create") return Pane.create(pane);
+    if (input.kind === "create") {
+      const { state, ...createInput } = pane;
+      return Pane.create({ ...createInput, initialState: state });
+    }
     if (input.kind === "clear-title") return Pane.update(pane, { title: clearPatch });
-    return Pane.update({ ...pane, state: "invalid" } as unknown as PaneRecord, { state: "running" });
+    if (input.kind === "reject-invalid-current") {
+      return Pane.update({ ...pane, name: "" } as PaneRecord, { name: "renamed" });
+    }
+    if (input.kind === "reject-immutable-update") {
+      return Pane.update(pane, { id: PaneId.create("pane-2") } as never);
+    }
+    if (input.kind === "reject-host-pane-identity-update") {
+      return Pane.update(pane, { hostPaneId: "%2" } as never);
+    }
+    if (input.kind === "reject-host-server-identity-update") {
+      return Pane.update(pane, { hostServerId: "host-2" } as never);
+    }
+    if (input.kind === "reject-state-update") {
+      return Pane.update(pane, { state: "completed" } as never);
+    }
+    return Pane.transitionState(pane, "waiting_input", "agent requested input", "2026-08-15T00:01:00.000Z");
   },
   observe: () => ({}),
 };

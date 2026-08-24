@@ -1,7 +1,8 @@
 import {
   type ClientControlMessage,
+  decodeServerControlFrame,
+  encodeClientControlFrame,
   type ServerControlMessage,
-  serverControlMessageSchema,
   terminalProtocolVersion,
 } from "@muximo/contract";
 import { FitAddon } from "@xterm/addon-fit";
@@ -24,6 +25,35 @@ export type PaneResumeState = {
   resumeToken: string;
   target: string;
 };
+
+export type TerminalResumeStore = {
+  read: (key: string, target: string) => PaneResumeState | null;
+  write: (key: string, state: PaneResumeState) => void;
+  clear: (key: string) => void;
+};
+
+/**
+ * Keeps resume credentials in this browser tab's JavaScript memory. SPA
+ * remounts and network reconnects retain the credential, while a full
+ * document reload starts a fresh attach instead of persisting it in storage.
+ */
+export function createTerminalResumeStore(): TerminalResumeStore {
+  const states = new Map<string, PaneResumeState>();
+  return {
+    read: (key, target) => {
+      const state = states.get(key);
+      return state?.target === target ? state : null;
+    },
+    write: (key, state) => {
+      states.set(key, state);
+    },
+    clear: (key) => {
+      states.delete(key);
+    },
+  };
+}
+
+const terminalResumeStore = createTerminalResumeStore();
 
 export type PaneViewModel = {
   target: string;
@@ -182,8 +212,8 @@ export function usePaneViewModel({
     });
 
     const endpoint = connection ? connection.websocketUrl : "mock";
-    const storageKey = terminalResumeStorageKey(endpoint, target);
-    resumeRef.current = readTerminalResumeState(storageKey, target);
+    const resumeKey = terminalResumeKey(endpoint, target);
+    resumeRef.current = terminalResumeStore.read(resumeKey, target);
     terminalClosedRef.current = false;
     setStatus("connecting");
     setErrorMessage(null);
@@ -235,7 +265,7 @@ export function usePaneViewModel({
         rows: terminal.rows,
         resume,
       });
-      socket.send(JSON.stringify(message));
+      socket.send(encodeClientControlFrame(message));
     };
 
     const connect = async () => {
@@ -301,11 +331,11 @@ export function usePaneViewModel({
               setErrorMessage(null);
               const nextResume = resumeStateFromReady(message, target);
               resumeRef.current = nextResume;
-              writeTerminalResumeState(storageKey, nextResume);
+              terminalResumeStore.write(resumeKey, nextResume);
             },
             onClosed: (message) => {
               terminalClosedRef.current = true;
-              clearTerminalResumeState(storageKey);
+              terminalResumeStore.clear(resumeKey);
               resumeRef.current = null;
               setStatus("closed");
               setErrorMessage(message.reason === "detached" ? "Terminal detached" : "Terminal session closed");
@@ -314,7 +344,7 @@ export function usePaneViewModel({
               if (code === "resume_not_found" && resumeAttempt && !fallbackAttachSent) {
                 fallbackAttachSent = true;
                 resumeRef.current = null;
-                clearTerminalResumeState(storageKey);
+                terminalResumeStore.clear(resumeKey);
                 setStatus("connecting");
                 sendAttach(socket);
                 return;
@@ -357,7 +387,7 @@ export function usePaneViewModel({
     detachRef.current = () => {
       const socket = socketRef.current;
       resumeRef.current = null;
-      clearTerminalResumeState(storageKey);
+      terminalResumeStore.clear(resumeKey);
       if (socket?.readyState === WebSocket.OPEN) {
         sendControl(socket, {
           type: "detach",
@@ -494,7 +524,7 @@ export function usePaneViewModel({
       if (cleanupMode === "detach") {
         terminalClosedRef.current = true;
         resumeRef.current = null;
-        clearTerminalResumeState(storageKey);
+        terminalResumeStore.clear(resumeKey);
       }
       const socket = socketRef.current;
       socketRef.current = null;
@@ -606,35 +636,27 @@ export function handleControlMessage(
     onViewport: (owner: PaneViewportOwner, reason: string) => void;
   },
 ): void {
-  try {
-    const parsed = serverControlMessageSchema.safeParse(JSON.parse(rawMessage));
-    if (!parsed.success) {
-      handlers.onError({
-        code: "invalid_control_frame",
-        message: "Invalid control frame from muximod",
-        retryable: false,
-      });
-      return;
-    }
-
-    const message = parsed.data;
-    if (message.type === "ready") handlers.onReady(message);
-    if (message.type === "closed") handlers.onClosed(message);
-    if (message.type === "error")
-      handlers.onError({ code: message.code, message: message.message, retryable: message.retryable ?? false });
-    if (message.type === "viewport") handlers.onViewport(message.owner, message.reason);
-  } catch {
+  const decoded = decodeServerControlFrame(rawMessage);
+  if (!decoded.ok) {
     handlers.onError({
       code: "invalid_control_frame",
       message: "Invalid control frame from muximod",
       retryable: false,
     });
+    return;
   }
+
+  const message = decoded.message;
+  if (message.type === "ready") handlers.onReady(message);
+  if (message.type === "closed") handlers.onClosed(message);
+  if (message.type === "error")
+    handlers.onError({ code: message.code, message: message.message, retryable: message.retryable ?? false });
+  if (message.type === "viewport") handlers.onViewport(message.owner, message.reason);
 }
 
 function sendControl(socket: WebSocket | null, message: ClientControlMessage): void {
   if (socket?.readyState !== WebSocket.OPEN) return;
-  socket.send(JSON.stringify(message));
+  socket.send(encodeClientControlFrame(message));
 }
 
 function binaryStringToBytes(data: string): ArrayBuffer {
@@ -660,12 +682,8 @@ function detachSocketAndWait(socket: WebSocket): Promise<void> {
     };
     const onMessage = (event: MessageEvent) => {
       if (typeof event.data !== "string") return;
-      try {
-        const parsed = serverControlMessageSchema.safeParse(JSON.parse(event.data));
-        if (parsed.success && parsed.data.type === "closed") finish();
-      } catch {
-        // Ignore terminal output that is not a control frame.
-      }
+      const decoded = decodeServerControlFrame(event.data);
+      if (decoded.ok && decoded.message.type === "closed") finish();
     };
     const onError = () => closeNetworkSocket(socket, "detached");
 
@@ -698,51 +716,8 @@ function closeNetworkSocket(socket: WebSocket, reason?: string): void {
   }
 }
 
-function terminalResumeStorageKey(endpoint: string, target: string): string {
+function terminalResumeKey(endpoint: string, target: string): string {
   return `muximo:terminal-resume:${endpoint}:${target}`;
-}
-
-function readTerminalResumeState(storageKey: string, target: string): PaneResumeState | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(storageKey);
-    if (!raw) return null;
-    const value: unknown = JSON.parse(raw);
-    if (!isResumeState(value) || value.target !== target) return null;
-    return value;
-  } catch {
-    return null;
-  }
-}
-
-function writeTerminalResumeState(storageKey: string, state: PaneResumeState): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(storageKey, JSON.stringify(state));
-  } catch {
-    // Storage can be unavailable in private browsing or an embedded shell.
-  }
-}
-
-function clearTerminalResumeState(storageKey: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(storageKey);
-  } catch {
-    // Storage can be unavailable in private browsing or an embedded shell.
-  }
-}
-
-function isResumeState(value: unknown): value is PaneResumeState {
-  if (typeof value !== "object" || value === null) return false;
-  return (
-    "sessionId" in value &&
-    typeof value.sessionId === "string" &&
-    "resumeToken" in value &&
-    typeof value.resumeToken === "string" &&
-    "target" in value &&
-    typeof value.target === "string"
-  );
 }
 
 function terminalFontSize(): number {

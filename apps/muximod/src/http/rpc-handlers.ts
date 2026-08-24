@@ -1,6 +1,7 @@
 import type {
   AuthPairingClaimRequest as ApplicationAuthPairingClaimRequest,
   CreatePaneInput,
+  CreateSessionInput,
   MuximodPaneSummary,
   MuximodSessionSummary,
   MuximodTerminalEndpoint,
@@ -11,9 +12,9 @@ import type {
 import {
   authInfoSchema,
   type CreatePaneRequest,
+  type CreateSessionRequest,
   muximodCapabilitiesSchema,
   muximodContract,
-  muximodHealthSchema,
   type pairingClaimRequestSchema,
   pairingStatusSchema,
   paneSummarySchema,
@@ -23,19 +24,20 @@ import {
 import { clearPatch, type Patch } from "@muximo/domain";
 import { implement, ORPCError } from "@orpc/server";
 import type { z } from "zod";
+import { presentMuximodHealth } from "./health.js";
 import { MuximodHttpError, mapError } from "./middleware.js";
 import type { MuximodAuthContext as HttpAuthContext, MuximodHttpDependencies, MuximodHttpStatus } from "./types.js";
 
 export type MuximodRpcContext = {
-  auth: HttpAuthContext | null;
+  auth: HttpAuthContext | undefined;
   pairingToken?: string;
 };
 
-export function contextForRequest(request: Request, deps: MuximodHttpDependencies): MuximodRpcContext {
+export async function contextForRequest(request: Request, deps: MuximodHttpDependencies): Promise<MuximodRpcContext> {
   const authorization = request.headers.get("authorization");
   const token = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length).trim() : undefined;
   return {
-    auth: deps.auth.authenticateAccessToken(token || undefined),
+    auth: await deps.auth.authenticateAccessToken(token || undefined),
     pairingToken: request.headers.get("x-muximod-pairing-token") ?? undefined,
   };
 }
@@ -53,9 +55,9 @@ function safeCall<T>(operation: () => T): T {
   }
 }
 
-async function safeAsyncCall<T>(operation: () => Promise<T>, context: MuximodRpcContext): Promise<T> {
-  requireAuth(context);
+async function safeAsyncCall<T>(operation: () => Promise<T>, context?: MuximodRpcContext): Promise<T> {
   try {
+    if (context) requireAuth(context);
     return await operation();
   } catch (error) {
     throw toRpcError(error);
@@ -102,6 +104,14 @@ function toApplicationCreatePane(input: CreatePaneRequest): CreatePaneInput {
     useWorktree: input.useWorktree,
     placement: input.placement,
     targetPaneId: input.targetPaneId,
+  };
+}
+
+function toApplicationCreateSession(input: CreateSessionRequest): CreateSessionInput {
+  return {
+    name: input.name,
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
   };
 }
 
@@ -164,7 +174,8 @@ function toProtocolSession(value: MuximodSessionSummary) {
 function toProtocolPane(value: MuximodPaneSummary) {
   return paneSummarySchema.parse({
     id: value.id,
-    tmuxPaneId: value.tmuxPaneId,
+    // The public wire name is retained at this outer adapter only.
+    tmuxPaneId: value.hostPaneId,
     sessionName: value.sessionName,
     windowId: value.windowId,
     kind: value.kind,
@@ -203,14 +214,9 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
   return os.router({
     health: os.health.handler(() =>
       safeCall(() => {
-        if (deps.isReady && !deps.isReady()) {
-          throw new MuximodHttpError(503, "muximod_unavailable", "muximod is still starting");
-        }
-        return muximodHealthSchema.parse({
-          ok: true,
-          service: "muximod",
-          protocolVersion: 1,
-        });
+        const health = presentMuximodHealth(deps.isReady?.() ?? true);
+        if (!health.ready) throw new MuximodHttpError(health.status, health.body.error, health.body.message);
+        return health.body;
       }),
     ),
     capabilities: os.capabilities.handler(({ context }) => {
@@ -234,23 +240,21 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
         }),
       ),
       claimPairing: os.auth.claimPairing.handler(({ input }) =>
-        safeCall(() => {
-          const response = deps.auth.claimPairing(input.pairingId, toApplicationPairingClaim(input.request));
-          return response;
-        }),
+        safeAsyncCall(() => deps.auth.claimPairing(input.pairingId, toApplicationPairingClaim(input.request))),
       ),
       pairingStatus: os.auth.pairingStatus.handler(({ input, context }) =>
-        safeCall(() => {
+        safeAsyncCall(async () => {
           const claimToken = context.pairingToken;
           if (!claimToken) throw new MuximodHttpError(401, "claim_token_required", "Pairing authorization is required");
-          return pairingStatusSchema.parse(deps.auth.pairingStatus(input.pairingId, claimToken));
+          const status = await deps.auth.pairingStatus(input.pairingId, claimToken);
+          return pairingStatusSchema.parse({ status: status.status, deviceId: status.deviceId ?? null });
         }),
       ),
       createChallenge: os.auth.createChallenge.handler(({ input }) =>
-        safeCall(() => deps.auth.createChallenge(input.deviceId)),
+        safeAsyncCall(() => deps.auth.createChallenge(input.deviceId)),
       ),
       createSession: os.auth.createSession.handler(({ input }) =>
-        safeCall(() =>
+        safeAsyncCall(() =>
           deps.auth.createSession({
             deviceId: input.deviceId,
             challengeId: input.challengeId,
@@ -259,9 +263,7 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
         ),
       ),
       issueWebSocketTicket: os.auth.issueWebSocketTicket.handler(({ input, context }) =>
-        safeCall(() => {
-          return deps.auth.issueWebSocketTicket(requireAuth(context), input.endpoint);
-        }),
+        safeAsyncCall(() => deps.auth.issueWebSocketTicket(requireAuth(context), input.endpoint)),
       ),
     },
     workspaces: {
@@ -329,13 +331,7 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
       ),
       create: os.sessions.create.handler(({ input, context }) =>
         safeAsyncCall(async () => {
-          const workspace = input.workspaceId
-            ? await deps.application.workspaces.resolveDirectory(input.workspaceId)
-            : undefined;
-          const session = await deps.application.sessions.create({
-            name: input.name,
-            initialCwd: workspace?.rootPath ?? input.cwd!,
-          });
+          const session = await deps.application.sessions.create(toApplicationCreateSession(input));
           return { session: toProtocolSession(session) };
         }, context),
       ),
@@ -351,14 +347,8 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
       ),
       create: os.panes.create.handler(({ input, context }) =>
         safeAsyncCall(async () => {
-          const workspace = input.workspaceId
-            ? await deps.application.workspaces.resolveSelection({
-                workspaceId: input.workspaceId,
-                mode: input.useWorktree ? "worktree" : "workspace",
-              })
-            : undefined;
           return {
-            pane: toProtocolPane(await deps.application.panes.create(toApplicationCreatePane(input), workspace)),
+            pane: toProtocolPane(await deps.application.panes.create(toApplicationCreatePane(input))),
           };
         }, context),
       ),

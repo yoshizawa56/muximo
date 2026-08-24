@@ -1,4 +1,9 @@
-import { type ClientControlMessage, type ServerControlMessage, terminalProtocolVersion } from "@muximo/contract";
+import {
+  type ClientControlMessage,
+  encodeServerControlFrame,
+  type ServerControlMessage,
+  terminalProtocolVersion,
+} from "@muximo/contract";
 import {
   type FixtureHandle,
   hasObserved,
@@ -7,16 +12,21 @@ import {
   type OperationTable,
   returns,
   runOperationTable,
+  runScenarioTable,
+  type ScenarioCase,
+  type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
 import {
   createPasteImageMessage,
   createTerminalAttachMessage,
+  createTerminalResumeStore,
   handleControlMessage,
   type PaneResumeState,
   type PaneViewportOwner,
   resumeStateFromReady,
+  type TerminalResumeStore,
   terminalSessionCleanupMode,
 } from "./-terminal-viewmodel";
 
@@ -194,8 +204,8 @@ const controlFixture = (): FixtureHandle<ControlFixture> => ({
 
 const controlCases = [
   {
-    name: "keeps control frames separate and exposes the resumed ready state",
-    input: { rawMessage: JSON.stringify(readyMessage) },
+    name: "decodes a contract-owned ready frame and exposes the resumed state",
+    input: { rawMessage: encodeServerControlFrame(readyMessage) },
     assert: [
       hasObserved<ControlContext, undefined>("events", ["ready:terminal-1"]),
       hasObserved<ControlContext, undefined>("resumed", true),
@@ -225,6 +235,81 @@ const controlTable: OperationTable<ControlFixture, "default", ControlInput, unde
   observe: (fixture) => ({ events: [...fixture.events], resumed: fixture.resumed }),
 };
 
+type ResumeStoreStep =
+  | { type: "write"; key: string; state: PaneResumeState }
+  | { type: "read"; key: string; target: string; store: "active" | "isolated" }
+  | { type: "clear"; key: string; store: "active" | "isolated" };
+type ResumeStoreFixture = {
+  active: TerminalResumeStore;
+  isolated: TerminalResumeStore;
+  reads: Array<PaneResumeState | null>;
+};
+type ResumeStoreContext = { reads: readonly (PaneResumeState | null)[] };
+
+const resumeStoreFixture = (): FixtureHandle<ResumeStoreFixture> => ({
+  fixture: {
+    active: createTerminalResumeStore(),
+    isolated: createTerminalResumeStore(),
+    reads: [],
+  },
+});
+
+const resumeStoreState: PaneResumeState = {
+  sessionId: "terminal-1",
+  resumeToken: "secret",
+  target: "%3",
+};
+
+const resumeStoreCases = [
+  {
+    name: "retains a credential across an SPA remount in the same tab",
+    steps: [
+      { type: "write", key: "endpoint:%3", state: resumeStoreState },
+      { type: "read", key: "endpoint:%3", target: "%3", store: "active" },
+    ],
+    assert: [hasObserved<ResumeStoreContext, undefined>("reads", [resumeStoreState])],
+  },
+  {
+    name: "clears a credential when the terminal is detached",
+    steps: [
+      { type: "write", key: "endpoint:%3", state: resumeStoreState },
+      { type: "clear", key: "endpoint:%3", store: "active" },
+      { type: "read", key: "endpoint:%3", target: "%3", store: "active" },
+    ],
+    assert: [hasObserved<ResumeStoreContext, undefined>("reads", [null])],
+  },
+  {
+    name: "does not share a credential with another tab memory store",
+    steps: [
+      { type: "write", key: "endpoint:%3", state: resumeStoreState },
+      { type: "read", key: "endpoint:%3", target: "%3", store: "isolated" },
+    ],
+    assert: [hasObserved<ResumeStoreContext, undefined>("reads", [null])],
+  },
+  {
+    name: "does not reuse a credential for another pane target",
+    steps: [
+      { type: "write", key: "endpoint:%3", state: resumeStoreState },
+      { type: "read", key: "endpoint:%3", target: "%4", store: "active" },
+    ],
+    assert: [hasObserved<ResumeStoreContext, undefined>("reads", [null])],
+  },
+] satisfies readonly ScenarioCase<"default", ResumeStoreStep, undefined, ResumeStoreContext>[];
+
+const resumeStoreTable: ScenarioTable<ResumeStoreFixture, "default", ResumeStoreStep, undefined, ResumeStoreContext> = {
+  defaultFixture: resumeStoreFixture,
+  cases: resumeStoreCases,
+  execute: (fixture, steps) => {
+    for (const step of steps) {
+      const store = step.type === "write" || step.store === "active" ? fixture.active : fixture.isolated;
+      if (step.type === "write") store.write(step.key, step.state);
+      if (step.type === "clear") store.clear(step.key);
+      if (step.type === "read") fixture.reads.push(store.read(step.key, step.target));
+    }
+  },
+  observe: (fixture) => ({ reads: [...fixture.reads] }),
+};
+
 describe("terminal pane handshake helpers", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, attachTable);
@@ -232,4 +317,5 @@ describe("terminal pane handshake helpers", () => {
   runOperationTable(register, resumeTable);
   runOperationTable(register, cleanupTable);
   runOperationTable(register, controlTable);
+  runScenarioTable(register, resumeStoreTable);
 });

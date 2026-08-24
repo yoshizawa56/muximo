@@ -1,13 +1,17 @@
+import type { TerminalEndpoint } from "@muximo/contract";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
-import type { ConnectionFlowViewModel, TerminalEndpoint } from "./-connection-flow-viewmodel";
 
-export type TerminalsViewModel = Pick<
-  ConnectionFlowViewModel,
-  "terminals" | "status" | "errorMessage" | "onSelectTerminal" | "onOpenSettings" | "onOpenWorkspaces"
->;
+export type TerminalsViewModel = {
+  terminals: TerminalEndpoint[];
+  status?: "loading" | "ready" | "error";
+  errorMessage?: string | null;
+  onSelectTerminal: (terminal: TerminalEndpoint) => void;
+  onOpenSettings: () => void;
+  onOpenWorkspaces: () => void;
+};
 
 export function useTerminalsViewModel(): TerminalsViewModel {
   const navigate = useNavigate();

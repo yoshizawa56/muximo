@@ -1,4 +1,5 @@
 import { AgentSessionId } from "@muximo/domain";
+import type { MuximodClock } from "../../ports/application.js";
 import type { MuximodHostPort } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
 import type { AgentStatusStore } from "../sessions/agent-status.js";
@@ -9,17 +10,20 @@ export async function adoptAgentSession(
   host: MuximodHostPort,
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
-  agentStatus: AgentStatusStore = new Map(),
-  request: { agentSessionId: string; tmuxPaneId: string; executionId: string },
+  agentStatus: AgentStatusStore,
+  clock: MuximodClock,
+  request: { agentSessionId: string; hostPaneId: string; executionId: string },
 ): Promise<void> {
   const session = await agentSessionRepository.findById(AgentSessionId.create(request.agentSessionId));
   if (!session) throw controlFailure("agent_session_not_found", `agent session not found: ${request.agentSessionId}`);
   if (session.executionId !== request.executionId)
     throw controlFailure("agent_execution_mismatch", "agent execution is no longer current");
-  const live = host.listPanesSnapshot();
-  if (!live.available) throw controlFailure("tmux_unavailable", "tmux is unavailable");
-  const pane = live.panes.find((candidate) => candidate.paneId === request.tmuxPaneId);
-  if (!pane) throw controlFailure("tmux_pane_not_found", `tmux pane not found: ${request.tmuxPaneId}`);
-  host.setAgentExecutionMetadata(pane.paneId, session.id, request.executionId);
-  await reconcilePanes(host, paneRepository, agentSessionRepository, host.listPanesSnapshot(), agentStatus);
+  const live = await host.listPanesSnapshot();
+  if (!live.available) throw controlFailure("terminal_host_unavailable", "terminal host is unavailable");
+  const pane = live.panes.find((candidate) => candidate.hostPaneId === request.hostPaneId);
+  if (!pane)
+    throw controlFailure("terminal_host_pane_not_found", `terminal host pane not found: ${request.hostPaneId}`);
+  await host.setAgentExecutionMetadata(pane.hostPaneId, session.id, request.executionId);
+  const reconciledSnapshot = await host.listPanesSnapshot();
+  await reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock, reconciledSnapshot);
 }

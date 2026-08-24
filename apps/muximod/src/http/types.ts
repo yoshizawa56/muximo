@@ -1,11 +1,11 @@
 import type {
-  MuximodHookEvent as ApplicationHookEvent,
+  TerminalHostHookEvent as ApplicationHookEvent,
   MuximodApplication,
   MuximodAuthContext,
   MuximodAuthPort,
-  MuximodSocket,
 } from "@muximo/application";
 import type { MuximodEvent } from "@muximo/contract";
+import type { MuximodSocket, MuximodSocketFactory } from "@muximo/infrastructure";
 
 export type { MuximodAuthContext, MuximodAuthDevice, MuximodAuthPort } from "@muximo/application";
 
@@ -18,12 +18,19 @@ export type MuximodHttpLogger = {
   error(event: string, fields?: Record<string, unknown>): void;
 };
 
+/** Exact browser-origin policy injected by the muximod composition root. */
+export type MuximodOriginPolicy = {
+  allows(origin: string | null): boolean;
+};
+
 export type MuximodHttpDependencies = {
   auth: MuximodAuthPort;
   application: MuximodApplication;
   isReady?: () => boolean;
-  corsOrigin: string;
+  originPolicy: MuximodOriginPolicy;
   hookToken: string;
+  /** Host-specific adapter construction is supplied by the composition root. */
+  socketFactory: MuximodSocketFactory;
   onTerminalConnection?: (socket: MuximodSocket, context: MuximodAuthContext) => void;
   subscribeEvents?: (signal: AbortSignal) => AsyncIteratorObject<MuximodEvent>;
   logger?: MuximodHttpLogger;

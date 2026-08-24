@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 
 const root = process.cwd();
 const workspaceRoots = ["apps", "packages"];
@@ -28,12 +28,9 @@ const packageRules = new Map([
   ["@muximo/contract", ["@muximo/domain"]],
   ["@muximo/application", ["@muximo/domain"]],
   ["@muximo/domain", []],
-  ["@muximo/infrastructure", ["@muximo/application", "@muximo/contract", "@muximo/domain"]],
+  ["@muximo/infrastructure", ["@muximo/application", "@muximo/domain"]],
   ["@muximo/test-support", []],
-  [
-    "@muximo/muximo-cli",
-    ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure", "@muximo/muximod"],
-  ],
+  ["@muximo/muximo-cli", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure"]],
   ["@muximo/muximod", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure"]],
   ["@muximo/web", ["@muximo/contract"]],
 ]);
@@ -48,12 +45,6 @@ const forbiddenImports = [
     root: "packages/domain/src",
     packages: /^@muximo\//,
     runtimes: /^(?:node|bun):/,
-  },
-  {
-    root: "packages/infrastructure/src",
-    packages: /^@muximo\/contract$/,
-    // The terminal session gateway implements the contract wire protocol.
-    allowedFiles: new Set(["packages/infrastructure/src/terminal/session-gateway.ts"]),
   },
   {
     root: "packages/application/src",
@@ -80,6 +71,25 @@ const entityRules = {
   schemaParseAllowedRoots: ["packages/domain/src/", "packages/contract/src/"],
 };
 
+const cliLegacyDirectories = ["apps/muximo-cli/src/cli/host", "apps/muximo-cli/src/cli/runtime"];
+const cliLegacyTerms =
+  /\b(?:CliRuntime|SessionLifecycleRuntime|RuntimeSessionHostAdapter|CliSessionHostPort|CommandEngine|MuximoCommand)\b/;
+const muximodCliDirectory = "apps/muximod/src/cli";
+const cliProviderLifecycleImport = /(?:from\s+|import\s*\(\s*)["'][^"']*\/agents\/(?:codex|claude|opencode)(?:\/|["'])/;
+const cliProviderLifecycleTerms =
+  /\b(?:CodexBackendProvider|ClaudeBackendProvider|OpenCodeBackendProvider|OpenCodeServerManager|manageCodexThread|manageCodexThreadFromEnvironment|ensureCodexRemoteControl|CodexRpcClient|MUXIMO_CODEX_NAME_BIN)\b/;
+const applicationLegacyPaths = [
+  "packages/application/src/ports/cli.ts",
+  "packages/application/src/ports/terminal.ts",
+  "packages/application/src/usecases/cli",
+  "packages/application/src/usecases/daemon/manage-daemon.ts",
+];
+const applicationPresentationTerms =
+  /\b(?:Cli[A-Z][A-Za-z0-9_]*|SessionOutputPort|CommandEngine|MuximoCommand|Presenter|Presentation|codexProfile|codexRemote|codexSessionBaseline)\b|\b(?:console\.(?:log|warn|error)|process\.(?:stdout|stderr)|Writable)\b/;
+const applicationTerminalTransportTerms =
+  /\b(?:MuximodPty(?:Exit|Process|Spawner|SpawnOptions)?|MuximodPreparedViewport|MuximodViewport(?:Event|Lease)|MuximodImage(?:PasteInput|Paster)|MuximodTerminal(?:Pane|ProcessSpec|ViewportPort))\b/;
+const legacyInfrastructureDaemonPath = "packages/infrastructure/src/cli/daemon.ts";
+
 // The application layer has no models/ directory: port-owned data lives in the
 // port file, use-case inputs live in the use case file, and shared business
 // vocabulary belongs to the domain package.
@@ -88,6 +98,30 @@ for (const sourceRoot of ["packages/application/src/models"]) {
   if (existsSync(modelsPath)) {
     errors.push(`${sourceRoot}: application/src/models was abolished; move types into ports or use case files`);
   }
+}
+
+for (const relativePath of cliLegacyDirectories) {
+  if (existsSync(join(root, relativePath))) {
+    errors.push(`${relativePath}: legacy CLI host/runtime directory is forbidden; compose focused ports directly`);
+  }
+}
+
+for (const relativePath of applicationLegacyPaths) {
+  if (existsSync(join(root, relativePath))) {
+    errors.push(`${relativePath}: application must not expose CLI transport or dispatcher vocabulary`);
+  }
+}
+
+if (existsSync(join(root, legacyInfrastructureDaemonPath))) {
+  errors.push(
+    `${legacyInfrastructureDaemonPath}: daemon process infrastructure is shared by apps; move it under packages/infrastructure/src/process`,
+  );
+}
+
+if (existsSync(join(root, muximodCliDirectory))) {
+  errors.push(
+    `${muximodCliDirectory}: muximod has no public CLI; keep parsing, validation, and presentation in apps/muximo-cli`,
+  );
 }
 
 for (const [packageName, packageInfo] of workspacePackages) {
@@ -143,6 +177,7 @@ function inspectSource(path, relativePath) {
     }
 
     const dependency = workspacePackageName(specifier);
+    inspectAppBoundary(specifier, path, relativePath, line);
     if (sourcePackage && dependency && dependency !== sourcePackage) {
       const packageInfo = workspacePackages.get(sourcePackage);
       if (packageInfo && !packageInfo.dependencies.has(dependency)) {
@@ -155,6 +190,76 @@ function inspectSource(path, relativePath) {
 
   inspectWebQueryKeys(source, relativePath);
   inspectEntityUsage(source, relativePath);
+  inspectCliBoundary(source, relativePath);
+  inspectApplicationBoundary(source, relativePath);
+}
+
+function inspectAppBoundary(specifier, sourcePath, relativePath, line) {
+  const sourceApp = appName(relativePath);
+  if (!sourceApp) return;
+
+  if (specifier.startsWith(".")) {
+    const targetPath = relative(root, resolvePath(dirname(sourcePath), specifier))
+      .split(sep)
+      .join("/");
+    const targetApp = appName(targetPath);
+    if (targetApp && targetApp !== sourceApp) {
+      errors.push(`${relativePath}:${line}: apps may not import one another (${specifier})`);
+    }
+    return;
+  }
+
+  const dependency = workspacePackageName(specifier);
+  const targetPackage = dependency ? workspacePackages.get(dependency) : undefined;
+  if (targetPackage?.relativeDirectory.startsWith("apps/") && targetPackage.relativeDirectory !== `apps/${sourceApp}`) {
+    errors.push(`${relativePath}:${line}: apps may not import one another (${specifier})`);
+  }
+}
+
+function appName(relativePath) {
+  const match = relativePath.match(/^apps\/([^/]+)(?:\/|$)/);
+  return match?.[1];
+}
+
+function inspectCliBoundary(source, relativePath) {
+  if (!relativePath.startsWith("apps/muximo-cli/src/")) return;
+  if (cliLegacyTerms.test(source)) {
+    errors.push(`${relativePath}: legacy CLI runtime/engine façade naming is forbidden`);
+  }
+  if (relativePath.startsWith("apps/muximo-cli/src/cli/") && /from\s+["']node:child_process["']/.test(source)) {
+    errors.push(`${relativePath}: concrete process spawning belongs in packages/infrastructure/src/cli`);
+  }
+  if (relativePath.startsWith("apps/muximo-cli/src/cli/") && /from\s+["'][^"']*\/(?:runtime|host)\//.test(source)) {
+    errors.push(`${relativePath}: CLI handlers/adapters may not import legacy host/runtime layers`);
+  }
+  if (cliProviderLifecycleImport.test(source) || cliProviderLifecycleTerms.test(source)) {
+    errors.push(
+      `${relativePath}: provider lifecycle transport/implementation belongs in packages/infrastructure/src/agents; use a provider-neutral port or registry adapter`,
+    );
+  }
+}
+
+function inspectApplicationBoundary(source, relativePath) {
+  if (!relativePath.startsWith("packages/application/src/")) return;
+  if (applicationTerminalTransportTerms.test(source)) {
+    errors.push(
+      `${relativePath}: PTY, viewport-lease, and image-paste transport contracts belong in an outer terminal adapter boundary`,
+    );
+  }
+  if (applicationPresentationTerms.test(source)) {
+    errors.push(
+      `${relativePath}: application must expose typed business outcomes and capabilities, not CLI transport or presentation vocabulary`,
+    );
+  }
+  if (
+    relativePath.startsWith("packages/application/src/usecases/daemon/") &&
+    /\b(?:Date\.now|setTimeout)\s*\(/.test(source)
+  ) {
+    errors.push(`${relativePath}: daemon timing must be supplied through required clock and scheduler ports`);
+  }
+  if (source.includes("MUXIMO_CODEX_NAME_BIN")) {
+    errors.push(`${relativePath}: undocumented Codex name helper compatibility is forbidden`);
+  }
 }
 
 function inspectEntityUsage(source, relativePath) {

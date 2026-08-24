@@ -18,9 +18,9 @@
     "@muximo/contract": "workspace:*",
     "@muximo/domain": "workspace:*",
     "@muximo/infrastructure": "workspace:*",
-    "@muximo/muximod": "workspace:*",
     "commander": "^15.0.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",

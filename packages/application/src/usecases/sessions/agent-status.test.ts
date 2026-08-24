@@ -1,6 +1,6 @@
 import type { PaneState } from "@muximo/domain";
 import {
-  noFixture,
+  type FixtureHandle,
   type OperationCase,
   type OperationTable,
   returns,
@@ -8,53 +8,32 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { inferUnmanagedAgentState, readManagedAgentObservation } from "./agent-status.js";
+import { type AgentStatusStore, agentStatusKey, readManagedAgentObservation } from "./agent-status.js";
 
-type StateInput = { output: string; fallback: PaneState };
 type EmptyContext = {};
+type ManagedInput = { sessionId: string; executionId: string };
+type ManagedResult = { state: PaneState; recentOutput?: string };
+type ManagedFixture = { store: AgentStatusStore };
 
-const cases = [
-  {
-    name: "detects an unmanaged approval prompt",
-    input: { output: "Allow this change?", fallback: "running" },
-    assert: [returns<EmptyContext, PaneState>("waiting_approval")],
-  },
-  {
-    name: "detects an unmanaged input prompt",
-    input: { output: "What should I do next?", fallback: "running" },
-    assert: [returns<EmptyContext, PaneState>("waiting_input")],
-  },
-  {
-    name: "strips ANSI sequences before classifying a prompt",
-    input: { output: "\u001b[31mPress Enter to continue\u001b[0m", fallback: "running" },
-    assert: [returns<EmptyContext, PaneState>("waiting_input")],
-  },
-  {
-    name: "keeps ordinary unmanaged output running",
-    input: { output: "Working on the task", fallback: "waiting_input" },
-    assert: [returns<EmptyContext, PaneState>("running")],
-  },
-  {
-    name: "keeps the fallback when an unmanaged pane has no output",
-    input: { output: "", fallback: "waiting_input" },
-    assert: [returns<EmptyContext, PaneState>("waiting_input")],
-  },
-] satisfies readonly OperationCase<"default", StateInput, PaneState, EmptyContext>[];
+const managedFixture = (): FixtureHandle<ManagedFixture> => ({
+  fixture: { store: new Map() },
+});
 
-const table: OperationTable<undefined, "default", StateInput, PaneState, EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases,
-  execute: (_fixture, input) => inferUnmanagedAgentState(input.output, input.fallback),
-  observe: () => ({}),
-};
+const waitingFixture = (): FixtureHandle<ManagedFixture> => ({
+  fixture: {
+    store: new Map([
+      [agentStatusKey("session", "execution"), { state: "waiting_input", recentOutput: "Question from provider" }],
+    ]),
+  },
+});
 
-type ManagedInput = { state?: PaneState; recentOutput?: string };
 const managedCases = [
   {
     name: "uses a provider waiting state",
-    input: { state: "waiting_input", recentOutput: "Question from provider" },
+    fixture: "waiting",
+    input: { sessionId: "session", executionId: "execution" },
     assert: [
-      returns<EmptyContext, { state: PaneState; recentOutput?: string }>({
+      returns<EmptyContext, ManagedResult>({
         state: "waiting_input",
         recentOutput: "Question from provider",
       }),
@@ -62,34 +41,19 @@ const managedCases = [
   },
   {
     name: "uses neutral running state before provider observation",
-    input: {},
-    assert: [returns<EmptyContext, { state: PaneState }>({ state: "running" })],
+    input: { sessionId: "session", executionId: "execution" },
+    assert: [returns<EmptyContext, ManagedResult>({ state: "running" })],
   },
-] satisfies readonly OperationCase<
-  "default",
-  ManagedInput,
-  { state: PaneState; recentOutput?: string },
-  EmptyContext
->[];
+] satisfies readonly OperationCase<"waiting", ManagedInput, ManagedResult, EmptyContext>[];
 
-const managedTable: OperationTable<
-  undefined,
-  "default",
-  ManagedInput,
-  { state: PaneState; recentOutput?: string },
-  EmptyContext
-> = {
-  defaultFixture: noFixture(),
+const managedTable: OperationTable<ManagedFixture, "waiting", ManagedInput, ManagedResult, EmptyContext> = {
+  defaultFixture: managedFixture,
+  fixtures: { waiting: waitingFixture },
   cases: managedCases,
-  execute: (_fixture, input) => {
-    const agentStatus = new Map();
-    if (input.state) agentStatus.set("session:execution", { state: input.state, recentOutput: input.recentOutput });
-    return readManagedAgentObservation("session", "execution", agentStatus);
-  },
+  execute: (fixture, input) => readManagedAgentObservation(input.sessionId, input.executionId, fixture.store),
   observe: () => ({}),
 };
 
 describe("agent status sources", () => {
-  runOperationTable(it as unknown as TestRegistrar, table);
   runOperationTable(it as unknown as TestRegistrar, managedTable);
 });

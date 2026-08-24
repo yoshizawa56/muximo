@@ -101,37 +101,33 @@ Moves:
   src/cli/health-diagnostics.ts and OpenCode registry cleanup to
   src/cli/opencode-registry.ts (re-exported through daemon for the runtime facade).
 
-## Phase 3 — IN PROGRESS — CLI decomposition
+## Phase 3 — DONE — CLI decomposition
 
-Completed:
-- `cli/host/command-support.ts` — git/path/tmux-metadata/session-name/codex/process helpers
-- `cli/host/presenters.ts` — labels, JSON projections, table padding
-- `cli/host/commands/workspace-commands.ts` — full workspace CRUD group
-- `cli/host/commands/list-sessions.ts` — muximo list group
-- `cli/host/commands/doctor.ts` — doctor diagnostics
+The CLI now has one explicit boundary, `createCliApp(deps)`, and one concrete
+composition root, `apps/muximo-cli/src/cli/compose.ts`. Commander owns the complete
+command tree, while each command module validates Commander values with Zod and calls
+one typed handler. The entrypoint owns only argv, environment, streams, invocation,
+error reporting, and exit status.
 
-Remaining (in extraction order; each becomes commands/<group>.ts taking explicit deps):
-1. worktree cluster (~300 lines: createWorktree..runHookCore + 3 predicates).
-   NOTE: a first extraction was reverted — biome check --write --unsafe truncated
-   the new module during the repair loop. Next attempt: run typecheck FIRST,
-   apply biome only after the module compiles.
-2. session lifecycle remainder: removeSessionRecord + manageRemoteThread +
-   runBackend/finalizeSession web (~700 lines, deepest coupling)
-3. resume + shell + tmux command groups
-4. compose.ts — direct-db composition root (constructor ensureDatabase block)
-5. declarative parser swap (commander) once groups are free functions
+Application lifecycle policy is split into `RunAgentSession`, `ResumeAgentSession`,
+`ListAgentSessions`, `CleanupAgentSession`, and `LocateAgentSession`. Their focused ports
+are provider-neutral and asynchronous for filesystem, Git, process, and observation I/O.
+Launch plans return typed session updates and own exactly-once disposal. Resume claims
+receive an application-generated `ClaimExecutionInput.updatedAt`.
 
-Replace `cli/host/muximo-command.ts` (3662 lines, 62 functions) with:
+Concrete CLI capabilities live under `packages/infrastructure/src/cli/`: backend
+launch/discovery, worktrees, hooks, panes, workspace, observations, shell, tmux sessions,
+serve, dev, and diagnostics. The shared daemon process and timing adapters live under
+`packages/infrastructure/src/process/`. Pairing UI and control-socket
+transport remain CLI-local adapters. Browser origins are normalized and passed exactly
+to daemon options/environment; wildcard origins are rejected.
 
-```
-entrypoint.ts      build program + parse
-compose.ts         direct-db composition root (repos, audit, transaction manager)
-commands/<group>.ts  declarative options + action=(deps)=>usecase call
-presenters/        text rendering only (pairing QR etc.)
-```
-
-Candidate library: commander. Every command action may only call application
-use cases (direct-db mode composes repositories through compose.ts).
+The former host/runtime directories, engine/lifecycle façade classes, broad session host
+port, manual parser paths, and CLI-to-muximod package dependency are removed. Provider
+implementation metadata is persisted through infrastructure-owned state rather than domain
+record mutation. Application results are typed business outcomes; CLI presenters own
+messages and process status mapping. `apps/muximod` remains a private server entrypoint
+without a public Commander/Zod CLI.
 
 ## Verification per phase
 
@@ -140,7 +136,6 @@ bun run lint
 node scripts/check-architecture.mjs
 bun run test:local
 per-package typecheck sweep
-git commit (one commit per phase)
 ```
 
 Known environment note: proxied sandboxes need NO_PROXY for localhost server

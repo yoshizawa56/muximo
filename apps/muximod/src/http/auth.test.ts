@@ -9,28 +9,30 @@ import {
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
 import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
+import { createOriginPolicy } from "./middleware.js";
 import { createHttpTestClient } from "./test-client.js";
+import { createTestMuximodSocketFactory } from "./test-socket.js";
 
 const serverId = "server-auth-test-000000";
 const auth: MuximodAuthPort = {
   serverId,
-  authenticateAccessToken: () => null,
-  claimPairing: () => {
+  authenticateAccessToken: async () => undefined,
+  claimPairing: async () => {
     throw new Error("not used");
   },
-  pairingStatus: () => {
+  pairingStatus: async () => {
     throw new Error("not used");
   },
-  createChallenge: () => {
+  createChallenge: async () => {
     throw new Error("not used");
   },
-  createSession: () => {
+  createSession: async () => {
     throw new Error("not used");
   },
-  issueWebSocketTicket: () => {
+  issueWebSocketTicket: async () => {
     throw new Error("not used");
   },
-  consumeWebSocketTicket: () => null,
+  consumeWebSocketTicket: async () => undefined,
 };
 
 type HttpStep = { type: "health" | "info" | "protected" | "preflight" };
@@ -51,8 +53,9 @@ const httpFixture = (): FixtureHandle<HttpFixture> => {
   const app = createMuximodApp({
     auth,
     application: createApplication(),
-    corsOrigin: "http://web.example",
+    originPolicy: createOriginPolicy({ allowedOrigins: ["http://web.example"], allowNoOrigin: true }),
     hookToken: "hook",
+    socketFactory: createTestMuximodSocketFactory(),
   });
   const fixture: HttpFixture = { app, statuses: {}, origins: {}, lastResponse: null, originalFetch };
   globalThis.fetch = (async (input, init) => {
@@ -90,7 +93,7 @@ const table: ScenarioTable<HttpFixture, "default", HttpStep, undefined, HttpCont
   defaultFixture: httpFixture,
   cases,
   execute: async (fixture, steps) => {
-    const client = createHttpTestClient({ httpBaseUrl: "http://muximod.example" });
+    const client = createHttpTestClient({ httpBaseUrl: "http://muximod.example", origin: "http://web.example" });
     for (const step of steps) {
       if (step.type === "health") {
         const response = await fixture.app.request("http://muximod.example/health");
@@ -160,12 +163,6 @@ function createApplication(): MuximodApplication {
       delete: async () => {
         throw new Error("not used");
       },
-      resolveDirectory: async () => {
-        throw new Error("not used");
-      },
-      resolveSelection: async () => {
-        throw new Error("not used");
-      },
     },
     sessions: {
       list: async () => [],
@@ -179,6 +176,6 @@ function createApplication(): MuximodApplication {
         throw new Error("not used");
       },
     },
-    hooks: { handleTmux: () => undefined },
+    hooks: { handleTerminalHostHook: async () => undefined },
   };
 }

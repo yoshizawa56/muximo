@@ -1,5 +1,5 @@
+import type { TmuxSession } from "@muximo/contract";
 import { ConnectionFlowLayout, FlowIntro } from "../../-connection-flow-layout";
-import type { TmuxSession } from "../../-connection-flow-viewmodel";
 import type { SessionsViewModel } from "./-sessions-viewmodel";
 
 export function SessionsView({ viewModel }: { viewModel: SessionsViewModel }) {

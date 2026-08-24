@@ -1,79 +1,93 @@
 import {
   AgentSessionId,
   type AgentSessionRecord,
+  clearPatch,
   Pane,
+  type PaneCreateInput,
   PaneId,
   type PaneRecord,
-  type PaneState,
-  paneKindForCommand,
 } from "@muximo/domain";
-import type { MuximodHostPort, MuximodLiveSnapshot, MuximodPaneSnapshot } from "../../ports/host.js";
+import type { MuximodClock } from "../../ports/application.js";
+import type {
+  HostPaneSnapshot,
+  MuximodHostPort,
+  MuximodPaneClassification,
+  TerminalHostSnapshot,
+} from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
 import {
   type AgentStatusObservation,
   type AgentStatusStore,
   agentStatusKey,
-  inferUnmanagedAgentState,
   readManagedAgentObservation,
 } from "../sessions/agent-status.js";
 
 /**
- * Reconciles live tmux pane snapshots with persisted pane records. This is the
- * single write path that turns host observations into durable pane state.
+ * Reconciles live terminal-host pane snapshots with persisted pane records.
+ * This is the single write path that turns host observations into durable pane state.
  */
 export async function reconcilePanes(
   host: MuximodHostPort,
   repository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
-  live?: MuximodLiveSnapshot,
-  agentStatus: AgentStatusStore = new Map(),
+  agentStatus: AgentStatusStore,
+  clock: MuximodClock,
+  live?: TerminalHostSnapshot,
 ): Promise<PaneRecord[]> {
-  const snapshot = live ?? host.listPanesSnapshot();
-  const now = new Date().toISOString();
+  const snapshot = live ?? (await host.listPanesSnapshot());
+  const now = clock.now();
   const records: PaneRecord[] = [];
-  const tmuxServerId = snapshot.tmuxServerId ?? "legacy";
+  const hostServerId = snapshot.hostServerId ?? "legacy";
 
-  for (const tmuxPane of snapshot.panes) {
-    const paneServerId = tmuxPane.tmuxServerId ?? tmuxServerId;
-    const existing = await repository.findByTmuxPaneIdentity(paneServerId, tmuxPane.paneId);
-    const sessionCandidate = tmuxPane.muximodSessionId
-      ? await agentSessionRepository.findById(AgentSessionId.create(tmuxPane.muximodSessionId))
+  for (const hostPane of snapshot.panes) {
+    const paneHostServerId = hostPane.hostServerId ?? hostServerId;
+    const existing = await repository.findByHostPaneIdentity(paneHostServerId, hostPane.hostPaneId);
+    const sessionCandidate = hostPane.muximodSessionId
+      ? await agentSessionRepository.findById(AgentSessionId.create(hostPane.muximodSessionId))
       : undefined;
     const adoptedSession =
       sessionCandidate &&
-      tmuxPane.muximodExecutionId === sessionCandidate.executionId &&
-      isLiveAgentExecution(host, sessionCandidate) &&
-      host.isManagedMuximoCommand(tmuxPane.command, sessionCandidate.backend)
+      hostPane.muximodExecutionId === sessionCandidate.executionId &&
+      (await isLiveAgentExecution(host, sessionCandidate)) &&
+      (await host.isManagedAgentExecution(hostPane.command, sessionCandidate.backend))
         ? sessionCandidate
         : undefined;
     const staleAgentMetadata =
-      tmuxPane.muximodKind === "agent" && Boolean(tmuxPane.muximodSessionId) && !adoptedSession;
-    if (tmuxPane.muximodSessionId && !adoptedSession) {
-      if (tmuxPane.muximodExecutionId)
-        agentStatus.delete(agentStatusKey(tmuxPane.muximodSessionId, tmuxPane.muximodExecutionId));
+      hostPane.muximodKind === "agent" && Boolean(hostPane.muximodSessionId) && !adoptedSession;
+    if (hostPane.muximodSessionId && !adoptedSession) {
+      if (hostPane.muximodExecutionId)
+        agentStatus.delete(agentStatusKey(hostPane.muximodSessionId, hostPane.muximodExecutionId));
       try {
-        const cleared = host.clearAgentExecutionMetadata(tmuxPane.paneId, tmuxPane.muximodExecutionId ?? "");
-        if (cleared && tmuxPane.muximodKind === "agent") {
-          host.resetAgentPaneMetadata(tmuxPane.paneId);
+        const cleared = await host.clearAgentExecutionMetadata(hostPane.hostPaneId, hostPane.muximodExecutionId ?? "");
+        if (cleared && hostPane.muximodKind === "agent") {
+          await host.resetAgentPaneMetadata(hostPane.hostPaneId);
         }
       } catch {
         // The pane may disappear while stale adoption metadata is being cleared.
       }
     }
-    const metadataId = tmuxPane.muximodPaneId;
+    const metadataId = hostPane.muximodPaneId;
     const metadataPaneId = metadataId ? PaneId.create(metadataId) : undefined;
     const conflictingId = !existing && metadataPaneId ? await repository.findById(metadataPaneId) : undefined;
     const reusableMetadataId =
       metadataPaneId &&
-      (!conflictingId || (conflictingId.tmuxServerId === paneServerId && conflictingId.tmuxPaneId === tmuxPane.paneId))
+      (!conflictingId ||
+        (conflictingId.hostServerId === paneHostServerId && conflictingId.hostPaneId === hostPane.hostPaneId))
         ? metadataPaneId
         : undefined;
-    const kind = resolvePaneKind(tmuxPane, existing, adoptedSession !== undefined, staleAgentMetadata);
+    const commandObservation = await host.classifyCommand(hostPane.command);
+    const kind = resolvePaneKind(
+      hostPane,
+      existing,
+      adoptedSession !== undefined,
+      staleAgentMetadata,
+      commandObservation,
+    );
     const agentId =
       kind === "agent"
-        ? (tmuxPane.muximodAgentId ??
+        ? (hostPane.muximodAgentId ??
           adoptedSession?.backend ??
-          executableName(tmuxPane.command) ??
+          commandObservation.agentId ??
           existing?.agentId ??
           "agent")
         : undefined;
@@ -82,47 +96,80 @@ export async function reconcilePanes(
         ? { state: "running" as const }
         : adoptedSession?.executionId
           ? readManagedAgentObservation(adoptedSession.id, adoptedSession.executionId, agentStatus)
-          : readUnmanagedAgentObservation(host, tmuxPane, existing?.state ?? "running");
+          : await host.observeUnmanagedAgent(hostPane.hostPaneId, existing?.state ?? "running");
     const name = staleAgentMetadata
-      ? tmuxPane.title || tmuxPane.command || tmuxPane.paneId
-      : (tmuxPane.muximodName ??
+      ? hostPane.title || hostPane.command || hostPane.hostPaneId
+      : (hostPane.muximodName ??
         adoptedSession?.name ??
-        (existing?.name && existing.name !== tmuxPane.paneId
+        (existing?.name && existing.name !== hostPane.hostPaneId
           ? existing.name
-          : tmuxPane.title || tmuxPane.command || tmuxPane.paneId));
-    const record: PaneRecord = Pane.create({
-      id: existing?.id ?? reusableMetadataId ?? PaneId.create(`pane-${host.newId()}`),
-      tmuxPaneId: tmuxPane.paneId,
-      tmuxServerId: paneServerId,
+          : hostPane.title || hostPane.command || hostPane.hostPaneId));
+    const id = existing?.id ?? reusableMetadataId ?? PaneId.create(`pane-${host.newId()}`);
+    const workspaceId = existing?.workspaceId ?? adoptedSession?.workspaceId;
+    const agentExecutionId =
+      adoptedSession?.id && hostPane.muximodExecutionId ? hostPane.muximodExecutionId : undefined;
+    const initialState = kind === "agent" && !existing ? "starting" : observation.state;
+    const createInput: PaneCreateInput = {
+      id,
+      hostPaneId: hostPane.hostPaneId,
+      hostServerId: paneHostServerId,
       ...(adoptedSession?.id ? { agentSessionId: adoptedSession.id } : {}),
-      ...(adoptedSession?.id && tmuxPane.muximodExecutionId ? { agentExecutionId: tmuxPane.muximodExecutionId } : {}),
-      sessionName: tmuxPane.sessionName,
-      windowId: tmuxPane.windowId,
+      ...(agentExecutionId ? { agentExecutionId } : {}),
+      sessionName: hostPane.sessionName,
+      windowId: hostPane.windowId,
       kind,
       name,
-      cwd: tmuxPane.cwd,
-      ...((existing?.workspaceId ?? adoptedSession?.workspaceId)
-        ? { workspaceId: existing?.workspaceId ?? adoptedSession?.workspaceId }
-        : {}),
-      agentId,
-      state: observation.state,
-      ...(tmuxPane.title ? { title: tmuxPane.title } : {}),
+      cwd: hostPane.cwd,
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(kind === "agent" ? { agentId } : {}),
+      initialState,
+      ...(hostPane.title ? { title: hostPane.title } : {}),
       ...(observation.recentOutput ? { recentOutput: observation.recentOutput } : {}),
       lastSeenAt: now,
-      windowName: tmuxPane.windowName,
-      windowIndex: tmuxPane.windowIndex,
-      paneIndex: tmuxPane.paneIndex,
-      left: tmuxPane.left,
-      top: tmuxPane.top,
-      width: tmuxPane.width,
-      height: tmuxPane.height,
-      windowWidth: tmuxPane.windowWidth,
-      windowHeight: tmuxPane.windowHeight,
-    });
+      windowName: hostPane.windowName,
+      windowIndex: hostPane.windowIndex,
+      paneIndex: hostPane.paneIndex,
+      left: hostPane.left,
+      top: hostPane.top,
+      width: hostPane.width,
+      height: hostPane.height,
+      windowWidth: hostPane.windowWidth,
+      windowHeight: hostPane.windowHeight,
+    };
+    let record: PaneRecord;
+    if (!existing) {
+      record = Pane.create(createInput);
+    } else {
+      record = Pane.update(existing, {
+        agentSessionId: adoptedSession?.id ?? clearPatch,
+        agentExecutionId: agentExecutionId ?? clearPatch,
+        sessionName: hostPane.sessionName,
+        windowId: hostPane.windowId,
+        kind,
+        name,
+        cwd: hostPane.cwd,
+        workspaceId: workspaceId ?? clearPatch,
+        agentId: kind === "agent" ? agentId : clearPatch,
+        title: hostPane.title ? hostPane.title : clearPatch,
+        recentOutput: observation.recentOutput ?? clearPatch,
+        lastSeenAt: now,
+        windowName: hostPane.windowName,
+        windowIndex: hostPane.windowIndex,
+        paneIndex: hostPane.paneIndex,
+        left: hostPane.left,
+        top: hostPane.top,
+        width: hostPane.width,
+        height: hostPane.height,
+        windowWidth: hostPane.windowWidth,
+        windowHeight: hostPane.windowHeight,
+      });
+      if (record.state !== observation.state) {
+        record = Pane.transitionState(record, observation.state, "terminal observation", now);
+      }
+    }
     await repository.upsert(record);
-    // Geometry and pane indexes are live tmux state rather than durable
-    // identity. Return the live record so the API/UI never loses it during
-    // the same reconciliation pass.
+    // Geometry and pane indexes are live host state rather than durable identity.
+    // Return the live record so the API/UI never loses it during reconciliation.
     records.push(record);
   }
 
@@ -130,42 +177,26 @@ export async function reconcilePanes(
 }
 
 function resolvePaneKind(
-  tmuxPane: MuximodPaneSnapshot,
+  hostPane: HostPaneSnapshot,
   existing: PaneRecord | undefined,
   adopted: boolean,
   staleAgentMetadata: boolean,
+  commandObservation: MuximodPaneClassification,
 ): PaneRecord["kind"] {
   if (staleAgentMetadata) return "shell";
-  if (tmuxPane.muximodKind === "agent" && adopted) return "agent";
-  if (tmuxPane.muximodKind === "agent" && !tmuxPane.muximodSessionId) return "agent";
-  if (tmuxPane.muximodKind === "shell" || tmuxPane.muximodKind === "unknown") return tmuxPane.muximodKind;
-  const detected = paneKindForCommand(tmuxPane.command);
+  if (hostPane.muximodKind === "agent" && adopted) return "agent";
+  if (hostPane.muximodKind === "agent" && !hostPane.muximodSessionId) return "agent";
+  if (hostPane.muximodKind === "shell" || hostPane.muximodKind === "unknown") return hostPane.muximodKind;
+  const detected = commandObservation.kind;
   if (detected === "unknown" && existing?.kind === "agent" && adopted) return "agent";
   return detected;
 }
 
-function readUnmanagedAgentObservation(
-  host: MuximodHostPort,
-  pane: MuximodPaneSnapshot,
-  fallback: PaneState,
-): AgentStatusObservation {
-  try {
-    return { state: inferUnmanagedAgentState(host.capturePane(pane.paneId), fallback) };
-  } catch {
-    return { state: fallback };
-  }
-}
-
-function executableName(command: string): string | null {
-  const executable = command.trim().split(/\s+/, 1)[0]?.split("/").at(-1)?.toLowerCase();
-  return executable === "codex" || executable === "claude" || executable === "opencode" ? executable : null;
-}
-
-function isLiveAgentExecution(
+async function isLiveAgentExecution(
   host: MuximodHostPort,
   session: Pick<AgentSessionRecord, "status" | "executionPid">,
-): boolean {
+): Promise<boolean> {
   if (session.status !== "running" && session.status !== "resuming") return false;
   if (session.executionPid === undefined) return false;
-  return host.isProcessAlive(session.executionPid);
+  return await host.isProcessAlive(session.executionPid);
 }

@@ -1,9 +1,10 @@
-import type { TmuxSession } from "@muximo/contract";
+import type { TerminalEndpoint, TmuxSession } from "@muximo/contract";
 import { useQuery } from "@tanstack/react-query";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import type { MuximodQueryUtils } from "../../app/api/orpc-utils";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
-import type { ConnectionFlowViewModel, TerminalEndpoint } from "./-connection-flow-viewmodel";
+
+type ResourceStatus = "loading" | "ready" | "error" | undefined;
 
 export type TerminalResources = {
   connection: ReturnType<typeof useMuximodConnection>["connection"];
@@ -13,9 +14,9 @@ export type TerminalResources = {
   sessions: TmuxSession[];
   selectedTerminal: TerminalEndpoint | null;
   selectedSession: TmuxSession | null;
-  terminalsStatus: ConnectionFlowViewModel["status"];
+  terminalsStatus: ResourceStatus;
   terminalsError: string | null;
-  sessionsStatus: ConnectionFlowViewModel["status"];
+  sessionsStatus: ResourceStatus;
   sessionsError: string | null;
 };
 

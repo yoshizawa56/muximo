@@ -1,6 +1,13 @@
-import type { AgentBackend, PaneRecord, Patch, WorkspaceRecord } from "@muximo/domain";
+import type { AgentBackend, PaneRecord, Patch } from "@muximo/domain";
 
-export type MuximodHookEvent =
+export type ApplicationClock = {
+  now(): string;
+};
+
+/** @deprecated Use ApplicationClock in application use cases. */
+export type MuximodClock = ApplicationClock;
+
+export type TerminalHostHookEvent =
   | "client-attached"
   | "client-active"
   | "client-resized"
@@ -37,7 +44,8 @@ export type CreatePaneInput = {
 
 export type CreateSessionInput = {
   name: string;
-  initialCwd: string;
+  cwd?: string;
+  workspaceId?: string;
 };
 
 export type MuximodWorkspaceDirectory = {
@@ -87,8 +95,8 @@ export type MuximodSessionSummary = {
 export type MuximodPaneSummary = PaneRecord;
 
 /**
- * Application use-case port consumed by HTTP, CLI, and future native
- * adapters. It contains no transport-runtime, tmux, SQLite, or filesystem types.
+ * Application use-case port consumed by delivery adapters. It contains no
+ * transport-runtime, provider, SQLite, or filesystem types.
  */
 export type MuximodApplication = {
   terminal: {
@@ -100,8 +108,6 @@ export type MuximodApplication = {
     register(input: RegisterWorkspaceCommand): Promise<MuximodWorkspaceDirectory>;
     update(workspaceId: string, input: UpdateWorkspaceCommand): Promise<MuximodWorkspaceDirectory>;
     delete(workspaceId: string): Promise<void>;
-    resolveDirectory(workspaceId: string): Promise<WorkspaceRecord>;
-    resolveSelection(selection: { workspaceId: string; mode: "workspace" | "worktree" }): Promise<WorkspaceRecord>;
   };
   sessions: {
     list(): Promise<MuximodSessionSummary[]>;
@@ -109,9 +115,9 @@ export type MuximodApplication = {
   };
   panes: {
     list(sessionName?: string): Promise<MuximodPaneSummary[]>;
-    create(input: CreatePaneInput, workspace?: WorkspaceRecord): Promise<MuximodPaneSummary>;
+    create(input: CreatePaneInput): Promise<MuximodPaneSummary>;
   };
   hooks: {
-    handleTmux(event: MuximodHookEvent, client: string): void;
+    handleTerminalHostHook(event: TerminalHostHookEvent, client: string): Promise<void>;
   };
 };

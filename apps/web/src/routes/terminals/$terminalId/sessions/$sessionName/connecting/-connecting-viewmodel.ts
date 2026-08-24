@@ -1,7 +1,6 @@
-import type { TmuxSession } from "@muximo/contract";
+import type { TerminalEndpoint, TmuxSession } from "@muximo/contract";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
-import type { TerminalEndpoint } from "../../../../-connection-flow-viewmodel";
 import { useTerminalResources } from "../../../../-terminal-resources";
 
 export type ConnectingViewModel = {

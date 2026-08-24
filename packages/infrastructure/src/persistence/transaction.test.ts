@@ -16,7 +16,7 @@ import { describe, it } from "vitest";
 import { createAgentDatabase, DrizzleWorkspaceRepository, SqliteTransactionManager } from "./index.js";
 
 type Input = {
-  mode: "commit" | "rollback" | "nested";
+  mode: "commit" | "rollback" | "nested" | "cross-database";
   id: string;
 };
 
@@ -24,6 +24,9 @@ type Fixture = {
   database: ReturnType<typeof createAgentDatabase>;
   manager: SqliteTransactionManager;
   repository: DrizzleWorkspaceRepository;
+  otherDatabase?: ReturnType<typeof createAgentDatabase>;
+  otherManager?: SqliteTransactionManager;
+  otherRepository?: DrizzleWorkspaceRepository;
 };
 
 type Context = {
@@ -59,12 +62,29 @@ const cases = [
       hasObserved<Context, number>("names", ["nested", "nested-child"]),
     ],
   },
-] satisfies readonly OperationCase<"default", Input, number, Context>[];
+  {
+    name: "rejects a repository from a different ambient database",
+    fixture: "two-database",
+    input: { mode: "cross-database", id: "workspace-cross-database" },
+    assert: [
+      hasError<Context, number>({ message: "SQLite transaction database identity mismatch" }),
+      hasObserved<Context, number>("count", 0),
+      hasObserved<Context, number>("names", []),
+    ],
+  },
+] satisfies readonly OperationCase<"default" | "two-database", Input, number, Context>[];
 
-const table: OperationTable<Fixture, "default", Input, number, Context> = {
+const table: OperationTable<Fixture, "default" | "two-database", Input, number, Context> = {
   defaultFixture: createFixture,
+  fixtures: { default: createFixture, "two-database": createTwoDatabaseFixture },
   cases,
   execute: async (fixture, input) => {
+    if (input.mode === "cross-database") {
+      return fixture.manager.run(async () => {
+        await fixture.otherRepository!.list();
+        return 0;
+      });
+    }
     return fixture.manager.run(async () => {
       await fixture.repository.upsert(createWorkspace(input.id, input.mode === "nested" ? "nested" : "commit"));
       if (input.mode === "rollback") throw new Error("rollback requested");
@@ -97,6 +117,33 @@ function createFixture(): FixtureHandle<Fixture> {
       manager.close();
       database.close();
       rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+function createTwoDatabaseFixture(): FixtureHandle<Fixture> {
+  const firstRoot = mkdtempSync(join(tmpdir(), "muximo-transaction-first-"));
+  const secondRoot = mkdtempSync(join(tmpdir(), "muximo-transaction-second-"));
+  const database = createAgentDatabase(join(firstRoot, "muximod.sqlite"));
+  const otherDatabase = createAgentDatabase(join(secondRoot, "muximod.sqlite"));
+  const manager = new SqliteTransactionManager(database);
+  const otherManager = new SqliteTransactionManager(otherDatabase);
+  return {
+    fixture: {
+      database,
+      manager,
+      repository: new DrizzleWorkspaceRepository(database.db),
+      otherDatabase,
+      otherManager,
+      otherRepository: new DrizzleWorkspaceRepository(otherDatabase.db),
+    },
+    cleanup: () => {
+      manager.close();
+      otherManager.close();
+      database.close();
+      otherDatabase.close();
+      rmSync(firstRoot, { recursive: true, force: true });
+      rmSync(secondRoot, { recursive: true, force: true });
     },
   };
 }

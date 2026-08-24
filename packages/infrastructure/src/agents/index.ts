@@ -1,6 +1,8 @@
 import { createOpenCodePlugin } from "./opencode/plugin.js";
 import { createClaudeMonitor, createCodexMonitor } from "./provider-monitors.js";
 
+export * from "./backend.js";
+export * from "./launch.js";
 export * from "./opencode/index.js";
 
 export const agentCapabilities = ["input", "approval", "stop", "resume", "structured_events"] as const;

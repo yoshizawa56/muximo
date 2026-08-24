@@ -1,15 +1,10 @@
 import type { PaneFilter, PaneRepository } from "@muximo/application";
 import { AgentSessionId, Pane, PaneId, type PaneRecord, WorkspaceId } from "@muximo/domain";
-import { and, desc, eq, like, lt, notInArray, or } from "drizzle-orm";
-import type { AgentDrizzleDatabase } from "../../database-types.js";
+import { and, eq, like, lt, notInArray, or } from "drizzle-orm";
 import { type PaneRow, panes } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
 export class DrizzlePaneRepository extends DrizzleRepositoryBase implements PaneRepository {
-  public constructor(database: AgentDrizzleDatabase) {
-    super(database);
-  }
-
   public async list(filter?: PaneFilter): Promise<PaneRecord[]> {
     const conditions = [];
     if (filter?.state) conditions.push(eq(panes.state, filter.state));
@@ -31,21 +26,11 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
     return row ? toPaneRecord(row) : undefined;
   }
 
-  public async findByTmuxPaneId(tmuxPaneId: string): Promise<PaneRecord | undefined> {
+  public async findByHostPaneIdentity(hostServerId: string, hostPaneId: string): Promise<PaneRecord | undefined> {
     const row = this.db()
       .select()
       .from(panes)
-      .where(eq(panes.tmuxPaneId, tmuxPaneId))
-      .orderBy(desc(panes.updatedAt))
-      .get();
-    return row ? toPaneRecord(row) : undefined;
-  }
-
-  public async findByTmuxPaneIdentity(tmuxServerId: string, tmuxPaneId: string): Promise<PaneRecord | undefined> {
-    const row = this.db()
-      .select()
-      .from(panes)
-      .where(and(eq(panes.tmuxServerId, tmuxServerId), eq(panes.tmuxPaneId, tmuxPaneId)))
+      .where(and(eq(panes.hostServerId, hostServerId), eq(panes.hostPaneId, hostPaneId)))
       .get();
     return row ? toPaneRecord(row) : undefined;
   }
@@ -57,10 +42,10 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
       .insert(panes)
       .values(row)
       .onConflictDoUpdate({
-        target: [panes.tmuxServerId, panes.tmuxPaneId],
+        target: [panes.hostServerId, panes.hostPaneId],
         set: {
-          tmuxPaneId: row.tmuxPaneId,
-          tmuxServerId: row.tmuxServerId,
+          hostPaneId: row.hostPaneId,
+          hostServerId: row.hostServerId,
           agentSessionId: row.agentSessionId,
           agentExecutionId: row.agentExecutionId,
           sessionName: row.sessionName,
@@ -82,7 +67,7 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
   public async pruneStalePanes(
     activePaneIds: readonly PaneId[],
     olderThan: string,
-    tmuxServerScope: string,
+    hostServerScope: string,
   ): Promise<number> {
     // An empty live set is deliberately not treated as authoritative. tmux
     // exits its server after the last session disappears, so deleting all old
@@ -92,7 +77,7 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
     const condition = and(
       lt(panes.lastSeenAt, olderThan),
       notInArray(panes.id, [...activePaneIds]),
-      or(eq(panes.tmuxServerId, "legacy"), like(panes.tmuxServerId, `${tmuxServerScope}:%`)),
+      or(eq(panes.hostServerId, "legacy"), like(panes.hostServerId, `${hostServerScope}:%`)),
     );
     const candidates = this.db().select({ id: panes.id }).from(panes).where(condition).all();
     this.db().delete(panes).where(condition).run();
@@ -104,8 +89,8 @@ function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
   const pane = Pane.restore(record);
   return {
     id: pane.id,
-    tmuxPaneId: pane.tmuxPaneId,
-    tmuxServerId: pane.tmuxServerId ?? "legacy",
+    hostPaneId: pane.hostPaneId,
+    hostServerId: pane.hostServerId ?? "legacy",
     agentSessionId: pane.agentSessionId ?? null,
     agentExecutionId: pane.agentExecutionId ?? null,
     sessionName: pane.sessionName,
@@ -126,8 +111,8 @@ function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
 function toPaneRecord(row: PaneRow): PaneRecord {
   return Pane.restore({
     id: PaneId.create(row.id),
-    tmuxPaneId: row.tmuxPaneId,
-    ...(row.tmuxServerId === "legacy" ? {} : { tmuxServerId: row.tmuxServerId }),
+    hostPaneId: row.hostPaneId,
+    ...(row.hostServerId === "legacy" ? {} : { hostServerId: row.hostServerId }),
     ...(row.agentSessionId ? { agentSessionId: AgentSessionId.create(row.agentSessionId) } : {}),
     ...(row.agentExecutionId ? { agentExecutionId: row.agentExecutionId } : {}),
     sessionName: row.sessionName,

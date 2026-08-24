@@ -36,6 +36,36 @@ export type ProcessSignaller = {
   kill(pid: number, signal: NodeJS.Signals): void;
 };
 
+export class OpenCodeRegistryLockTimeoutError extends Error {
+  public readonly code = "opencode_registry_lock_timeout" as const;
+  public readonly retryable = true;
+
+  public constructor(
+    public readonly lockPath: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`OpenCode server registry lock could not be acquired within ${timeoutMs}ms; retry the operation`);
+    this.name = "OpenCodeRegistryLockTimeoutError";
+  }
+}
+
+export type OpenCodeProcessDisposalErrorCode = "opencode_process_disposal_failed" | "opencode_process_disposal_timeout";
+
+export class OpenCodeServerDisposalError extends Error {
+  public constructor(
+    message: string,
+    public readonly code: OpenCodeProcessDisposalErrorCode,
+    public readonly pid: number,
+    public readonly signal: NodeJS.Signals | undefined,
+    public readonly retryable: boolean,
+    cause?: unknown,
+  ) {
+    super(message);
+    this.name = "OpenCodeServerDisposalError";
+    if (cause !== undefined) Object.defineProperty(this, "cause", { configurable: true, value: cause });
+  }
+}
+
 export type OpenCodeServerManagerOptions = {
   registryFile: string;
   executable?: string;
@@ -49,6 +79,13 @@ export type OpenCodeServerManagerOptions = {
   probePort?: (port: number) => Promise<boolean>;
   healthPollIntervalMs?: number;
   startupTimeoutMs?: number;
+  shutdownTimeoutMs?: number;
+  shutdownGracePeriodMs?: number;
+  shutdownPollIntervalMs?: number;
+  registryLockTimeoutMs?: number;
+  registryLockPollIntervalMs?: number;
+  now?: () => number;
+  sleep?: (milliseconds: number) => Promise<void>;
   logFileDirectory?: string;
   signaller?: ProcessSignaller;
   onLog?: OpenCodeLog;
@@ -56,6 +93,11 @@ export type OpenCodeServerManagerOptions = {
 
 export const openCodeServerDefaultTimeoutMs = 15_000;
 export const openCodeServerHealthPollMs = 100;
+export const openCodeServerShutdownTimeoutMs = 3_000;
+export const openCodeServerShutdownGracePeriodMs = 2_000;
+export const openCodeServerShutdownPollMs = 50;
+export const openCodeRegistryLockTimeoutMs = 5_000;
+export const openCodeRegistryLockPollMs = 50;
 
 export function defaultOpenCodeRegistryFile(env: NodeJS.ProcessEnv = process.env): string {
   const instanceDirectory = env.MUXIMOD_INSTANCE_DIR?.trim()
@@ -72,6 +114,13 @@ export class OpenCodeServerManager {
   private readonly probePort: (port: number) => Promise<boolean>;
   private readonly healthPollIntervalMs: number;
   private readonly startupTimeoutMs: number;
+  private readonly shutdownTimeoutMs: number;
+  private readonly shutdownGracePeriodMs: number;
+  private readonly shutdownPollIntervalMs: number;
+  private readonly registryLockTimeoutMs: number;
+  private readonly registryLockPollIntervalMs: number;
+  private readonly now: () => number;
+  private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly logFileDirectory: string;
   private readonly signaller: ProcessSignaller;
   private readonly onLog: OpenCodeLog | undefined;
@@ -85,6 +134,13 @@ export class OpenCodeServerManager {
     this.probePort = options.probePort ?? probeLoopbackPort;
     this.healthPollIntervalMs = options.healthPollIntervalMs ?? openCodeServerHealthPollMs;
     this.startupTimeoutMs = options.startupTimeoutMs ?? openCodeServerDefaultTimeoutMs;
+    this.shutdownTimeoutMs = Math.max(0, options.shutdownTimeoutMs ?? openCodeServerShutdownTimeoutMs);
+    this.shutdownGracePeriodMs = Math.max(0, options.shutdownGracePeriodMs ?? openCodeServerShutdownGracePeriodMs);
+    this.shutdownPollIntervalMs = Math.max(1, options.shutdownPollIntervalMs ?? openCodeServerShutdownPollMs);
+    this.registryLockTimeoutMs = Math.max(0, options.registryLockTimeoutMs ?? openCodeRegistryLockTimeoutMs);
+    this.registryLockPollIntervalMs = Math.max(1, options.registryLockPollIntervalMs ?? openCodeRegistryLockPollMs);
+    this.now = options.now ?? Date.now;
+    this.sleep = options.sleep ?? sleep;
     this.logFileDirectory = options.logFileDirectory ?? dirnameOf(options.registryFile);
     this.signaller = options.signaller ?? defaultSignaller;
     this.onLog = options.onLog;
@@ -104,7 +160,7 @@ export class OpenCodeServerManager {
         if (this.isAlive(existing.pid) && (await this.isHealthy(existing.port))) {
           return existing;
         }
-        this.disposeEntry(existing);
+        await this.disposeEntry(existing);
         delete registry[workspaceRoot];
       }
 
@@ -114,7 +170,15 @@ export class OpenCodeServerManager {
       try {
         health = await this.waitForHealth(port, child.pid);
       } catch (error) {
-        this.disposeChild(child);
+        try {
+          await this.disposeChild(child);
+        } catch (cleanupError) {
+          this.onLog?.("warn", "opencode.server_cleanup_failed", {
+            pid: child.pid,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+          throw cleanupError;
+        }
         throw error;
       }
       const entry: OpenCodeServerEntry = {
@@ -122,7 +186,7 @@ export class OpenCodeServerManager {
         pid: child.pid,
         port,
         version: health.version,
-        startedAt: new Date().toISOString(),
+        startedAt: new Date(this.now()).toISOString(),
       };
       registry[workspaceRoot] = entry;
       this.writeRegistry(registry);
@@ -159,15 +223,14 @@ export class OpenCodeServerManager {
     }
   }
 
-  /** Stop and forget the owned server for a project root. */
   public async dispose(workspaceRoot: string): Promise<boolean> {
     return this.withFileLock(async () => {
       const registry = this.readRegistry();
       const entry = registry[workspaceRoot];
       if (!entry) return false;
+      await this.disposeEntry(entry);
       delete registry[workspaceRoot];
       this.writeRegistry(registry);
-      this.disposeEntry(entry);
       return true;
     });
   }
@@ -175,8 +238,21 @@ export class OpenCodeServerManager {
   public async disposeAll(): Promise<void> {
     await this.withFileLock(async () => {
       const registry = this.readRegistry();
-      for (const entry of Object.values(registry)) this.disposeEntry(entry);
-      this.writeRegistry({});
+      const failures: unknown[] = [];
+      const remaining: OpenCodeServerRegistry = {};
+      for (const [workspaceRoot, entry] of Object.entries(registry)) {
+        try {
+          await this.disposeEntry(entry);
+        } catch (error) {
+          remaining[workspaceRoot] = entry;
+          failures.push(error);
+        }
+      }
+      this.writeRegistry(remaining);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, "OpenCode server disposal failed for multiple registered processes");
+      }
     });
   }
 
@@ -197,7 +273,7 @@ export class OpenCodeServerManager {
               pid: value.pid,
               port: value.port,
               version: typeof value.version === "string" ? value.version : "",
-              startedAt: typeof value.startedAt === "string" ? value.startedAt : new Date().toISOString(),
+              startedAt: typeof value.startedAt === "string" ? value.startedAt : new Date(this.now()).toISOString(),
             };
           }
         }
@@ -235,19 +311,19 @@ export class OpenCodeServerManager {
   }
 
   private async waitForHealth(port: number, pid: number): Promise<{ healthy: boolean; version: string }> {
-    const deadline = Date.now() + this.startupTimeoutMs;
+    const deadline = this.now() + this.startupTimeoutMs;
     for (;;) {
       if (!this.isAlive(pid)) {
         throw new Error(`opencode serve exited before it became healthy (${this.executable} serve --port ${port})`);
       }
       const health = await this.isHealthy(port);
       if (health) return { healthy: true, version: await this.readVersion(port) };
-      if (Date.now() >= deadline) {
+      if (this.now() >= deadline) {
         throw new Error(
           `opencode serve did not become healthy within ${this.startupTimeoutMs}ms (${this.executable} serve --port ${port})`,
         );
       }
-      await sleep(this.healthPollIntervalMs);
+      await this.sleep(this.healthPollIntervalMs);
     }
   }
 
@@ -264,9 +340,9 @@ export class OpenCodeServerManager {
     }
   }
 
-  private disposeEntry(entry: OpenCodeServerEntry): void {
+  private async disposeEntry(entry: OpenCodeServerEntry): Promise<void> {
     this.onLog?.("debug", "opencode.server_disposing", { pid: entry.pid, port: entry.port });
-    void this.signalAndWaitExit(entry.pid);
+    await this.signalAndWaitExit(entry.pid, (signal) => this.signaller.kill(entry.pid, signal));
   }
 
   /**
@@ -280,7 +356,7 @@ export class OpenCodeServerManager {
     entry: OpenCodeServerEntry,
   ): Promise<OpenCodeServerEntry | undefined> {
     this.onLog?.("debug", "opencode.server_refreshing", { workspaceRoot, pid: entry.pid, port: entry.port });
-    await this.signalAndWaitExit(entry.pid);
+    await this.signalAndWaitExit(entry.pid, (signal) => this.signaller.kill(entry.pid, signal));
     const port = await this.allocatePreferredPort(entry.port);
     const child = this.spawnServer(workspaceRoot, port);
     try {
@@ -290,10 +366,19 @@ export class OpenCodeServerManager {
         pid: child.pid,
         port,
         version: health.version,
-        startedAt: new Date().toISOString(),
+        startedAt: new Date(this.now()).toISOString(),
       };
     } catch (error) {
-      this.disposeChild(child);
+      try {
+        await this.disposeChild(child);
+      } catch (cleanupError) {
+        this.onLog?.("warn", "opencode.server_cleanup_failed", {
+          workspaceRoot,
+          pid: child.pid,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+        throw cleanupError;
+      }
       this.onLog?.("warn", "opencode.server_refresh_failed", {
         workspaceRoot,
         port,
@@ -303,28 +388,73 @@ export class OpenCodeServerManager {
     }
   }
 
-  private async signalAndWaitExit(pid: number): Promise<void> {
-    if (!this.isAlive(pid)) return;
-    try {
-      this.signaller.kill(pid, "SIGTERM");
-    } catch (_error) {
-      // EPERM means the process belongs to another user; never force-stop a
-      // server Muximo does not own.
-      this.onLog?.("warn", "opencode.server_not_owned", { pid });
+  private async signalAndWaitExit(pid: number, sendSignal: (signal: NodeJS.Signals) => void): Promise<void> {
+    if (!this.isAlive(pid)) {
+      this.forgetChildrenForPid(pid);
       return;
     }
-    setTimeout(() => {
-      if (this.isAlive(pid)) {
+
+    let signal: NodeJS.Signals = "SIGTERM";
+    try {
+      sendSignal(signal);
+    } catch (error) {
+      if (!this.isAlive(pid)) {
+        this.forgetChildrenForPid(pid);
+        return;
+      }
+      this.onLog?.("warn", "opencode.server_not_owned", { pid });
+      throw new OpenCodeServerDisposalError(
+        `OpenCode process ${pid} could not be terminated; the resource may still be running`,
+        "opencode_process_disposal_failed",
+        pid,
+        signal,
+        false,
+        error,
+      );
+    }
+
+    const startedAt = this.now();
+    const deadline = startedAt + this.shutdownTimeoutMs;
+    const forceAt = startedAt + Math.min(this.shutdownGracePeriodMs, this.shutdownTimeoutMs);
+    let forceSent = false;
+    for (;;) {
+      if (!this.isAlive(pid)) {
+        this.forgetChildrenForPid(pid);
+        return;
+      }
+      const now = this.now();
+      if (!forceSent && now >= forceAt) {
+        signal = "SIGKILL";
         try {
-          this.signaller.kill(pid, "SIGKILL");
-        } catch {
-          // The process exited during the grace period.
+          sendSignal(signal);
+        } catch (error) {
+          if (this.isAlive(pid)) {
+            throw new OpenCodeServerDisposalError(
+              `OpenCode process ${pid} could not be force-terminated; the resource may still be running`,
+              "opencode_process_disposal_failed",
+              pid,
+              signal,
+              false,
+              error,
+            );
+          }
+        }
+        forceSent = true;
+        if (!this.isAlive(pid)) {
+          this.forgetChildrenForPid(pid);
+          return;
         }
       }
-    }, 2_000).unref?.();
-    const deadline = Date.now() + 3_000;
-    while (Date.now() < deadline && this.isAlive(pid)) {
-      await sleep(50);
+      if (this.now() >= deadline) {
+        throw new OpenCodeServerDisposalError(
+          `OpenCode process ${pid} did not exit within ${this.shutdownTimeoutMs}ms after termination; retry cleanup`,
+          "opencode_process_disposal_timeout",
+          pid,
+          signal,
+          true,
+        );
+      }
+      await this.sleep(Math.min(this.shutdownPollIntervalMs, Math.max(1, deadline - this.now())));
     }
   }
 
@@ -333,13 +463,19 @@ export class OpenCodeServerManager {
     return this.allocatePort();
   }
 
-  private disposeChild(child: SpawnedChild): void {
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      // The child already exited.
-    }
+  private async disposeChild(child: SpawnedChild): Promise<void> {
+    await this.signalAndWaitExit(child.pid, (signal) => {
+      if (!child.kill(signal) && this.isAlive(child.pid)) {
+        throw new Error(`child process ${child.pid} rejected ${signal}`);
+      }
+    });
     this.children.delete(child);
+  }
+
+  private forgetChildrenForPid(pid: number): void {
+    for (const child of this.children) {
+      if (child.pid === pid) this.children.delete(child);
+    }
   }
 
   private isAlive(pid: number): boolean {
@@ -349,12 +485,12 @@ export class OpenCodeServerManager {
   /**
    * Serialize registry mutations across `muximo run` processes in the same
    * instance so two panes starting concurrently share one server. Stale locks
-   * (dead owner) are broken; a lock that stays contended is abandoned rather
-   * than blocking the pane forever.
+   * (dead owner) are broken; a lock that stays contended returns a retryable
+   * error and never runs the mutation without ownership.
    */
   private async withFileLock<T>(operation: () => Promise<T>): Promise<T> {
     const lockPath = `${this.options.registryFile}.lock`;
-    const deadline = Date.now() + 5_000;
+    const deadline = this.now() + this.registryLockTimeoutMs;
     for (;;) {
       let acquired = false;
       try {
@@ -374,11 +510,11 @@ export class OpenCodeServerManager {
         }
       }
       if (!acquired) {
-        if (Date.now() >= deadline) {
+        if (this.now() >= deadline) {
           this.onLog?.("warn", "opencode.registry_lock_timeout", { path: lockPath });
-          return operation();
+          throw new OpenCodeRegistryLockTimeoutError(lockPath, this.registryLockTimeoutMs);
         }
-        await sleep(50);
+        await this.sleep(Math.min(this.registryLockPollIntervalMs, Math.max(1, deadline - this.now())));
         continue;
       }
       try {

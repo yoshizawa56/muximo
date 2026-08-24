@@ -4,8 +4,9 @@ import { useMemo, useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { storyPanes, storySession, storyTerminal, storyWorkspaces } from "../../../../../-story-fixtures";
 import type { WorkspacePickerViewModel, WorkspaceSelectionMode } from "../../../-workspace-picker-viewmodel";
+import type { NewPaneAgent } from "./-agent-options";
 import { NewPaneView } from "./-new-pane-view";
-import type { NewPaneAgent, NewPaneKind, NewPaneViewModel } from "./-new-pane-viewmodel";
+import type { NewPaneKind, NewPaneViewModel } from "./-new-pane-viewmodel";
 
 function buildWorkspacePicker(
   mode: WorkspaceSelectionMode,

@@ -1,16 +1,16 @@
-import type { AuthCryptoPort, AuthStorePort, AuthWsTicketStorePort } from "../../ports/auth.js";
+import type { AuthCryptoPort, AuthStorePort, AuthWsTicketStorePort, Clock } from "../../ports/auth.js";
 import type { MuximodAuthContext } from "../../ports/auth-types.js";
 import { contextForSession } from "./device-guard.js";
 
-export function consumeWebSocketTicket(
-  deps: { store: AuthStorePort; crypto: AuthCryptoPort; wsTickets: AuthWsTicketStorePort; now?: () => Date },
+export async function consumeWebSocketTicket(
+  deps: { store: AuthStorePort; crypto: AuthCryptoPort; wsTickets: AuthWsTicketStorePort; clock: Clock },
   ticket: string | undefined,
   endpoint: "terminal",
-): MuximodAuthContext | null {
-  if (!ticket) return null;
-  const nowIso = (deps.now?.() ?? new Date()).toISOString();
+): Promise<MuximodAuthContext | undefined> {
+  if (!ticket) return undefined;
+  const nowIso = deps.clock.now().toISOString();
   const pending = deps.wsTickets.take(deps.crypto.hashOpaque(ticket));
-  if (!pending || pending.endpoint !== endpoint || pending.expiresAt <= nowIso) return null;
-  const session = deps.store.findSessionById(pending.sessionId);
-  return session ? contextForSession(deps.store, session) : null;
+  if (!pending || pending.endpoint !== endpoint || pending.expiresAt <= nowIso) return undefined;
+  const session = await deps.store.findSessionById(pending.sessionId);
+  return session ? contextForSession(deps.store, session) : undefined;
 }

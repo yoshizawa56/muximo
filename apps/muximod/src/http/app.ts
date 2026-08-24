@@ -1,15 +1,7 @@
-import { muximodHealthSchema } from "@muximo/contract";
 import { RPCHandler } from "@orpc/server/fetch";
 import type { WebSocketHandler } from "bun";
-import {
-  corsResponse,
-  errorBody,
-  errorResponse,
-  jsonResponse,
-  MuximodHttpError,
-  notFound,
-  withCors,
-} from "./middleware.js";
+import { presentMuximodHealth } from "./health.js";
+import { corsResponse, errorResponse, jsonResponse, notFound, originDeniedResponse, withCors } from "./middleware.js";
 import { contextForRequest, createMuximodRouter, type MuximodRpcContext } from "./rpc-handlers.js";
 import { handleTmuxHook } from "./tmux-hook.js";
 import type { MuximodHttpDependencies } from "./types.js";
@@ -20,8 +12,8 @@ import {
   type UpgradeServer,
 } from "./ws-terminal.js";
 
-export type { MuximodSocket, MuximodSocketData } from "@muximo/application";
-export { BunSocketAdapter, muximodSocketReadyState } from "@muximo/infrastructure";
+export type { MuximodSocket, MuximodSocketData } from "@muximo/infrastructure";
+export { muximodSocketReadyState } from "@muximo/infrastructure";
 export { MuximodHttpError } from "./middleware.js";
 export type { MuximodRpcContext } from "./rpc-handlers.js";
 export type {
@@ -30,6 +22,7 @@ export type {
   MuximodHookEvent,
   MuximodHttpDependencies,
   MuximodHttpStatus,
+  MuximodOriginPolicy,
 } from "./types.js";
 export type { MuximodWebSocketData } from "./ws-terminal.js";
 
@@ -53,7 +46,7 @@ export function createMuximodApp(deps: MuximodHttpDependencies): MuximodFetchApp
         response = await handleRequest(request, server, deps, handler);
         return response;
       } catch (error) {
-        response = errorResponse(error, deps.corsOrigin);
+        response = errorResponse(error, request, deps.originPolicy);
         return response;
       } finally {
         deps.logger?.debug("http.request_finished", {
@@ -85,18 +78,14 @@ async function handleRequest(
   const url = new URL(request.url);
 
   if (url.pathname === "/terminal") {
+    if (!deps.originPolicy.allows(request.headers.get("origin"))) return originDeniedResponse();
     return handleTerminalUpgrade(request, server, deps);
   }
 
   if (url.pathname === "/health") {
-    if (request.method === "OPTIONS") return corsResponse(undefined, deps.corsOrigin, 204);
-    if (deps.isReady && !deps.isReady()) {
-      return jsonResponse(
-        errorBody(new MuximodHttpError(503, "muximod_unavailable", "muximod is still starting")),
-        503,
-      );
-    }
-    return jsonResponse(muximodHealthSchema.parse({ ok: true, service: "muximod", protocolVersion: 1 }));
+    if (request.method === "OPTIONS") return corsResponse(undefined, request, deps.originPolicy, 204);
+    const health = presentMuximodHealth(deps.isReady?.() ?? true);
+    return jsonResponse(health.body, health.status);
   }
 
   if (url.pathname === "/internal/tmux-hook") {
@@ -104,13 +93,16 @@ async function handleRequest(
   }
 
   if (url.pathname === "/rpc" || url.pathname.startsWith("/rpc/")) {
-    if (request.method === "OPTIONS") return corsResponse(undefined, deps.corsOrigin, 204);
+    if (!deps.originPolicy.allows(request.headers.get("origin"))) return originDeniedResponse();
+    if (request.method === "OPTIONS") return corsResponse(undefined, request, deps.originPolicy, 204);
     const result = await handler.handle(request, {
       prefix: "/rpc",
-      context: contextForRequest(request, deps),
+      context: await contextForRequest(request, deps),
     });
-    return result.matched ? withCors(result.response, deps.corsOrigin) : notFound(deps.corsOrigin);
+    return result.matched
+      ? withCors(result.response, request, deps.originPolicy)
+      : notFound(request, deps.originPolicy);
   }
 
-  return notFound(deps.corsOrigin);
+  return notFound(request, deps.originPolicy);
 }

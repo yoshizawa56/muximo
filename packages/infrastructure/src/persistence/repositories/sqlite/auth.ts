@@ -13,12 +13,17 @@ import {
   type ClaimPairingResult,
   type CreatePairingInput,
   type CreatePairingResult,
+  type PublicKeyJwk,
 } from "@muximo/application";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { authDevices, authMetadata, authPairings, authSessions } from "../../auth-schema.js";
 import type { AgentDrizzleDatabase } from "../../database-types.js";
 import { runSqliteTransaction } from "../../transaction.js";
-import { ambientDatabase, currentSqliteTransaction } from "../../transaction-context.js";
+import {
+  ambientDatabase,
+  assertSqliteTransactionIdentity,
+  currentSqliteTransaction,
+} from "../../transaction-context.js";
 
 export type {
   AuthDeviceRecord,
@@ -37,52 +42,25 @@ export type {
  * Drizzle-backed authentication repository. The root SQLite connection is
  * used only when no ambient transaction exists; repository calls inside an
  * application transaction automatically use its dedicated Drizzle client.
+ * JSON and SQL NULL values are converted to application records here.
  */
 export class AuthStore implements AuthStorePort {
+  public readonly serverId: string;
+
   public constructor(
     private readonly rootDatabase: AgentDrizzleDatabase,
     private readonly rootSqlite: Database,
-  ) {}
-
-  public getServerId(): string {
-    const existing = this.db()
-      .select({ serverId: authMetadata.serverId })
-      .from(authMetadata)
-      .where(eq(authMetadata.id, 1))
-      .get();
-    if (existing?.serverId) return existing.serverId;
-
-    const serverId = randomOpaque(16);
-    const now = timestamp();
-    this.runTransaction(() => {
-      const current = this.db()
-        .select({ serverId: authMetadata.serverId })
-        .from(authMetadata)
-        .where(eq(authMetadata.id, 1))
-        .get();
-      if (!current?.serverId) {
-        this.db().insert(authMetadata).values({ id: 1, serverId, createdAt: now }).run();
-      }
-    });
-
-    const row = this.db()
-      .select({ serverId: authMetadata.serverId })
-      .from(authMetadata)
-      .where(eq(authMetadata.id, 1))
-      .get();
-    if (!row?.serverId)
-      throw new AuthStoreError("auth_metadata_missing", "muximod authentication metadata could not be initialized");
-    return row.serverId;
+  ) {
+    this.serverId = this.initializeServerId();
   }
 
-  public createPairing(input: CreatePairingInput): CreatePairingResult {
-    const serverId = this.getServerId();
+  public async createPairing(input: CreatePairingInput): Promise<CreatePairingResult> {
     const pairingId = randomOpaque(16);
     this.db()
       .insert(authPairings)
       .values({
         pairingId,
-        serverId,
+        serverId: this.serverId,
         // Keep the legacy NOT NULL column populated for databases created by
         // v1. It is no longer part of the pairing model or returned to clients.
         webOrigin: "",
@@ -95,42 +73,23 @@ export class AuthStore implements AuthStorePort {
       .run();
     return {
       pairingId,
-      serverId,
+      serverId: this.serverId,
       secret: input.secret,
       muximodBaseUrl: input.muximodBaseUrl,
       expiresAt: input.expiresAt,
     };
   }
 
-  public findPairing(pairingId: string): AuthPairingRecord | null {
-    const row = this.db().select().from(authPairings).where(eq(authPairings.pairingId, pairingId)).get();
-    if (!row) return null;
-    const pairing = toPairingRecord(row);
-    if (isExpired(pairing.expiresAt) && pairing.status === "offered") {
-      this.db()
-        .update(authPairings)
-        .set({ status: "expired" })
-        .where(and(eq(authPairings.pairingId, pairingId), eq(authPairings.status, "offered")))
-        .run();
-      return { ...pairing, status: "expired" };
-    }
-    if (pairing.claimExpiresAt && isExpired(pairing.claimExpiresAt) && pairing.status === "awaiting_approval") {
-      this.db()
-        .update(authPairings)
-        .set({ status: "expired" })
-        .where(and(eq(authPairings.pairingId, pairingId), eq(authPairings.status, "awaiting_approval")))
-        .run();
-      return { ...pairing, status: "expired" };
-    }
-    return pairing;
+  public async findPairing(pairingId: string): Promise<AuthPairingRecord | undefined> {
+    return this.findPairingRecord(pairingId);
   }
 
-  public claimPairing(input: ClaimPairingInput): ClaimPairingResult {
+  public async claimPairing(input: ClaimPairingInput): Promise<ClaimPairingResult> {
     const claim = this.runTransaction(() => {
       const row = this.db().select().from(authPairings).where(eq(authPairings.pairingId, input.pairingId)).get();
       if (!row) throw new AuthStoreError("pairing_not_found", "pairing was not found");
       const pairing = toPairingRecord(row);
-      if (pairing.serverId !== this.getServerId())
+      if (pairing.serverId !== this.serverId)
         throw new AuthStoreError("wrong_server", "pairing belongs to another authentication realm");
       if (pairing.status !== "offered")
         throw new AuthStoreError("pairing_unavailable", "pairing is no longer available");
@@ -152,12 +111,12 @@ export class AuthStore implements AuthStorePort {
           status: "awaiting_approval",
           claimExpiresAt: input.claimExpiresAt,
           claimedAt: timestamp(),
-          pendingPublicKeyJwk: input.publicKeyJwk,
+          pendingPublicKeyJwk: JSON.stringify(input.publicKey),
           pendingFingerprint: input.keyFingerprint,
           pendingDisplayName: input.displayName,
           pendingDeviceType: input.deviceType,
-          pendingPlatform: input.platform,
-          pendingClientVersion: input.clientVersion,
+          pendingPlatform: input.platform ?? null,
+          pendingClientVersion: input.clientVersion ?? null,
         })
         .where(and(eq(authPairings.pairingId, input.pairingId), eq(authPairings.status, "offered")))
         .returning({ pairingId: authPairings.pairingId })
@@ -173,11 +132,11 @@ export class AuthStore implements AuthStorePort {
     return { pairing: claim, claimToken: input.claimToken };
   }
 
-  public getPairingStatus(
+  public async getPairingStatus(
     pairingId: string,
     claimToken: string,
-  ): { status: AuthPairingStatus; deviceId: string | null } {
-    const pairing = this.findPairing(pairingId);
+  ): Promise<{ status: AuthPairingStatus; deviceId?: string }> {
+    const pairing = this.findPairingRecord(pairingId);
     if (!pairing) throw new AuthStoreError("pairing_not_found", "pairing was not found");
     const row = this.db()
       .select({ claimTokenHash: authPairings.claimTokenHash, claimExpiresAt: authPairings.claimExpiresAt })
@@ -189,15 +148,15 @@ export class AuthStore implements AuthStorePort {
     }
     if (!row.claimExpiresAt || isExpired(row.claimExpiresAt))
       throw new AuthStoreError("claim_token_expired", "claim token has expired");
-    return { status: pairing.status, deviceId: pairing.deviceId };
+    return { status: pairing.status, ...(pairing.deviceId === undefined ? {} : { deviceId: pairing.deviceId }) };
   }
 
-  public approvePairing(pairingId: string): AuthDeviceRecord {
+  public async approvePairing(pairingId: string): Promise<AuthDeviceRecord> {
     return this.runTransaction(() => {
       const row = this.db().select().from(authPairings).where(eq(authPairings.pairingId, pairingId)).get();
       if (!row) throw new AuthStoreError("pairing_not_found", "pairing was not found");
       const pairing = toPairingRecord(row);
-      if (pairing.status !== "awaiting_approval" || !pairing.pendingPublicKeyJwk || !pairing.pendingFingerprint) {
+      if (pairing.status !== "awaiting_approval" || !pairing.pendingPublicKey || !pairing.pendingFingerprint) {
         throw new AuthStoreError("pairing_not_awaiting_approval", "pairing is not awaiting approval");
       }
       if (!pairing.claimExpiresAt || isExpired(pairing.claimExpiresAt)) {
@@ -212,12 +171,12 @@ export class AuthStore implements AuthStorePort {
         .values({
           deviceId,
           serverId: pairing.serverId,
-          publicKeyJwk: pairing.pendingPublicKeyJwk,
+          publicKeyJwk: JSON.stringify(pairing.pendingPublicKey),
           keyFingerprint: pairing.pendingFingerprint,
           displayName: pairing.pendingDisplayName ?? "Unnamed device",
           deviceType: pairing.pendingDeviceType ?? "browser",
-          platform: pairing.pendingPlatform,
-          clientVersion: pairing.pendingClientVersion,
+          platform: pairing.pendingPlatform ?? null,
+          clientVersion: pairing.pendingClientVersion ?? null,
           status: "active",
           createdAt: approvedAt,
           approvedAt,
@@ -234,7 +193,7 @@ export class AuthStore implements AuthStorePort {
     });
   }
 
-  public rejectPairing(pairingId: string): void {
+  public async rejectPairing(pairingId: string): Promise<void> {
     const result = this.db()
       .update(authPairings)
       .set({ status: "rejected" })
@@ -244,18 +203,17 @@ export class AuthStore implements AuthStorePort {
     if (result.length === 0) throw new AuthStoreError("pairing_not_rejectable", "pairing is no longer pending");
   }
 
-  public findDevice(deviceId: string): AuthDeviceRecord | null {
-    const row = this.db().select().from(authDevices).where(eq(authDevices.deviceId, deviceId)).get();
-    return row ? toDeviceRecord(row) : null;
+  public async findDevice(deviceId: string): Promise<AuthDeviceRecord | undefined> {
+    return this.findDeviceRecord(deviceId);
   }
 
-  public createSession(input: {
+  public async createSession(input: {
     sessionId: string;
     token: string;
     deviceId: string;
     expiresAt: string;
-  }): AuthSessionRecord {
-    const device = this.findDevice(input.deviceId);
+  }): Promise<AuthSessionRecord> {
+    const device = this.findDeviceRecord(input.deviceId);
     if (device?.status !== "active") throw new AuthStoreError("device_inactive", "device is not active");
     const issuedAt = timestamp();
     this.db()
@@ -275,11 +233,10 @@ export class AuthStore implements AuthStorePort {
       deviceId: input.deviceId,
       issuedAt,
       expiresAt: input.expiresAt,
-      revokedAt: null,
     };
   }
 
-  public findSession(token: string): AuthSessionRecord | null {
+  public async findSession(token: string): Promise<AuthSessionRecord | undefined> {
     const now = timestamp();
     const row = this.db()
       .select({
@@ -295,13 +252,13 @@ export class AuthStore implements AuthStorePort {
       .innerJoin(authDevices, eq(authDevices.deviceId, authSessions.deviceId))
       .where(eq(authSessions.tokenHash, hashOpaque(token)))
       .get();
-    if (row?.deviceStatus !== "active" || row.revokedAt || row.expiresAt <= now) return null;
+    if (row?.deviceStatus !== "active" || row.revokedAt || row.expiresAt <= now) return undefined;
     this.db().update(authSessions).set({ lastUsedAt: now }).where(eq(authSessions.sessionId, row.sessionId)).run();
     this.db().update(authDevices).set({ lastSeenAt: now }).where(eq(authDevices.deviceId, row.deviceId)).run();
     return toSessionRecord(row);
   }
 
-  public findSessionById(sessionId: string): AuthSessionRecord | null {
+  public async findSessionById(sessionId: string): Promise<AuthSessionRecord | undefined> {
     const row = this.db()
       .select({
         sessionId: authSessions.sessionId,
@@ -314,13 +271,13 @@ export class AuthStore implements AuthStorePort {
       .from(authSessions)
       .where(eq(authSessions.sessionId, sessionId))
       .get();
-    if (!row || row.revokedAt || row.expiresAt <= timestamp()) return null;
-    const device = this.findDevice(row.deviceId);
-    if (device?.status !== "active") return null;
+    if (!row || row.revokedAt || row.expiresAt <= timestamp()) return undefined;
+    const device = this.findDeviceRecord(row.deviceId);
+    if (device?.status !== "active") return undefined;
     return toSessionRecord(row);
   }
 
-  public revokeSession(sessionId: string): void {
+  public async revokeSession(sessionId: string): Promise<void> {
     this.db()
       .update(authSessions)
       .set({ revokedAt: timestamp() })
@@ -328,7 +285,7 @@ export class AuthStore implements AuthStorePort {
       .run();
   }
 
-  public revokeDevice(deviceId: string): void {
+  public async revokeDevice(deviceId: string): Promise<void> {
     const now = timestamp();
     this.runTransaction(() => {
       this.db()
@@ -344,8 +301,66 @@ export class AuthStore implements AuthStorePort {
     });
   }
 
-  public listDevices(): AuthDeviceRecord[] {
+  public async listDevices(): Promise<AuthDeviceRecord[]> {
     return this.db().select().from(authDevices).orderBy(asc(authDevices.createdAt)).all().map(toDeviceRecord);
+  }
+
+  private initializeServerId(): string {
+    const existing = this.rootDatabase
+      .select({ serverId: authMetadata.serverId })
+      .from(authMetadata)
+      .where(eq(authMetadata.id, 1))
+      .get();
+    if (existing?.serverId) return existing.serverId;
+
+    const serverId = randomOpaque(16);
+    const now = timestamp();
+    runSqliteTransaction(this.rootSqlite, () => {
+      const current = this.rootDatabase
+        .select({ serverId: authMetadata.serverId })
+        .from(authMetadata)
+        .where(eq(authMetadata.id, 1))
+        .get();
+      if (!current?.serverId) this.rootDatabase.insert(authMetadata).values({ id: 1, serverId, createdAt: now }).run();
+    });
+
+    const row = this.rootDatabase
+      .select({ serverId: authMetadata.serverId })
+      .from(authMetadata)
+      .where(eq(authMetadata.id, 1))
+      .get();
+    if (!row?.serverId)
+      throw new AuthStoreError("auth_metadata_missing", "muximod authentication metadata could not be initialized");
+    return row.serverId;
+  }
+
+  private findPairingRecord(pairingId: string): AuthPairingRecord | undefined {
+    const row = this.db().select().from(authPairings).where(eq(authPairings.pairingId, pairingId)).get();
+    if (!row) return undefined;
+    const pairing = toPairingRecord(row);
+    const now = timestamp();
+    if (pairing.expiresAt <= now && pairing.status === "offered") {
+      this.db()
+        .update(authPairings)
+        .set({ status: "expired" })
+        .where(and(eq(authPairings.pairingId, pairingId), eq(authPairings.status, "offered")))
+        .run();
+      return { ...pairing, status: "expired" };
+    }
+    if (pairing.claimExpiresAt && pairing.claimExpiresAt <= now && pairing.status === "awaiting_approval") {
+      this.db()
+        .update(authPairings)
+        .set({ status: "expired" })
+        .where(and(eq(authPairings.pairingId, pairingId), eq(authPairings.status, "awaiting_approval")))
+        .run();
+      return { ...pairing, status: "expired" };
+    }
+    return pairing;
+  }
+
+  private findDeviceRecord(deviceId: string): AuthDeviceRecord | undefined {
+    const row = this.db().select().from(authDevices).where(eq(authDevices.deviceId, deviceId)).get();
+    return row ? toDeviceRecord(row) : undefined;
   }
 
   private db(): AgentDrizzleDatabase {
@@ -353,7 +368,11 @@ export class AuthStore implements AuthStorePort {
   }
 
   private runTransaction<Result>(operation: () => Result): Result {
-    if (currentSqliteTransaction()) return operation();
+    const current = currentSqliteTransaction();
+    if (current) {
+      assertSqliteTransactionIdentity(current, this.rootDatabase, this.rootSqlite);
+      return operation();
+    }
     return runSqliteTransaction(this.rootSqlite, operation);
   }
 }
@@ -369,16 +388,16 @@ function toPairingRecord(row: AuthPairingRow): AuthPairingRecord {
     status: row.status,
     offeredAt: row.offeredAt,
     expiresAt: row.expiresAt,
-    claimExpiresAt: row.claimExpiresAt,
-    claimedAt: row.claimedAt,
-    approvedAt: row.approvedAt,
-    pendingPublicKeyJwk: row.pendingPublicKeyJwk,
-    pendingFingerprint: row.pendingFingerprint,
-    pendingDisplayName: row.pendingDisplayName,
-    pendingDeviceType: row.pendingDeviceType,
-    pendingPlatform: row.pendingPlatform,
-    pendingClientVersion: row.pendingClientVersion,
-    deviceId: row.deviceId,
+    ...(row.claimExpiresAt === null ? {} : { claimExpiresAt: row.claimExpiresAt }),
+    ...(row.claimedAt === null ? {} : { claimedAt: row.claimedAt }),
+    ...(row.approvedAt === null ? {} : { approvedAt: row.approvedAt }),
+    ...(row.pendingPublicKeyJwk === null ? {} : { pendingPublicKey: parseStoredPublicKey(row.pendingPublicKeyJwk) }),
+    ...(row.pendingFingerprint === null ? {} : { pendingFingerprint: row.pendingFingerprint }),
+    ...(row.pendingDisplayName === null ? {} : { pendingDisplayName: row.pendingDisplayName }),
+    ...(row.pendingDeviceType === null ? {} : { pendingDeviceType: row.pendingDeviceType }),
+    ...(row.pendingPlatform === null ? {} : { pendingPlatform: row.pendingPlatform }),
+    ...(row.pendingClientVersion === null ? {} : { pendingClientVersion: row.pendingClientVersion }),
+    ...(row.deviceId === null ? {} : { deviceId: row.deviceId }),
   };
 }
 
@@ -386,17 +405,17 @@ function toDeviceRecord(row: AuthDeviceRow): AuthDeviceRecord {
   return {
     deviceId: row.deviceId,
     serverId: row.serverId,
-    publicKeyJwk: row.publicKeyJwk,
+    publicKey: parseStoredPublicKey(row.publicKeyJwk),
     keyFingerprint: row.keyFingerprint,
     displayName: row.displayName,
     deviceType: row.deviceType,
-    platform: row.platform,
-    clientVersion: row.clientVersion,
+    ...(row.platform === null ? {} : { platform: row.platform }),
+    ...(row.clientVersion === null ? {} : { clientVersion: row.clientVersion }),
     status: row.status,
     createdAt: row.createdAt,
     approvedAt: row.approvedAt,
-    lastSeenAt: row.lastSeenAt,
-    revokedAt: row.revokedAt,
+    ...(row.lastSeenAt === null ? {} : { lastSeenAt: row.lastSeenAt }),
+    ...(row.revokedAt === null ? {} : { revokedAt: row.revokedAt }),
   };
 }
 
@@ -414,8 +433,36 @@ function toSessionRecord(row: {
     deviceId: row.deviceId,
     issuedAt: row.issuedAt,
     expiresAt: row.expiresAt,
-    revokedAt: row.revokedAt ?? null,
+    ...(row.revokedAt === null ? {} : { revokedAt: row.revokedAt }),
   };
+}
+
+function parseStoredPublicKey(value: string): PublicKeyJwk {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new AuthStoreError("device_key_invalid", "stored device public key is invalid");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new AuthStoreError("device_key_invalid", "stored device public key is invalid");
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    record.kty !== "EC" ||
+    record.crv !== "P-256" ||
+    typeof record.x !== "string" ||
+    typeof record.y !== "string" ||
+    !isBase64Url(record.x) ||
+    !isBase64Url(record.y)
+  ) {
+    throw new AuthStoreError("device_key_invalid", "stored device public key is invalid");
+  }
+  return { kty: "EC", crv: "P-256", x: record.x, y: record.y };
+}
+
+function isBase64Url(value: string): boolean {
+  return value.length > 0 && /^[A-Za-z0-9_-]+$/.test(value);
 }
 
 function randomOpaque(bytes: number): string {

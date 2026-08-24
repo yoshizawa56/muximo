@@ -49,6 +49,7 @@ export class SqliteTransactionManager implements TransactionManager {
   public async run<Result>(operation: () => Promise<Result>): Promise<Result> {
     const current = currentSqliteTransaction();
     if (current?.owner === this) return operation();
+    if (current) throw new Error("SQLite transaction owner mismatch");
     if (this.closed) throw new Error("SQLite transaction manager is closed");
 
     const release = await this.mutex.acquire();
@@ -74,6 +75,8 @@ export class SqliteTransactionManager implements TransactionManager {
         started = true;
         const scope: SqliteTransactionScope = {
           owner: this,
+          rootDatabase: this.root.db,
+          rootSqlite: this.root.sqlite,
           database: this.database,
           sqlite: this.sqlite,
         };

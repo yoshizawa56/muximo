@@ -1,7 +1,55 @@
 export { InvalidWorkspaceCopyPatternError, InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
 export type {
+  AgentBackendResumeState,
+  AgentSessionExecutionHealth,
+  AgentSessionListInput,
+  AgentSessionListObservation,
+  AgentSessionListProjection,
+  AgentSessionListResult,
+  AgentSessionResumeReason,
+  AgentSessionResumeState,
+  AgentSessionWorktreeState,
+  CleanupAgentSessionInput,
+  CleanupAgentSessionResult,
+  CleanupDisposition,
+  CleanupReason,
+  CleanupResult,
+  HookPort,
+  HookResult,
+  HookSessionUpdate,
+  LaunchExecution,
+  LaunchPlan,
+  LaunchPreparation,
+  ManagedAgentSessionRepository,
+  ManagedWorktreeState,
+  PanePublicationPort,
+  ProcessObservationPort,
+  ProcessResult,
+  RemoteSessionPort,
+  ResumeAgentSessionInput,
+  ResumeAgentSessionResult,
+  RunAgentSessionResult,
+  SessionAuditPort,
+  SessionBaselineResult,
+  SessionCleanupConfirmationPort,
+  SessionClock,
+  SessionIdentityUpdate,
+  SessionLauncherPort,
+  SessionListClock,
+  SessionLogger,
+  SessionNamingPort,
+  SessionObservationPort,
+  SessionResourcePort,
+  StartAgentSessionInput,
+  WorkspaceResolverPort,
+  WorkspaceScope,
+  WorktreePort,
+} from "./ports/agent-sessions.js";
+export type {
+  ApplicationClock,
   CreatePaneInput,
   CreateSessionInput,
+  MuximodClock,
   MuximodPanePlacement,
   MuximodPaneSummary,
   MuximodSessionSummary,
@@ -10,19 +58,21 @@ export type {
   RegisterWorkspaceCommand,
   UpdateWorkspaceCommand,
 } from "./ports/application.js";
-export { ApplicationError, type MuximodApplication, type MuximodHookEvent } from "./ports/application.js";
+export { ApplicationError, type MuximodApplication, type TerminalHostHookEvent } from "./ports/application.js";
 export type {
   AuthChallengeStorePort,
+  AuthConnectionPort,
   AuthCryptoPort,
+  AuthPairingClaimSinkPort,
   AuthRateLimitStorePort,
   AuthStorePort,
   AuthWsTicketStorePort,
   ChallengeRateWindow,
+  Clock,
   MuximodAuthControlPort,
   MuximodAuthPort,
   PendingChallengeRecord,
   PendingWsTicketRecord,
-  TrackedSocketRegistryPort,
 } from "./ports/auth.js";
 export type {
   AuthChallengeResponse,
@@ -47,13 +97,32 @@ export type {
   WsTicketResponse,
 } from "./ports/auth-types.js";
 export type {
+  DaemonClock,
+  DaemonEnsureResult,
+  DaemonHealthFailureContext,
+  DaemonHealthFailureReason,
+  DaemonOptions,
+  DaemonPidRecord,
+  DaemonProcessHandle,
+  DaemonRestartResult,
+  DaemonRuntimePort,
+  DaemonScheduler,
+  DaemonStartResult,
+  DaemonStatusResult,
+  DaemonStopResult,
+} from "./ports/daemon.js";
+export { DaemonHealthError } from "./ports/daemon.js";
+export type {
   AgentExecutionObservation,
+  HostPaneReference,
+  HostPaneSnapshot,
   MuximodHostPort,
-  MuximodLiveSnapshot,
-  MuximodPaneRef,
-  MuximodPaneSnapshot,
+  MuximodPaneClassification,
+  MuximodPaneObservation,
+  MuximodTerminalObservationPort,
   MuximodViewportPort,
   MuximodWorkspaceCatalogPort,
+  TerminalHostSnapshot,
 } from "./ports/host.js";
 export type { PairingControlPort, PairingPresenterPort } from "./ports/pairing.js";
 export type {
@@ -66,20 +135,47 @@ export type {
 export type { PaneGateway } from "./ports/panes.js";
 export type {
   AgentSessionRepository,
+  ClaimExecutionInput,
   PaneFilter,
   PaneRepository,
   WorkspaceRepository,
 } from "./ports/repositories.js";
-export { type MuximodSocket, type MuximodSocketData, muximodSocketReadyState } from "./ports/socket.js";
+export type {
+  RunShellDependencies,
+  RunShellInput,
+  SessionWorktreeLookupPort,
+  ShellHookPort,
+  ShellPanePort,
+  ShellProcessInput,
+  ShellProcessPort,
+  ShellWorktree,
+  ShellWorktreePort,
+} from "./ports/shell.js";
 export type { TransactionManager } from "./ports/transactions.js";
 export type {
   WorkspaceAuditPort,
   WorkspaceDirectoryInfo,
   WorkspaceDirectoryPort,
 } from "./ports/workspace.js";
+export { CleanupAgentSession } from "./usecases/agent-sessions/cleanup-session.js";
+export {
+  ListAgentSessions,
+  projectAgentSession,
+  sessionListPolicy,
+  shouldCheckAgentSessionWorktree,
+} from "./usecases/agent-sessions/list-sessions.js";
+export { LocateAgentSession } from "./usecases/agent-sessions/locate-session.js";
+export { ResumeAgentSession } from "./usecases/agent-sessions/resume-session.js";
+export { RunAgentSession } from "./usecases/agent-sessions/run-session.js";
 export { AuthStoreError } from "./usecases/auth/auth-errors.js";
 export type { AuthServiceOptions } from "./usecases/auth/auth-service.js";
 export { AuthService } from "./usecases/auth/auth-service.js";
+export { authChallengeTtlMs, authRateWindowMax, authRateWindowMs } from "./usecases/auth/create-challenge.js";
+export { EnsureDaemon } from "./usecases/daemon/ensure-daemon.js";
+export { RestartDaemon, type RestartDaemonDependencies } from "./usecases/daemon/restart-daemon.js";
+export { StartDaemon, type StartDaemonDependencies, type StartDaemonInput } from "./usecases/daemon/start-daemon.js";
+export { StatusDaemon } from "./usecases/daemon/status-daemon.js";
+export { StopDaemon } from "./usecases/daemon/stop-daemon.js";
 export {
   createMuximodApplication,
   type MuximodApplicationResources,
@@ -94,11 +190,11 @@ export {
   type AgentStatusObservation,
   type AgentStatusStore,
   agentStatusKey,
-  inferUnmanagedAgentState,
   normalizeAgentStatusObservation,
   readManagedAgentObservation,
   recentAgentOutputLimits,
 } from "./usecases/sessions/agent-status.js";
+export { RunShell, type RunShellResult } from "./usecases/shell/run-shell.js";
 // Workspace use cases (one file per operation)
 export { DeleteWorkspace } from "./usecases/workspaces/delete-workspace.js";
 export { ListWorkspaces } from "./usecases/workspaces/list-workspaces.js";

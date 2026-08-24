@@ -1,24 +1,20 @@
-import type { AuthCryptoPort, AuthStorePort } from "../../ports/auth.js";
-import type {
-  AuthPairingClaimNotification,
-  AuthPairingClaimRequest,
-  AuthPairingClaimResponse,
-} from "../../ports/auth-types.js";
+import type { AuthCryptoPort, AuthPairingClaimSinkPort, AuthStorePort, Clock } from "../../ports/auth.js";
+import type { AuthPairingClaimRequest, AuthPairingClaimResponse } from "../../ports/auth-types.js";
 import { AuthStoreError } from "./auth-errors.js";
 
 const CLAIM_TTL_MS = 10 * 60_000;
 
-export function claimPairing(
+export async function claimPairing(
   deps: {
     store: AuthStorePort;
     crypto: AuthCryptoPort;
     serverId: string;
-    now?: () => Date;
-    onClaimed?: (notification: AuthPairingClaimNotification) => void;
+    clock: Clock;
+    claimSink: AuthPairingClaimSinkPort;
   },
   pairingId: string,
   request: AuthPairingClaimRequest,
-): AuthPairingClaimResponse {
+): Promise<AuthPairingClaimResponse> {
   const keyFingerprint = deps.crypto.fingerprint(request.publicKey);
   const secretHash = deps.crypto.hashOpaque(request.pairingSecret);
   const message = deps.crypto.pairingClaimMessage({
@@ -33,28 +29,28 @@ export function claimPairing(
   }
 
   const claimToken = deps.crypto.randomOpaque(32);
-  const now = deps.now?.() ?? new Date();
+  const now = deps.clock.now();
   const claimExpiresAt = new Date(now.getTime() + CLAIM_TTL_MS).toISOString();
-  const _result = deps.store.claimPairing({
+  await deps.store.claimPairing({
     pairingId,
     secretHash,
     claimToken,
     claimExpiresAt,
-    publicKeyJwk: JSON.stringify(request.publicKey),
+    publicKey: request.publicKey,
     keyFingerprint,
     displayName: request.deviceName,
     deviceType: request.deviceType,
-    platform: request.platform ?? null,
-    clientVersion: request.clientVersion ?? null,
+    ...(request.platform === undefined ? {} : { platform: request.platform }),
+    ...(request.clientVersion === undefined ? {} : { clientVersion: request.clientVersion }),
   });
 
-  deps.onClaimed?.({
+  await deps.claimSink.publish({
     pairingId,
     serverId: deps.serverId,
     deviceName: request.deviceName,
     deviceType: request.deviceType,
-    platform: request.platform ?? null,
-    clientVersion: request.clientVersion ?? null,
+    ...(request.platform === undefined ? {} : { platform: request.platform }),
+    ...(request.clientVersion === undefined ? {} : { clientVersion: request.clientVersion }),
     keyFingerprint,
     expiresAt: claimExpiresAt,
   });

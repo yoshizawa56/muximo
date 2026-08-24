@@ -1,4 +1,5 @@
 import { clearPatch, type Patch, Workspace, type WorkspaceRecord } from "@muximo/domain";
+import type { ApplicationClock } from "../../ports/application.js";
 import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
 import type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "./workspace-inputs.js";
 
@@ -6,12 +7,12 @@ import type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "./workspace-i
 export class WorkspaceRecordFactory {
   public constructor(
     private readonly directories: WorkspaceDirectoryPort,
-    private readonly now: () => string = () => new Date().toISOString(),
+    private readonly clock: ApplicationClock,
   ) {}
 
   public async create(input: RegisterWorkspaceInput, existing?: WorkspaceRecord): Promise<WorkspaceRecord> {
     const directory = await this.directories.resolveDirectory(input.directory);
-    const now = this.now();
+    const now = this.clock.now();
     const setupScriptPath = await this.resolveCreateHook(input.setupHook, directory.rootPath);
     const cleanupScriptPath = await this.resolveCreateHook(input.cleanupHook, directory.rootPath);
     return Workspace.create({
@@ -37,6 +38,7 @@ export class WorkspaceRecordFactory {
       worktreeCopyPatterns: input.worktreeCopyPatterns,
       appendWorktreeCopyPatterns: input.appendCopyPatterns,
       clearWorktreeCopyPatterns: input.clearCopyPatterns,
+      updatedAt: this.clock.now(),
     });
   }
 

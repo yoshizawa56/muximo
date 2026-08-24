@@ -87,6 +87,7 @@ export type WorkspaceUpdateInput = {
   worktreeCopyPatterns?: readonly string[];
   appendWorktreeCopyPatterns?: readonly string[];
   clearWorktreeCopyPatterns?: boolean;
+  updatedAt?: string;
 };
 const parseWorkspace = (input: unknown): Workspace => workspaceSchema.parse(input);
 
@@ -124,6 +125,7 @@ export const Workspace = {
       setupScriptPath: applyPatch(current.setupScriptPath, input.setupScriptPath),
       cleanupScriptPath: applyPatch(current.cleanupScriptPath, input.cleanupScriptPath),
       worktreeCopyPatterns: validateWorktreeCopyPatterns(patterns),
+      updatedAt: input.updatedAt === undefined ? current.updatedAt : input.updatedAt,
     });
   },
 
@@ -238,7 +240,8 @@ function hasWorkspaceUpdate(input: WorkspaceUpdateInput): boolean {
     input.cleanupScriptPath !== undefined ||
     input.worktreeCopyPatterns !== undefined ||
     (input.appendWorktreeCopyPatterns?.length ?? 0) > 0 ||
-    input.clearWorktreeCopyPatterns === true
+    input.clearWorktreeCopyPatterns === true ||
+    input.updatedAt !== undefined
   );
 }
 

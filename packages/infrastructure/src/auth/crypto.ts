@@ -1,6 +1,6 @@
 // Node crypto is the infrastructure implementation of the application crypto port.
 import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
-import { type AuthCryptoPort, AuthStoreError, type PublicKeyJwk } from "@muximo/application";
+import type { AuthCryptoPort } from "@muximo/application";
 import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 
 export const nodeAuthCrypto: AuthCryptoPort = {
@@ -26,22 +26,6 @@ export const nodeAuthCrypto: AuthCryptoPort = {
     } catch {
       return false;
     }
-  },
-  parsePublicKey(value): PublicKeyJwk {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      throw new AuthStoreError("device_key_invalid", "stored device public key is invalid");
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new AuthStoreError("device_key_invalid", "stored device public key is invalid");
-    }
-    const record = parsed as Record<string, unknown>;
-    if (record.kty !== "EC" || record.crv !== "P-256" || typeof record.x !== "string" || typeof record.y !== "string") {
-      throw new AuthStoreError("device_key_invalid", "stored device public key is invalid");
-    }
-    return { kty: "EC", crv: "P-256", x: record.x, y: record.y };
   },
 };
 

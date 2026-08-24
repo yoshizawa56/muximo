@@ -25,7 +25,6 @@ export class RegisterWorkspace {
           isGit: candidate.isGit,
         });
       }
-      await this.workspaces.upsert(candidate);
       await this.audit?.record("workspace.created", candidate.id, {
         name: candidate.name,
         directory: candidate.rootPath,

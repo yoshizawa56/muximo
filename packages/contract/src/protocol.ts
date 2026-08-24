@@ -46,6 +46,8 @@ const displayValueSchema = z
   .max(120)
   .regex(/^[^\u0000\r\n]+$/);
 
+const tmuxPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
+
 export const publicKeyJwkSchema = z
   .object({
     kty: z.literal("EC"),
@@ -114,7 +116,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("adopt_agent_session"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+      tmuxPaneId: tmuxPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
     })
     .strict(),
@@ -122,7 +124,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("release_agent_session"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+      tmuxPaneId: tmuxPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
     })
     .strict(),
@@ -130,7 +132,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("observe_agent_session"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+      tmuxPaneId: tmuxPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
       state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
       recentOutput: z.string().max(2_000).optional(),
@@ -178,7 +180,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("agent_session_adopted"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+      tmuxPaneId: tmuxPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
     })
     .strict(),
@@ -186,7 +188,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("agent_session_released"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+      tmuxPaneId: tmuxPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
     })
     .strict(),
@@ -194,7 +196,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("agent_session_observed"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: z.string().regex(/^%[0-9]+$/),
+      tmuxPaneId: tmuxPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
       state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
     })
@@ -479,36 +481,26 @@ export const clientControlMessageSchema = z.discriminatedUnion("type", [
 
 export type ClientControlMessage = z.infer<typeof clientControlMessageSchema>;
 
-export type ClientControlFrameDecode =
-  | { ok: true; message: ClientControlMessage }
+type TerminalControlFrameDecode<T> =
+  | { ok: true; message: T }
   | { ok: false; code: "invalid_json" | "unsupported_version" | "invalid_message"; message: string };
+
+export type ClientControlFrameDecode = TerminalControlFrameDecode<ClientControlMessage>;
+
+/** Validates and encodes a client control message for a text WebSocket frame. */
+export function encodeClientControlFrame(message: ClientControlMessage): string {
+  return JSON.stringify(clientControlMessageSchema.parse(message));
+}
 
 /** Decodes and validates a text WebSocket control frame at the protocol boundary. */
 export function decodeClientControlFrame(data: string | Uint8Array): ClientControlFrameDecode {
-  let input: unknown;
-  try {
-    input = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data)) as unknown;
-  } catch {
-    return { ok: false, code: "invalid_json", message: "Invalid JSON control frame" };
-  }
-
-  if (isRecord(input) && "version" in input && input.version !== terminalProtocolVersion) {
-    return {
-      ok: false,
-      code: "unsupported_version",
-      message: `Unsupported terminal protocol version: ${String(input.version)}`,
-    };
-  }
-
-  const parsed = clientControlMessageSchema.safeParse(input);
-  return parsed.success
-    ? { ok: true, message: parsed.data }
-    : { ok: false, code: "invalid_message", message: parsed.error.message };
+  return decodeTerminalControlFrame(data, clientControlMessageSchema);
 }
 
 export const paneSummarySchema = z.object({
   id: paneIdWireSchema,
-  tmuxPaneId: Pane.schema.shape.tmuxPaneId,
+  // Stable wire compatibility name. The application/domain field is hostPaneId.
+  tmuxPaneId: tmuxPaneIdWireSchema,
   sessionName: Pane.schema.shape.sessionName,
   windowId: Pane.schema.shape.windowId,
   kind: paneKindSchema,
@@ -692,6 +684,13 @@ export const serverControlMessageSchema = z.discriminatedUnion("type", [
 
 export type ServerControlMessage = z.infer<typeof serverControlMessageSchema>;
 
+export type ServerControlFrameDecode = TerminalControlFrameDecode<ServerControlMessage>;
+
+/** Decodes and validates a text WebSocket control frame at the protocol boundary. */
+export function decodeServerControlFrame(data: string | Uint8Array): ServerControlFrameDecode {
+  return decodeTerminalControlFrame(data, serverControlMessageSchema);
+}
+
 /** Validates and encodes a server control message for a text WebSocket frame. */
 export function encodeServerControlFrame(message: ServerControlMessage): string {
   return JSON.stringify(serverControlMessageSchema.parse(message));
@@ -724,6 +723,28 @@ function decodeControlFrame<T>(
   return parsed.success
     ? { ok: true, value: parsed.data as T }
     : { ok: false, code: "invalid_shape", message: "control frame has an invalid shape" };
+}
+
+function decodeTerminalControlFrame<T>(data: string | Uint8Array, schema: z.ZodType<T>): TerminalControlFrameDecode<T> {
+  let input: unknown;
+  try {
+    input = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data));
+  } catch {
+    return { ok: false, code: "invalid_json", message: "Invalid JSON control frame" };
+  }
+
+  if (isRecord(input) && "version" in input && input.version !== terminalProtocolVersion) {
+    return {
+      ok: false,
+      code: "unsupported_version",
+      message: `Unsupported terminal protocol version: ${String(input.version)}`,
+    };
+  }
+
+  const parsed = schema.safeParse(input);
+  return parsed.success
+    ? { ok: true, message: parsed.data }
+    : { ok: false, code: "invalid_message", message: parsed.error.message };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

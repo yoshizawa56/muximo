@@ -11,7 +11,9 @@ import {
 import { EventPublisher } from "@orpc/server";
 import { describe, it } from "vitest";
 import { createMuximodApp } from "./app.js";
+import { createOriginPolicy } from "./middleware.js";
 import { createHttpTestClient } from "./test-client.js";
+import { createTestMuximodSocketFactory } from "./test-socket.js";
 
 const event: MuximodEvent = {
   type: "session_updated",
@@ -25,21 +27,16 @@ const authContext = {
   deviceId: "device-events-test-00000",
   issuedAt: "2026-08-15T00:00:00.000Z",
   expiresAt: "2099-08-15T00:00:00.000Z",
-  revokedAt: null,
   device: {
     deviceId: "device-events-test-00000",
     serverId: "server-events-test-00000",
-    publicKeyJwk: "{}",
+    publicKey: { kty: "EC" as const, crv: "P-256" as const, x: "x", y: "y" },
     keyFingerprint: "fingerprint-events-test",
     displayName: "Events test",
     deviceType: "browser" as const,
-    platform: null,
-    clientVersion: null,
     status: "active" as const,
     createdAt: "2026-08-15T00:00:00.000Z",
     approvedAt: "2026-08-15T00:00:00.000Z",
-    lastSeenAt: null,
-    revokedAt: null,
   },
 };
 
@@ -59,8 +56,9 @@ const eventFixture = (): FixtureHandle<EventFixture> => {
   const app = createMuximodApp({
     auth: testAuth,
     application: createApplication(),
-    corsOrigin: "*",
+    originPolicy: createOriginPolicy({ allowedOrigins: ["http://muximod.local"], allowNoOrigin: true }),
     hookToken: "hook",
+    socketFactory: createTestMuximodSocketFactory(),
     subscribeEvents: (signal) => publisher.subscribe("muximod", { signal }),
   });
   globalThis.fetch = (async (input, init) => {
@@ -71,6 +69,7 @@ const eventFixture = (): FixtureHandle<EventFixture> => {
     publisher,
     client: createHttpTestClient({
       httpBaseUrl: "http://muximod.local",
+      origin: "http://muximod.local",
       auth: { getAccessToken: async () => "events-token" },
     }),
     originalFetch,
@@ -118,23 +117,23 @@ describe("muximod event transport", () => {
 
 const testAuth: MuximodAuthPort = {
   serverId: authContext.serverId,
-  authenticateAccessToken: (token) => (token === "events-token" ? authContext : null),
-  claimPairing: () => {
+  authenticateAccessToken: async (token) => (token === "events-token" ? authContext : undefined),
+  claimPairing: async () => {
     throw new Error("not used");
   },
-  pairingStatus: () => {
+  pairingStatus: async () => {
     throw new Error("not used");
   },
-  createChallenge: () => {
+  createChallenge: async () => {
     throw new Error("not used");
   },
-  createSession: () => {
+  createSession: async () => {
     throw new Error("not used");
   },
-  issueWebSocketTicket: () => {
+  issueWebSocketTicket: async () => {
     throw new Error("not used");
   },
-  consumeWebSocketTicket: () => null,
+  consumeWebSocketTicket: async () => undefined,
 };
 
 function createApplication(): MuximodApplication {
@@ -162,12 +161,6 @@ function createApplication(): MuximodApplication {
       delete: async () => {
         throw new Error("not used");
       },
-      resolveDirectory: async () => {
-        throw new Error("not used");
-      },
-      resolveSelection: async () => {
-        throw new Error("not used");
-      },
     },
     sessions: {
       list: async () => [],
@@ -181,6 +174,6 @@ function createApplication(): MuximodApplication {
         throw new Error("not used");
       },
     },
-    hooks: { handleTmux: () => undefined },
+    hooks: { handleTerminalHostHook: async () => undefined },
   };
 }

@@ -1,5 +1,7 @@
 import {
+  type FixtureHandle,
   hasError,
+  hasObserved,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -24,6 +26,7 @@ const serverEntry: OpenCodeServerEntry = {
 
 function fakeManager(
   overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown> } = {},
+  onDispose: () => void = () => undefined,
 ): OpenCodeServerManager {
   return {
     ensure: async (root: string) => {
@@ -31,7 +34,10 @@ function fakeManager(
       return { ...serverEntry, workspaceRoot: root };
     },
     isHealthy: async () => true,
-    dispose: async () => true,
+    dispose: async () => {
+      onDispose();
+      return true;
+    },
     disposeAll: async () => undefined,
     list: () => [serverEntry],
   } as unknown as OpenCodeServerManager;
@@ -251,6 +257,81 @@ const table: OperationTable<undefined, "default", PluginInput, PluginResult, Emp
 
 describe("opencode plugin", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
+});
+
+type LifecycleInput = "release" | "prepare-failure";
+type LifecycleFixtureKey = "prepare-failure";
+type LifecycleResult = undefined;
+type LifecycleContext = { disposeCalls: number };
+type LifecycleFixture = {
+  plugin: AgentPluginV1;
+  disposeCalls: { count: number };
+};
+
+const lifecycleCases = [
+  {
+    name: "shares one disposal between the sidecar and launch plan hooks",
+    input: "release" as const,
+    assert: [hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1)],
+  },
+  {
+    name: "releases a prepared server when session preparation fails",
+    fixture: "prepare-failure" as const,
+    input: "prepare-failure" as const,
+    assert: [
+      hasError<LifecycleContext, LifecycleResult>({ code: "opencode_session_not_found" }),
+      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1),
+    ],
+  },
+] satisfies readonly OperationCase<LifecycleFixtureKey, LifecycleInput, LifecycleResult, LifecycleContext>[];
+
+const lifecycleTable: OperationTable<
+  LifecycleFixture,
+  LifecycleFixtureKey,
+  LifecycleInput,
+  LifecycleResult,
+  LifecycleContext
+> = {
+  defaultFixture: () => createLifecycleFixture(true),
+  fixtures: { "prepare-failure": () => createLifecycleFixture(false) },
+  cases: lifecycleCases,
+  execute: async (fixture, input) => {
+    const plan = await fixture.plugin.prepareLaunch!({
+      cwd: "/workspace",
+      args: [],
+      environment: {},
+      monitorContext: {
+        sessionId: "mobile-session",
+        executionId: "execution-1",
+        cwd: "/workspace",
+        startedAt: "2026-08-15T00:00:00.000Z",
+        backendSessionId: input === "prepare-failure" ? "session-gone" : null,
+        environment: {},
+      },
+      resumeSessionId: input === "prepare-failure" ? "session-gone" : null,
+    });
+    if (input === "release") {
+      await Promise.all([plan.sidecars?.[0]?.stop(), plan.dispose?.()]);
+    }
+  },
+  observe: (fixture) => ({ disposeCalls: fixture.disposeCalls.count }),
+};
+
+function createLifecycleFixture(sessionExists: boolean): FixtureHandle<LifecycleFixture> {
+  const disposeCalls = { count: 0 };
+  const plugin = createOpenCodePlugin({
+    serverManager: fakeManager({}, () => {
+      disposeCalls.count += 1;
+    }),
+    clientFactory: () =>
+      fakeClient({ createdTitles: [], renamedSessions: [] }, sessionExists ? { "session-resumed": {} } : {}),
+    monitorFactory: () => new PassThroughMonitor(),
+  });
+  return { fixture: { plugin, disposeCalls } };
+}
+
+describe("opencode plugin lifecycle", () => {
+  runOperationTable(it as unknown as TestRegistrar, lifecycleTable);
 });
 
 class PassThroughMonitor implements AgentMonitor {

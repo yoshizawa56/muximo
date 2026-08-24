@@ -2,6 +2,7 @@ import type { WorkspaceDirectory } from "@muximo/contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { invalidateWorkspaceData } from "../../app/api/invalidation";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 
@@ -85,13 +86,7 @@ export function useWorkspacesListViewModel(): WorkspacesListViewModel {
     },
     onSuccess: (response) => {
       const workspace = response.workspace;
-      queryClient.setQueryData(utils.workspaces.list.queryKey({ input: {} }), (current) => {
-        if (!current) return current;
-        const workspaces = [...current.workspaces.filter((candidate) => candidate.id !== workspace.id), workspace].sort(
-          (left, right) => left.name.localeCompare(right.name),
-        );
-        return { ...current, workspaces };
-      });
+      invalidateWorkspaceData(queryClient, utils);
       void navigate({ to: "/workspaces/$workspaceId", params: { workspaceId: workspace.id } });
     },
   });

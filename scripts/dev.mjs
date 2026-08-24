@@ -84,6 +84,17 @@ export function resolveDevConfig(environment = process.env, cwd = process.cwd())
     }
   }
 
+  baseEnvironment = {
+    ...baseEnvironment,
+    MUXIMOD_ALLOWED_ORIGINS: resolveDevBrowserOrigins({
+      environment: baseEnvironment,
+      webHost,
+      webPort,
+      serveProvider,
+      servePort,
+    }),
+  };
+
   return {
     ...DEFAULT_DEV_CONFIG,
     repoRoot: cwd,
@@ -154,6 +165,41 @@ function appendAllowedHost(value, hostname) {
     .filter(Boolean);
   if (!hosts.includes(hostname)) hosts.push(hostname);
   return hosts.join(",");
+}
+
+function resolveDevBrowserOrigins({ environment, webHost, webPort, serveProvider, servePort }) {
+  const configured = environment.MUXIMOD_ALLOWED_ORIGINS;
+  if (configured !== undefined) return normalizeBrowserOrigins(configured.split(","));
+
+  const localHost = browserHost(webHost);
+  const origins = [`http://${formatHost(localHost)}:${webPort}`];
+  if (serveProvider === "tailscale" && environment.MUXIMO_TAILSCALE_HOSTNAME) {
+    const port = servePort ?? 443;
+    origins.push(
+      port === 443
+        ? `https://${environment.MUXIMO_TAILSCALE_HOSTNAME}`
+        : `https://${environment.MUXIMO_TAILSCALE_HOSTNAME}:${port}`,
+    );
+  }
+  return normalizeBrowserOrigins(origins);
+}
+
+function normalizeBrowserOrigins(values) {
+  const origins = new Set();
+  for (const value of values) {
+    const origin = value.trim();
+    if (!origin) continue;
+    if (origin === "*") throw new DevRuntimeError("wildcard browser origins are not allowed");
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new DevRuntimeError(`browser origin must use http or https: ${origin}`);
+    }
+    if (parsed.origin !== origin.replace(/\/$/u, "")) {
+      throw new DevRuntimeError(`browser origin must not include a path: ${origin}`);
+    }
+    origins.add(parsed.origin);
+  }
+  return [...origins].sort().join(",");
 }
 
 function endpoint(host, port, pathname = "/") {

@@ -68,8 +68,8 @@ const integrationFixture = (): FixtureHandle<IntegrationFixture> => {
   fixture.expectedCwd = realpathSync(tmux.directory);
   return {
     fixture,
-    cleanup: () => {
-      fixture.pty?.kill();
+    cleanup: async () => {
+      await fixture.pty?.kill();
       fixture.manager?.dispose();
       fixture.tmux.dispose();
     },
@@ -105,32 +105,33 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
       if (step.type !== "run") continue;
       fixture.selectedPaneId = fixture.tmux.createSplitWindow();
       fixture.manager = new TmuxViewportManager(fixture.tmux.adapter);
-      const prepared = fixture.manager.prepare(fixture.selectedPaneId, "/tmp", 80, 24);
+      const prepared = await fixture.manager.prepare(fixture.selectedPaneId, "/tmp", 80, 24);
       const staged = fixture.tmux.adapter.snapshotWindow(prepared.pane);
       fixture.stagedZoomed = staged.zoomed;
       fixture.stagedSelected = staged.activePaneId === fixture.selectedPaneId;
       fixture.stagedVisible = !staged.visibleLayout.includes("{");
-      fixture.pty = spawnPty("tmux", fixture.tmux.adapter.attachArgs(prepared.pane.paneId), {
+      fixture.pty = await spawnPty("tmux", fixture.tmux.adapter.attachArgs(prepared.pane.paneId), {
         name: "xterm-256color",
         cols: 80,
         rows: 24,
         cwd: "/tmp",
         env: { ...process.env, TERM: "xterm-256color" },
       });
-      fixture.pty.onData((data) => {
+      const pty = fixture.pty;
+      pty.onData((data) => {
         fixture.output += data;
       });
-      const lease = await prepared.attach({ ptyPid: fixture.pty.pid, cols: 80, rows: 24, onEvent: () => undefined });
+      const lease = await prepared.attach({ ptyPid: pty.pid, cols: 80, rows: 24, onEvent: () => undefined });
       await delay(100);
       const final = fixture.tmux.adapter.snapshotWindow(prepared.pane);
-      const client = fixture.tmux.adapter.findClientByPid(fixture.pty.pid);
+      const client = fixture.tmux.adapter.findClientByPid(pty.pid);
       fixture.finalZoomed = final.zoomed;
       fixture.finalSelected = final.activePaneId === fixture.selectedPaneId;
       fixture.finalVisible = !final.visibleLayout.includes("{");
       fixture.clientSelected = client?.paneId === fixture.selectedPaneId;
       fixture.outputHasErase = fixture.output.includes("\u001b[K");
       fixture.tmux.adapter.splitWindow(undefined, "right", fixture.selectedPaneId, true);
-      fixture.manager.reassertMobileViewport(fixture.selectedPaneId);
+      await fixture.manager.reassertMobileViewport(fixture.selectedPaneId);
       await delay(100);
       const afterSplit = fixture.tmux.adapter.snapshotWindow(prepared.pane);
       fixture.afterSplitCwd =
@@ -139,7 +140,7 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
       fixture.afterSplitZoomed = afterSplit.zoomed;
       fixture.afterSplitSelected = afterSplit.activePaneId === fixture.selectedPaneId;
       fixture.afterSplitVisible = !afterSplit.visibleLayout.includes("{");
-      lease.release();
+      await lease.release();
     }
   },
   observe: (fixture) => ({

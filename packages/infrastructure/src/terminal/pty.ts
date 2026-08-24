@@ -1,33 +1,12 @@
-/** Terminal adapter contract for PTY processes; it remains outside application policy. */
-export type PtyExit = {
-  exitCode: number;
-  signal: number | null;
-};
+import type { PtyExit, PtyProcess, PtySpawnOptions } from "./contracts.js";
 
-export type PtySpawnOptions = {
-  name: string;
-  cols: number;
-  rows: number;
-  cwd: string;
-  env: Record<string, string>;
-};
-
-export type PtyProcess = {
-  readonly pid: number;
-  onData(listener: (data: string) => void): { dispose: () => void };
-  onExit(listener: (event: PtyExit) => void): { dispose: () => void };
-  write(data: string): void;
-  resize(cols: number, rows: number): void;
-  kill(): void;
-};
-
-export type PtySpawner = (file: string, args: string[], options: PtySpawnOptions) => PtyProcess;
+export type { PtyExit, PtyProcess, PtySpawner, PtySpawnOptions } from "./contracts.js";
 
 /**
  * Bun-native PTY implementation used by both development and compiled builds.
  * Bun.Terminal owns the kernel PTY; Bun.spawn owns the child process lifecycle.
  */
-export function spawnPty(file: string, args: string[], options: PtySpawnOptions): PtyProcess {
+export async function spawnPty(file: string, args: string[], options: PtySpawnOptions): Promise<PtyProcess> {
   const dataListeners = new Set<(data: string) => void>();
   const exitListeners = new Set<(event: PtyExit) => void>();
   const decoder = new TextDecoder();
@@ -72,13 +51,13 @@ export function spawnPty(file: string, args: string[], options: PtySpawnOptions)
       exitListeners.add(listener);
       return { dispose: () => exitListeners.delete(listener) };
     },
-    write(data) {
+    async write(data) {
       if (!closed) terminal.write(data);
     },
-    resize(cols, rows) {
+    async resize(cols, rows) {
       if (!closed) terminal.resize(cols, rows);
     },
-    kill() {
+    async kill() {
       if (closed) return;
       child.kill();
       terminal.close();

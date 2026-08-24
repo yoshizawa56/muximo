@@ -33,7 +33,8 @@ export async function findWorkspace(
   }
 
   const byName = records.filter((workspace) => workspace.name === reference);
-  if (byName.length === 1) return byName[0]!;
+  const [workspace] = byName;
+  if (byName.length === 1 && workspace) return workspace;
   if (byName.length > 1) {
     throw new WorkspaceUseCaseError(
       "workspace_name_ambiguous",

@@ -1,6 +1,7 @@
 import type { WorkspaceDirectory } from "@muximo/contract";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
+import { invalidateWorkspaceData } from "../../../../app/api/invalidation";
 import { useMuximodConnection } from "../../../../app/api/use-muximod-connection";
 
 export type WorkspacePickerStatus = "loading" | "ready" | "error";
@@ -149,14 +150,7 @@ export function useWorkspacePickerViewModel({
       )
       .then((response) => {
         const workspace = response.workspace;
-        queryClient.setQueryData(utils.workspaces.list.queryKey({ input: {} }), (current) => {
-          if (!current) return current;
-          const workspaces = [
-            ...current.workspaces.filter((candidate) => candidate.id !== workspace.id),
-            workspace,
-          ].sort((left, right) => left.name.localeCompare(right.name));
-          return { ...current, workspaces };
-        });
+        invalidateWorkspaceData(queryClient, utils);
         setWorkspaceId(workspace.id);
         setRegistrationOpen(false);
         setRegistrationError(null);

@@ -1,19 +1,19 @@
-import type { PanePlacement, PaneSummary } from "@muximo/contract";
+import type { PanePlacement, PaneSummary, TerminalEndpoint, TmuxSession } from "@muximo/contract";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { invalidateSessionData } from "../../../../../../../app/api/invalidation";
 import { useMuximodConnection } from "../../../../../../../app/api/use-muximod-connection";
-import type { TerminalEndpoint, TmuxSession } from "../../../../../-connection-flow-viewmodel";
 import { fallbackSession, fallbackTerminal, useTerminalResources } from "../../../../../-terminal-resources";
 import {
   useWorkspacePickerViewModel,
   type WorkspacePickerViewModel,
   workspacePickerState,
 } from "../../../-workspace-picker-viewmodel";
+import type { NewPaneAgent } from "./-agent-options";
 
 export type NewPaneKind = "agent" | "shell";
-export type NewPaneAgent = "codex" | "claude" | "opencode";
+export type { NewPaneAgent } from "./-agent-options";
 
 export type NewPaneViewModel = {
   terminal: TerminalEndpoint;

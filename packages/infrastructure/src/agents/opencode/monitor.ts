@@ -65,8 +65,6 @@ export class OpenCodeMonitor implements AgentMonitor {
   private aborted = false;
   private reconnectAttempt = 0;
   private abortController: AbortController | undefined;
-  /** Last opened event stream, kept for diagnostics and lifecycle assertions. */
-  private stream: AsyncGenerator<OpenCodeEvent> | undefined;
 
   public constructor(private readonly options: OpenCodeMonitorOptions) {
     this.reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelay;
@@ -137,7 +135,6 @@ export class OpenCodeMonitor implements AgentMonitor {
       let stream: AsyncGenerator<OpenCodeEvent>;
       try {
         stream = this.options.client.events(signal);
-        this.stream = stream;
       } catch (error) {
         this.options.onLog?.("warn", "opencode.stream_open_failed", { error: messageOf(error) });
         await this.backoffAndReconcile();

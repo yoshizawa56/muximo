@@ -20,7 +20,8 @@ import { SendPaneInput } from "./send-pane-input.js";
 
 const pane: PaneRecord = Pane.create({
   id: PaneId.create("pane-1"),
-  tmuxPaneId: "%1",
+  hostPaneId: "%1",
+  hostServerId: "host-1",
   sessionName: "muximod",
   windowId: "@0",
   kind: "shell",
@@ -28,7 +29,7 @@ const pane: PaneRecord = Pane.create({
   cwd: "/tmp",
   workspaceId: undefined,
   agentId: undefined,
-  state: "running",
+  initialState: "running",
   title: undefined,
   lastSeenAt: "2026-08-09T00:00:00.000Z",
 });
@@ -41,11 +42,8 @@ class FakePanes implements PaneRepository {
   public async findById(id: PaneRecord["id"]) {
     return this.records.find((record) => record.id === id);
   }
-  public async findByTmuxPaneId(tmuxPaneId: string) {
-    return this.records.find((record) => record.tmuxPaneId === tmuxPaneId);
-  }
-  public async findByTmuxPaneIdentity(_tmuxServerId: string, tmuxPaneId: string) {
-    return this.records.find((record) => record.tmuxPaneId === tmuxPaneId);
+  public async findByHostPaneIdentity(hostServerId: string, hostPaneId: string) {
+    return this.records.find((record) => record.hostServerId === hostServerId && record.hostPaneId === hostPaneId);
   }
   public async upsert(record: PaneRecord) {
     this.records = [record];
@@ -53,7 +51,7 @@ class FakePanes implements PaneRepository {
   public async pruneStalePanes(
     _activePaneIds: readonly PaneRecord["id"][],
     _olderThan: string,
-    _tmuxServerScope: string,
+    _hostServerScope: string,
   ) {
     return 0;
   }
