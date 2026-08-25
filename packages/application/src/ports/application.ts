@@ -4,9 +4,6 @@ export type ApplicationClock = {
   now(): string;
 };
 
-/** @deprecated Use ApplicationClock in application use cases. */
-export type MuximodClock = ApplicationClock;
-
 export type TerminalHostHookEvent =
   | "client-attached"
   | "client-active"
@@ -34,7 +31,6 @@ export type CreatePaneInput = {
   sessionName: string;
   kind: "agent" | "shell";
   name: string;
-  cwd?: string;
   workspaceId?: string;
   agentId: AgentBackend | null;
   useWorktree: boolean;
@@ -44,8 +40,7 @@ export type CreatePaneInput = {
 
 export type CreateSessionInput = {
   name: string;
-  cwd?: string;
-  workspaceId?: string;
+  workspaceId: string;
 };
 
 export type MuximodWorkspaceDirectory = {

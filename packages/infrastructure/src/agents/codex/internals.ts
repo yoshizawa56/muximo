@@ -29,7 +29,6 @@ export type CodexDiscoveryDiagnostics = {
   filesScanned: number;
   sessionMetaFiles: number;
   payloadMetadataFiles: number;
-  flatMetadataFiles: number;
   baselineEntries: number;
   candidateFiles: number;
   uniqueCandidates: number;
@@ -47,7 +46,6 @@ export type CodexMeta = {
 
 export type CodexMetaInspection = {
   meta?: CodexMeta;
-  shape?: "payload" | "flat";
   rejection?: "read_error" | "metadata_too_large" | "invalid_json" | "not_session_meta";
 };
 
@@ -113,7 +111,6 @@ export function emptyCodexDiscoveryDiagnostics(rootExists: boolean): CodexDiscov
     filesScanned: 0,
     sessionMetaFiles: 0,
     payloadMetadataFiles: 0,
-    flatMetadataFiles: 0,
     baselineEntries: 0,
     candidateFiles: 0,
     uniqueCandidates: 0,
@@ -128,7 +125,7 @@ export function formatCodexDiscoveryDiagnostics(diagnostics: CodexDiscoveryDiagn
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([reason, count]) => `${reason}=${count}`)
       .join(",") || "none";
-  return `rollout scan: root=${diagnostics.rootExists ? "present" : "missing"}, files=${diagnostics.filesScanned}, session_meta=${diagnostics.sessionMetaFiles}, payload=${diagnostics.payloadMetadataFiles}, flat=${diagnostics.flatMetadataFiles}, baseline_entries=${diagnostics.baselineEntries}, candidate_files=${diagnostics.candidateFiles}, unique_candidates=${diagnostics.uniqueCandidates}, rejected=${rejected}, scan_ms=${diagnostics.elapsedMs}`;
+  return `rollout scan: root=${diagnostics.rootExists ? "present" : "missing"}, files=${diagnostics.filesScanned}, session_meta=${diagnostics.sessionMetaFiles}, payload=${diagnostics.payloadMetadataFiles}, baseline_entries=${diagnostics.baselineEntries}, candidate_files=${diagnostics.candidateFiles}, unique_candidates=${diagnostics.uniqueCandidates}, rejected=${rejected}, scan_ms=${diagnostics.elapsedMs}`;
 }
 
 export function inspectCodexMeta(file: string): CodexMetaInspection {
@@ -145,14 +142,10 @@ export function inspectCodexMeta(file: string): CodexMetaInspection {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { rejection: "invalid_json" };
     const record = parsed as Record<string, unknown>;
     if (record.type !== "session_meta") return { rejection: "not_session_meta" };
-    // Codex 0.147.0 moved session metadata under `payload`, while older
-    // rollouts kept these fields at the top level. Read both shapes so
-    // persisted sessions remain resumable across Codex upgrades.
     const payload = record.payload;
-    const isPayload = payload && typeof payload === "object" && !Array.isArray(payload);
-    const metadata = isPayload ? (payload as Record<string, unknown>) : record;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { rejection: "not_session_meta" };
+    const metadata = payload as Record<string, unknown>;
     return {
-      shape: isPayload ? "payload" : "flat",
       meta: {
         session_id: stringValue(metadata.session_id),
         id: stringValue(metadata.id),

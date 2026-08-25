@@ -182,7 +182,7 @@ export class MuximodControlServer {
             this.send(socket, {
               type: "agent_session_observed",
               agentSessionId: request.agentSessionId,
-              tmuxPaneId: request.tmuxPaneId,
+              hostPaneId: request.hostPaneId,
               executionId: request.executionId,
               state: request.state,
             }),
@@ -252,19 +252,19 @@ function errorMessage(error: unknown): string {
 
 function toApplicationAgentSessionRequest(request: {
   agentSessionId: string;
-  tmuxPaneId: string;
+  hostPaneId: string;
   executionId: string;
 }): AgentSessionControlRequest {
   return {
     agentSessionId: request.agentSessionId,
-    hostPaneId: request.tmuxPaneId,
+    hostPaneId: request.hostPaneId,
     executionId: request.executionId,
   };
 }
 
 function toApplicationAgentSessionObservationRequest(request: {
   agentSessionId: string;
-  tmuxPaneId: string;
+  hostPaneId: string;
   executionId: string;
   state: PaneState;
   recentOutput?: string;

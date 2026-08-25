@@ -1,5 +1,5 @@
 export function cameraErrorName(cause: unknown): string {
-  return isRecord(cause) ? readString(cause.name) ?? "" : "";
+  return isRecord(cause) ? (readString(cause.name) ?? "") : "";
 }
 
 export function appendCameraErrorDetails(message: string, cause: unknown): string {

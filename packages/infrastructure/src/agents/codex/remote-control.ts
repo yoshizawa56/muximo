@@ -18,21 +18,17 @@ const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /**
  * Minimal Unix-socket WebSocket client for the Codex app-server control API.
  *
- * The dotfiles wrapper used a small Python implementation because the
- * app-server endpoint is a Unix socket rather than a TCP URL. Keeping this
- * transport here makes the migrated `muximo` command self-contained and also
- * retains the raw-frame fallback used by older app-server builds.
+ * The app-server endpoint is a Unix socket carrying the current WebSocket
+ * protocol. Keeping this transport here makes the `muximo` command self-contained.
  */
 export async function manageCodexThread(options: {
   threadId: string;
   operation: CodexThreadOperation;
   name?: string;
   socketPath?: string;
-  transport?: "auto" | "http" | "raw";
 }): Promise<void> {
   const socketPath = options.socketPath ?? defaultCodexSocket();
-  const transport = options.transport ?? "auto";
-  const client = await CodexRpcClient.connect(socketPath, transport);
+  const client = await CodexRpcClient.connect(socketPath);
   try {
     await client.initialize();
     if (options.operation === "name") {
@@ -54,28 +50,18 @@ export function defaultCodexSocket(env: NodeJS.ProcessEnv = process.env): string
 
 class CodexRpcClient {
   private readonly socket: Socket;
-  private readonly websocket: boolean;
   private buffer: Buffer;
   private nextRequestId = 1;
 
-  private constructor(socket: Socket, buffered: Buffer, websocket: boolean) {
+  private constructor(socket: Socket, buffered: Buffer) {
     this.socket = socket;
     this.buffer = buffered;
-    this.websocket = websocket;
   }
 
-  public static async connect(path: string, transport: "auto" | "http" | "raw"): Promise<CodexRpcClient> {
-    if (transport === "raw") return new CodexRpcClient(await openSocket(path), Buffer.alloc(0), false);
-
+  public static async connect(path: string): Promise<CodexRpcClient> {
     const socket = await openSocket(path);
-    try {
-      const result = await performHandshake(socket);
-      return new CodexRpcClient(socket, result.remaining, true);
-    } catch (error) {
-      socket.destroy();
-      if (transport === "http") throw error;
-      return new CodexRpcClient(await openSocket(path), Buffer.alloc(0), false);
-    }
+    const result = await performHandshake(socket);
+    return new CodexRpcClient(socket, result.remaining);
   }
 
   public async initialize(): Promise<void> {
@@ -99,12 +85,10 @@ class CodexRpcClient {
   }
 
   public close(): void {
-    if (this.websocket) {
-      try {
-        this.sendFrame(0x8, Buffer.alloc(0));
-      } catch {
-        // The server may already have closed the socket after the RPC response.
-      }
+    try {
+      this.sendFrame(0x8, Buffer.alloc(0));
+    } catch {
+      // The server may already have closed the socket after the RPC response.
     }
     this.socket.destroy();
   }
@@ -151,14 +135,8 @@ class CodexRpcClient {
         if (largeLength > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Codex frame is too large");
         length = Number(largeLength);
       }
-      let mask: Buffer | undefined;
-      if ((second & 0x80) !== 0) {
-        mask = await this.readBytes(4);
-        // Server frames should not be masked, but accepting them costs little
-        // and mirrors the old helper's tolerant decoder.
-      }
-      let payload = await this.readBytes(length);
-      if (mask) payload = unmask(payload, mask);
+      if ((second & 0x80) !== 0) throw new Error("Codex app-server sent a masked WebSocket frame");
+      const payload = await this.readBytes(length);
 
       if (opcode === 0x8) throw new Error("app-server closed the WebSocket");
       if (opcode === 0x9) {
@@ -195,17 +173,6 @@ class CodexRpcClient {
     this.buffer = this.buffer.subarray(size);
     return result;
   }
-}
-
-function unmask(payload: Buffer, mask: Buffer): Buffer {
-  const result = Buffer.alloc(payload.byteLength);
-  for (let index = 0; index < payload.byteLength; index += 1) {
-    const payloadByte = payload[index];
-    const maskByte = mask[index % 4];
-    if (payloadByte === undefined || maskByte === undefined) throw new Error("Codex frame mask is incomplete");
-    result[index] = payloadByte ^ maskByte;
-  }
-  return result;
 }
 
 async function openSocket(path: string): Promise<Socket> {

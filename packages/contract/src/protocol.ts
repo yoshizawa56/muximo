@@ -46,7 +46,7 @@ const displayValueSchema = z
   .max(120)
   .regex(/^[^\u0000\r\n]+$/);
 
-const tmuxPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
+const hostPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
 
 export const publicKeyJwkSchema = z
   .object({
@@ -116,7 +116,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("adopt_agent_session"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: tmuxPaneIdWireSchema,
+      hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
     })
     .strict(),
@@ -124,7 +124,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("release_agent_session"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: tmuxPaneIdWireSchema,
+      hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
     })
     .strict(),
@@ -132,7 +132,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("observe_agent_session"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: tmuxPaneIdWireSchema,
+      hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
       state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
       recentOutput: z.string().max(2_000).optional(),
@@ -180,7 +180,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("agent_session_adopted"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: tmuxPaneIdWireSchema,
+      hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
     })
     .strict(),
@@ -188,7 +188,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("agent_session_released"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: tmuxPaneIdWireSchema,
+      hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
     })
     .strict(),
@@ -196,7 +196,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("agent_session_observed"),
       agentSessionId: z.string().min(1).max(128),
-      tmuxPaneId: tmuxPaneIdWireSchema,
+      hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
       state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
     })
@@ -499,8 +499,7 @@ export function decodeClientControlFrame(data: string | Uint8Array): ClientContr
 
 export const paneSummarySchema = z.object({
   id: paneIdWireSchema,
-  // Stable wire compatibility name. The application/domain field is hostPaneId.
-  tmuxPaneId: tmuxPaneIdWireSchema,
+  hostPaneId: hostPaneIdWireSchema,
   sessionName: Pane.schema.shape.sessionName,
   windowId: Pane.schema.shape.windowId,
   kind: paneKindSchema,
@@ -514,11 +513,10 @@ export const paneSummarySchema = z.object({
   // persisted pane rows so the pane list remains a small status projection.
   recentOutput: Pane.schema.shape.recentOutput.unwrap().max(2_000).optional(),
   lastSeenAt: Pane.schema.shape.lastSeenAt,
-  // Present for live tmux snapshots. Older persisted rows may omit geometry;
-  // the client falls back to a readable stacked layout in that case.
+  // Live tmux geometry used by the pane layout.
   windowName: Pane.schema.shape.windowName,
   windowIndex: Pane.schema.shape.windowIndex,
-  // Pane indexes are scoped to a tmux window and are distinct from tmuxPaneId
+  // Pane indexes are scoped to a tmux window and are distinct from hostPaneId
   // (the server-wide target such as %32).
   paneIndex: Pane.schema.shape.paneIndex,
   left: Pane.schema.shape.left,
@@ -550,9 +548,6 @@ export const createPaneRequestSchema = z
       .min(1)
       .max(120)
       .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "name contains a control character"),
-    // cwd remains readable for older clients and is used only as a new-window
-    // initial directory. Split panes always inherit the target pane cwd.
-    cwd: z.string().trim().min(1).max(4_096).optional(),
     workspaceId: workspaceIdWireSchema.optional(),
     agentId: agentBackendSchema.nullable(),
     useWorktree: z.boolean(),
@@ -560,12 +555,6 @@ export const createPaneRequestSchema = z
     targetPaneId: z.string().trim().min(1).max(64).nullable(),
   })
   .superRefine((value, context) => {
-    if (value.cwd && value.workspaceId) {
-      context.addIssue({ code: "custom", path: ["workspaceId"], message: "choose workspaceId instead of cwd" });
-    }
-    if (value.placement !== "window" && value.cwd) {
-      context.addIssue({ code: "custom", path: ["cwd"], message: "split panes always inherit the target pane cwd" });
-    }
     if (value.placement !== "window" && value.workspaceId && !value.useWorktree) {
       context.addIssue({
         code: "custom",
@@ -621,27 +610,15 @@ export type TmuxSession = z.infer<typeof tmuxSessionSchema>;
 
 export const sessionListResponseSchema = z.object({ sessions: z.array(tmuxSessionSchema) });
 
-export const createSessionRequestSchema = z
-  .object({
-    name: z
-      .string()
-      .trim()
-      .min(1)
-      .max(64)
-      .regex(/^[A-Za-z0-9._-]+$/),
-    // cwd is accepted only as a compatibility input. The web flow always sends
-    // workspaceId, which is resolved on the host before tmux is touched.
-    cwd: z.string().trim().min(1).max(4_096).optional(),
-    workspaceId: workspaceIdWireSchema.optional(),
-  })
-  .superRefine((value, context) => {
-    if (!value.cwd && !value.workspaceId) {
-      context.addIssue({ code: "custom", path: ["workspaceId"], message: "workspaceId or cwd is required" });
-    }
-    if (value.cwd && value.workspaceId) {
-      context.addIssue({ code: "custom", path: ["workspaceId"], message: "choose workspaceId instead of cwd" });
-    }
-  });
+export const createSessionRequestSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .regex(/^[A-Za-z0-9._-]+$/),
+  workspaceId: workspaceIdWireSchema,
+});
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
 
 export const sessionResponseSchema = z.object({ session: tmuxSessionSchema });

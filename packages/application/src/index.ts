@@ -49,7 +49,6 @@ export type {
   ApplicationClock,
   CreatePaneInput,
   CreateSessionInput,
-  MuximodClock,
   MuximodPanePlacement,
   MuximodPaneSummary,
   MuximodSessionSummary,

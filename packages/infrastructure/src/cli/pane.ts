@@ -5,11 +5,11 @@ import { resolveMuximodPaths } from "../persistence/index.js";
 import type { TmuxAdapter } from "../terminal/tmux.js";
 
 export type PaneControlClient = {
-  adoptAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
-  releaseAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
+  adoptAgentSession(input: { agentSessionId: string; hostPaneId: string; executionId: string }): Promise<void>;
+  releaseAgentSession(input: { agentSessionId: string; hostPaneId: string; executionId: string }): Promise<void>;
   observeAgentSession(input: {
     agentSessionId: string;
-    tmuxPaneId: string;
+    hostPaneId: string;
     executionId: string;
     state: "running" | "completed" | "failed" | "stopped";
   }): Promise<void>;
@@ -33,7 +33,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPan
   public async adopt(session: AgentSessionRecord): Promise<void> {
     const pane = currentTmuxPane(this.options.environment);
     if (!pane || !session.executionId) return;
-    const input = { agentSessionId: session.id, tmuxPaneId: pane, executionId: session.executionId };
+    const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
     try {
       const control = await this.options.connect(
         defaultControlSocket(this.options.environment, this.options.databaseFile),
@@ -55,7 +55,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPan
   public async release(session: AgentSessionRecord): Promise<void> {
     const pane = currentTmuxPane(this.options.environment);
     if (!pane || !session.executionId) return;
-    const input = { agentSessionId: session.id, tmuxPaneId: pane, executionId: session.executionId };
+    const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
     try {
       const control = await this.options.connect(
         defaultControlSocket(this.options.environment, this.options.databaseFile),
@@ -87,7 +87,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPan
       try {
         await control.observeAgentSession({
           agentSessionId: session.id,
-          tmuxPaneId: pane,
+          hostPaneId: pane,
           executionId: session.executionId,
           state,
         });

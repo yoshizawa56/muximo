@@ -72,9 +72,7 @@ export async function pairBrowserFromQr(
   const connection = createServeConnection(payload.muximodBaseUrl);
   const rpcEndpoint = `${connection.httpBaseUrl.replace(/\/+$/, "")}/rpc`;
   const client: MuximodRpcClient = muximodRpc(connection);
-  const info = await withMuximodRequest(rpcEndpoint, "requesting server information", () =>
-    client.auth.info({}),
-  );
+  const info = await withMuximodRequest(rpcEndpoint, "requesting server information", () => client.auth.info({}));
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const publicKey = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   const parsedPublicKey = publicKeyJwk(publicKey);
@@ -178,10 +176,7 @@ async function waitForPairingApproval(
   const deadline = Date.now() + 10 * 60_000;
   while (Date.now() < deadline) {
     const status = await withMuximodRequest(endpoint, "checking pairing approval", () =>
-      client.auth.pairingStatus(
-        { pairingId, claimToken },
-        { context: { pairingToken: claimToken } },
-      ),
+      client.auth.pairingStatus({ pairingId, claimToken }, { context: { pairingToken: claimToken } }),
     );
     if (status.status === "approved" || status.status === "rejected" || status.status === "expired") return status;
     await wait(1_000);

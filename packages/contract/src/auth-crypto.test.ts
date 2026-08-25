@@ -9,7 +9,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { decodePairingCode, encodeJsonBase64Url, encodePairingCode } from "./auth-crypto.js";
+import { decodePairingCode, encodePairingCode } from "./auth-crypto.js";
 import type { PairingCodePayload, PairingQrPayload } from "./protocol.js";
 
 type EmptyContext = {};
@@ -36,8 +36,6 @@ const hasRawPairingCodeShape = (): Assertion<EmptyContext, PairingCodeResult> =>
     if (!result.ok) throw result.error;
     if (typeof result.value !== "string") throw new Error("expected an encoded pairing code");
     if (!/^ma3:[A-Za-z0-9_-]+$/.test(result.value)) throw new Error("pairing code is not a compact raw ma3 payload");
-    if (result.value.length >= `ma2:${encodeJsonBase64Url(payload)}`.length)
-      throw new Error("pairing code was not shortened");
     if (result.value.includes("/settings") || result.value.includes("http"))
       throw new Error("pairing code contains a web navigation target");
   },
@@ -55,9 +53,9 @@ const pairingCodeCases = [
     assert: [returns<EmptyContext, PairingCodeResult>(codePayload)],
   },
   {
-    name: "reads the previous JSON pairing code format",
-    input: { type: "decode", value: `ma2:${encodeJsonBase64Url(payload)}` },
-    assert: [returns<EmptyContext, PairingCodeResult>(codePayload)],
+    name: "rejects an unsupported pairing code prefix",
+    input: { type: "decode", value: "ma2:unsupported" },
+    assert: [hasError<EmptyContext, PairingCodeResult>({ message: "QR code is not a muximo pairing code" })],
   },
   {
     name: "rejects a browser navigation URL",

@@ -1,5 +1,5 @@
 import { AgentSessionId } from "@muximo/domain";
-import type { MuximodClock } from "../../ports/application.js";
+import type { ApplicationClock } from "../../ports/application.js";
 import type { MuximodHostPort } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
 import type { AgentStatusStore } from "../sessions/agent-status.js";
@@ -11,7 +11,7 @@ export async function adoptAgentSession(
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   agentStatus: AgentStatusStore,
-  clock: MuximodClock,
+  clock: ApplicationClock,
   request: { agentSessionId: string; hostPaneId: string; executionId: string },
 ): Promise<void> {
   const session = await agentSessionRepository.findById(AgentSessionId.create(request.agentSessionId));

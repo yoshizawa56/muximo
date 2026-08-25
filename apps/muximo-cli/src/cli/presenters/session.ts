@@ -6,7 +6,7 @@ export function presentRunAgentSession(result: RunAgentSessionResult, io: CliIo)
     io.out.write(
       result.cleanup.reason === "interrupted"
         ? `muximo: session '${result.session.name}' kept for resume after interruption\n`
-        : `muximo: session '${result.session.name}' mapping retained; use 'muximo resume ${result.session.name}' or 'muximo cleanup ${result.session.name}'\n`,
+        : `muximo: session '${result.session.name}' mapping retained; use 'muximo session resume ${result.session.name}' or 'muximo session cleanup ${result.session.name}'\n`,
     );
   } else if (result.cleanup.disposition === "retained") {
     io.out.write(`muximo: ${cleanupRetainedMessage(result)}\n`);

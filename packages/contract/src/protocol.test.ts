@@ -292,7 +292,7 @@ const pairingCases = [
       value: {
         type: "adopt_agent_session",
         agentSessionId: "session-id",
-        tmuxPaneId: "%1",
+        hostPaneId: "%1",
         executionId: "execution-id-123456",
       },
     },
@@ -305,7 +305,7 @@ const pairingCases = [
       value: {
         type: "release_agent_session",
         agentSessionId: "session-id",
-        tmuxPaneId: "%1",
+        hostPaneId: "%1",
         executionId: "execution-id-123456",
       },
     },
@@ -318,7 +318,7 @@ const pairingCases = [
       value: {
         type: "observe_agent_session",
         agentSessionId: "session-id",
-        tmuxPaneId: "%1",
+        hostPaneId: "%1",
         executionId: "execution-id-123456",
         state: "waiting_input",
         recentOutput: "recent output",
@@ -333,7 +333,7 @@ const pairingCases = [
       value: {
         type: "agent_session_adopted",
         agentSessionId: "session-id",
-        tmuxPaneId: "%1",
+        hostPaneId: "%1",
         executionId: "execution-id-123456",
       },
     },
@@ -346,7 +346,7 @@ const pairingCases = [
       value: {
         type: "agent_session_released",
         agentSessionId: "session-id",
-        tmuxPaneId: "%1",
+        hostPaneId: "%1",
         executionId: "execution-id-123456",
       },
     },
@@ -359,7 +359,7 @@ const pairingCases = [
       value: {
         type: "agent_session_observed",
         agentSessionId: "session-id",
-        tmuxPaneId: "%1",
+        hostPaneId: "%1",
         executionId: "execution-id-123456",
         state: "waiting_input",
       },
@@ -383,7 +383,7 @@ const paneListCases = [
       panes: [
         {
           id: "pane-1",
-          tmuxPaneId: "%1",
+          hostPaneId: "%1",
           sessionName: "muximod",
           windowId: "@0",
           kind: "shell",
@@ -405,7 +405,6 @@ const paneListCases = [
 type PaneCreateInput = {
   placement: "window" | "right" | "bottom";
   targetPaneId: string | null;
-  cwd?: string;
   workspaceId?: string;
   useWorktree?: boolean;
 };
@@ -424,11 +423,6 @@ const paneCreateCases = [
     name: "rejects a split without a target pane",
     input: { placement: "bottom", targetPaneId: null },
     assert: [isInvalid()],
-  },
-  {
-    name: "rejects a split cwd override",
-    input: { placement: "right", targetPaneId: "%0", cwd: "/tmp" },
-    assert: [isInvalid(["cwd"])],
   },
   {
     name: "rejects a split workspace override without a worktree",
@@ -456,16 +450,11 @@ const paneCreateTable: OperationTable<undefined, "default", PaneCreateInput, Val
   observe: () => ({}),
 };
 
-type SessionCreateInput = { name: string; workspaceId?: string; cwd?: string };
+type SessionCreateInput = { name: string; workspaceId?: string };
 const sessionCases = [
   {
     name: "accepts the selected workspace for a new session",
     input: { name: "review", workspaceId: "workspace-1" },
-    assert: [isValid()],
-  },
-  {
-    name: "accepts a legacy cwd while clients migrate",
-    input: { name: "review", cwd: "/work/muximo" },
     assert: [isValid()],
   },
   { name: "rejects a session without a workspace selection", input: { name: "review" }, assert: [isInvalid()] },

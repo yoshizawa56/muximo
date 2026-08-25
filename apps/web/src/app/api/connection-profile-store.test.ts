@@ -113,14 +113,6 @@ const hasProfileName = (expected: string): Assertion<ProfileContext, ProfileResu
   },
 });
 
-const hasProfileEndpoint = (expected: string): Assertion<ProfileContext, ProfileResult> => ({
-  name: `returns endpoint ${expected}`,
-  check: (_ctx, result) => {
-    if (!result.ok) throw result.error;
-    expect(result.value?.muximodBaseUrl).toBe(expected);
-  },
-});
-
 const hasNoCredentialFields = (): Assertion<ProfileContext, ProfileResult> => ({
   name: "persists no credential fields",
   check: (ctx) => {
@@ -144,7 +136,7 @@ const profileCases = [
     assert: [returns<ProfileContext, ProfileResult>(null)],
   },
   {
-    name: "reads the legacy serveUrl field as a muximod endpoint",
+    name: "ignores a profile with an unsupported endpoint field",
     steps: [
       {
         type: "set-raw",
@@ -157,7 +149,7 @@ const profileCases = [
       },
       { type: "read" },
     ],
-    assert: [hasProfileEndpoint("https://workstation.tailnet.ts.net")],
+    assert: [returns<ProfileContext, ProfileResult>(null)],
   },
   {
     name: "clears a saved profile",

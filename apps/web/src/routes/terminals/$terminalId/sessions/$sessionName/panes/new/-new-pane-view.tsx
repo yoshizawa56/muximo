@@ -158,8 +158,8 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
                 onChange={(event) => viewModel.onTargetPaneChange(event.target.value)}
               >
                 {viewModel.existingPanes.map((pane) => (
-                  <option value={pane.tmuxPaneId} key={pane.id}>
-                    {pane.name} · {pane.tmuxPaneId}
+                  <option value={pane.hostPaneId} key={pane.id}>
+                    {pane.name} · {pane.hostPaneId}
                   </option>
                 ))}
               </select>

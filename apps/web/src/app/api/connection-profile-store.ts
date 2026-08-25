@@ -67,16 +67,10 @@ export function normalizeMuximodBaseUrl(value: string): string {
 function parseProfile(value: unknown): BrowserConnectionProfile {
   if (!value || typeof value !== "object") throw new Error("Invalid connection profile");
   const candidate = value as Record<string, unknown>;
-  const muximodBaseUrl =
-    typeof candidate.muximodBaseUrl === "string"
-      ? candidate.muximodBaseUrl
-      : typeof candidate.serveUrl === "string"
-        ? candidate.serveUrl
-        : undefined;
   if (
     typeof candidate.id !== "string" ||
     typeof candidate.name !== "string" ||
-    !muximodBaseUrl ||
+    typeof candidate.muximodBaseUrl !== "string" ||
     typeof candidate.updatedAt !== "string"
   ) {
     throw new Error("Invalid connection profile");
@@ -84,7 +78,7 @@ function parseProfile(value: unknown): BrowserConnectionProfile {
   return {
     id: candidate.id,
     name: candidate.name,
-    muximodBaseUrl: normalizeMuximodBaseUrl(muximodBaseUrl),
+    muximodBaseUrl: normalizeMuximodBaseUrl(candidate.muximodBaseUrl),
     ...(typeof candidate.serverId === "string" ? { serverId: candidate.serverId } : {}),
     updatedAt: candidate.updatedAt,
   };

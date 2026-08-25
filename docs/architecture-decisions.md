@@ -275,7 +275,7 @@ The Web UI is route-driven and colocated:
 
 Each page view should have a current Storybook story that covers meaningful
 empty, loading, error, boundary, and populated states. Stories should use
-`play` interactions to verify view behavior. Obsolete stories should be
+`play` interactions to verify view behavior. Stale stories should be
 deleted instead of retained as historical snapshots.
 
 ## Authentication and middleware
@@ -389,9 +389,9 @@ Database table tests should avoid running migrations for every row:
 
 The shared table-test runner should provide a case scope that wraps fixture,
 execution, observation, assertions, and rollback. External resources still
-need explicit cleanup after the database scope. Migration compatibility tests
-that intentionally create legacy or pending schemas remain separate and may
-use their own database lifecycle.
+need explicit cleanup after the database scope. Tests that exercise migration
+discovery or a deliberately pending schema remain separate and may use their
+own database lifecycle.
 
 All table tests should use typed declarative rows, complete fixture selection,
 shared execution, post-execution observation, named assertions, and aggregate

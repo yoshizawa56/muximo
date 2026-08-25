@@ -24,8 +24,6 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
-import type { CodexSessionState } from "../agents/codex/state.js";
-import { DrizzleCodexSessionStateRepository } from "../agents/codex/state.js";
 import {
   createAgentDatabase,
   DrizzleAgentSessionRepository,
@@ -39,6 +37,7 @@ import { auditEvents } from "./schema.js";
 const pane: PaneRecord = Pane.create({
   id: PaneId.create("pane-1"),
   hostPaneId: "%1",
+  hostServerId: "scope-current:server-current",
   sessionName: "muximod",
   windowId: "@0",
   kind: "agent",
@@ -96,25 +95,18 @@ type DatabaseFixture = {
   prePruneCurrent?: PaneRecord;
   claimResults: boolean[];
   backendResults: boolean[];
-  codexState?: CodexSessionState;
-  codexStateAfterSaves?: CodexSessionState;
-  codexCreatedAt?: string;
-  codexCreatedAtAfterSaves?: string;
-  codexStateDeletedAfterSessionDelete?: boolean;
-  metadataColumnsPresent?: boolean;
 };
-type DatabaseKey = "historical" | "legacy" | "pending" | "codex-legacy";
+type DatabaseKey = "default" | "pending" | "restart";
 type DatabaseStep =
   | { type: "write-round-trip" }
   | { type: "verify-timestamp-preservation" }
-  | { type: "verify-legacy" }
   | { type: "verify-pending" }
+  | { type: "verify-restart" }
   | { type: "verify-generations" }
   | { type: "verify-upsert-identity" }
   | { type: "verify-agent-association" }
   | { type: "verify-execution-claim" }
-  | { type: "verify-atomic-claim-timestamp" }
-  | { type: "verify-codex-metadata" };
+  | { type: "verify-atomic-claim-timestamp" };
 type DatabaseResult = undefined;
 type DatabaseContext = {
   pane: PaneRecord | undefined;
@@ -136,15 +128,7 @@ type DatabaseContext = {
   claimSession: AgentSessionRecord | undefined;
   timestampWorkspace: { name: string; createdAt: string; updatedAt: string } | undefined;
   timestampSession: { name: string; createdAt: string; updatedAt: string } | undefined;
-  runTablePresent: boolean;
-  runIdColumnPresent: boolean;
-  integrityCheck: string;
-  codexState: CodexSessionState | undefined;
-  codexStateAfterSaves: CodexSessionState | undefined;
-  codexCreatedAt: string | undefined;
-  codexCreatedAtAfterSaves: string | undefined;
-  codexStateDeletedAfterSessionDelete: boolean | undefined;
-  metadataColumnsPresent: boolean | undefined;
+  tmuxServerDefault: string | null | undefined;
 };
 
 const normalFixture = (): FixtureHandle<DatabaseFixture> => {
@@ -152,68 +136,26 @@ const normalFixture = (): FixtureHandle<DatabaseFixture> => {
   return { fixture: { database, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
-const createPreCleanupMigrationsFolder = (root: string): string => {
+const restartFixture = async (registerCleanup?: CleanupRegistrar): Promise<FixtureHandle<DatabaseFixture>> => {
+  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-restart-"));
+  registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
   const migrationsFolder = join(root, "drizzle");
   cpSync(defaultAgentMigrationsFolder(), migrationsFolder, { recursive: true });
   const journalPath = join(migrationsFolder, "meta", "_journal.json");
   const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
     entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
   };
-  journal.entries = journal.entries.filter(
-    (entry) => entry.tag !== "0004_remove_legacy_runs" && entry.tag !== "0005_codex_session_state",
-  );
+  journal.entries = journal.entries.filter((entry) => entry.tag !== "0006_remove_tmux_server_default");
   writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
-  rmSync(join(migrationsFolder, "0004_remove_legacy_runs.sql"));
-  rmSync(join(migrationsFolder, "0005_codex_session_state.sql"));
-  return migrationsFolder;
-};
+  rmSync(join(migrationsFolder, "0006_remove_tmux_server_default.sql"));
+  rmSync(join(migrationsFolder, "meta", "0006_snapshot.json"));
 
-const legacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<FixtureHandle<DatabaseFixture>> => {
-  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-legacy-"));
-  registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
   const file = join(root, "muximod.sqlite");
-  const initial = createAgentDatabase(file, { migrationsFolder: createPreCleanupMigrationsFolder(root) });
+  const beforeRestart = createAgentDatabase(file, { migrationsFolder });
   try {
-    await new DrizzlePaneRepository(initial.db).upsert(pane);
-    initial.sqlite.exec(
-      'ALTER TABLE workspaces DROP COLUMN worktree_copy_patterns; DROP INDEX panes_agent_session_index; ALTER TABLE panes DROP COLUMN agent_session_id; ALTER TABLE panes DROP COLUMN agent_execution_id; DROP INDEX panes_tmux_server_pane_id_index; ALTER TABLE panes DROP COLUMN tmux_server_id; CREATE UNIQUE INDEX panes_tmux_pane_id_index ON panes (tmux_pane_id); ALTER TABLE agent_sessions DROP COLUMN execution_id; ALTER TABLE agent_sessions DROP COLUMN execution_pid; ALTER TABLE agent_sessions DROP COLUMN execution_started_at; DROP TABLE "__drizzle_migrations"',
-    );
+    await new DrizzlePaneRepository(beforeRestart.db).upsert(pane);
   } finally {
-    initial.close();
-  }
-  const database = createAgentDatabase(file);
-  return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
-};
-
-const historicalMigrationFixture = async (
-  registerCleanup?: CleanupRegistrar,
-): Promise<FixtureHandle<DatabaseFixture>> => {
-  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-historical-"));
-  registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
-  const file = join(root, "muximod.sqlite");
-  const migrationsFolder = createPreCleanupMigrationsFolder(root);
-
-  const historical = createAgentDatabase(file, { migrationsFolder });
-  try {
-    await new DrizzlePaneRepository(historical.db).upsert(pane);
-    historical.sqlite
-      .prepare(
-        "INSERT INTO runs (id, pane_id, agent_id, profile_id, state, started_at, ended_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(
-        "legacy-run",
-        pane.id,
-        pane.agentId ?? null,
-        "legacy-profile",
-        pane.state,
-        pane.lastSeenAt,
-        null,
-        pane.lastSeenAt,
-        pane.lastSeenAt,
-      );
-    historical.sqlite.prepare("UPDATE panes SET run_id = ? WHERE id = ?").run("legacy-run", pane.id);
-  } finally {
-    historical.close();
+    beforeRestart.close();
   }
 
   const database = createAgentDatabase(file);
@@ -246,24 +188,6 @@ const pendingMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHan
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
-const codexLegacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<FixtureHandle<DatabaseFixture>> => {
-  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-codex-legacy-"));
-  registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
-  const file = join(root, "muximod.sqlite");
-  const migrationsFolder = createPreCleanupMigrationsFolder(root);
-  const legacy = createAgentDatabase(file, { migrationsFolder });
-  try {
-    await new DrizzleAgentSessionRepository(legacy.db).insert(session);
-    legacy.sqlite
-      .prepare("UPDATE agent_sessions SET codex_profile = ?, codex_remote = ?, codex_session_baseline = ? WHERE id = ?")
-      .run("local-agent", "unix://", JSON.stringify({ codexSessions: ["legacy"] }), session.id);
-  } finally {
-    legacy.close();
-  }
-  const database = createAgentDatabase(file);
-  return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
-};
-
 const matchesObserved = <Result>(
   key: keyof DatabaseContext,
   expected: unknown,
@@ -282,7 +206,7 @@ const cases = [
       hasObserved<DatabaseContext, DatabaseResult>("workspace", workspace),
       hasObserved<DatabaseContext, DatabaseResult>("session", session),
       hasObserved<DatabaseContext, DatabaseResult>("auditCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 6),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 7),
     ],
   },
   {
@@ -302,33 +226,22 @@ const cases = [
     ],
   },
   {
-    name: "baselines a legacy database while preserving current pane data",
-    fixture: "legacy",
-    steps: [{ type: "verify-legacy" }],
-    assert: [
-      hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 6),
-    ],
-  },
-  {
-    name: "removes legacy run storage while preserving current pane data",
-    fixture: "historical",
-    steps: [{ type: "verify-legacy" }],
-    assert: [
-      hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
-      hasObserved<DatabaseContext, DatabaseResult>("runTablePresent", false),
-      hasObserved<DatabaseContext, DatabaseResult>("runIdColumnPresent", false),
-      hasObserved<DatabaseContext, DatabaseResult>("integrityCheck", "ok"),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 6),
-    ],
-  },
-  {
     name: "applies a pending generated migration at startup",
     fixture: "pending",
     steps: [{ type: "verify-pending" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("probeCount", 1),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+    ],
+  },
+  {
+    name: "applies the next migration when reopening a database at the previous migration",
+    fixture: "restart",
+    steps: [{ type: "verify-restart" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
       hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 7),
+      hasObserved<DatabaseContext, DatabaseResult>("tmuxServerDefault", null),
     ],
   },
   {
@@ -384,37 +297,14 @@ const cases = [
       }),
     ],
   },
-  {
-    name: "migrates Codex metadata out of the domain session without data loss",
-    fixture: "codex-legacy",
-    steps: [{ type: "verify-codex-metadata" }],
-    assert: [
-      hasObserved<DatabaseContext, DatabaseResult>("codexState", {
-        profile: "local-agent",
-        remote: "unix://",
-        sessionBaseline: JSON.stringify({ codexSessions: ["legacy"] }),
-      }),
-      hasObserved<DatabaseContext, DatabaseResult>("codexStateAfterSaves", {
-        profile: "updated-agent",
-        remote: "unix+updated://",
-        sessionBaseline: JSON.stringify({ codexSessions: ["updated"] }),
-      }),
-      hasObserved<DatabaseContext, DatabaseResult>("codexCreatedAt", "2026-08-09T00:00:00.000Z"),
-      hasObserved<DatabaseContext, DatabaseResult>("codexCreatedAtAfterSaves", "2026-08-09T00:00:00.000Z"),
-      hasObserved<DatabaseContext, DatabaseResult>("codexStateDeletedAfterSessionDelete", true),
-      hasObserved<DatabaseContext, DatabaseResult>("metadataColumnsPresent", false),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 6),
-    ],
-  },
 ] satisfies readonly ScenarioCase<DatabaseKey, DatabaseStep, DatabaseResult, DatabaseContext>[];
 
 const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseResult, DatabaseContext> = {
   defaultFixture: normalFixture,
   fixtures: {
-    historical: historicalMigrationFixture,
-    legacy: legacyFixture,
+    default: normalFixture,
     pending: pendingMigrationFixture,
-    "codex-legacy": codexLegacyFixture,
+    restart: restartFixture,
   },
   cases,
   execute: async (fixture, steps) => {
@@ -469,48 +359,10 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           );
           break;
         }
-        case "verify-legacy":
         case "verify-pending":
           break;
-        case "verify-codex-metadata": {
-          const state = new DrizzleCodexSessionStateRepository(databases.db);
-          fixture.codexState = await state.find(session.id);
-          fixture.codexCreatedAt = readCodexCreatedAt(databases);
-          await state.save(
-            session.id,
-            {
-              profile: "first-agent",
-              remote: "unix+first://",
-              sessionBaseline: JSON.stringify({ codexSessions: ["first"] }),
-            },
-            "2026-08-10T00:00:00.000Z",
-          );
-          await Promise.all([
-            state.save(
-              session.id,
-              {
-                profile: "second-agent",
-                remote: "unix+second://",
-                sessionBaseline: JSON.stringify({ codexSessions: ["second"] }),
-              },
-              "2026-08-11T00:00:00.000Z",
-            ),
-            state.save(
-              session.id,
-              {
-                profile: "updated-agent",
-                remote: "unix+updated://",
-                sessionBaseline: JSON.stringify({ codexSessions: ["updated"] }),
-              },
-              "2026-08-12T00:00:00.000Z",
-            ),
-          ]);
-          fixture.codexStateAfterSaves = await state.find(session.id);
-          fixture.codexCreatedAtAfterSaves = readCodexCreatedAt(databases);
-          await new DrizzleAgentSessionRepository(databases.db).delete(session.id);
-          fixture.codexStateDeletedAfterSessionDelete = (await state.find(session.id)) === undefined;
+        case "verify-restart":
           break;
-        }
         case "verify-generations": {
           const panes = new DrizzlePaneRepository(databases.db);
           const oldPane = {
@@ -605,10 +457,6 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
     const { database } = fixture;
     const panes = new DrizzlePaneRepository(database.db);
     const sessions = new DrizzleAgentSessionRepository(database.db);
-    const runTablePresent =
-      database.sqlite.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'").all().length > 0;
-    const paneColumns = database.sqlite.query("PRAGMA table_info(panes)").all() as Array<{ name: string }>;
-    const integrity = database.sqlite.query("PRAGMA integrity_check").get() as { integrity_check: string };
     return {
       pane: await panes.findById(pane.id),
       waitingPanes: await panes.list({ state: "waiting_input" }),
@@ -619,9 +467,6 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       probeCount: database.sqlite
         .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'migration_probe'")
         .all().length,
-      runTablePresent,
-      runIdColumnPresent: paneColumns.some((column) => column.name === "run_id"),
-      integrityCheck: integrity.integrity_check,
       oldIdentity: fixture.prePruneOld,
       currentIdentity: fixture.prePruneCurrent,
       oldAfterPrune: await panes.findById(PaneId.create("pane-old")),
@@ -634,12 +479,9 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       claimSession: await sessions.findById(session.id),
       timestampWorkspace: await readWorkspaceTimestamps(database, "workspace-timestamps"),
       timestampSession: await readSessionTimestamps(database, "session-timestamps"),
-      codexState: fixture.codexState ?? (await new DrizzleCodexSessionStateRepository(database.db).find(session.id)),
-      codexStateAfterSaves: fixture.codexStateAfterSaves,
-      codexCreatedAt: fixture.codexCreatedAt,
-      codexCreatedAtAfterSaves: fixture.codexCreatedAtAfterSaves,
-      codexStateDeletedAfterSessionDelete: fixture.codexStateDeletedAfterSessionDelete,
-      metadataColumnsPresent: readAgentSessionMetadataColumns(database),
+      tmuxServerDefault: (
+        database.sqlite.query("PRAGMA table_info(panes)").all() as Array<{ name: string; dflt_value: string | null }>
+      ).find((column) => column.name === "tmux_server_id")?.dflt_value,
     };
   },
 };
@@ -666,16 +508,4 @@ async function readSessionTimestamps(
 ): Promise<{ name: string; createdAt: string; updatedAt: string } | undefined> {
   const record = await new DrizzleAgentSessionRepository(database.db).findById(AgentSessionId.create(id));
   return record ? { name: record.name, createdAt: record.createdAt, updatedAt: record.updatedAt } : undefined;
-}
-
-function readAgentSessionMetadataColumns(database: Database): boolean {
-  const columns = database.sqlite.query("PRAGMA table_info(agent_sessions)").all() as Array<{ name: string }>;
-  return columns.some((column) => ["codex_profile", "codex_remote", "codex_session_baseline"].includes(column.name));
-}
-
-function readCodexCreatedAt(database: Database): string | undefined {
-  const row = database.sqlite
-    .query("SELECT created_at FROM codex_session_states WHERE agent_session_id = ?")
-    .get(session.id) as { created_at?: string } | null;
-  return row?.created_at;
 }

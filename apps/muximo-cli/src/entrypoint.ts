@@ -1,8 +1,8 @@
 import type { Readable, Writable } from "node:stream";
-import { createCliComposition } from "./cli/compose.js";
 import { createCliApp } from "./cli/app.js";
 import { globalOptionSpecs } from "./cli/commands/global.js";
 import type { CliHandlers } from "./cli/commands/types.js";
+import { createCliComposition } from "./cli/compose.js";
 import { resolveCliOptions } from "./cli/options/index.js";
 
 export type CliEntrypointOptions = {

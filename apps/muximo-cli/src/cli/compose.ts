@@ -119,15 +119,12 @@ export function createCliComposition(options: CliCompositionOptions = {}): CliCo
     });
   const paths = resolveMuximodPaths(environment, { databaseFile: options.databaseFile });
   const databaseFile = options.databaseFile ?? paths.databaseFile;
-  const instanceDirectory =
-    databaseFile === ":memory:" || (options.databaseFile === undefined && !environment.MUXIMOD_INSTANCE_DIR?.trim())
-      ? undefined
-      : paths.instanceDirectory;
+  const instanceDirectory = databaseFile === ":memory:" ? undefined : paths.instanceDirectory;
   let resources: DatabaseResources | undefined;
   const ensureDatabase = (): DatabaseResources => {
     if (resources) return resources;
     const database = createAgentDatabase(databaseFile, {
-      migrationsFolder: environment.MUXIMOD_MIGRATIONS_DIR ?? environment.MUXIMO_MIGRATIONS_DIR,
+      migrationsFolder: environment.MUXIMOD_MIGRATIONS_DIR,
       instanceDirectory,
     });
     const transaction = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);

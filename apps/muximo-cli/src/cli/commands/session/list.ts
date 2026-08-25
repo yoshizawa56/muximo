@@ -63,9 +63,7 @@ export function registerSessionListCommand(
   context: CliCommandContext,
   options: SessionListCommandOptions,
 ): Command {
-  const command = parent
-    .command(options.commandName)
-    .description("List managed sessions");
+  const command = parent.command(options.commandName).description("List managed sessions");
   registerOptions(command, sessionListOptionSpecs);
 
   command.action(async (commandOptions) => {
@@ -81,13 +79,6 @@ export function registerSessionListCommand(
     );
   });
   return command;
-}
-
-export function registerRootListCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
-  return registerSessionListCommand(parent, handlers, context, {
-    commandName: "list",
-    commandPath: ["list"],
-  });
 }
 
 export function registerNestedSessionListCommand(

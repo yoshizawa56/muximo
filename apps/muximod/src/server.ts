@@ -112,13 +112,8 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     controlSocket: options.controlSocket,
   });
   const databaseFile = paths.databaseFile;
-  const configuredDatabaseFile =
-    options.databaseFile ?? process.env.MUXIMOD_DB_FILE ?? process.env.MUXIMO_DATABASE_FILE;
-  const usePrivateInstanceDirectory =
-    Boolean(process.env.MUXIMOD_INSTANCE_DIR?.trim()) || !configuredDatabaseFile?.trim();
   const database = createAgentDatabase(databaseFile, {
-    instanceDirectory:
-      databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
+    instanceDirectory: databaseFile === ":memory:" ? undefined : paths.instanceDirectory,
   });
   const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
