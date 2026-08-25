@@ -33,12 +33,14 @@ type PaneResult = {
   diagnosticEvents: readonly string[];
 };
 
-type Input = { mode: "success" | "fallback" | "failure"; operation: "lifecycle" | "observation" };
+type PaneMode = "success" | "fallback" | "failure";
+type LifecycleInput = { mode: PaneMode };
+type ObservationInput = { mode: "success" };
 
-const cases = [
+const lifecycleCases = [
   {
     name: "adopts and releases through the control socket in order",
-    input: { mode: "success", operation: "lifecycle" },
+    input: { mode: "success" },
     assert: [
       hasEvents<PaneResult, PaneResult>("events", ["connect", "adopt", "close", "connect", "release", "close"]),
       hasObserved<PaneResult, PaneResult>("observations", []),
@@ -48,7 +50,7 @@ const cases = [
   },
   {
     name: "falls back to pane metadata when the control socket is unavailable",
-    input: { mode: "fallback", operation: "lifecycle" },
+    input: { mode: "fallback" },
     assert: [
       {
         name: "writes session and execution metadata for adoption",
@@ -72,16 +74,19 @@ const cases = [
   },
   {
     name: "records control operation failures as structured diagnostics",
-    input: { mode: "failure", operation: "lifecycle" },
+    input: { mode: "failure" },
     assert: [
       hasObserved<PaneResult, PaneResult>("events", ["connect", "connect"]),
       hasObserved<PaneResult, PaneResult>("observations", []),
       hasObserved<PaneResult, PaneResult>("diagnosticEvents", ["pane.adopt_failed", "pane.release_failed"]),
     ],
   },
+] satisfies readonly OperationCase<"default", LifecycleInput, PaneResult, PaneResult>[];
+
+const observationCases = [
   {
     name: "publishes provider state and recent output through the control socket",
-    input: { mode: "success", operation: "observation" },
+    input: { mode: "success" },
     assert: [
       hasObserved<PaneResult, PaneResult>("events", ["connect", "observe", "close"]),
       hasObserved<PaneResult, PaneResult>("observations", [{ state: "waiting_input", recentOutput: "Need input" }]),
@@ -89,48 +94,58 @@ const cases = [
       hasObserved<PaneResult, PaneResult>("diagnosticEvents", []),
     ],
   },
-] satisfies readonly OperationCase<"default", Input, PaneResult, PaneResult>[];
+] satisfies readonly OperationCase<"default", ObservationInput, PaneResult, PaneResult>[];
 
-const table: OperationTable<PaneFixture, "default", Input, PaneResult, PaneResult> = {
+const lifecycleTable: OperationTable<PaneFixture, "default", LifecycleInput, PaneResult, PaneResult> = {
   defaultFixture: createPaneFixture,
-  cases,
+  cases: lifecycleCases,
   execute: async (fixture, input) => {
     fixture.adapter = createAdapter(fixture, input.mode);
-    const session = AgentSession.create({
-      id: AgentSessionId.create("session-id"),
-      name: "session",
-      backend: "claude",
-      status: "running",
-      workspaceId: WorkspaceId.create("workspace-id"),
-      workspaceRoot: fixture.root,
-      workspaceName: "workspace",
-      useWorktree: false,
-      setupRan: false,
-      resuming: false,
-      executionId: "execution-id",
-      createdAt: "2026-08-23T00:00:00.000Z",
-      updatedAt: "2026-08-23T00:00:00.000Z",
-    });
-    if (input.operation === "lifecycle") {
-      await fixture.adapter.adopt(session);
-      await fixture.adapter.release(session);
-    } else {
-      await fixture.adapter.observe(session, { state: "waiting_input", recentOutput: "Need input" });
-    }
-    return {
-      events: fixture.events,
-      observations: fixture.observations,
-      paneOptions: fixture.paneWrites,
-      diagnosticEvents: fixture.diagnostics.map((record) => record.event),
-    };
+    const session = createSession(fixture.root);
+    await fixture.adapter.adopt(session);
+    await fixture.adapter.release(session);
+    return observePane(fixture);
   },
-  observe: (fixture) => ({
+  observe: observePane,
+};
+
+const observationTable: OperationTable<PaneFixture, "default", ObservationInput, PaneResult, PaneResult> = {
+  defaultFixture: createPaneFixture,
+  cases: observationCases,
+  execute: async (fixture, input) => {
+    fixture.adapter = createAdapter(fixture, input.mode);
+    await fixture.adapter.observe(createSession(fixture.root), { state: "waiting_input", recentOutput: "Need input" });
+    return observePane(fixture);
+  },
+  observe: observePane,
+};
+
+function observePane(fixture: PaneFixture): PaneResult {
+  return {
     events: fixture.events,
     observations: fixture.observations,
     paneOptions: fixture.paneWrites,
     diagnosticEvents: fixture.diagnostics.map((record) => record.event),
-  }),
-};
+  };
+}
+
+function createSession(root: string): AgentSession {
+  return AgentSession.create({
+    id: AgentSessionId.create("session-id"),
+    name: "session",
+    backend: "claude",
+    status: "running",
+    workspaceId: WorkspaceId.create("workspace-id"),
+    workspaceRoot: root,
+    workspaceName: "workspace",
+    useWorktree: false,
+    setupRan: false,
+    resuming: false,
+    executionId: "execution-id",
+    createdAt: "2026-08-23T00:00:00.000Z",
+    updatedAt: "2026-08-23T00:00:00.000Z",
+  });
+}
 
 function createPaneFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: PaneFixture } {
   const root = mkdtempSync(join(tmpdir(), "muximo-pane-adapter-"));
@@ -167,7 +182,7 @@ function createPaneFixture(registerCleanup?: (cleanup: () => void) => void): { f
   return { fixture };
 }
 
-function createAdapter(fixture: PaneFixture, mode: Input["mode"]): TmuxPanePublicationAdapter {
+function createAdapter(fixture: PaneFixture, mode: PaneMode): TmuxPanePublicationAdapter {
   return new TmuxPanePublicationAdapter({
     environment: { TMUX: "1", TMUX_PANE: "%1", MUXIMOD_MANAGED_SESSION_ID: "managed-id" },
     databaseFile: join(fixture.root, "muximod.sqlite"),
@@ -235,5 +250,6 @@ class RecordingTmux extends TmuxAdapter {
 }
 
 describe("tmux pane publication CLI adapter", () => {
-  runOperationTable(it as unknown as TestRegistrar, table);
+  runOperationTable(it as unknown as TestRegistrar, lifecycleTable);
+  runOperationTable(it as unknown as TestRegistrar, observationTable);
 });

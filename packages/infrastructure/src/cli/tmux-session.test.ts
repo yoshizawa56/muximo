@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  hasError,
   hasNoError,
   hasObserved,
   type OperationCase,
@@ -70,6 +71,22 @@ const cases = [
         "metadata:managed",
         "metadata:wrapper",
       ]),
+    ],
+  },
+  {
+    name: "rejects a session name with unsupported characters",
+    input: { name: "review/remote", detached: true },
+    assert: [
+      hasError<TmuxContext, TmuxNewSessionResult>({ message: "invalid session name 'review/remote'" }),
+      hasObserved<TmuxContext, TmuxNewSessionResult>("events", []),
+    ],
+  },
+  {
+    name: "rejects a session name longer than the wire limit",
+    input: { name: "a".repeat(65), detached: true },
+    assert: [
+      hasError<TmuxContext, TmuxNewSessionResult>({ message: `invalid session name '${"a".repeat(65)}'` }),
+      hasObserved<TmuxContext, TmuxNewSessionResult>("events", []),
     ],
   },
 ] satisfies readonly OperationCase<"default", TmuxInput, TmuxNewSessionResult, TmuxContext>[];

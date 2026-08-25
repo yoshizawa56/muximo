@@ -147,6 +147,24 @@ const cases = [
     ],
   },
   {
+    name: "rejects unsafe tmux session names before adoption dispatch",
+    input: { args: ["tmux", "manage-session", "--name", "desktop/remote"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "Invalid arguments for muximo tmux manage-session"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
+    name: "rejects tmux session names longer than the wire limit before creation dispatch",
+    input: { args: ["tmux", "new-session", "--name", "a".repeat(65)] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "Invalid arguments for muximo tmux new-session"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
     name: "dispatches exact serve defaults through the typed handler",
     input: { args: ["serve", "tailscale"] },
     assert: [

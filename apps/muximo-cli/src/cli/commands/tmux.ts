@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { tmuxSessionNameSchema } from "@muximo/contract";
 import type { Command } from "commander";
 import { z } from "zod";
 import { defineOptions, registerOptions } from "../options/index.js";
@@ -29,7 +30,7 @@ export const tmuxNewSessionOptionSpecs = defineOptions(
 );
 
 export const tmuxNewSessionSchema = z.object({
-  name: z.string().trim().min(1, { error: "tmux session name is required" }),
+  name: tmuxSessionNameSchema,
   cwd: z.string().trim().min(1, { error: "tmux session cwd is required" }),
   detached: z.boolean().default(false),
 });
@@ -42,7 +43,7 @@ export const tmuxManageSessionOptionSpecs = defineOptions({
 });
 
 export const tmuxManageSessionSchema = z.object({
-  name: z.string().trim().min(1, { error: "tmux session name is required" }),
+  name: tmuxSessionNameSchema,
 });
 
 export function registerTmuxCommands(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {

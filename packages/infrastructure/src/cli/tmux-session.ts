@@ -32,11 +32,12 @@ export class TmuxNewSessionService {
   public constructor(private readonly options: TmuxNewSessionServiceOptions) {}
 
   public execute(input: TmuxNewSessionInput): TmuxNewSessionResult {
-    if (!/^[\p{L}\p{N}][\p{L}\p{N}\p{M}._-]{0,63}$/u.test(input.name)) {
+    const name = input.name.trim();
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(name)) {
       throw new Error(`invalid session name '${input.name}'`);
     }
     if (!existsSync(input.cwd)) throw new Error(`tmux session cwd does not exist: ${input.cwd}`);
-    const normalized = { ...input, cwd: realpathSafe(input.cwd) };
+    const normalized = { ...input, name, cwd: realpathSafe(input.cwd) };
     if (this.options.tmux.hasSession(normalized.name))
       throw new Error(`tmux session already exists: ${normalized.name}`);
 
