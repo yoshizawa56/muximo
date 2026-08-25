@@ -99,23 +99,30 @@ const mouseWheelTable: OperationTable<undefined, "default", MouseWheelInput, str
 };
 
 type PointerValues = { pointerId: number; clientX: number; clientY: number };
-type FlickStep = {
-  type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel";
-  now: number;
-  values: PointerValues;
-};
+type FlickStep =
+  | {
+      type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel";
+      now: number;
+      values: PointerValues;
+    }
+  | {
+      type: "advance";
+      ms: number;
+    };
 type FlickContext = { inputs: readonly string[]; scrollDeltas: readonly number[] };
 type FlickFixture = {
   container: HTMLElement;
   inputs: string[];
   scrollDeltas: number[];
   setNow: (value: number) => void;
+  advanceTimers: (milliseconds: number) => void;
 };
 
 const flickFixture = (): FixtureHandle<FlickFixture> => {
   const container = createPointerSurface();
   const inputs: string[] = [];
   const scrollDeltas: number[] = [];
+  vi.useFakeTimers();
   let now = 0;
   const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
   const cleanupInput = installTerminalFlickInput(container, (input) => inputs.push(input), {
@@ -129,10 +136,12 @@ const flickFixture = (): FixtureHandle<FlickFixture> => {
       setNow: (value) => {
         now = value;
       },
+      advanceTimers: (milliseconds) => vi.advanceTimersByTime(milliseconds),
     },
     cleanup: () => {
       cleanupInput();
       clock.mockRestore();
+      vi.useRealTimers();
     },
   };
 };
@@ -184,6 +193,17 @@ const gestureCases = [
     ],
     assert: [hasObserved<FlickContext, undefined>("inputs", [])],
   },
+  {
+    name: "repeats a horizontal flick while the pointer remains down",
+    steps: [
+      { type: "pointerdown", now: 0, values: { pointerId: 1, clientX: 10, clientY: 10 } },
+      { type: "pointermove", now: 100, values: { pointerId: 1, clientX: 90, clientY: 10 } },
+      { type: "advance", ms: 420 },
+      { type: "advance", ms: 360 },
+      { type: "pointerup", now: 900, values: { pointerId: 1, clientX: 90, clientY: 10 } },
+    ],
+    assert: [hasObserved<FlickContext, undefined>("inputs", ["\u001b[C", "\u001b[C", "\u001b[C"])],
+  },
 ] satisfies readonly ScenarioCase<"default", FlickStep, undefined, FlickContext>[];
 
 const gestureTable: ScenarioTable<FlickFixture, "default", FlickStep, undefined, FlickContext> = {
@@ -191,6 +211,10 @@ const gestureTable: ScenarioTable<FlickFixture, "default", FlickStep, undefined,
   cases: gestureCases,
   execute: (fixture, steps) => {
     for (const step of steps) {
+      if (step.type === "advance") {
+        fixture.advanceTimers(step.ms);
+        continue;
+      }
       fixture.setNow(step.now);
       dispatchPointer(fixture.container, step.type, step.values);
     }

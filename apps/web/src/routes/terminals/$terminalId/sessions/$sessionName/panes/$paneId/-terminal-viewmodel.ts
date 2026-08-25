@@ -12,7 +12,12 @@ import { openMuximodTerminal } from "../../../../../../../app/api/muximod-client
 import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
 import { isMockMode, mockTerminalOutputForTarget } from "../../../../../../../mock/mock-data";
 import { muximoBridge } from "../../../../../../../platform/muximo-bridge";
-import { installTerminalFlickInput, terminalMouseWheelInput } from "./-terminal-flick";
+import {
+  installTerminalFlickInput,
+  type TerminalFlickPreview,
+  type TerminalFlickRepeatConfig,
+  terminalMouseWheelInput,
+} from "./-terminal-flick";
 import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./-terminal-font";
 import { createTerminalInputBatcher, createTerminalOutputScheduler } from "./-terminal-scheduler";
 
@@ -66,15 +71,21 @@ export type PaneViewModel = {
   reconnect: () => void;
   claim: () => void;
   detach: () => void;
+  sendInput: (data: string) => void;
+  focus: () => void;
+  blur: () => void;
+  setFlickRepeat: (config: TerminalFlickRepeatConfig) => void;
   pasteImage: (file: File) => void;
 };
 
 export function usePaneViewModel({
   target,
   connection,
+  onFlickPreviewChange,
 }: {
   target: string;
   connection?: MuximodConnection;
+  onFlickPreviewChange?: (preview: TerminalFlickPreview | null) => void;
 }): PaneViewModel {
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const terminalContainerRef = useCallback<RefCallback<HTMLDivElement>>((node) => {
@@ -85,6 +96,10 @@ export function usePaneViewModel({
   const [viewportOwner, setViewportOwner] = useState<PaneViewportOwner>("mobile");
   const [viewportReason, setViewportReason] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const sendInputRef = useRef<(data: string) => void>(() => undefined);
+  const flickRepeatRef = useRef<TerminalFlickRepeatConfig>({ startDelayMs: 420, intervalMs: 180 });
+  const flickPreviewChangeRef = useRef(onFlickPreviewChange);
   const connectRef = useRef<(() => void) | null>(null);
   const detachRef = useRef<(() => void) | null>(null);
   const retryCountRef = useRef(0);
@@ -95,6 +110,38 @@ export function usePaneViewModel({
   const pendingDetachRef = useRef<Promise<void> | null>(null);
   const [pasteState, setPasteState] = useState<PanePasteState>("idle");
   const pasteResetTimerRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    flickPreviewChangeRef.current = onFlickPreviewChange;
+  }, [onFlickPreviewChange]);
+
+  const sendInput = useCallback((data: string) => {
+    sendInputRef.current(data);
+  }, []);
+
+  const focus = useCallback(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const helperInput = terminal.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    if (helperInput) helperInput.inputMode = "text";
+    terminal.focus();
+  }, []);
+
+  const blur = useCallback(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const helperInput = terminal.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    if (helperInput) {
+      helperInput.inputMode = "none";
+      helperInput.blur();
+    }
+  }, []);
+
+  const setFlickRepeat = useCallback((config: TerminalFlickRepeatConfig) => {
+    flickRepeatRef.current = {
+      startDelayMs: Math.max(0, config.startDelayMs),
+      intervalMs: Math.max(16, config.intervalMs),
+    };
+  }, []);
   useLayoutEffect(() => {
     currentTargetRef.current = target;
   }, [target]);
@@ -206,6 +253,9 @@ export function usePaneViewModel({
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(container);
+    terminalRef.current = terminal;
+    const helperInput = terminal.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    if (helperInput) helperInput.inputMode = "none";
     fitAddon.fit();
     const terminalOutputScheduler = createTerminalOutputScheduler({
       write: (data) => terminal.write(data),
@@ -410,6 +460,7 @@ export function usePaneViewModel({
       scrollInputBatcher.flush();
       sendTerminalInput(data);
     };
+    sendInputRef.current = sendInteractiveTerminalInput;
     const scrollTerminal = (deltaY: number, clientX: number, clientY: number) => {
       terminalOutputScheduler.markScroll();
       const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen") ?? terminal.element ?? container;
@@ -435,6 +486,8 @@ export function usePaneViewModel({
         scrollRemainder = 0;
       },
       onScroll: scrollTerminal,
+      getRepeatConfig: () => flickRepeatRef.current,
+      onPreviewChange: (preview: TerminalFlickPreview | null) => flickPreviewChangeRef.current?.(preview),
     };
 
     if (isMockMode()) {
@@ -469,6 +522,8 @@ export function usePaneViewModel({
         scrollInputBatcher.dispose();
         terminalOutputScheduler.dispose();
         inputDisposable.dispose();
+        sendInputRef.current = () => undefined;
+        terminalRef.current = null;
         terminal.dispose();
       };
     }
@@ -520,6 +575,8 @@ export function usePaneViewModel({
       scrollInputBatcher.dispose();
       terminalOutputScheduler.dispose();
       resizeDisposable.dispose();
+      sendInputRef.current = () => undefined;
+      terminalRef.current = null;
       const cleanupMode = terminalSessionCleanupMode(target, currentTargetRef.current);
       if (cleanupMode === "detach") {
         terminalClosedRef.current = true;
@@ -550,6 +607,10 @@ export function usePaneViewModel({
     reconnect,
     claim,
     detach,
+    sendInput,
+    focus,
+    blur,
+    setFlickRepeat,
     pasteImage,
   };
 }

@@ -1,13 +1,33 @@
 export type TerminalFlickDirection = "up" | "down" | "left" | "right";
 export type TerminalMouseWheelDirection = "up" | "down";
 
+export type TerminalFlickPreview = {
+  direction: TerminalFlickDirection;
+  xPercent: number;
+  yPercent: number;
+  repeating: boolean;
+  startDelayMs: number;
+  intervalMs: number;
+};
+
+export type TerminalFlickRepeatConfig = {
+  startDelayMs: number;
+  intervalMs: number;
+};
+
 export type TerminalFlickInputOptions = {
   onGestureStart?: () => void;
   onScroll?: (deltaY: number, clientX: number, clientY: number) => void;
+  onPreviewChange?: (preview: TerminalFlickPreview | null) => void;
+  repeatStartDelayMs?: number;
+  repeatIntervalMs?: number;
+  getRepeatConfig?: () => TerminalFlickRepeatConfig;
 };
 
 const TERMINAL_FLICK_MOVE_TOLERANCE_PX = 12;
 const TERMINAL_FLICK_SCROLL_DECISION_MS = 220;
+const DEFAULT_REPEAT_START_DELAY_MS = 420;
+const DEFAULT_REPEAT_INTERVAL_MS = 180;
 
 const ARROW_INPUT: Record<TerminalFlickDirection, string> = {
   up: "\u001b[A",
@@ -57,11 +77,80 @@ export function installTerminalFlickInput(
     lastY: number;
     startedAt: number;
     didScroll: boolean;
+    flickDirection: TerminalFlickDirection | null;
+    repeatStarted: boolean;
+    repeatStartTimer: ReturnType<typeof setTimeout> | null;
+    repeatTimer: ReturnType<typeof setInterval> | null;
   } | null = null;
   const activeTouchPointers = new Set<number>();
 
+  const repeatConfig = (): TerminalFlickRepeatConfig => {
+    const configured = options.getRepeatConfig?.() ?? {
+      startDelayMs: options.repeatStartDelayMs ?? DEFAULT_REPEAT_START_DELAY_MS,
+      intervalMs: options.repeatIntervalMs ?? DEFAULT_REPEAT_INTERVAL_MS,
+    };
+    return {
+      startDelayMs: Math.max(0, configured.startDelayMs),
+      intervalMs: Math.max(16, configured.intervalMs),
+    };
+  };
+
+  const clearRepeatTimers = (state: NonNullable<typeof gesture>) => {
+    if (state.repeatStartTimer !== null) globalThis.clearTimeout(state.repeatStartTimer);
+    if (state.repeatTimer !== null) globalThis.clearInterval(state.repeatTimer);
+    state.repeatStartTimer = null;
+    state.repeatTimer = null;
+  };
+
   const clearGesture = () => {
+    if (gesture) clearRepeatTimers(gesture);
+    options.onPreviewChange?.(null);
     gesture = null;
+  };
+
+  const previewAt = (
+    direction: TerminalFlickDirection,
+    x: number,
+    y: number,
+    repeating: boolean,
+    config: TerminalFlickRepeatConfig,
+  ): TerminalFlickPreview => {
+    const rect = container.getBoundingClientRect?.() ?? ({ left: 0, top: 0, width: 0, height: 0 } as DOMRect);
+    const xPercent = rect.width > 0 ? ((x - rect.left) / rect.width) * 100 : 50;
+    const yPercent = rect.height > 0 ? ((y - rect.top) / rect.height) * 100 : 50;
+    return {
+      direction,
+      xPercent: Math.min(100, Math.max(0, xPercent)),
+      yPercent: Math.min(100, Math.max(0, yPercent)),
+      repeating,
+      startDelayMs: config.startDelayMs,
+      intervalMs: config.intervalMs,
+    };
+  };
+
+  const startFlick = (
+    state: NonNullable<typeof gesture>,
+    direction: TerminalFlickDirection,
+    x: number,
+    y: number,
+    event?: Event,
+  ) => {
+    if (state.flickDirection) return;
+    const config = repeatConfig();
+    state.flickDirection = direction;
+    state.didScroll = true;
+    event?.preventDefault();
+    onInput(terminalInputForFlick(direction));
+    options.onPreviewChange?.(previewAt(direction, x, y, false, config));
+    state.repeatStartTimer = globalThis.setTimeout(() => {
+      if (gesture !== state || state.flickDirection !== direction) return;
+      state.repeatStarted = true;
+      options.onPreviewChange?.(previewAt(direction, x, y, true, config));
+      state.repeatTimer = globalThis.setInterval(() => {
+        if (gesture !== state || state.flickDirection !== direction) return;
+        onInput(terminalInputForFlick(direction));
+      }, config.intervalMs);
+    }, config.startDelayMs);
   };
 
   const capturePointer = (event: PointerEvent) => {
@@ -90,10 +179,11 @@ export function installTerminalFlickInput(
 
     event?.preventDefault();
     if ((direction === "up" || direction === "down") && options.onScroll) {
+      state.didScroll = true;
       options.onScroll(y - state.y, x, y);
       return;
     }
-    onInput(terminalInputForFlick(direction));
+    startFlick(state, direction, x, y, event);
   };
 
   const onPointerDown = (event: PointerEvent) => {
@@ -113,6 +203,10 @@ export function installTerminalFlickInput(
       lastY: event.clientY,
       startedAt,
       didScroll: false,
+      flickDirection: null,
+      repeatStarted: false,
+      repeatStartTimer: null,
+      repeatTimer: null,
     };
     options.onGestureStart?.();
     capturePointer(event);
@@ -130,7 +224,7 @@ export function installTerminalFlickInput(
     const totalDistance = Math.hypot(totalDx, totalDy);
     const isVerticalDrag = Math.abs(totalDy) > Math.abs(totalDx) && totalDistance > TERMINAL_FLICK_MOVE_TOLERANCE_PX;
 
-    if (options.onScroll && isVerticalDrag) {
+    if (!state.flickDirection && options.onScroll && isVerticalDrag) {
       const flick = classifyTerminalFlick({ dx: totalDx, dy: totalDy, durationMs: now - state.startedAt });
       if (state.didScroll || now - state.startedAt > TERMINAL_FLICK_SCROLL_DECISION_MS || !flick) {
         const wasScrolling = state.didScroll;
@@ -138,6 +232,20 @@ export function installTerminalFlickInput(
         event.preventDefault();
         options.onScroll(event.clientY - (wasScrolling ? previousY : state.y), event.clientX, event.clientY);
       }
+    }
+
+    if (!state.didScroll && !state.flickDirection) {
+      const flick = classifyTerminalFlick({ dx: totalDx, dy: totalDy, durationMs: now - state.startedAt });
+      if (flick && (!options.onScroll || !isVerticalDrag)) {
+        startFlick(state, flick, event.clientX, event.clientY, event);
+      }
+    }
+
+    if (state.flickDirection) {
+      const config = repeatConfig();
+      options.onPreviewChange?.(
+        previewAt(state.flickDirection, event.clientX, event.clientY, state.repeatStarted, config),
+      );
     }
 
     state.lastY = event.clientY;

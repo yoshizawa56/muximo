@@ -3,6 +3,8 @@ import { expect, fn, userEvent, within } from "storybook/test";
 import { storyPanes } from "../../../../../-story-fixtures";
 import { ControlRoomView } from "./-control-room-view";
 import type { ControlRoomViewModel } from "./-control-room-viewmodel";
+import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "./-custom-keyboard-viewmodel";
+import { defaultCustomKeyboardButtons } from "./-custom-keyboard-viewmodel";
 import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
 import type { PaneViewModel } from "./-terminal-viewmodel";
 
@@ -31,10 +33,48 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     reconnect: fn(),
     claim: fn(),
     detach: fn(),
+    sendInput: fn(),
+    focus: fn(),
+    blur: fn(),
+    setFlickRepeat: fn(),
     pasteImage: fn(),
+  };
+  const keyboard: CustomKeyboardViewModel = {
+    buttons: defaultCustomKeyboardButtons,
+    activeModifiers: [],
+    nativeKeyboardVisible: false,
+    flickPreview: null,
+    onButtonPress: fn(),
+    onNativeAction: fn(),
+    onNativeFileSelected: fn(),
+    onToggleNativeKeyboard: fn(),
+    onOpenSettings: fn(),
+  };
+  const keyboardSettings: CustomKeyboardSettingsViewModel = {
+    buttons: defaultCustomKeyboardButtons,
+    availableButtons: [],
+    shortcutButtons: [],
+    selectedButtonId: null,
+    repeatStartDelayMs: 420,
+    repeatIntervalMs: 180,
+    onSelectButton: fn(),
+    onSwapButton: fn(),
+    onMoveShortcut: fn(),
+    onAddButton: fn(),
+    onRemoveButton: fn(),
+    onRegisterShortcut: fn(),
+    onUpdateShortcut: fn(),
+    onDeleteShortcut: fn(),
+    onRepeatStartDelayChange: fn(),
+    onRepeatIntervalChange: fn(),
+    onClose: fn(),
+    onSave: fn(),
   };
   return {
     terminal,
+    keyboard,
+    keyboardSettings,
+    keyboardSettingsOpen: false,
     paneBoard,
     onSessionSelect: fn(),
     onNewPane: fn(),

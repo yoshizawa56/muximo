@@ -1,6 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { useTerminalResources } from "../../../../../-terminal-resources";
+import { encodeCustomKeyboardSequence } from "./-custom-keyboard-input";
+import type {
+  CustomKeyboardFlickPreview,
+  CustomKeyboardSettingsViewModel,
+  CustomKeyboardViewModel,
+} from "./-custom-keyboard-viewmodel";
+import { useCustomKeyboardViewModel } from "./-custom-keyboard-viewmodel";
 import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
 import { usePaneBoardViewModel } from "./-pane-board-viewmodel";
 import type { PaneViewModel } from "./-terminal-viewmodel";
@@ -8,6 +16,9 @@ import { usePaneViewModel } from "./-terminal-viewmodel";
 
 export type ControlRoomViewModel = {
   terminal: PaneViewModel;
+  keyboard: CustomKeyboardViewModel;
+  keyboardSettings: CustomKeyboardSettingsViewModel;
+  keyboardSettingsOpen: boolean;
   paneBoard: PaneBoardViewModel;
   onSessionSelect: () => void;
   onNewPane: () => void;
@@ -32,7 +43,31 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
   const panes = panesQuery.data?.panes ?? [];
   const selectedPane = panes.find((pane) => pane.id === paneId) ?? null;
   const selectedTarget = selectedPane?.tmuxPaneId ?? "";
-  const terminal = usePaneViewModel({ target: selectedTarget, connection });
+  const [flickPreview, setFlickPreview] = useState<CustomKeyboardFlickPreview | null>(null);
+  const terminal = usePaneViewModel({
+    target: selectedTarget,
+    connection,
+    onFlickPreviewChange: setFlickPreview,
+  });
+  const keyboardController = useCustomKeyboardViewModel({
+    flickPreview,
+    onSequence: (sequence, activeModifiers) => {
+      terminal.sendInput(encodeCustomKeyboardSequence(sequence, activeModifiers));
+    },
+    onNativeFileSelected: (_action, file) => {
+      terminal.pasteImage(file);
+    },
+    onNativeKeyboardToggle: (visible) => {
+      if (visible) terminal.focus();
+      else terminal.blur();
+    },
+  });
+  useEffect(() => {
+    terminal.setFlickRepeat({
+      startDelayMs: keyboardController.repeatStartDelayMs,
+      intervalMs: keyboardController.repeatIntervalMs,
+    });
+  }, [keyboardController.repeatIntervalMs, keyboardController.repeatStartDelayMs, terminal.setFlickRepeat]);
   const paneBoard = usePaneBoardViewModel({
     selectedTarget,
     sessionName,
@@ -51,6 +86,9 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
 
   return {
     terminal,
+    keyboard: keyboardController.keyboard,
+    keyboardSettings: keyboardController.settings,
+    keyboardSettingsOpen: keyboardController.settingsOpen,
     paneBoard,
     onSessionSelect: () => {
       void navigate({ to: "/terminals/$terminalId/sessions", params: { terminalId } });
