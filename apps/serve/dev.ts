@@ -56,25 +56,37 @@ const onSigint = () => stopTurbo("SIGINT");
 const onSigterm = () => stopTurbo("SIGTERM");
 process.once("SIGINT", onSigint);
 process.once("SIGTERM", onSigterm);
+const routeAbort = new AbortController();
 
 try {
-  const [webRoute, muximodRoute] = await Promise.all([
-    waitForPortlessRoute("web", { repositoryRoot, environment: childEnvironment }),
-    waitForPortlessRoute("muximod", { repositoryRoot, environment: childEnvironment }),
+  const readiness = await Promise.race([
+    Promise.all([
+      waitForPortlessRoute("web", { repositoryRoot, environment: childEnvironment, signal: routeAbort.signal }),
+      waitForPortlessRoute("muximod", { repositoryRoot, environment: childEnvironment, signal: routeAbort.signal }),
+    ]).then((routes) => ({ kind: "routes" as const, routes })),
+    turboExit.then((result) => ({ kind: "turbo-exit" as const, result })),
   ]);
-  await configureTailscaleServe(webRoute.routePort, webExternalPort, childEnvironment);
-  await configureTailscaleServe(muximodRoute.routePort, muximodExternalPort, childEnvironment);
-  console.log(`[serve] web: ${webServeUrl}`);
-  console.log(`[serve] muximod: ${muximodServeUrl}`);
+  if (readiness.kind === "turbo-exit") {
+    routeAbort.abort();
+    process.exitCode = readiness.result.code ?? signalExitCode(readiness.result.signal);
+  } else {
+    const [webRoute, muximodRoute] = readiness.routes;
+    await configureTailscaleServe(webRoute.routePort, webExternalPort, childEnvironment);
+    await configureTailscaleServe(muximodRoute.routePort, muximodExternalPort, childEnvironment);
+    console.log(`[serve] web: ${webServeUrl}`);
+    console.log(`[serve] muximod: ${muximodServeUrl}`);
 
-  const result = await turboExit;
-  process.exitCode = result.code ?? signalExitCode(result.signal);
+    const result = await turboExit;
+    process.exitCode = result.code ?? signalExitCode(result.signal);
+  }
 } catch (error) {
+  routeAbort.abort();
   console.error(`[serve] ${error instanceof Error ? error.message : String(error)}`);
   stopTurbo("SIGTERM");
   await turboExit.catch(() => undefined);
   process.exitCode = 1;
 } finally {
+  routeAbort.abort();
   process.off("SIGINT", onSigint);
   process.off("SIGTERM", onSigterm);
 }

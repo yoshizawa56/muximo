@@ -321,17 +321,59 @@ export function resolvePortlessServiceHostname(
 /** Waits for a Portless child to publish its route in the shared route store. */
 export async function waitForPortlessRoute(
   service: PortlessService,
-  options: { repositoryRoot?: string; environment?: Environment; timeoutMs?: number; intervalMs?: number } = {},
+  options: {
+    repositoryRoot?: string;
+    environment?: Environment;
+    timeoutMs?: number;
+    intervalMs?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<PortlessServiceRoute> {
   const timeoutMs = options.timeoutMs ?? 15_000;
   const intervalMs = options.intervalMs ?? 50;
   const deadline = Date.now() + timeoutMs;
+  throwIfAborted(options.signal);
   while (Date.now() <= deadline) {
+    throwIfAborted(options.signal);
     const route = resolvePortlessRoute(service, options);
     if (route) return route;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
+    await waitForPortlessRouteInterval(intervalMs, options.signal);
   }
   throw new Error(`${service} did not publish a Portless route within ${timeoutMs}ms`);
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("Portless route wait aborted");
+}
+
+function waitForPortlessRouteInterval(intervalMs: number, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
+
+  return new Promise((resolvePromise, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      signal.removeEventListener("abort", onAbort);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Portless route wait aborted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolvePromise();
+    }, intervalMs);
+  });
 }
 
 export function resolvePortlessStateDirectory(environment: Environment = process.env): string {

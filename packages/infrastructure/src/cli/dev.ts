@@ -16,7 +16,7 @@ export async function runDevCommand(
 ): Promise<number> {
   const logger = dependencies.logger;
   const repositoryRoot = findRepositoryRoot(environment.MUXIMO_REPOSITORY_ROOT ?? process.cwd());
-  if (!repositoryRoot) throw new Error("muximo dev requires a source checkout containing package.json");
+  if (!repositoryRoot) throw new Error("muximo dev requires a source checkout containing portless.json");
   const allowedOrigins = resolveDevAllowedOrigins(input, environment);
   const childEnvironment: NodeJS.ProcessEnv = { ...environment };
   const childCwd = input.serveProvider ? join(repositoryRoot, "apps/serve") : repositoryRoot;
@@ -86,14 +86,14 @@ export function resolveDevAllowedOrigins(input: DevSupervisorInput, environment:
 function findRepositoryRoot(start: string): string | undefined {
   let current = resolve(start);
   while (true) {
-    if (existsSync(join(current, "package.json"))) return current;
+    if (existsSync(join(current, "portless.json"))) return current;
     const parent = dirname(current);
     if (parent === current) break;
     current = parent;
   }
   try {
     const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../");
-    return existsSync(join(sourceRoot, "package.json")) ? sourceRoot : undefined;
+    return existsSync(join(sourceRoot, "portless.json")) ? sourceRoot : undefined;
   } catch {
     return undefined;
   }

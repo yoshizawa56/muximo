@@ -200,7 +200,7 @@ function inspectSource(path, relativePath) {
 }
 
 function isDevelopmentEntryPoint(relativePath) {
-  return /(?:^|\/)dev\.ts$/.test(relativePath);
+  return /^(?:apps|packages)\/[^/]+\/dev\.ts$/.test(relativePath);
 }
 
 function inspectAppBoundary(specifier, sourcePath, relativePath, line) {

@@ -15,16 +15,20 @@ import { describe, it } from "vitest";
 import {
   createAgentDatabase,
   createMigrationSchemaSynchronizer,
+  type DatabaseSchemaSynchronizer,
   type PushCommandOptions,
   PushSchemaSynchronizer,
 } from "./index.js";
 
-type Input = { mode: "migrate" | "push" | "push-memory" };
+type FixtureKey = "migration" | "push" | "push-memory";
+type Input = { operation: "create-database" };
 type PushCall = { command: string; args: readonly string[]; options: PushCommandOptions };
 type Fixture = {
   root: string;
   calls: PushCall[];
   databases: Array<ReturnType<typeof createAgentDatabase>>;
+  databaseFile: string;
+  synchronizer: DatabaseSchemaSynchronizer;
 };
 type Context = {
   callCount: number;
@@ -46,7 +50,8 @@ const errorContains = <Result>(name: string, text: string): Assertion<Context, R
 const cases = [
   {
     name: "runs the migration synchronizer through the required strategy boundary",
-    input: { mode: "migrate" },
+    fixture: "migration",
+    input: { operation: "create-database" },
     assert: [
       hasNoError<Context, unknown>(),
       hasObserved<Context, unknown>("migrationTables", ["__drizzle_migrations"]),
@@ -55,7 +60,8 @@ const cases = [
   },
   {
     name: "runs push with the dev config and target database path",
-    input: { mode: "push" },
+    fixture: "push",
+    input: { operation: "create-database" },
     assert: [
       hasNoError<Context, unknown>(),
       hasObserved<Context, unknown>("callCount", 1),
@@ -71,41 +77,22 @@ const cases = [
   },
   {
     name: "rejects push for an in-memory database",
-    input: { mode: "push-memory" },
+    fixture: "push-memory",
+    input: { operation: "create-database" },
     assert: [errorContains("reports the file-backed requirement", "file-backed SQLite database")],
   },
-] satisfies readonly OperationCase<"default", Input, unknown, Context>[];
+] satisfies readonly OperationCase<FixtureKey, Input, unknown, Context>[];
 
-const table: OperationTable<Fixture, "default", Input, unknown, Context> = {
-  defaultFixture: () => {
-    const root = mkdtempSync(join(tmpdir(), "muximo-schema-sync-test-"));
-    const fixture: Fixture = { root, calls: [], databases: [] };
-    return {
-      fixture,
-      cleanup: () => {
-        for (const database of fixture.databases) database.close();
-        rmSync(root, { recursive: true, force: true });
-      },
-    };
+const table: OperationTable<Fixture, FixtureKey, Input, unknown, Context> = {
+  defaultFixture: () => createFixture("migration"),
+  fixtures: {
+    migration: () => createFixture("migration"),
+    push: () => createFixture("push"),
+    "push-memory": () => createFixture("push-memory"),
   },
   cases,
-  execute: (fixture, input) => {
-    if (input.mode === "migrate") {
-      const database = createAgentDatabase(":memory:", {
-        schemaSynchronizer: createMigrationSchemaSynchronizer(),
-      });
-      fixture.databases.push(database);
-      return database.databaseFile;
-    }
-
-    const synchronizer = new PushSchemaSynchronizer({
-      configFile: join("/repo", "packages/infrastructure", "drizzle.dev.config.ts"),
-      workingDirectory: join("/repo", "packages/infrastructure"),
-      force: true,
-      run: (command, args, options) => fixture.calls.push({ command, args, options }),
-    });
-    const databaseFile = input.mode === "push-memory" ? ":memory:" : join(fixture.root, "muximod.sqlite");
-    const database = createAgentDatabase(databaseFile, { schemaSynchronizer: synchronizer });
+  execute: (fixture) => {
+    const database = createAgentDatabase(fixture.databaseFile, { schemaSynchronizer: fixture.synchronizer });
     fixture.databases.push(database);
     return database.databaseFile;
   },
@@ -131,3 +118,27 @@ const table: OperationTable<Fixture, "default", Input, unknown, Context> = {
 describe("database schema synchronization", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
+
+function createFixture(key: FixtureKey): { fixture: Fixture; cleanup: () => void } {
+  const root = mkdtempSync(join(tmpdir(), "muximo-schema-sync-test-"));
+  const calls: PushCall[] = [];
+  const workingDirectory = join("/repo", "packages/infrastructure");
+  const synchronizer =
+    key === "migration"
+      ? createMigrationSchemaSynchronizer()
+      : new PushSchemaSynchronizer({
+          configFile: join(workingDirectory, "drizzle.dev.config.ts"),
+          workingDirectory,
+          force: true,
+          run: (command, args, options) => calls.push({ command, args, options }),
+        });
+  const databaseFile = key === "push" ? join(root, "muximod.sqlite") : ":memory:";
+  const fixture: Fixture = { root, calls, databases: [], databaseFile, synchronizer };
+  return {
+    fixture,
+    cleanup: () => {
+      for (const database of fixture.databases) database.close();
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
