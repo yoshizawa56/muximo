@@ -8,6 +8,7 @@ import {
   ListWorkspaces,
   LocateAgentSession,
   type ManagedAgentSessionRepository,
+  manageSession,
   PairDevice,
   RegisterWorkspace,
   RestartDaemon,
@@ -52,6 +53,7 @@ import {
   systemDaemonClock,
   systemDaemonScheduler,
   TmuxAdapter,
+  TmuxMuximodHostAdapter,
   TmuxNewSessionService,
   TmuxPanePublicationAdapter,
   validateMuximodControlSocketPath,
@@ -186,6 +188,7 @@ export function createCliComposition(options: CliCompositionOptions = {}): CliCo
     logger,
   });
   const tmux = options.tmux ?? new TmuxAdapter(environment.MUXIMOD_TMUX_SOCKET, undefined, environment);
+  const tmuxHost = new TmuxMuximodHostAdapter(tmux, environment);
   const pane = new TmuxPanePublicationAdapter({
     environment,
     databaseFile,
@@ -203,6 +206,7 @@ export function createCliComposition(options: CliCompositionOptions = {}): CliCo
   const codexState = new DrizzleCodexSessionStateRepository(repository().database.db);
   const backend = new AgentBackendAdapter({
     ...backendOptions,
+    observations: pane,
     terminalTitle: new OscTerminalTitleAdapter(io.out, environment.MUXIMO_SET_TERMINAL_TITLE !== "0"),
     providers: createDefaultAgentBackendProviders(
       backendOptions,
@@ -359,7 +363,12 @@ export function createCliComposition(options: CliCompositionOptions = {}): CliCo
       list: listSessions,
       io,
     }),
-    ...createInteractiveHandlers({ shell, tmux: tmuxSession, io }),
+    ...createInteractiveHandlers({
+      shell,
+      tmux: tmuxSession,
+      manageSession: { execute: (input) => manageSession(input, tmuxHost) },
+      io,
+    }),
     ...systemHandlers,
     pair: pairHandler,
     ...createWorkspaceHandlers({

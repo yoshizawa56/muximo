@@ -94,16 +94,10 @@ export class TmuxViewportManager {
     }
   }
 
-  public async prepare(target: string, cwd: string, cols = 80, rows = 24): Promise<PreparedViewport> {
+  public async prepare(target: string, _cwd: string, cols = 80, rows = 24): Promise<PreparedViewport> {
     if (this.disposed) throw new Error("Viewport manager has been disposed");
 
-    let pane: TmuxPaneRef;
-    try {
-      pane = this.adapter.resolvePane(target);
-    } catch {
-      this.adapter.ensureSession(sessionTarget(target), cwd);
-      pane = this.adapter.resolvePane(target);
-    }
+    const pane = this.adapter.resolvePane(target);
 
     if (this.leases.has(pane.windowId)) {
       throw new Error(`Viewport is already in use for tmux window: ${pane.windowId}`);
@@ -639,11 +633,6 @@ export class TmuxViewportManager {
 
 function createLeaseId(): string {
   return `viewport-${Date.now().toString(36)}-${randomInt(100_000, 999_999).toString(36)}`;
-}
-
-function sessionTarget(target: string): string {
-  const separator = target.indexOf(":");
-  return separator === -1 ? target : target.slice(0, separator);
 }
 
 function delay(milliseconds: number): Promise<void> {

@@ -9,6 +9,8 @@ function buildViewModel(overrides: Partial<ConnectingViewModel> = {}): Connectin
     selectedTerminal: storyTerminal,
     selectedSession: storySession,
     connectionStep: 2,
+    isManaging: false,
+    errorMessage: null,
     onOpenSessionOverview: fn(),
     onBack: fn(),
     ...overrides,

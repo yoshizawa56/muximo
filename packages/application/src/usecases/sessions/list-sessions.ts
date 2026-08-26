@@ -12,6 +12,10 @@ export async function listSessions(
   agentStatus: AgentStatusStore,
   clock: MuximodClock,
 ): Promise<MuximodSessionSummary[]> {
-  const panes = await reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock);
-  return summarizeSessions(panes);
+  const snapshot = await host.listPanesSnapshot();
+  const panes = await reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock, snapshot);
+  const managedSessionNames = new Set(
+    snapshot.panes.filter((pane) => pane.muximodManagedSessionId).map((pane) => pane.sessionName),
+  );
+  return summarizeSessions(panes, managedSessionNames);
 }

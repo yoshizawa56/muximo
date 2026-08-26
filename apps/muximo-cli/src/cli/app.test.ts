@@ -47,6 +47,7 @@ function createFixture(environment: NodeJS.ProcessEnv = {}) {
     "run",
     "shell",
     "tmuxNewSession",
+    "tmuxManageSession",
     "sessionList",
     "sessionResume",
     "sessionCleanup",
@@ -130,6 +131,37 @@ const cases = [
           },
         },
       ]),
+    ],
+  },
+  {
+    name: "dispatches existing tmux session adoption through the typed handler",
+    input: { args: ["tmux", "manage-session", "--name", "desktop"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "tmuxManageSession",
+          input: { name: "desktop" },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "rejects unsafe tmux session names before adoption dispatch",
+    input: { args: ["tmux", "manage-session", "--name", "desktop/remote"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "Invalid arguments for muximo tmux manage-session"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
+    name: "rejects tmux session names longer than the wire limit before creation dispatch",
+    input: { args: ["tmux", "new-session", "--name", "a".repeat(65)] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "Invalid arguments for muximo tmux new-session"),
+      hasObserved<Context, number>("calls", []),
     ],
   },
   {

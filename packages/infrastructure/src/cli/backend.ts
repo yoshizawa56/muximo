@@ -1,5 +1,7 @@
 import { basename } from "node:path";
 import type {
+  AgentObservationPort,
+  AgentStateObservation,
   LaunchExecution,
   LaunchPlan,
   LaunchPreparation,
@@ -21,6 +23,7 @@ import { spawnAttached } from "../process/process.js";
 import type { TerminalTitlePort } from "../terminal/title.js";
 
 export type BackendAdapterOptions = AgentBackendProviderOptions & {
+  observations: AgentObservationPort;
   providers: AgentBackendProviderRegistry;
   terminalTitle?: TerminalTitlePort;
 };
@@ -168,10 +171,20 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
 
   private async publishObservation(session: AgentSessionRecord, observation: AgentObservation): Promise<void> {
     if (observation.type !== "state_changed") return;
-    this.options.logger.debug("agent.observation", {
-      sessionId: session.id,
+    const stateObservation: AgentStateObservation = {
       state: observation.state,
-      recentOutput: observation.recentOutput,
-    });
+      ...(observation.recentOutput === undefined ? {} : { recentOutput: observation.recentOutput }),
+    };
+    try {
+      await this.options.observations.observe(session, stateObservation);
+    } catch (error) {
+      // Observation delivery is best effort. The foreground agent must remain
+      // usable when muximod is restarting or temporarily unavailable.
+      this.options.logger.debug("agent.observation_publish_failed", {
+        sessionId: session.id,
+        state: observation.state,
+        ...errorFields(error),
+      });
+    }
   }
 }

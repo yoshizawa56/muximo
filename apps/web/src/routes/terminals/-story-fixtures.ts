@@ -27,11 +27,12 @@ export const storySession: TmuxSession = {
   paneCount: 3,
   waitingCount: 1,
   detail: "2 agents · 1 shell · waiting input",
+  managed: true,
 };
 
 export const storySessions: TmuxSession[] = [
   storySession,
-  { name: "release", paneCount: 1, waitingCount: 0, detail: "1 shell · active now" },
+  { name: "release", paneCount: 1, waitingCount: 0, detail: "1 shell · active now", managed: false },
 ];
 
 export const storyWorkspaces: WorkspaceDirectory[] = [

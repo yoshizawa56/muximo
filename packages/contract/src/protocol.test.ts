@@ -17,6 +17,7 @@ import {
   decodeServerControlFrame,
   encodeClientControlFrame,
   encodeServerControlFrame,
+  manageSessionRequestSchema,
   maxPasteImageBase64Length,
   muximodControlRequestSchema,
   muximodControlResponseSchema,
@@ -477,6 +478,31 @@ const sessionTable: OperationTable<undefined, "default", SessionCreateInput, Val
   observe: () => ({}),
 };
 
+type SessionManageInput = { name: string };
+const sessionManageCases = [
+  {
+    name: "accepts an existing tmux session name",
+    input: { name: "desktop" },
+    assert: [isValid()],
+  },
+  {
+    name: "trims an existing tmux session name",
+    input: { name: " desktop " },
+    assert: [isValid({ name: "desktop" })],
+  },
+  {
+    name: "rejects a tmux session name with unsupported characters",
+    input: { name: "desktop/main" },
+    assert: [isInvalid(["name"])],
+  },
+] satisfies readonly OperationCase<"default", SessionManageInput, ValidationResult, EmptyContext>[];
+const sessionManageTable: OperationTable<undefined, "default", SessionManageInput, ValidationResult, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: sessionManageCases,
+  execute: (_fixture, input) => parseSchema(manageSessionRequestSchema, input),
+  observe: () => ({}),
+};
+
 type WorkspaceInput = { workspaceId: string; mode: "workspace" | "worktree" };
 const workspaceCases = [
   {
@@ -678,6 +704,7 @@ describe("protocol schemas", () => {
   runOperationTable(register, createValidationTable(paneListCases, paneListResponseSchema));
   runOperationTable(register, paneCreateTable);
   runOperationTable(register, sessionTable);
+  runOperationTable(register, sessionManageTable);
   runOperationTable(register, workspaceTable);
   runOperationTable(register, paneWorkspaceTable);
   runOperationTable(register, frameTable);

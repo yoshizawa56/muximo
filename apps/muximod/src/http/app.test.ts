@@ -131,6 +131,7 @@ const fixture = (): FixtureHandle<SocketFixture> => {
       create: async () => {
         throw new Error("not used");
       },
+      manage: async () => ({ name: "unused", changed: false }),
     },
     panes: {
       list: async () => [],

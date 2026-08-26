@@ -372,6 +372,7 @@ function createApplication(state: { sessionsCalls: number }): MuximodApplication
         state.sessionsCalls += 1;
         return [];
       },
+      manage: async () => ({ name: "unused", changed: false }),
       create: async () => {
         throw new Error("not used");
       },

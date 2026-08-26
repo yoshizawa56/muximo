@@ -100,6 +100,11 @@ function SessionCard({
           <strong className="min-w-0 overflow-hidden text-[0.78rem] font-semibold text-[#d0f9d4] text-ellipsis whitespace-nowrap max-[620px]:text-[0.69rem]">
             {session.name}
           </strong>
+          <span
+            className={`shrink-0 rounded-[4px] border px-[5px] py-[2px] font-mono text-[0.46rem] font-bold tracking-[0.08em] ${session.managed ? "border-[#2d7140] bg-lime/8 text-lime" : "border-[#4b4b2d] bg-[#282817] text-[#c6b879]"}`}
+          >
+            {session.managed ? "MANAGED" : "UNMANAGED"}
+          </span>
         </span>
         <small className="overflow-hidden font-mono text-[0.57rem] text-[#67946e] text-ellipsis whitespace-nowrap max-[620px]:text-[0.5rem]">
           {session.detail}

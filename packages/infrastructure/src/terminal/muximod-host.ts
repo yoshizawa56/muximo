@@ -35,6 +35,15 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     return this.adapter.hasSession(target);
   }
 
+  public async findManagedSessionId(target: string): Promise<string | undefined> {
+    const snapshot = await this.listPanesSnapshot();
+    return snapshot.panes.find((pane) => pane.sessionName === target)?.muximodManagedSessionId;
+  }
+
+  public async configureManagedSession(target: string, managedSessionId: string): Promise<void> {
+    configureManagedTmuxSession(this.adapter, target, managedSessionId, resolveMuximoCommand(this.environment));
+  }
+
   public async createManagedSession(target: string, cwd: string): Promise<string> {
     const managedSessionId = randomUUID();
     const binary = resolveMuximoCommand(this.environment);

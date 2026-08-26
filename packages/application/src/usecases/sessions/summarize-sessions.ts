@@ -2,7 +2,10 @@ import type { PaneRecord } from "@muximo/domain";
 import type { MuximodSessionSummary } from "../../ports/application.js";
 
 /** Derives the session summaries shown to clients from reconciled panes. */
-export function summarizeSessions(panes: PaneRecord[]): MuximodSessionSummary[] {
+export function summarizeSessions(
+  panes: PaneRecord[],
+  managedSessionNames: ReadonlySet<string> = new Set(),
+): MuximodSessionSummary[] {
   const groups = new Map<string, PaneRecord[]>();
   for (const pane of panes) groups.set(pane.sessionName, [...(groups.get(pane.sessionName) ?? []), pane]);
 
@@ -21,6 +24,7 @@ export function summarizeSessions(panes: PaneRecord[]): MuximodSessionSummary[] 
         paneCount: sessionPanes.length,
         waitingCount,
         detail: detailParts.join(" · "),
+        managed: managedSessionNames.has(name),
       } satisfies MuximodSessionSummary;
     });
 }

@@ -86,6 +86,7 @@ export const fallbackSession: TmuxSession = {
   paneCount: 0,
   waitingCount: 0,
   detail: "tmux",
+  managed: false,
 };
 
 export function queryStatus(status: "pending" | "error" | "success"): "loading" | "error" | "ready" {

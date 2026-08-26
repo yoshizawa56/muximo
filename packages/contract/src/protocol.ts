@@ -46,6 +46,13 @@ const displayValueSchema = z
   .max(120)
   .regex(/^[^\u0000\r\n]+$/);
 
+export const tmuxSessionNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9._-]+$/);
+
 const tmuxPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
 
 export const publicKeyJwkSchema = z
@@ -537,12 +544,7 @@ export type PanePlacement = z.infer<typeof panePlacementSchema>;
 
 export const createPaneRequestSchema = z
   .object({
-    sessionName: z
-      .string()
-      .trim()
-      .min(1)
-      .max(64)
-      .regex(/^[A-Za-z0-9._-]+$/),
+    sessionName: tmuxSessionNameSchema,
     kind: z.enum(["agent", "shell"]),
     name: z
       .string()
@@ -616,19 +618,27 @@ export const tmuxSessionSchema = z.object({
   paneCount: z.number().int().min(0),
   waitingCount: z.number().int().min(0),
   detail: z.string(),
+  managed: z.boolean().default(false),
 });
 export type TmuxSession = z.infer<typeof tmuxSessionSchema>;
 
 export const sessionListResponseSchema = z.object({ sessions: z.array(tmuxSessionSchema) });
 
+export const manageSessionRequestSchema = z.object({
+  name: tmuxSessionNameSchema,
+});
+export type ManageSessionRequest = z.infer<typeof manageSessionRequestSchema>;
+
+export const managedSessionResponseSchema = z.object({
+  session: z.object({
+    name: z.string().min(1),
+    changed: z.boolean(),
+  }),
+});
+
 export const createSessionRequestSchema = z
   .object({
-    name: z
-      .string()
-      .trim()
-      .min(1)
-      .max(64)
-      .regex(/^[A-Za-z0-9._-]+$/),
+    name: tmuxSessionNameSchema,
     // cwd is accepted only as a compatibility input. The web flow always sends
     // workspaceId, which is resolved on the host before tmux is touched.
     cwd: z.string().trim().min(1).max(4_096).optional(),

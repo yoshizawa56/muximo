@@ -23,6 +23,7 @@ type BackendFixture = {
   root: string;
   executable: string;
   log: string;
+  observations: Array<{ state: string; recentOutput?: string }>;
   disposeCount: number;
   prepareInput?: { name?: string; cwd: string; resumeSessionId?: string | null };
   runCount: number;
@@ -35,6 +36,7 @@ type BackendFixture = {
 type BackendResult = {
   runCount: number;
   disposeCount: number;
+  observations: readonly { state: string; recentOutput?: string }[];
   sessionUpdate: string | undefined;
   sameProcessResult: boolean;
   preparedCwd: string | undefined;
@@ -50,6 +52,9 @@ const cases = [
       hasObserved<BackendResult, BackendResult>("sessionUpdate", "provider-session"),
       hasObserved<BackendResult, BackendResult>("runCount", 1),
       hasObserved<BackendResult, BackendResult>("disposeCount", 1),
+      hasObserved<BackendResult, BackendResult>("observations", [
+        { state: "waiting_input", recentOutput: "Need input" },
+      ]),
       hasObserved<BackendResult, BackendResult>("sameProcessResult", true),
       {
         name: "passes the session working directory to the provider",
@@ -75,6 +80,7 @@ const table: OperationTable<BackendFixture, "default", Input, BackendResult, Bac
     return {
       runCount: fixture.runCount,
       disposeCount: fixture.disposeCount,
+      observations: fixture.observations,
       sessionUpdate: fixture.sessionUpdate,
       sameProcessResult: fixture.sameProcessResult,
       preparedCwd: fixture.prepareInput?.cwd,
@@ -83,6 +89,7 @@ const table: OperationTable<BackendFixture, "default", Input, BackendResult, Bac
   observe: (fixture) => ({
     runCount: fixture.runCount,
     disposeCount: fixture.disposeCount,
+    observations: fixture.observations,
     sessionUpdate: fixture.sessionUpdate,
     sameProcessResult: fixture.sameProcessResult ?? false,
     preparedCwd: fixture.prepareInput?.cwd,
@@ -120,6 +127,7 @@ function createBackendFixture(registerCleanup?: (cleanup: () => void) => void): 
     root,
     executable,
     log,
+    observations: [],
     disposeCount,
     runCount: 0,
     adapter: undefined as unknown as AgentBackendAdapter,
@@ -147,6 +155,11 @@ function createBackendFixture(registerCleanup?: (cleanup: () => void) => void): 
       info: () => undefined,
       warn: () => undefined,
       child: () => ({ debug: () => undefined, info: () => undefined, warn: () => undefined }),
+    },
+    observations: {
+      observe: async (_session: AgentSessionRecord, observation: { state: string; recentOutput?: string }) => {
+        fixture.observations.push(observation);
+      },
     },
   };
   fixture.adapter = new AgentBackendAdapter({
@@ -177,6 +190,12 @@ function createPlugin(
     detect: async () => null,
     launch: async (input) => ({ command: executable, args: input.args ?? [], cwd: input.cwd, environment: {} }),
     createObserver: () => ({ onOutput: () => [], onExit: () => [] }),
+    createMonitor: () => ({
+      start: async (sink) => {
+        await sink({ type: "state_changed", state: "waiting_input", recentOutput: "Need input" });
+      },
+      stop: async () => undefined,
+    }),
     prepareLaunch: async (input) => {
       onPrepare(input);
       return {
