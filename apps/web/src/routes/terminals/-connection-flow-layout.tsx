@@ -1,13 +1,12 @@
 import type { ReactNode } from "react";
+import { MuximoLogo } from "../../app/components/muximo-logo";
 
 export function ConnectionFlowLayout({ children }: { children: ReactNode }) {
   return (
     <main className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-x-hidden overflow-y-auto bg-flow-grid bg-[length:auto,32px_32px,32px_32px,auto] text-ink">
       <header className="flex min-h-[58px] shrink-0 items-center justify-between border-b border-[#17391f] bg-[#030a05]/72 px-7 backdrop-blur-[16px] max-[620px]:min-h-[calc(56px+var(--safe-area-top))] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pt-[var(--safe-area-top)]">
         <div className="flex items-center gap-[9px]">
-          <span className="grid size-[26px] place-items-center rounded-lg border border-[#2d6c39] bg-[#071309] font-mono text-base text-lime">
-            ⌁
-          </span>
+          <MuximoLogo size={26} />
           <strong className="text-[0.92rem] tracking-[-0.04em] text-[#d5ffd9]">
             muximo<span className="text-lime-deep">.</span>
           </strong>

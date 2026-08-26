@@ -1,3 +1,4 @@
+import { MuximoLogo } from "../../../../../app/components/muximo-logo";
 import { PaneLayoutOverlay } from "./-pane-layout-overlay-view";
 import type { SessionOverviewViewModel } from "./-session-viewmodel";
 
@@ -5,14 +6,17 @@ export function SessionView({ viewModel }: { viewModel: SessionOverviewViewModel
   return (
     <main className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-x-hidden overflow-y-auto bg-flow-grid bg-[length:auto,32px_32px,32px_32px,auto] text-ink">
       <header className="flex min-h-[58px] shrink-0 items-center justify-between gap-3 border-b border-[#17391f] bg-[#030a05]/72 px-7 backdrop-blur-[16px] max-[620px]:min-h-[calc(56px+var(--safe-area-top))] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pt-[var(--safe-area-top)]">
-        <button
-          className="grid size-8 place-items-center rounded-lg border border-[#24522e] bg-[#08170b] text-[1.15rem] leading-none text-[#9bd5a2] transition-colors hover:border-lime-deep hover:text-lime max-[620px]:size-11"
-          type="button"
-          onClick={viewModel.onBack}
-          aria-label="Back to sessions"
-        >
-          ‹
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            className="grid size-8 place-items-center rounded-lg border border-[#24522e] bg-[#08170b] text-[1.15rem] leading-none text-[#9bd5a2] transition-colors hover:border-lime-deep hover:text-lime max-[620px]:size-11"
+            type="button"
+            onClick={viewModel.onBack}
+            aria-label="Back to sessions"
+          >
+            ‹
+          </button>
+          <MuximoLogo size={24} />
+        </div>
         <div className="flex min-w-0 flex-1 flex-col items-center gap-[3px] text-center">
           <span className="inline-flex items-center gap-1.5 font-mono text-[0.48rem] font-bold tracking-[0.12em] text-lime-deep">
             <span className="size-[5px] rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" /> CONNECTED
