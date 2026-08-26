@@ -3,14 +3,48 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#030704" />
+    <meta name="theme-color" content="#000000" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="description" content="Muximo is a focused mobile control room for tmux agent sessions." />
+    <link rel="icon" href="/branding/muximo-logo.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/branding/muximo-logo-180.png" />
+    <style>
+      html,
+      body {
+        background: #000000;
+      }
+
+      #boot-splash {
+        position: fixed;
+        z-index: 10000;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #000000;
+        opacity: 1;
+        transition: opacity 180ms ease, visibility 180ms ease;
+      }
+
+      #boot-splash.is-hidden {
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #boot-splash img {
+        display: block;
+        width: min(34vw, 180px);
+        height: auto;
+      }
+    </style>
     <title>muximo. / control room</title>
   </head>
   <body>
+    <div id="boot-splash" role="status" aria-label="Loading Muximo">
+      <img src="/branding/muximo-logo.svg" alt="" />
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

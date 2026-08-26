@@ -1,17 +1,23 @@
-import type { PanePublicationPort, ShellPanePort } from "@muximo/application";
-import type { AgentSessionRecord } from "@muximo/domain";
+import type {
+  AgentObservationPort,
+  AgentStateObservation,
+  PanePublicationPort,
+  ShellPanePort,
+} from "@muximo/application";
+import type { AgentSessionRecord, PaneState } from "@muximo/domain";
 import { errorFields, type Logger } from "../logging/index.js";
 import { resolveMuximodPaths } from "../persistence/index.js";
 import type { TmuxAdapter } from "../terminal/tmux.js";
 
 export type PaneControlClient = {
-  adoptAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
-  releaseAgentSession(input: { agentSessionId: string; tmuxPaneId: string; executionId: string }): Promise<void>;
+  adoptAgentSession(input: { agentSessionId: string; hostPaneId: string; executionId: string }): Promise<void>;
+  releaseAgentSession(input: { agentSessionId: string; hostPaneId: string; executionId: string }): Promise<void>;
   observeAgentSession(input: {
     agentSessionId: string;
-    tmuxPaneId: string;
+    hostPaneId: string;
     executionId: string;
-    state: "running" | "completed" | "failed" | "stopped";
+    state: PaneState;
+    recentOutput?: string;
   }): Promise<void>;
   close(): void;
 };
@@ -27,13 +33,13 @@ export type PaneAdapterOptions = {
 };
 
 /** Tmux/control-socket adapter for pane identity and agent observation. */
-export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPanePort {
+export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObservationPort, ShellPanePort {
   public constructor(private readonly options: PaneAdapterOptions) {}
 
   public async adopt(session: AgentSessionRecord): Promise<void> {
     const pane = currentTmuxPane(this.options.environment);
     if (!pane || !session.executionId) return;
-    const input = { agentSessionId: session.id, tmuxPaneId: pane, executionId: session.executionId };
+    const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
     try {
       const control = await this.options.connect(
         defaultControlSocket(this.options.environment, this.options.databaseFile),
@@ -55,7 +61,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPan
   public async release(session: AgentSessionRecord): Promise<void> {
     const pane = currentTmuxPane(this.options.environment);
     if (!pane || !session.executionId) return;
-    const input = { agentSessionId: session.id, tmuxPaneId: pane, executionId: session.executionId };
+    const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
     try {
       const control = await this.options.connect(
         defaultControlSocket(this.options.environment, this.options.databaseFile),
@@ -78,6 +84,10 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPan
     session: AgentSessionRecord,
     state: "running" | "completed" | "failed" | "stopped",
   ): Promise<void> {
+    return this.observe(session, { state });
+  }
+
+  public async observe(session: AgentSessionRecord, observation: AgentStateObservation): Promise<void> {
     const pane = currentTmuxPane(this.options.environment);
     if (!pane || !session.executionId) return;
     try {
@@ -87,16 +97,21 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPan
       try {
         await control.observeAgentSession({
           agentSessionId: session.id,
-          tmuxPaneId: pane,
+          hostPaneId: pane,
           executionId: session.executionId,
-          state,
+          state: observation.state,
+          ...(observation.recentOutput === undefined ? {} : { recentOutput: observation.recentOutput }),
         });
       } finally {
         control.close();
       }
     } catch (error) {
       if (isControlSocketUnavailable(error)) return;
-      this.options.logger.debug("agent.observation_publish_failed", { state, pane, ...errorFields(error) });
+      this.options.logger.debug("agent.observation_publish_failed", {
+        state: observation.state,
+        pane,
+        ...errorFields(error),
+      });
     }
   }
 
@@ -119,7 +134,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPan
 
   public restoreShell(): void {
     const name =
-      this.options.environment.MUXIMO_PANE_NAME ?? this.options.environment.MUXIMO_MANAGED_SESSION_NAME ?? "shell";
+      this.options.environment.MUXIMOD_PANE_NAME ?? this.options.environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell";
     this.markShell(name);
   }
 

@@ -1,10 +1,6 @@
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-/**
- * Authentication tables are bootstrapped for legacy databases by
- * `ensureAuthSchema`. CRUD still uses these Drizzle definitions so database
- * reads and writes do not bypass the repository type boundary.
- */
+/** Authentication tables are bootstrapped by the persistence composition root. */
 export const authMetadata = sqliteTable("auth_metadata", {
   id: integer("id").primaryKey(),
   serverId: text("server_id").notNull().unique(),
@@ -38,7 +34,6 @@ export const authPairings = sqliteTable(
   {
     pairingId: text("pairing_id").primaryKey(),
     serverId: text("server_id").notNull(),
-    webOrigin: text("web_origin").notNull().default(""),
     muximodBaseUrl: text("muximod_base_url").notNull(),
     secretHash: text("secret_hash").notNull().unique(),
     claimTokenHash: text("claim_token_hash").unique(),

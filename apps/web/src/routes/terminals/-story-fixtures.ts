@@ -27,11 +27,12 @@ export const storySession: TmuxSession = {
   paneCount: 3,
   waitingCount: 1,
   detail: "2 agents · 1 shell · waiting input",
+  managed: true,
 };
 
 export const storySessions: TmuxSession[] = [
   storySession,
-  { name: "release", paneCount: 1, waitingCount: 0, detail: "1 shell · active now" },
+  { name: "release", paneCount: 1, waitingCount: 0, detail: "1 shell · active now", managed: false },
 ];
 
 export const storyWorkspaces: WorkspaceDirectory[] = [
@@ -58,7 +59,7 @@ export const storyWorkspaces: WorkspaceDirectory[] = [
 export const storyPanes: PaneSummary[] = [
   {
     id: "pane-review",
-    tmuxPaneId: "%0",
+    hostPaneId: "%0",
     sessionName: "muximo",
     windowId: "@0",
     paneIndex: 0,
@@ -76,7 +77,7 @@ export const storyPanes: PaneSummary[] = [
   },
   {
     id: "pane-build",
-    tmuxPaneId: "%1",
+    hostPaneId: "%1",
     sessionName: "muximo",
     windowId: "@0",
     paneIndex: 1,
@@ -94,7 +95,7 @@ export const storyPanes: PaneSummary[] = [
   },
   {
     id: "pane-shell",
-    tmuxPaneId: "%2",
+    hostPaneId: "%2",
     sessionName: "muximo",
     windowId: "@1",
     paneIndex: 0,
@@ -112,7 +113,7 @@ export const storyPanes: PaneSummary[] = [
   },
   {
     id: "pane-approval",
-    tmuxPaneId: "%3",
+    hostPaneId: "%3",
     sessionName: "muximo",
     windowId: "@2",
     paneIndex: 0,

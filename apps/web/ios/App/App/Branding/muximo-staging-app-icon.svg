@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>Muximo staging app icon</title>
+  <rect width="1024" height="1024" fill="#171007" />
+  <g transform="matrix(7.5 0 0 7.5 137 137)">
+    <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" />
+    <rect x="19" y="21" width="62" height="58" rx="12" fill="none" stroke="#f1c76d" stroke-width="4" />
+    <path d="M29 31h2M36 31h2M43 31h2" fill="none" stroke="#c99a3f" stroke-width="3" stroke-linecap="round" />
+    <g transform="translate(-4 0) translate(50 0) scale(0.92 1) translate(-50 0)">
+      <path d="m31 44 10 9-10 9M47 62h8" fill="none" stroke="#d9f4dc" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M76 46c-2-2-4-3-7-3h-1c-4 0-6 2-6 5s2 4 6 5l2 1c4 1 6 2 6 5s-2 4-6 4h-1c-3 0-5-1-7-3" fill="none" stroke="#f1c76d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+    </g>
+  </g>
+</svg>

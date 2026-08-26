@@ -52,7 +52,7 @@ function buildViewModel(overrides: Partial<NewPaneViewModel> = {}): NewPaneViewM
     agentId: "codex",
     existingPanes: storyPanes,
     placement: "window",
-    targetPaneId: storyPanes[0].tmuxPaneId,
+    targetPaneId: storyPanes[0].hostPaneId,
     isCreating: false,
     errorMessage: null,
     onNameChange: fn(),
@@ -79,7 +79,7 @@ function NewPaneStory({
   const [kind, setKind] = useState(initialKind);
   const [agentId, setAgentId] = useState<NewPaneAgent>("codex");
   const [placement, setPlacement] = useState(initialPlacement);
-  const [targetPaneId, setTargetPaneId] = useState<string | null>(initialPanes[0]?.tmuxPaneId ?? null);
+  const [targetPaneId, setTargetPaneId] = useState<string | null>(initialPanes[0]?.hostPaneId ?? null);
   const [mode, setMode] = useState<WorkspaceSelectionMode>(initialKind === "shell" ? "workspace" : "worktree");
   const [created, setCreated] = useState(false);
   const onCreate = useMemo(() => () => setCreated(true), []);

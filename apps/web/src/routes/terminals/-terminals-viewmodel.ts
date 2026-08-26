@@ -1,6 +1,7 @@
 import type { TerminalEndpoint } from "@muximo/contract";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { muximodErrorMessage } from "../../app/api/muximod-error.js";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 
@@ -21,7 +22,6 @@ export function useTerminalsViewModel(): TerminalsViewModel {
     utils.terminals.list.queryOptions({
       input: {},
       staleTime: 5_000,
-      retry: 1,
       enabled: Boolean(connection),
     }),
   );
@@ -48,5 +48,5 @@ function queryStatus(status: "pending" | "error" | "success"): "loading" | "erro
 }
 
 function errorMessage(error: unknown): string | null {
-  return error instanceof Error ? error.message : error ? String(error) : null;
+  return error ? muximodErrorMessage(error) : null;
 }

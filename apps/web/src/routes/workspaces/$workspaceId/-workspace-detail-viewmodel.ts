@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invalidateWorkspaceData } from "../../../app/api/invalidation";
+import { muximodErrorMessage } from "../../../app/api/muximod-error.js";
 import { useMuximodEvents } from "../../../app/api/muximod-events";
 import { useMuximodConnection } from "../../../app/api/use-muximod-connection";
 import {
@@ -64,7 +65,7 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
       invalidateWorkspaceData(queryClient, utils);
       setSaveError(null);
     },
-    onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
+    onError: (error: unknown) => setSaveError(muximodErrorMessage(error)),
   });
 
   const deleteMutation = useMutation({
@@ -76,7 +77,7 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
       invalidateWorkspaceData(queryClient, utils);
       void navigate({ to: "/workspaces" });
     },
-    onError: (error: unknown) => setSaveError(error instanceof Error ? error.message : String(error)),
+    onError: (error: unknown) => setSaveError(muximodErrorMessage(error)),
   });
 
   const onSave = useCallback(() => {
@@ -107,12 +108,7 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
     worktreeCopyPatterns,
     isSaving: updateMutation.isPending,
     isDeleting: deleteMutation.isPending,
-    errorMessage:
-      workspacesQuery.error instanceof Error
-        ? workspacesQuery.error.message
-        : workspacesQuery.error
-          ? String(workspacesQuery.error)
-          : null,
+    errorMessage: workspacesQuery.error ? muximodErrorMessage(workspacesQuery.error) : null,
     saveError,
     canSave: workspaceDetailCanSave(name),
     onNameChange: setName,

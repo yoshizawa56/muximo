@@ -7,7 +7,7 @@ import {
   PaneId,
   type PaneRecord,
 } from "@muximo/domain";
-import type { MuximodClock } from "../../ports/application.js";
+import { type ApplicationClock, ApplicationError } from "../../ports/application.js";
 import type {
   HostPaneSnapshot,
   MuximodHostPort,
@@ -31,16 +31,18 @@ export async function reconcilePanes(
   repository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   agentStatus: AgentStatusStore,
-  clock: MuximodClock,
+  clock: ApplicationClock,
   live?: TerminalHostSnapshot,
 ): Promise<PaneRecord[]> {
   const snapshot = live ?? (await host.listPanesSnapshot());
   const now = clock.now();
   const records: PaneRecord[] = [];
-  const hostServerId = snapshot.hostServerId ?? "legacy";
+  if (snapshot.panes.length > 0 && !snapshot.hostServerId) {
+    throw new ApplicationError("terminal_host_unavailable", "tmux server identity is unavailable");
+  }
 
   for (const hostPane of snapshot.panes) {
-    const paneHostServerId = hostPane.hostServerId ?? hostServerId;
+    const paneHostServerId = hostPane.hostServerId;
     const existing = await repository.findByHostPaneIdentity(paneHostServerId, hostPane.hostPaneId);
     const sessionCandidate = hostPane.muximodSessionId
       ? await agentSessionRepository.findById(AgentSessionId.create(hostPane.muximodSessionId))
@@ -95,7 +97,18 @@ export async function reconcilePanes(
       kind !== "agent"
         ? { state: "running" as const }
         : adoptedSession?.executionId
-          ? readManagedAgentObservation(adoptedSession.id, adoptedSession.executionId, agentStatus)
+          ? readManagedAgentObservation(
+              adoptedSession.id,
+              adoptedSession.executionId,
+              agentStatus,
+              existing?.agentSessionId === adoptedSession.id &&
+                existing.agentExecutionId === hostPane.muximodExecutionId
+                ? {
+                    state: existing.state,
+                    ...(existing.recentOutput === undefined ? {} : { recentOutput: existing.recentOutput }),
+                  }
+                : undefined,
+            )
           : await host.observeUnmanagedAgent(hostPane.hostPaneId, existing?.state ?? "running");
     const name = staleAgentMetadata
       ? hostPane.title || hostPane.command || hostPane.hostPaneId
@@ -184,7 +197,7 @@ function resolvePaneKind(
   commandObservation: MuximodPaneClassification,
 ): PaneRecord["kind"] {
   if (staleAgentMetadata) return "shell";
-  if (hostPane.muximodKind === "agent" && adopted) return "agent";
+  if (adopted) return "agent";
   if (hostPane.muximodKind === "agent" && !hostPane.muximodSessionId) return "agent";
   if (hostPane.muximodKind === "shell" || hostPane.muximodKind === "unknown") return hostPane.muximodKind;
   const detected = commandObservation.kind;

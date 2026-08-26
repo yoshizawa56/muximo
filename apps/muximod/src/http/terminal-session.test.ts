@@ -353,7 +353,6 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
   });
   const options: TerminalSessionOptions = {
     cwd: "/tmp",
-    defaultTarget: "muximod",
     viewportManager: manager,
     spawnPty: spawn,
     sessions: registry,

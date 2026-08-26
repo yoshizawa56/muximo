@@ -1,7 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type Assertion,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -9,7 +10,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { type OpenCodeServerEntry, OpenCodeServerManager, type SpawnedChild } from "./server.js";
 
 type SpawnRecord = {
@@ -44,6 +45,8 @@ type SeededEntry = {
 };
 
 type ServerInput = {
+  rawRegistry?: string;
+  registryIsDirectory?: boolean;
   seededEntry?: SeededEntry;
   seededEntries?: readonly SeededEntry[];
   seededAlive?: boolean;
@@ -74,6 +77,8 @@ type ServerResult = {
   killed: readonly { pid: number; signal: string }[];
   registry: Record<string, unknown>;
   errorCode?: string;
+  errorMessage?: string;
+  causeMessage?: string;
   retryable?: boolean;
   failure:
     | "health_timeout"
@@ -171,7 +176,21 @@ const expectAnyStartedAt = "__ANY_STARTED_AT__";
 
 type EmptyContext = {};
 
+const hasRegistryReadCause = (): Assertion<EmptyContext, ServerResult> => ({
+  name: "preserves the registry read failure cause",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value.errorMessage).toContain("OpenCode server registry could not be read");
+    expect(result.value.causeMessage).toMatch(/directory|EISDIR/i);
+  },
+});
+
 const cases = [
+  {
+    name: "preserves a registry read failure cause",
+    input: { operation: "ensure" as const, registryIsDirectory: true },
+    assert: [hasRegistryReadCause()],
+  },
   {
     name: "starts an owned server and records the entry",
     input: { operation: "ensure" as const },
@@ -189,6 +208,59 @@ const cases = [
         killed: [],
         registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
         failure: "none",
+      }),
+    ],
+  },
+  {
+    name: "rejects a registry entry without the current format",
+    input: {
+      operation: "ensure" as const,
+      rawRegistry: JSON.stringify({
+        "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: "2026-08-15T00:00:00.000Z" },
+      }),
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [],
+        registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        errorMessage: "OpenCode server registry entry is invalid: /ws",
+        failure: "health_timeout",
+      }),
+    ],
+  },
+  {
+    name: "rejects a registry entry with an unknown field",
+    input: {
+      operation: "ensure" as const,
+      rawRegistry: JSON.stringify({
+        "/ws": {
+          workspaceRoot: "/ws",
+          pid: 42,
+          port: 7_000,
+          version: "1.2.3",
+          startedAt: "2026-08-15T00:00:00.000Z",
+          legacy: true,
+        },
+      }),
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [],
+        registry: {
+          "/ws": {
+            pid: 42,
+            port: 7_000,
+            version: "1.2.3",
+            startedAt: expectAnyStartedAt,
+            legacy: true,
+          },
+        },
+        errorMessage: "OpenCode server registry entry is invalid: /ws",
+        failure: "health_timeout",
       }),
     ],
   },
@@ -650,27 +722,33 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         writeFileSync(`${harness.registryFile}.lock`, `${process.pid}\n`);
         harness.alivePids.add(process.pid);
       }
-      const seededEntries = input.seededEntries ?? (input.seededEntry ? [input.seededEntry] : []);
-      if (seededEntries.length > 0) {
-        const registry = Object.fromEntries(
-          seededEntries.map((seeded) => [
-            seeded.root ?? "/ws",
-            {
-              pid: seeded.pid,
-              port: seeded.port,
-              version: "1.2.3",
-              startedAt: "2026-08-15T00:00:00.000Z",
-            },
-          ]),
-        );
-        writeFileSync(harness.registryFile, JSON.stringify(registry));
-        for (const seeded of seededEntries) {
-          const alive = seeded.alive ?? input.seededAlive ?? false;
-          const healthy = seeded.healthy ?? input.seededHealthy ?? false;
-          const portAvailable = seeded.portAvailable ?? input.seededPortAvailable !== false;
-          if (alive) harness.alivePids.add(seeded.pid);
-          if (healthy) harness.healthyPorts.add(seeded.port);
-          if (portAvailable) harness.availablePorts.add(seeded.port);
+      if (input.registryIsDirectory) {
+        mkdirSync(harness.registryFile);
+      } else {
+        if (input.rawRegistry !== undefined) writeFileSync(harness.registryFile, input.rawRegistry);
+        const seededEntries = input.seededEntries ?? (input.seededEntry ? [input.seededEntry] : []);
+        if (seededEntries.length > 0) {
+          const registry = Object.fromEntries(
+            seededEntries.map((seeded) => [
+              seeded.root ?? "/ws",
+              {
+                workspaceRoot: seeded.root ?? "/ws",
+                pid: seeded.pid,
+                port: seeded.port,
+                version: "1.2.3",
+                startedAt: "2026-08-15T00:00:00.000Z",
+              },
+            ]),
+          );
+          writeFileSync(harness.registryFile, JSON.stringify(registry));
+          for (const seeded of seededEntries) {
+            const alive = seeded.alive ?? input.seededAlive ?? false;
+            const healthy = seeded.healthy ?? input.seededHealthy ?? false;
+            const portAvailable = seeded.portAvailable ?? input.seededPortAvailable !== false;
+            if (alive) harness.alivePids.add(seeded.pid);
+            if (healthy) harness.healthyPorts.add(seeded.port);
+            if (portAvailable) harness.availablePorts.add(seeded.port);
+          }
         }
       }
       if (input.healthOnSpawn === false) harness.healthyPorts.clear();
@@ -682,6 +760,8 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
       let failure: ServerResult["failure"] = "none";
       let errorCode: string | undefined;
       let retryable: boolean | undefined;
+      let errorMessage: string | undefined;
+      let causeMessage: string | undefined;
       try {
         if (input.operation === "dispose") {
           const disposed = await manager.dispose("/ws");
@@ -698,6 +778,13 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        if (input.rawRegistry !== undefined || input.registryIsDirectory) {
+          errorMessage = message;
+          if (input.registryIsDirectory && error instanceof Error) {
+            const cause = error.cause;
+            causeMessage = cause instanceof Error ? cause.message : String(cause);
+          }
+        }
         const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
         if (
           code === "opencode_registry_lock_timeout" ||
@@ -718,9 +805,11 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
                   ? "server_exited"
                   : "health_timeout";
       }
-      const registry = existsSync(harness.registryFile)
-        ? (JSON.parse(readFileSync(harness.registryFile, "utf8")) as Record<string, unknown>)
-        : {};
+      const registry = input.registryIsDirectory
+        ? {}
+        : existsSync(harness.registryFile)
+          ? (JSON.parse(readFileSync(harness.registryFile, "utf8")) as Record<string, unknown>)
+          : {};
       const normalizedRegistry = normalizeRegistry(registry);
       const result: ServerResult = {
         entry: entry
@@ -730,6 +819,8 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         killed: harness.killed,
         registry: normalizedRegistry,
         ...(errorCode ? { errorCode, retryable } : {}),
+        ...(errorMessage ? { errorMessage } : {}),
+        ...(causeMessage ? { causeMessage } : {}),
         failure,
       };
       if (input.operation === "refresh-all") {

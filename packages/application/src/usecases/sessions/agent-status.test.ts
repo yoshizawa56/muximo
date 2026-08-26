@@ -11,7 +11,7 @@ import { describe, it } from "vitest";
 import { type AgentStatusStore, agentStatusKey, readManagedAgentObservation } from "./agent-status.js";
 
 type EmptyContext = {};
-type ManagedInput = { sessionId: string; executionId: string };
+type ManagedInput = { sessionId: string; executionId: string; persisted?: ManagedResult };
 type ManagedResult = { state: PaneState; recentOutput?: string };
 type ManagedFixture = { store: AgentStatusStore };
 
@@ -44,13 +44,28 @@ const managedCases = [
     input: { sessionId: "session", executionId: "execution" },
     assert: [returns<EmptyContext, ManagedResult>({ state: "running" })],
   },
+  {
+    name: "uses a persisted observation for the current execution after restart",
+    input: {
+      sessionId: "session",
+      executionId: "execution",
+      persisted: { state: "waiting_approval", recentOutput: "Approve this action" },
+    },
+    assert: [
+      returns<EmptyContext, ManagedResult>({
+        state: "waiting_approval",
+        recentOutput: "Approve this action",
+      }),
+    ],
+  },
 ] satisfies readonly OperationCase<"waiting", ManagedInput, ManagedResult, EmptyContext>[];
 
 const managedTable: OperationTable<ManagedFixture, "waiting", ManagedInput, ManagedResult, EmptyContext> = {
   defaultFixture: managedFixture,
   fixtures: { waiting: waitingFixture },
   cases: managedCases,
-  execute: (fixture, input) => readManagedAgentObservation(input.sessionId, input.executionId, fixture.store),
+  execute: (fixture, input) =>
+    readManagedAgentObservation(input.sessionId, input.executionId, fixture.store, input.persisted),
   observe: () => ({}),
 };
 

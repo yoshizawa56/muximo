@@ -1,3 +1,4 @@
+import { MuximoLogo } from "../../../app/components/muximo-logo";
 import type { WorkspaceDetailViewModel } from "../-workspaces-viewmodel";
 
 const fieldClass = "flex flex-col gap-[7px]";
@@ -36,13 +37,16 @@ export function WorkspaceDetailView({ viewModel }: { viewModel: WorkspaceDetailV
   return (
     <main className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-x-hidden overflow-y-auto bg-flow-grid bg-[length:auto,32px_32px,32px_32px,auto] text-ink">
       <header className="flex min-h-[58px] shrink-0 items-center justify-between gap-3 border-b border-[#17391f] bg-[#030a05]/72 px-7 backdrop-blur-[16px] max-[620px]:min-h-[calc(56px+var(--safe-area-top))] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pt-[var(--safe-area-top)]">
-        <button
-          className="inline-flex items-center gap-2 font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime"
-          type="button"
-          onClick={viewModel.onBack}
-        >
-          ‹ workspaces
-        </button>
+        <div className="flex min-w-0 items-center gap-3">
+          <MuximoLogo size={26} />
+          <button
+            className="inline-flex items-center gap-2 font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime"
+            type="button"
+            onClick={viewModel.onBack}
+          >
+            ‹ workspaces
+          </button>
+        </div>
         <span className="font-mono text-[0.52rem] text-[#78ae80]">{workspace.isGit ? "git" : "plain"} workspace</span>
       </header>
       <section className="mx-auto w-full max-w-[570px] flex-1 px-6 py-8 max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pb-[calc(32px+var(--safe-area-bottom))]">

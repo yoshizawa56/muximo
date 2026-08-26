@@ -16,7 +16,7 @@ export type HostPaneReference = {
 };
 
 export type HostPaneSnapshot = HostPaneReference & {
-  hostServerId?: string;
+  hostServerId: string;
   muximodSessionId?: string;
   muximodExecutionId?: string;
   windowName: string;
@@ -55,6 +55,15 @@ export type MuximodPaneClassification = {
 export type MuximodPaneObservation = {
   state: PaneState;
 };
+
+/** Host operations required to adopt an existing tmux session. */
+export interface MuximodSessionManagementPort {
+  /** UUID generation is local identity construction and has no host I/O. */
+  newId(): string;
+  hasSession(target: string): Promise<boolean>;
+  findManagedSessionId(target: string): Promise<string | undefined>;
+  configureManagedSession(target: string, managedSessionId: string): Promise<void>;
+}
 
 /** Provider-neutral terminal observation and classification owned by application. */
 export interface MuximodTerminalObservationPort {
@@ -107,7 +116,6 @@ export interface MuximodViewportPort {
 export interface MuximodWorkspaceCatalogPort extends WorkspaceDirectoryPort {
   toDirectoryOption(workspace: WorkspaceRecord): MuximodWorkspaceDirectory;
   browseDirectories(parentPath?: string): Promise<MuximodWorkspaceDirectory[]>;
-  resolveLegacyDirectory(directory: string): Promise<string>;
   resolveWorkspaceDirectory(
     workspaceId: WorkspaceId,
     findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,

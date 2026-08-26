@@ -6,6 +6,7 @@ import {
   readBrowserConnectionProfile,
   saveBrowserConnectionProfile,
 } from "../../app/api/connection-profile-store";
+import { muximodErrorMessage } from "../../app/api/muximod-error.js";
 import { type MuximoAppInfo, muximoBridge, muximoFallbackAppInfo } from "../../platform/muximo-bridge";
 
 export type SettingsViewModel = {
@@ -70,7 +71,7 @@ export function useSettingsViewModel(): SettingsViewModel {
       try {
         parsePairingQrPayload(value);
       } catch (error: unknown) {
-        setErrorMessage(error instanceof Error ? error.message : String(error));
+        setErrorMessage(muximodErrorMessage(error));
         return;
       }
       setIsScanningQr(false);
@@ -94,7 +95,7 @@ export function useSettingsViewModel(): SettingsViewModel {
           setProfile(nextProfile);
           void navigate({ to: "/terminals" });
         })
-        .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)))
+        .catch((error: unknown) => setErrorMessage(muximodErrorMessage(error)))
         .finally(() => {
           setIsPairingQr(false);
           setPairingMessage(null);

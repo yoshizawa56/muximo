@@ -11,7 +11,6 @@ export function registerWorkspaceCommands(parent: Command, handlers: CliHandlers
   });
   registerWorkspaceListCommand(command, handlers, context);
   registerWorkspaceAddCommand(command, handlers, context);
-  registerWorkspaceAddCommand(command, handlers, context, "register");
   registerWorkspaceUpdateCommand(command, handlers, context);
   registerWorkspaceDeleteCommand(command, handlers, context);
   return command;

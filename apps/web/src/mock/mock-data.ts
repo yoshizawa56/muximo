@@ -3,7 +3,7 @@ import type { PaneSummary } from "@muximo/contract";
 export const mockPanes: PaneSummary[] = [
   {
     id: "pane-review",
-    tmuxPaneId: "%0",
+    hostPaneId: "%0",
     sessionName: "muximo",
     windowId: "@0",
     paneIndex: 0,
@@ -18,7 +18,7 @@ export const mockPanes: PaneSummary[] = [
   },
   {
     id: "pane-build",
-    tmuxPaneId: "%1",
+    hostPaneId: "%1",
     sessionName: "muximo",
     windowId: "@0",
     paneIndex: 1,
@@ -33,7 +33,7 @@ export const mockPanes: PaneSummary[] = [
   },
   {
     id: "pane-shell",
-    tmuxPaneId: "%2",
+    hostPaneId: "%2",
     sessionName: "muximo",
     windowId: "@1",
     paneIndex: 0,
@@ -48,7 +48,7 @@ export const mockPanes: PaneSummary[] = [
   },
   {
     id: "pane-approval",
-    tmuxPaneId: "%3",
+    hostPaneId: "%3",
     sessionName: "papercal",
     windowId: "@2",
     paneIndex: 0,
@@ -123,7 +123,7 @@ export const mockApprovalTerminalOutput = [
 
 export function mockTerminalOutputForTarget(target: string): string {
   if (target === "%4") return mockShellTerminalOutput;
-  const pane = mockPanes.find((candidate) => candidate.tmuxPaneId === target);
+  const pane = mockPanes.find((candidate) => candidate.hostPaneId === target);
   if (pane?.kind === "shell") return mockShellTerminalOutput;
   if (pane?.state === "waiting_approval") return mockApprovalTerminalOutput;
   if (pane?.state === "running") return mockRunningAgentTerminalOutput;

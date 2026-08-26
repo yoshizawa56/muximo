@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   type AgentStatusStore,
   type ApplicationClock,
@@ -15,8 +15,6 @@ import {
   AuthStore,
   allowedRootsFromEnvironment,
   BunSocketAdapter,
-  buildMuximoShellCommand,
-  configureManagedTmuxSession,
   createAgentDatabase,
   createImagePaster,
   createLogger,
@@ -112,13 +110,8 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     controlSocket: options.controlSocket,
   });
   const databaseFile = paths.databaseFile;
-  const configuredDatabaseFile =
-    options.databaseFile ?? process.env.MUXIMOD_DB_FILE ?? process.env.MUXIMO_DATABASE_FILE;
-  const usePrivateInstanceDirectory =
-    Boolean(process.env.MUXIMOD_INSTANCE_DIR?.trim()) || !configuredDatabaseFile?.trim();
   const database = createAgentDatabase(databaseFile, {
-    instanceDirectory:
-      databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
+    instanceDirectory: databaseFile === ":memory:" ? undefined : paths.instanceDirectory,
   });
   const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
@@ -153,6 +146,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const application = createMuximodApplication({
     getTerminal: getLocalTerminal,
     host,
+    sessionManagement: host,
     clock,
     paneRepository,
     agentSessionRepository,
@@ -167,7 +161,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   const eventHub = new MuximodEventHub();
   const hookToken = randomBytes(24).toString("hex");
-  const defaultTarget = process.env.MUXIMOD_DEFAULT_TMUX_TARGET ?? "muximod";
   const authStore = new AuthStore(database.db, database.sqlite);
   const authChallenges = new MemoryAuthChallengeStore();
   const authRateLimits = new MemoryAuthRateLimitStore();
@@ -270,7 +263,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       });
       new TerminalSession(socket, {
         cwd: process.cwd(),
-        defaultTarget,
         viewportManager,
         spawnPty,
         sessions: terminalSessions,
@@ -289,29 +281,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     app,
     async start(): Promise<void> {
       if (httpServer) return;
-
-      let createdDefaultSession = false;
-      try {
-        const managedSessionId = randomUUID();
-        createdDefaultSession = tmux.ensureSession(
-          defaultTarget,
-          process.cwd(),
-          buildMuximoShellCommand(undefined, {
-            MUXIMOD_MANAGED_SESSION_ID: managedSessionId,
-            MUXIMOD_MANAGED_SESSION_NAME: defaultTarget,
-          }),
-        );
-        if (createdDefaultSession) configureManagedTmuxSession(tmux, defaultTarget, managedSessionId);
-      } catch (error) {
-        if (createdDefaultSession) {
-          try {
-            tmux.killSession(defaultTarget);
-          } catch {
-            // Preserve the warning; cleanup is best effort.
-          }
-        }
-        logger.warn("tmux.default_session_failed", errorFields(error));
-      }
 
       try {
         httpServer = Bun.serve({

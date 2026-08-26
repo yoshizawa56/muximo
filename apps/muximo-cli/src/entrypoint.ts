@@ -1,8 +1,8 @@
 import type { Readable, Writable } from "node:stream";
-import { createCliComposition } from "./cli/compose.js";
 import { createCliApp } from "./cli/app.js";
 import { globalOptionSpecs } from "./cli/commands/global.js";
 import type { CliHandlers } from "./cli/commands/types.js";
+import { createCliComposition } from "./cli/compose.js";
 import { resolveCliOptions } from "./cli/options/index.js";
 
 export type CliEntrypointOptions = {
@@ -84,6 +84,7 @@ function createNoopHandlers(): CliHandlers {
     run: async () => 0,
     shell: async () => 0,
     tmuxNewSession: async () => 0,
+    tmuxManageSession: async () => 0,
     sessionList: async () => 0,
     sessionResume: async () => 0,
     sessionCleanup: async () => 0,

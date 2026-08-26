@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { invalidateWorkspaceData } from "../../app/api/invalidation";
+import { muximodErrorMessage } from "../../app/api/muximod-error.js";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 
@@ -113,5 +114,5 @@ export function useWorkspacesListViewModel(): WorkspacesListViewModel {
 }
 
 function errorMessage(error: unknown): string | null {
-  return error instanceof Error ? error.message : error ? String(error) : null;
+  return error ? muximodErrorMessage(error) : null;
 }

@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { muximodErrorMessage } from "./api/muximod-error.js";
+import { MuximoLogo } from "./components/muximo-logo";
 
 type AppErrorViewProps = {
   error: unknown;
@@ -20,6 +22,12 @@ export function AppErrorView({
   return (
     <main className="grid min-h-[var(--app-viewport-height)] place-items-center p-6 text-ink" role="alert">
       <div className="w-full max-w-[520px] rounded-[24px] border border-line-strong bg-[linear-gradient(145deg,rgb(12_19_14_/_96%),rgb(2_5_3_/_96%))] p-[clamp(24px,7vw,48px)] shadow-app">
+        <div className="mb-6 flex items-center gap-2.5">
+          <MuximoLogo size={34} />
+          <span className="font-semibold tracking-[-0.04em] text-ink">
+            muximo<span className="text-lime-deep">.</span>
+          </span>
+        </div>
         <div
           className="mb-6 grid size-[42px] place-items-center rounded-[13px] border border-red/48 bg-red/10 font-mono text-xl font-extrabold text-red"
           aria-hidden="true"
@@ -59,16 +67,7 @@ export function AppErrorView({
 }
 
 export function errorMessage(error: unknown): string {
-  if (error == null) return "Unknown error";
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "string" && error) return error;
-
-  try {
-    const serialized = JSON.stringify(error);
-    return serialized && serialized !== "{}" ? serialized : "Unknown error";
-  } catch {
-    return "Unknown error";
-  }
+  return muximodErrorMessage(error);
 }
 
 function reloadPage() {

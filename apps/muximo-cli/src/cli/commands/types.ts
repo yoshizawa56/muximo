@@ -32,6 +32,10 @@ export type CliTmuxNewSessionInput = {
   detached: boolean;
 };
 
+export type CliTmuxManageSessionInput = {
+  name: string;
+};
+
 export type CliSessionListInput = {
   global: boolean;
   names: boolean;
@@ -124,6 +128,7 @@ export type CliHandlers = {
   run(input: CliRunInput): Promise<number>;
   shell(input: CliShellInput): Promise<number>;
   tmuxNewSession(input: CliTmuxNewSessionInput): Promise<number>;
+  tmuxManageSession(input: CliTmuxManageSessionInput): Promise<number>;
   sessionList(input: CliSessionListInput): Promise<number>;
   sessionResume(input: CliSessionResumeInput): Promise<number>;
   sessionCleanup(input: CliSessionCleanupInput): Promise<number>;

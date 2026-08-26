@@ -139,8 +139,9 @@ class JsonlAgentMonitor implements AgentMonitor {
   }
 
   private async handleCodexRecord(record: JsonObject): Promise<void> {
-    const payload = objectValue(record.payload) ?? record;
-    const eventType = stringValue(payload.type) ?? stringValue(record.type) ?? "";
+    const payload = objectValue(record.payload);
+    if (!payload) return;
+    const eventType = stringValue(payload.type) ?? "";
     const normalizedType = eventType.toLowerCase();
     if (isApprovalEvent(normalizedType)) {
       await this.emit("waiting_approval", undefined, eventType);
@@ -159,7 +160,7 @@ class JsonlAgentMonitor implements AgentMonitor {
       return;
     }
 
-    const output = extractOutput(payload) ?? extractOutput(objectValue(record.item));
+    const output = extractOutput(payload);
     if (output) await this.emit(this.lastState ?? "running", output, eventType || "output");
   }
 
@@ -259,9 +260,8 @@ function codexHeaderMatches(header: string, cwd: string): boolean {
   for (const line of header.split("\n")) {
     const record = parseObject(line);
     if (!record) continue;
-    const payload = objectValue(record.payload) ?? record;
-    const type = stringValue(record.type) ?? stringValue(payload.type);
-    if (type !== "session_meta") continue;
+    const payload = objectValue(record.payload);
+    if (stringValue(record.type) !== "session_meta" || !payload) continue;
     const recordCwd = stringValue(payload.cwd);
     const originator = stringValue(payload.originator);
     const threadSource = stringValue(payload.thread_source);

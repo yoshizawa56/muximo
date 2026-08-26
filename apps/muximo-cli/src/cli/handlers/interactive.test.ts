@@ -120,6 +120,7 @@ function createFixture(attachmentState: TmuxNewSessionResult["attachment"]["stat
             return result;
           },
         },
+        manageSession: { execute: async () => ({ name: "review", changed: true }) },
         io,
       }),
     },

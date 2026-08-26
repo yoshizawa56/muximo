@@ -13,11 +13,11 @@ export type OpenCodeHealth = {
   version: string;
 };
 
-/** A normalized bus event: `payload` mirrors the OpenCode `Event` union. */
+/** A normalized bus event from the OpenCode global event envelope. */
 export type OpenCodeEvent = {
   type: string;
   properties: Record<string, unknown>;
-  /** Present on `/global/event`; the project directory the event belongs to. */
+  /** The project directory the event belongs to. */
   directory?: string;
 };
 
@@ -76,11 +76,7 @@ export class OpenCodeClient {
     return healthy ? { healthy, version } : undefined;
   }
 
-  /**
-   * Create a session on the server. The server derives the session ID; an
-   * optional `title` is stored as the session title so the session is
-   * recognizable in the OpenCode TUI and `session list`.
-   */
+  /** Creates a session and optionally sets its title. */
   public async createSession(title?: string): Promise<string | undefined> {
     const response = await this.request(`${this.baseUrl}/session`, {
       method: "POST",
@@ -92,10 +88,7 @@ export class OpenCodeClient {
     return stringValue(objectValue(body)?.id);
   }
 
-  /**
-   * Rename an existing session. Best effort: returns false when the server
-   * rejects the update (for example an older server without title support).
-   */
+  /** Renames an existing session. */
   public async setSessionTitle(sessionId: string, title: string): Promise<boolean> {
     const response = await this.request(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
@@ -231,11 +224,9 @@ function sessionStatusValue(value: unknown): OpenCodeSessionStatus | undefined {
 function parseSseBlock(block: string): OpenCodeEvent | undefined {
   const lines = block.replaceAll("\r\n", "\n").split("\n");
   const dataLines: string[] = [];
-  let eventName: string | undefined;
   for (const line of lines) {
     if (line.startsWith(":")) continue;
-    if (line.startsWith("event:")) eventName = line.slice("event:".length).trim();
-    else if (line.startsWith("data:")) dataLines.push(line.slice("data:".length).trimStart());
+    if (line.startsWith("data:")) dataLines.push(line.slice("data:".length).trimStart());
   }
   const data = dataLines.join("\n").trim();
   if (!data) return undefined;
@@ -246,21 +237,18 @@ function parseSseBlock(block: string): OpenCodeEvent | undefined {
   } catch {
     return undefined;
   }
-  return normalizeSsePayload(parsed, eventName);
+  return normalizeSsePayload(parsed);
 }
 
-/**
- * The server streams either the raw `Event` (`{ type, properties }`) or the
- * global envelope `GlobalEvent` (`{ directory, payload }`). Both shapes are
- * accepted; the normalized event is derived from the payload.
- */
-function normalizeSsePayload(parsed: unknown, eventName: string | undefined): OpenCodeEvent | undefined {
+/** Normalizes the current OpenCode `GlobalEvent` envelope. */
+function normalizeSsePayload(parsed: unknown): OpenCodeEvent | undefined {
   const object = objectValue(parsed);
   if (!object) return undefined;
-  const payload = objectValue(object.payload) ?? object;
-  const type = stringValue(payload.type) ?? eventName;
+  const payload = objectValue(object.payload);
+  if (!payload) return undefined;
+  const type = stringValue(payload.type);
   if (!type) return undefined;
-  const properties = objectValue(payload.properties) ?? objectValue(payload);
+  const properties = objectValue(payload.properties);
   if (!properties) return undefined;
   return {
     type,
