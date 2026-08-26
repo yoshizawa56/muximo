@@ -14,7 +14,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
-import { AuthStore, createAgentDatabase } from "../persistence/index.js";
+import { AuthStore, createAgentDatabase, createMigrationSchemaSynchronizer } from "../persistence/index.js";
 import { nodeAuthCrypto } from "./crypto.js";
 import { MemoryAuthChallengeStore, MemoryAuthRateLimitStore, MemoryAuthWsTicketStore } from "./flow-store-memory.js";
 
@@ -64,7 +64,7 @@ type AuthContext = Pick<
 >;
 
 const authFixture = async (): Promise<FixtureHandle<AuthFixture>> => {
-  const database = createAgentDatabase(":memory:");
+  const database = createAgentDatabase(":memory:", { schemaSynchronizer: createMigrationSchemaSynchronizer() });
   const store = new AuthStore(database.db, database.sqlite);
   const disconnectDeviceCalls: string[] = [];
   const disconnectSessionCalls: string[] = [];

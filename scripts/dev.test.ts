@@ -263,7 +263,7 @@ const supervisorCases = [
         assert.equal(ctx.state, "stopped");
         assert.deepEqual(ctx.spawnNames, ["muximod", "web"]);
         assert.deepEqual(ctx.spawnCommands, ["bun", "node"]);
-        assert.deepEqual(ctx.spawnArgs, [["--watch", "src/index.ts"], ["./node_modules/vite/bin/vite.js"]]);
+        assert.deepEqual(ctx.spawnArgs, [["--watch", "dev.ts"], ["./node_modules/vite/bin/vite.js"]]);
         assert.deepEqual(ctx.spawnCwds, ["/repo/apps/muximod", "/repo/apps/web"]);
         assert.equal(ctx.detached, true);
         assert.equal(ctx.shell, false);

@@ -20,6 +20,7 @@ import {
   createAgentDatabase,
   createImagePaster,
   createLogger,
+  type DatabaseSchemaSynchronizer,
   DrizzleAgentSessionRepository,
   DrizzlePaneRepository,
   DrizzleWorkspaceRepository,
@@ -58,6 +59,7 @@ import type { MuximodOriginPolicy } from "./http/types.js";
 export type MuximodOptions = {
   host: string;
   port: number;
+  schemaSynchronizer: DatabaseSchemaSynchronizer;
   databaseFile?: string;
   allowedRoots?: string[];
   controlSocket?: string;
@@ -117,6 +119,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const usePrivateInstanceDirectory =
     Boolean(process.env.MUXIMOD_INSTANCE_DIR?.trim()) || !configuredDatabaseFile?.trim();
   const database = createAgentDatabase(databaseFile, {
+    schemaSynchronizer: options.schemaSynchronizer,
     instanceDirectory:
       databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
   });

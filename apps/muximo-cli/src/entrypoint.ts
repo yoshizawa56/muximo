@@ -1,11 +1,14 @@
 import type { Readable, Writable } from "node:stream";
-import { createCliComposition } from "./cli/compose.js";
+import type { DatabaseSchemaSynchronizer } from "@muximo/infrastructure";
 import { createCliApp } from "./cli/app.js";
 import { globalOptionSpecs } from "./cli/commands/global.js";
 import type { CliHandlers } from "./cli/commands/types.js";
+import { createCliComposition } from "./cli/compose.js";
 import { resolveCliOptions } from "./cli/options/index.js";
 
 export type CliEntrypointOptions = {
+  schemaSynchronizer: DatabaseSchemaSynchronizer;
+  includeDevelopmentCommands: boolean;
   env?: NodeJS.ProcessEnv;
   input?: Readable;
   out?: Writable;
@@ -13,7 +16,7 @@ export type CliEntrypointOptions = {
 };
 
 /** Process boundary: argv/env/I/O invocation and exit status only. */
-export async function runMuximoCli(args: readonly string[], options: CliEntrypointOptions = {}): Promise<number> {
+export async function runMuximoCli(args: readonly string[], options: CliEntrypointOptions): Promise<number> {
   const io = {
     out: options.out ?? process.stdout,
     err: options.err ?? process.stderr,
@@ -26,6 +29,7 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
       cwd: process.cwd(),
       environment,
       handlers: createNoopHandlers(),
+      includeDevelopmentCommands: options.includeDevelopmentCommands,
     });
     try {
       return await app.execute(args);
@@ -39,6 +43,8 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
     environment,
   });
   const composition = createCliComposition({
+    schemaSynchronizer: options.schemaSynchronizer,
+    includeDevelopmentCommands: options.includeDevelopmentCommands,
     env: environment,
     input: options.input,
     io,

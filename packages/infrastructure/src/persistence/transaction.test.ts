@@ -13,7 +13,12 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { createAgentDatabase, DrizzleWorkspaceRepository, SqliteTransactionManager } from "./index.js";
+import {
+  createAgentDatabase,
+  createMigrationSchemaSynchronizer,
+  DrizzleWorkspaceRepository,
+  SqliteTransactionManager,
+} from "./index.js";
 
 type Input = {
   mode: "commit" | "rollback" | "nested" | "cross-database";
@@ -108,7 +113,9 @@ describe("SQLite transaction manager", () => {
 
 function createFixture(): FixtureHandle<Fixture> {
   const root = mkdtempSync(join(tmpdir(), "muximo-transaction-manager-"));
-  const database = createAgentDatabase(join(root, "muximod.sqlite"));
+  const database = createAgentDatabase(join(root, "muximod.sqlite"), {
+    schemaSynchronizer: createMigrationSchemaSynchronizer(),
+  });
   const manager = new SqliteTransactionManager(database);
   const repository = new DrizzleWorkspaceRepository(database.db);
   return {
@@ -124,8 +131,12 @@ function createFixture(): FixtureHandle<Fixture> {
 function createTwoDatabaseFixture(): FixtureHandle<Fixture> {
   const firstRoot = mkdtempSync(join(tmpdir(), "muximo-transaction-first-"));
   const secondRoot = mkdtempSync(join(tmpdir(), "muximo-transaction-second-"));
-  const database = createAgentDatabase(join(firstRoot, "muximod.sqlite"));
-  const otherDatabase = createAgentDatabase(join(secondRoot, "muximod.sqlite"));
+  const database = createAgentDatabase(join(firstRoot, "muximod.sqlite"), {
+    schemaSynchronizer: createMigrationSchemaSynchronizer(),
+  });
+  const otherDatabase = createAgentDatabase(join(secondRoot, "muximod.sqlite"), {
+    schemaSynchronizer: createMigrationSchemaSynchronizer(),
+  });
   const manager = new SqliteTransactionManager(database);
   const otherManager = new SqliteTransactionManager(otherDatabase);
   return {

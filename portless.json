@@ -1,0 +1,12 @@
+{
+  "apps": {
+    "apps/web": {
+      "name": "web",
+      "script": "dev:server"
+    },
+    "apps/muximod": {
+      "name": "muximod",
+      "script": "dev:server"
+    }
+  }
+}

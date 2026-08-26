@@ -28,6 +28,7 @@ import type { CodexSessionState } from "../agents/codex/state.js";
 import { DrizzleCodexSessionStateRepository } from "../agents/codex/state.js";
 import {
   createAgentDatabase,
+  createMigrationSchemaSynchronizer,
   DrizzleAgentSessionRepository,
   DrizzlePaneRepository,
   DrizzleWorkspaceRepository,
@@ -35,6 +36,8 @@ import {
   recordAuditEvent,
 } from "./index.js";
 import { auditEvents } from "./schema.js";
+
+const migrationSchemaSynchronizer = createMigrationSchemaSynchronizer();
 
 const pane: PaneRecord = Pane.create({
   id: PaneId.create("pane-1"),
@@ -148,7 +151,7 @@ type DatabaseContext = {
 };
 
 const normalFixture = (): FixtureHandle<DatabaseFixture> => {
-  const database = createAgentDatabase(":memory:");
+  const database = createAgentDatabase(":memory:", { schemaSynchronizer: migrationSchemaSynchronizer });
   return { fixture: { database, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
@@ -172,7 +175,10 @@ const legacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<Fixtur
   const root = mkdtempSync(join(tmpdir(), "muximo-persistence-legacy-"));
   registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
   const file = join(root, "muximod.sqlite");
-  const initial = createAgentDatabase(file, { migrationsFolder: createPreCleanupMigrationsFolder(root) });
+  const initial = createAgentDatabase(file, {
+    migrationsFolder: createPreCleanupMigrationsFolder(root),
+    schemaSynchronizer: migrationSchemaSynchronizer,
+  });
   try {
     await new DrizzlePaneRepository(initial.db).upsert(pane);
     initial.sqlite.exec(
@@ -181,7 +187,7 @@ const legacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<Fixtur
   } finally {
     initial.close();
   }
-  const database = createAgentDatabase(file);
+  const database = createAgentDatabase(file, { schemaSynchronizer: migrationSchemaSynchronizer });
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
@@ -193,7 +199,10 @@ const historicalMigrationFixture = async (
   const file = join(root, "muximod.sqlite");
   const migrationsFolder = createPreCleanupMigrationsFolder(root);
 
-  const historical = createAgentDatabase(file, { migrationsFolder });
+  const historical = createAgentDatabase(file, {
+    migrationsFolder,
+    schemaSynchronizer: migrationSchemaSynchronizer,
+  });
   try {
     await new DrizzlePaneRepository(historical.db).upsert(pane);
     historical.sqlite
@@ -216,7 +225,7 @@ const historicalMigrationFixture = async (
     historical.close();
   }
 
-  const database = createAgentDatabase(file);
+  const database = createAgentDatabase(file, { schemaSynchronizer: migrationSchemaSynchronizer });
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
@@ -242,7 +251,10 @@ const pendingMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHan
     join(migrationsFolder, "0001_migration_probe.sql"),
     "CREATE TABLE migration_probe (id integer PRIMARY KEY);\n",
   );
-  const database = createAgentDatabase(":memory:", { migrationsFolder });
+  const database = createAgentDatabase(":memory:", {
+    migrationsFolder,
+    schemaSynchronizer: migrationSchemaSynchronizer,
+  });
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
@@ -251,7 +263,10 @@ const codexLegacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<F
   registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
   const file = join(root, "muximod.sqlite");
   const migrationsFolder = createPreCleanupMigrationsFolder(root);
-  const legacy = createAgentDatabase(file, { migrationsFolder });
+  const legacy = createAgentDatabase(file, {
+    migrationsFolder,
+    schemaSynchronizer: migrationSchemaSynchronizer,
+  });
   try {
     await new DrizzleAgentSessionRepository(legacy.db).insert(session);
     legacy.sqlite
@@ -260,7 +275,7 @@ const codexLegacyFixture = async (registerCleanup?: CleanupRegistrar): Promise<F
   } finally {
     legacy.close();
   }
-  const database = createAgentDatabase(file);
+  const database = createAgentDatabase(file, { schemaSynchronizer: migrationSchemaSynchronizer });
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 

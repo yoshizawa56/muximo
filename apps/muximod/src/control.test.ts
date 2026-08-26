@@ -5,6 +5,7 @@ import { AuthService } from "@muximo/application";
 import {
   AuthStore,
   createAgentDatabase,
+  createMigrationSchemaSynchronizer,
   MemoryAuthChallengeStore,
   MemoryAuthRateLimitStore,
   MemoryAuthWsTicketStore,
@@ -45,7 +46,10 @@ const request: ControlRequest = { agentSessionId: "session-id", tmuxPaneId: "%1"
 
 const fixture = (): FixtureHandle<ControlFixture> => {
   const instanceDirectory = mkdtempSync(join(tmpdir(), "muximod-control-test-"));
-  const database = createAgentDatabase(join(instanceDirectory, "muximod.sqlite"), { instanceDirectory });
+  const database = createAgentDatabase(join(instanceDirectory, "muximod.sqlite"), {
+    instanceDirectory,
+    schemaSynchronizer: createMigrationSchemaSynchronizer(),
+  });
   const store = new AuthStore(database.db, database.sqlite);
   const auth = new AuthService({
     store,

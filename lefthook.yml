@@ -2,7 +2,7 @@ pre-commit:
   commands:
     biome:
       glob: "*.{js,ts,jsx,tsx,mjs,cjs}"
-      run: bunx biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      run: node node_modules/@biomejs/biome/bin/biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
       stage_fixed: true
     architecture:
       run: node scripts/check-architecture.mjs

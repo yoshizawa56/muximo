@@ -220,7 +220,7 @@ function serviceDefinitions(config) {
       url: endpoint(config.muximodProbeHost, config.muximodPort),
       healthUrl: endpoint(config.muximodProbeHost, config.muximodPort, "/health"),
       command: "bun",
-      args: ["--watch", "src/index.ts"],
+      args: ["--watch", "dev.ts"],
       cwd: resolve(config.repoRoot, "apps/muximod"),
       environment: {
         ...config.baseEnvironment,

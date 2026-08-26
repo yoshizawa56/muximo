@@ -22,20 +22,20 @@
     "bun": ">=1.3.14"
   },
   "scripts": {
-    "build": "bunx --no-install turbo run build",
+    "build": "node node_modules/turbo/bin/turbo run build",
     "build:muximo": "bun scripts/build-muximo.mjs",
     "muximo:install": "bun scripts/install-muximo.mjs",
     "deps:check": "bun outdated",
-    "dev": "bun scripts/dev.mjs",
+    "dev": "node node_modules/turbo/bin/turbo run dev --filter=@muximo/web --filter=@muximo/muximod",
     "audit:public": "bun scripts/audit-public-repo.mjs",
     "check:architecture": "node scripts/check-architecture.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test:table": "node scripts/check-table-tests.mjs",
-    "test": "bun run check:architecture && bun run test:table && bun test scripts/dev.test.ts scripts/build-muximo.test.ts && bunx --no-install turbo run test",
+    "test": "bun run check:architecture && bun run test:table && bun test scripts/dev.test.ts scripts/build-muximo.test.ts && node node_modules/turbo/bin/turbo run test",
     "test:local": "bun test packages/domain/src packages/application/src packages/contract/src packages/test-support/src packages/infrastructure/src apps/muximod/src apps/muximo-cli/src apps/web/src scripts/dev.test.ts scripts/build-muximo.test.ts",
-    "typecheck": "bun run check:architecture && bunx --no-install turbo run typecheck",
+    "typecheck": "bun run check:architecture && node node_modules/turbo/bin/turbo run typecheck",
     "prepare": "lefthook install"
   },
   "devDependencies": {

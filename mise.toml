@@ -8,12 +8,12 @@ description = "Install the locked workspace dependencies"
 run = "bun install --frozen-lockfile"
 
 [tasks.dev]
-description = "Start the local muximod and web development stack with child-process cleanup"
+description = "Start the local muximod and web development stack through Turbo and Portless"
 run = "bun dev"
 
 [tasks.dev-serve]
 description = "Start the source development stack and upsert its Tailscale Serve route"
-run = "bun run --filter @muximo/muximo-cli dev -- dev serve tailscale"
+run = "bun run --filter serve dev"
 
 [tasks.ios]
 description = "Build, sync, and open the Web iOS app"

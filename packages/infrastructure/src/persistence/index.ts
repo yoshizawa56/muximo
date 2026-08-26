@@ -5,11 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import { readMigrationFiles } from "drizzle-orm/migrator";
 import type { AgentDrizzleDatabase } from "./database-types.js";
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 import { resolveMuximodPaths } from "./paths.js";
+import type { DatabaseSchemaSynchronizer } from "./schema-sync.js";
 import { configureSqliteConnection, defaultSqliteBusyTimeoutMs } from "./sqlite.js";
 
 export type {
@@ -41,6 +40,17 @@ export {
   recordAuditEvent,
 } from "./repositories/sqlite/index.js";
 export { agentSessions, auditEvents, codexSessionStates, panes, workspaces } from "./schema.js";
+export {
+  createMigrationSchemaSynchronizer,
+  createPushSchemaSynchronizer,
+  type DatabaseSchemaSynchronizer,
+  type DatabaseSchemaSynchronizerInput,
+  MigrationSchemaSynchronizer,
+  type PushCommandOptions,
+  type PushCommandRunner,
+  PushSchemaSynchronizer,
+  type PushSchemaSynchronizerOptions,
+} from "./schema-sync.js";
 export type { SqliteRetryOptions } from "./transaction.js";
 export { isRetryableSqliteBusy, runSqliteTransaction, SqliteTransactionManager } from "./transaction.js";
 
@@ -53,6 +63,7 @@ export type AgentDatabase = {
 };
 
 export type AgentDatabaseOptions = {
+  schemaSynchronizer: DatabaseSchemaSynchronizer;
   migrationsFolder?: string;
   instanceDirectory?: string;
   busyTimeoutMs?: number;
@@ -62,10 +73,7 @@ export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): 
   return resolveMuximodPaths(env).databaseFile;
 }
 
-export function createAgentDatabase(
-  file: string | undefined = undefined,
-  options: AgentDatabaseOptions = {},
-): AgentDatabase {
+export function createAgentDatabase(file: string | undefined, options: AgentDatabaseOptions): AgentDatabase {
   const databaseFile = file ?? defaultCreateDatabaseFile(process.env);
   const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
   const configuredInstanceDirectory =
@@ -85,15 +93,22 @@ export function createAgentDatabase(
   const sqlite = openConfiguredConnection(databasePath, busyTimeoutMs);
   secureDatabaseFiles(databasePath);
   const migrationsFolder = options.migrationsFolder ?? findAgentMigrationsFolder() ?? materializeEmbeddedMigrations();
-  baselineLegacyDatabase(sqlite, migrationsFolder);
   const db = drizzle({ client: sqlite });
   try {
-    migrate(db, { migrationsFolder });
+    options.schemaSynchronizer.synchronize({
+      databaseFile: databasePath,
+      db,
+      sqlite,
+      migrationsFolder,
+    });
   } catch (error) {
     sqlite.close();
-    throw new Error(`database migration failed: ${error instanceof Error ? error.message : String(error)}`, {
-      cause: error,
-    });
+    throw new Error(
+      `database schema synchronization failed: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
   ensureAuthSchema(sqlite);
   secureDatabaseFiles(databasePath);
@@ -177,38 +192,6 @@ function materializeEmbeddedMigrations(): string {
   return migrationsFolder;
 }
 
-const legacyTableNames = ["panes", "runs", "audit_events", "workspaces", "agent_sessions"] as const;
-
-// Raw SQL is restricted to legacy migration baselining; repository CRUD stays in Drizzle adapters.
-function baselineLegacyDatabase(sqlite: Database, migrationsFolder: string): void {
-  const migrations = readMigrationFiles({ migrationsFolder });
-  const initialMigration = migrations[0];
-  if (!initialMigration) throw new Error(`no migrations found in ${migrationsFolder}`);
-
-  const rows = sqlite.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>;
-  const existingTables = new Set(rows.map((row) => row.name));
-  if (existingTables.has("__drizzle_migrations")) return;
-
-  const legacyTables = legacyTableNames.filter((tableName) => existingTables.has(tableName));
-  if (legacyTables.length === 0) return;
-  if (legacyTables.length !== legacyTableNames.length) {
-    throw new Error(`database has a partial legacy schema; refusing to baseline (${legacyTables.join(", ")})`);
-  }
-
-  ensureColumn(sqlite, "workspaces", "setup_script_path", "TEXT");
-  ensureColumn(sqlite, "workspaces", "cleanup_script_path", "TEXT");
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
-      id SERIAL PRIMARY KEY,
-      hash text NOT NULL,
-      created_at numeric
-    )
-  `);
-  sqlite
-    .prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)')
-    .run(initialMigration.hash, initialMigration.folderMillis);
-}
-
 // Auth tables are bootstrapped for legacy databases here; AuthStore CRUD uses auth-schema.ts through Drizzle.
 function ensureAuthSchema(sqlite: Database): void {
   sqlite.exec(`
@@ -268,10 +251,4 @@ function ensureAuthSchema(sqlite: Database): void {
     CREATE INDEX IF NOT EXISTS auth_sessions_device_index ON auth_sessions (device_id);
     CREATE INDEX IF NOT EXISTS auth_sessions_expiry_index ON auth_sessions (expires_at);
   `);
-}
-
-function ensureColumn(sqlite: Database, table: string, column: string, definition: string): void {
-  const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!columns.some((entry) => entry.name === column))
-    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
