@@ -27,6 +27,12 @@ export type TerminalInputBatcherOptions = {
   cancelFrame?: (handle: number) => void;
 };
 
+export type TerminalInputQueue = {
+  write: (data: string) => void;
+  attach: (sendInput: (data: string) => void) => void;
+  detach: (clearPending?: boolean) => void;
+};
+
 const TERMINAL_OUTPUT_NORMAL_INTERVAL_MS = 32;
 const TERMINAL_OUTPUT_SCROLL_IDLE_MS = 140;
 
@@ -156,4 +162,29 @@ export function createTerminalInputBatcher(
   };
 
   return { enqueue, flush, dispose };
+}
+
+export function createTerminalInputQueue(): TerminalInputQueue {
+  let pending = [] as string[];
+  let sendInput: ((data: string) => void) | null = null;
+
+  const write = (data: string) => {
+    if (!data) return;
+    if (sendInput) sendInput(data);
+    else pending.push(data);
+  };
+
+  const attach = (nextSendInput: (data: string) => void) => {
+    sendInput = nextSendInput;
+    const queued = pending;
+    pending = [];
+    for (const data of queued) sendInput(data);
+  };
+
+  const detach = (clearPending = false) => {
+    sendInput = null;
+    if (clearPending) pending = [];
+  };
+
+  return { write, attach, detach };
 }

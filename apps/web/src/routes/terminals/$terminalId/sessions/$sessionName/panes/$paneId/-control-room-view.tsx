@@ -1,7 +1,9 @@
 import { AppIcon } from "../../../../../../../app/components/app-icon";
+import { AppSafeAreaOverlay } from "../../../../../../../app/components/app-layout";
 import { MuximoLogo } from "../../../../../../../app/components/muximo-logo";
 import type { PaneLayoutOverlayVariant } from "../../-pane-layout-overlay-view";
 import type { ControlRoomViewModel } from "./-control-room-viewmodel";
+import { CustomKeyboardSettingsView, CustomKeyboardView } from "./-custom-keyboard-view";
 import { PaneBoardView } from "./-pane-board-view";
 import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
 import type { PaneViewModel } from "./-terminal-viewmodel";
@@ -17,6 +19,8 @@ export function ControlRoomView({
   layoutVariant?: PaneLayoutOverlayVariant;
 }) {
   const viewModel: PaneViewModel = controlRoomViewModel.terminal;
+  const keyboard = controlRoomViewModel.keyboard;
+  const keyboardSettings = controlRoomViewModel.keyboardSettings;
   const paneBoard: PaneBoardViewModel = controlRoomViewModel.paneBoard;
   const onSessionSelect = controlRoomViewModel.onSessionSelect;
   const onNewPane = controlRoomViewModel.onNewPane;
@@ -215,50 +219,52 @@ export function ControlRoomView({
             </div>
           </div>
 
-          <section
-            className="relative flex min-h-[450px] flex-1 flex-col overflow-hidden rounded-[15px] border border-[#1d4c29] bg-terminal shadow-[var(--shadow-app),0_0_0_7px_rgb(57_214_91_/_5%),0_0_70px_rgb(21_116_42_/_12%)] max-[920px]:min-h-0 max-[920px]:rounded-none max-[920px]:border-0 max-[920px]:shadow-none max-[620px]:rounded-[9px]"
-            aria-label={`${viewModel.target} terminal`}
-          >
-            <div className="flex min-h-0 w-full flex-1 flex-col px-6 pb-[18px] pt-[23px] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-[max(12px,var(--safe-area-bottom))] max-[920px]:pt-3">
-              <div
-                ref={viewModel.terminalContainerRef}
-                className="terminal-container min-h-0 w-full flex-1 touch-none [-webkit-touch-callout:none]"
-              />
-            </div>
-            {viewModel.pasteState !== "idle" ? (
-              <div
-                className="pointer-events-none absolute top-[16px] right-[16px] z-10 flex items-center gap-2 rounded-[9px] border border-[#1d4c29] bg-[rgb(7_16_8_/_94%)] px-3 py-2 font-mono text-[0.62rem] text-[#b9dfbd] shadow-[0_6px_24px_rgb(0_0_0_/_45%)]"
-                role="status"
-              >
-                <span
-                  className={`size-1.5 shrink-0 rounded-full ${viewModel.pasteState === "failed" ? "bg-red" : "bg-lime-deep"}`}
+          <CustomKeyboardView viewModel={keyboard}>
+            <section
+              className="relative flex min-h-[450px] flex-1 flex-col overflow-hidden rounded-[15px] border border-[#1d4c29] bg-terminal shadow-[var(--shadow-app),0_0_0_7px_rgb(57_214_91_/_5%),0_0_70px_rgb(21_116_42_/_12%)] max-[920px]:min-h-0 max-[920px]:rounded-none max-[920px]:border-0 max-[920px]:shadow-none max-[620px]:rounded-[9px]"
+              aria-label={`${viewModel.target} terminal`}
+            >
+              <div className="flex min-h-0 w-full flex-1 flex-col px-6 pb-[18px] pt-[23px] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-1 max-[920px]:pt-3">
+                <div
+                  ref={viewModel.terminalContainerRef}
+                  className="terminal-container min-h-0 w-full flex-1 touch-none [-webkit-touch-callout:none]"
                 />
-                {viewModel.pasteState === "pasting"
-                  ? "Pasting image…"
-                  : viewModel.pasteState === "pasted"
-                    ? "Image pasted"
-                    : "Image paste failed"}
               </div>
-            ) : null}
-            {notices.length ? (
-              <ToastPattern
-                agents={notices.map(toToastAgent)}
-                onOpen={(agent) => {
-                  dismissNotice(agent.id);
-                  const pane = paneBoard.panes.find((candidate) => candidate.hostPaneId === agent.target);
-                  if (pane) paneBoard.select(pane);
-                }}
-              />
-            ) : null}
-            <div className="flex min-h-7 shrink-0 items-center justify-between gap-3 border-t border-[#15351d] bg-[#071008] px-[13px] font-mono text-[0.58rem] text-[#657169] max-[920px]:hidden">
-              <span className="inline-flex items-center gap-1.5 text-[#8cb793]">
-                <span className="size-[5px] rounded-full bg-lime-deep" />{" "}
-                {viewModel.status === "connected" ? "streaming" : viewModel.status}
-              </span>
-              <span>{viewModel.viewportReason ? `viewport · ${viewModel.viewportReason}` : "xterm / tmux"}</span>
-              <span>UTF-8</span>
-            </div>
-          </section>
+              {viewModel.pasteState !== "idle" ? (
+                <div
+                  className="pointer-events-none absolute top-[16px] right-[16px] z-10 flex items-center gap-2 rounded-[9px] border border-[#1d4c29] bg-[rgb(7_16_8_/_94%)] px-3 py-2 font-mono text-[0.62rem] text-[#b9dfbd] shadow-[0_6px_24px_rgb(0_0_0_/_45%)]"
+                  role="status"
+                >
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full ${viewModel.pasteState === "failed" ? "bg-red" : "bg-lime-deep"}`}
+                  />
+                  {viewModel.pasteState === "pasting"
+                    ? "Pasting image…"
+                    : viewModel.pasteState === "pasted"
+                      ? "Image pasted"
+                      : "Image paste failed"}
+                </div>
+              ) : null}
+              {notices.length ? (
+                <ToastPattern
+                  agents={notices.map(toToastAgent)}
+                  onOpen={(agent) => {
+                    dismissNotice(agent.id);
+                    const pane = paneBoard.panes.find((candidate) => candidate.hostPaneId === agent.target);
+                    if (pane) paneBoard.select(pane);
+                  }}
+                />
+              ) : null}
+              <div className="flex min-h-7 shrink-0 items-center justify-between gap-3 border-t border-[#15351d] bg-[#071008] px-[13px] font-mono text-[0.58rem] text-[#657169] max-[920px]:hidden">
+                <span className="inline-flex items-center gap-1.5 text-[#8cb793]">
+                  <span className="size-[5px] rounded-full bg-lime-deep" />{" "}
+                  {viewModel.status === "connected" ? "streaming" : viewModel.status}
+                </span>
+                <span>{viewModel.viewportReason ? `viewport · ${viewModel.viewportReason}` : "xterm / tmux"}</span>
+                <span>UTF-8</span>
+              </div>
+            </section>
+          </CustomKeyboardView>
 
           {viewModel.errorMessage ? (
             <div
@@ -309,6 +315,11 @@ export function ControlRoomView({
           </div>
         </aside>
       </div>
+      {controlRoomViewModel.keyboardSettingsOpen ? (
+        <AppSafeAreaOverlay className="z-50">
+          <CustomKeyboardSettingsView viewModel={keyboardSettings} />
+        </AppSafeAreaOverlay>
+      ) : null}
     </main>
   );
 }

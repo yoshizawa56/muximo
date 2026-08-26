@@ -1,6 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useCallback, useRef, useState } from "react";
+import { muximoBridge } from "../../../../../../../platform/muximo-bridge";
 import { useTerminalResources } from "../../../../../-terminal-resources";
+import { encodeCustomKeyboardNativeInput, encodeCustomKeyboardSequence } from "./-custom-keyboard-input";
+import type {
+  CustomKeyboardModifier,
+  CustomKeyboardSettingsViewModel,
+  CustomKeyboardViewModel,
+} from "./-custom-keyboard-viewmodel";
+import { useCustomKeyboardViewModel } from "./-custom-keyboard-viewmodel";
 import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
 import { usePaneBoardViewModel } from "./-pane-board-viewmodel";
 import type { PaneViewModel } from "./-terminal-viewmodel";
@@ -8,6 +17,9 @@ import { usePaneViewModel } from "./-terminal-viewmodel";
 
 export type ControlRoomViewModel = {
   terminal: PaneViewModel;
+  keyboard: CustomKeyboardViewModel;
+  keyboardSettings: CustomKeyboardSettingsViewModel;
+  keyboardSettingsOpen: boolean;
   paneBoard: PaneBoardViewModel;
   onSessionSelect: () => void;
   onNewPane: () => void;
@@ -31,7 +43,46 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
   const panes = panesQuery.data?.panes ?? [];
   const selectedPane = panes.find((pane) => pane.id === paneId) ?? null;
   const selectedTarget = selectedPane?.hostPaneId ?? "";
-  const terminal = usePaneViewModel({ target: selectedTarget, connection });
+  const [activeKeyboardModifiers, setActiveKeyboardModifiers] = useState<CustomKeyboardModifier[]>([]);
+  const activeKeyboardModifiersRef = useRef<CustomKeyboardModifier[]>([]);
+  const onNativeKeyboardInput = useCallback((data: string) => {
+    const modifiers = activeKeyboardModifiersRef.current;
+    if (modifiers.length === 0) return data;
+    activeKeyboardModifiersRef.current = [];
+    setActiveKeyboardModifiers([]);
+    return encodeCustomKeyboardNativeInput(data, modifiers);
+  }, []);
+  const onActiveKeyboardModifiersChange = useCallback((modifiers: readonly CustomKeyboardModifier[]) => {
+    const nextModifiers = [...modifiers];
+    activeKeyboardModifiersRef.current = nextModifiers;
+    setActiveKeyboardModifiers(nextModifiers);
+  }, []);
+  const terminal = usePaneViewModel({
+    target: selectedTarget,
+    connection,
+    transformInput: onNativeKeyboardInput,
+  });
+  const onKeyboardSequence = useCallback(
+    (
+      sequence: Parameters<typeof encodeCustomKeyboardSequence>[0],
+      activeModifiers: Parameters<typeof encodeCustomKeyboardSequence>[1],
+    ) => {
+      terminal.sendInput(encodeCustomKeyboardSequence(sequence, activeModifiers));
+    },
+    [terminal.sendInput],
+  );
+  const keyboardController = useCustomKeyboardViewModel({
+    nativeKeyboardVisible: terminal.nativeKeyboardVisible,
+    activeModifiers: activeKeyboardModifiers,
+    onActiveModifiersChange: onActiveKeyboardModifiersChange,
+    onSequence: onKeyboardSequence,
+    onKeyEffect: muximoBridge.keyPressHaptic,
+    onNativeFileSelected: (_action, file) => {
+      terminal.pasteImage(file);
+    },
+    onKeepNativeKeyboardOpen: terminal.keepNativeKeyboardOpen,
+    onNativeKeyboardToggle: terminal.toggleNativeKeyboard,
+  });
   const paneBoard = usePaneBoardViewModel({
     selectedTarget,
     sessionName,
@@ -50,6 +101,9 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
 
   return {
     terminal,
+    keyboard: keyboardController.keyboard,
+    keyboardSettings: keyboardController.settings,
+    keyboardSettingsOpen: keyboardController.settingsOpen,
     paneBoard,
     onSessionSelect: () => {
       void navigate({ to: "/terminals/$terminalId/sessions", params: { terminalId } });

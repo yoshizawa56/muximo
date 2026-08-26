@@ -23,6 +23,7 @@ import {
   createTerminalAttachMessage,
   createTerminalResumeStore,
   handleControlMessage,
+  nativeKeyboardToggleAction,
   type PaneResumeState,
   type PaneViewportOwner,
   resumeStateFromReady,
@@ -191,6 +192,43 @@ const cleanupTable: OperationTable<undefined, "default", CleanupInput, CleanupRe
   observe: () => ({}),
 };
 
+type NativeKeyboardToggleInput = {
+  nativeKeyboardVisible: boolean;
+  helperInputFocused: boolean;
+};
+type NativeKeyboardToggleResult = "show" | "hide";
+
+const nativeKeyboardToggleCases = [
+  {
+    name: "hides when the native keyboard state is visible",
+    input: { nativeKeyboardVisible: true, helperInputFocused: false },
+    assert: [returns<EmptyContext, NativeKeyboardToggleResult>("hide")],
+  },
+  {
+    name: "hides when the helper input is still focused despite stale visibility state",
+    input: { nativeKeyboardVisible: false, helperInputFocused: true },
+    assert: [returns<EmptyContext, NativeKeyboardToggleResult>("hide")],
+  },
+  {
+    name: "shows when the helper input is not focused and the state is hidden",
+    input: { nativeKeyboardVisible: false, helperInputFocused: false },
+    assert: [returns<EmptyContext, NativeKeyboardToggleResult>("show")],
+  },
+] satisfies readonly OperationCase<"default", NativeKeyboardToggleInput, NativeKeyboardToggleResult, EmptyContext>[];
+
+const nativeKeyboardToggleTable: OperationTable<
+  undefined,
+  "default",
+  NativeKeyboardToggleInput,
+  NativeKeyboardToggleResult,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: nativeKeyboardToggleCases,
+  execute: (_fixture, input) => nativeKeyboardToggleAction(input.nativeKeyboardVisible, input.helperInputFocused),
+  observe: () => ({}),
+};
+
 type ControlFixture = {
   events: string[];
   resumed: boolean | null;
@@ -316,6 +354,7 @@ describe("terminal pane handshake helpers", () => {
   runOperationTable(register, pasteImageTable);
   runOperationTable(register, resumeTable);
   runOperationTable(register, cleanupTable);
+  runOperationTable(register, nativeKeyboardToggleTable);
   runOperationTable(register, controlTable);
   runScenarioTable(register, resumeStoreTable);
 });

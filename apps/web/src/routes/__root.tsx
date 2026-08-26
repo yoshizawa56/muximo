@@ -1,5 +1,6 @@
 import { createRootRoute, type ErrorComponentProps, Outlet } from "@tanstack/react-router";
 import { AppErrorView } from "../app/app-error-view";
+import { AppViewport } from "../app/components/app-layout";
 import { useMobileViewportHeight } from "../app/mobile-viewport";
 
 export const Route = createRootRoute({
@@ -10,7 +11,11 @@ export const Route = createRootRoute({
 
 function RootRoute() {
   useMobileViewportHeight();
-  return <Outlet />;
+  return (
+    <AppViewport>
+      <Outlet />
+    </AppViewport>
+  );
 }
 
 function RootError({ error, reset }: ErrorComponentProps) {

@@ -12,9 +12,12 @@ import { openMuximodTerminal } from "../../../../../../../app/api/muximod-client
 import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
 import { isMockMode, mockTerminalOutputForTarget } from "../../../../../../../mock/mock-data";
 import { muximoBridge } from "../../../../../../../platform/muximo-bridge";
-import { installTerminalFlickInput, terminalMouseWheelInput } from "./-terminal-flick";
 import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./-terminal-font";
-import { createTerminalInputBatcher, createTerminalOutputScheduler } from "./-terminal-scheduler";
+import {
+  createTerminalInputQueue,
+  createTerminalOutputScheduler,
+  type TerminalInputQueue,
+} from "./-terminal-scheduler";
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PaneViewportOwner = "mobile" | "desktop";
@@ -66,15 +69,36 @@ export type PaneViewModel = {
   reconnect: () => void;
   claim: () => void;
   detach: () => void;
+  sendInput: (data: string) => void;
+  focus: () => void;
+  blur: () => void;
+  keepNativeKeyboardOpen: () => void;
+  toggleNativeKeyboard: () => void;
+  nativeKeyboardVisible: boolean;
   pasteImage: (file: File) => void;
 };
+
+export type NativeKeyboardToggleAction = "show" | "hide";
+
+export function nativeKeyboardToggleAction(
+  nativeKeyboardVisible: boolean,
+  helperInputFocused: boolean,
+): NativeKeyboardToggleAction {
+  return nativeKeyboardVisible || helperInputFocused ? "hide" : "show";
+}
+
+function identityInputTransform(data: string): string {
+  return data;
+}
 
 export function usePaneViewModel({
   target,
   connection,
+  transformInput,
 }: {
   target: string;
   connection?: MuximodConnection;
+  transformInput?: (data: string) => string;
 }): PaneViewModel {
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const terminalContainerRef = useCallback<RefCallback<HTMLDivElement>>((node) => {
@@ -85,6 +109,11 @@ export function usePaneViewModel({
   const [viewportOwner, setViewportOwner] = useState<PaneViewportOwner>("mobile");
   const [viewportReason, setViewportReason] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const terminalInputQueueRef = useRef<TerminalInputQueue>(createTerminalInputQueue());
+  const socketInputQueueRef = useRef<TerminalInputQueue>(createTerminalInputQueue());
+  const inputTransformRef = useRef(transformInput ?? identityInputTransform);
+  const nativeKeyboardFocusPendingRef = useRef(false);
   const connectRef = useRef<(() => void) | null>(null);
   const detachRef = useRef<(() => void) | null>(null);
   const retryCountRef = useRef(0);
@@ -94,10 +123,96 @@ export function usePaneViewModel({
   const currentTargetRef = useRef(target);
   const pendingDetachRef = useRef<Promise<void> | null>(null);
   const [pasteState, setPasteState] = useState<PanePasteState>("idle");
+  const [nativeKeyboardVisible, setNativeKeyboardVisible] = useState(false);
+  const nativeKeyboardVisibleRef = useRef(false);
+  const nativeKeyboardPreserveRef = useRef(false);
+  const nativeKeyboardPreserveTimerRef = useRef<number | null>(null);
+  const nativeKeyboardResettingRef = useRef(false);
+  const keyboardViewportHeightRef = useRef<number | null>(null);
   const pasteResetTimerRef = useRef<number | null>(null);
+
+  const sendInput = useCallback((data: string) => {
+    terminalInputQueueRef.current.write(data);
+  }, []);
+
+  const focus = useCallback(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      nativeKeyboardFocusPendingRef.current = true;
+      return;
+    }
+    nativeKeyboardFocusPendingRef.current = false;
+    const helperInput = terminal.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    if (helperInput) helperInput.inputMode = "text";
+    terminal.focus();
+  }, []);
+
+  const blur = useCallback(() => {
+    nativeKeyboardPreserveRef.current = false;
+    if (nativeKeyboardPreserveTimerRef.current !== null) {
+      window.clearTimeout(nativeKeyboardPreserveTimerRef.current);
+      nativeKeyboardPreserveTimerRef.current = null;
+    }
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const helperInput = terminal.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    if (helperInput) {
+      helperInput.inputMode = "none";
+      helperInput.blur();
+    }
+  }, []);
+
+  const keepNativeKeyboardOpen = useCallback(() => {
+    const terminal = terminalRef.current;
+    const helperInput = terminal?.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    const shouldRestore = nativeKeyboardVisibleRef.current || helperInput === document.activeElement;
+    if (!terminal || !helperInput || !shouldRestore) return;
+
+    nativeKeyboardPreserveRef.current = true;
+    if (nativeKeyboardPreserveTimerRef.current !== null) {
+      window.clearTimeout(nativeKeyboardPreserveTimerRef.current);
+    }
+    nativeKeyboardPreserveTimerRef.current = window.setTimeout(() => {
+      nativeKeyboardPreserveRef.current = false;
+      nativeKeyboardPreserveTimerRef.current = null;
+    }, 500);
+
+    const restoreFocus = () => {
+      if (!nativeKeyboardPreserveRef.current) return;
+      const currentTerminal = terminalRef.current;
+      const currentHelperInput = currentTerminal?.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+      if (!currentTerminal || currentTerminal !== terminal || !currentHelperInput || terminalClosedRef.current) return;
+      currentHelperInput.inputMode = "text";
+      currentTerminal.focus();
+    };
+
+    restoreFocus();
+    window.requestAnimationFrame(restoreFocus);
+  }, []);
+
+  const toggleNativeKeyboard = useCallback(() => {
+    nativeKeyboardPreserveRef.current = false;
+    if (nativeKeyboardPreserveTimerRef.current !== null) {
+      window.clearTimeout(nativeKeyboardPreserveTimerRef.current);
+      nativeKeyboardPreserveTimerRef.current = null;
+    }
+    const terminal = terminalRef.current;
+    const helperInput = terminal?.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    const helperInputFocused = helperInput !== null && document.activeElement === helperInput;
+    if (nativeKeyboardToggleAction(nativeKeyboardVisible, helperInputFocused) === "hide") {
+      blur();
+      return;
+    }
+    focus();
+  }, [blur, focus, nativeKeyboardVisible]);
+
   useLayoutEffect(() => {
     currentTargetRef.current = target;
   }, [target]);
+
+  useLayoutEffect(() => {
+    inputTransformRef.current = transformInput ?? identityInputTransform;
+  }, [transformInput]);
 
   useEffect(
     () => () => {
@@ -206,10 +321,89 @@ export function usePaneViewModel({
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(container);
+    terminalRef.current = terminal;
+    const helperInput = terminal.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    if (helperInput) helperInput.inputMode = "none";
+    const visualViewport = window.visualViewport;
+    const setNativeKeyboardVisibility = (visible: boolean) => {
+      nativeKeyboardVisibleRef.current = visible;
+      setNativeKeyboardVisible(visible);
+    };
+    const syncNativeKeyboardVisibility = () => {
+      if (!helperInput || document.activeElement !== helperInput) {
+        keyboardViewportHeightRef.current = null;
+        setNativeKeyboardVisibility(false);
+        return;
+      }
+      const currentHeight = visualViewport?.height ?? window.innerHeight;
+      const previousHeight = keyboardViewportHeightRef.current;
+      const baselineHeight = previousHeight === null ? currentHeight : Math.max(previousHeight, currentHeight);
+      keyboardViewportHeightRef.current = baselineHeight;
+      setNativeKeyboardVisibility(baselineHeight - currentHeight > 80);
+    };
+    const handleKeyboardFocus = () => {
+      if (!helperInput) return;
+      const currentHeight = visualViewport?.height ?? window.innerHeight;
+      keyboardViewportHeightRef.current = Math.max(keyboardViewportHeightRef.current ?? currentHeight, currentHeight);
+      setNativeKeyboardVisibility(true);
+    };
+    const isKeyboardPreservingTarget = (target: EventTarget | null) =>
+      target instanceof Element && target.closest('[data-preserve-native-keyboard-focus="true"]') !== null;
+    const handleKeyboardBlur = (event: FocusEvent) => {
+      const preserveFocus =
+        nativeKeyboardPreserveRef.current ||
+        isKeyboardPreservingTarget(event.relatedTarget) ||
+        isKeyboardPreservingTarget(document.activeElement);
+      if (!nativeKeyboardResettingRef.current && preserveFocus) {
+        nativeKeyboardPreserveRef.current = false;
+        if (nativeKeyboardPreserveTimerRef.current !== null) {
+          window.clearTimeout(nativeKeyboardPreserveTimerRef.current);
+          nativeKeyboardPreserveTimerRef.current = null;
+        }
+        setNativeKeyboardVisibility(true);
+        helperInput?.focus({ preventScroll: true });
+        window.requestAnimationFrame(() => {
+          if (!nativeKeyboardResettingRef.current && document.activeElement !== helperInput) {
+            helperInput?.focus({ preventScroll: true });
+          }
+        });
+        return;
+      }
+      keyboardViewportHeightRef.current = null;
+      setNativeKeyboardVisibility(false);
+    };
+    const resetNativeKeyboard = () => {
+      nativeKeyboardPreserveRef.current = false;
+      if (nativeKeyboardPreserveTimerRef.current !== null) {
+        window.clearTimeout(nativeKeyboardPreserveTimerRef.current);
+        nativeKeyboardPreserveTimerRef.current = null;
+      }
+      nativeKeyboardResettingRef.current = true;
+      if (helperInput) {
+        helperInput.inputMode = "none";
+        helperInput.blur();
+      }
+      keyboardViewportHeightRef.current = null;
+      setNativeKeyboardVisibility(false);
+      nativeKeyboardResettingRef.current = false;
+    };
+    resetNativeKeyboard();
+    helperInput?.addEventListener("focus", handleKeyboardFocus);
+    helperInput?.addEventListener("blur", handleKeyboardBlur);
+    visualViewport?.addEventListener("resize", syncNativeKeyboardVisibility);
+    window.addEventListener("resize", syncNativeKeyboardVisibility);
+    syncNativeKeyboardVisibility();
     fitAddon.fit();
     const terminalOutputScheduler = createTerminalOutputScheduler({
       write: (data) => terminal.write(data),
     });
+    let disposed = false;
+    if (nativeKeyboardFocusPendingRef.current) {
+      nativeKeyboardFocusPendingRef.current = false;
+      window.requestAnimationFrame(() => {
+        if (!disposed && terminalRef.current === terminal) focus();
+      });
+    }
 
     const endpoint = connection ? connection.websocketUrl : "mock";
     const resumeKey = terminalResumeKey(endpoint, target);
@@ -217,7 +411,6 @@ export function usePaneViewModel({
     terminalClosedRef.current = false;
     setStatus("connecting");
     setErrorMessage(null);
-    let disposed = false;
     let resizeFrame: number | null = null;
     let retryScheduled = false;
     let socketGeneration = 0;
@@ -286,6 +479,7 @@ export function usePaneViewModel({
         (previousSocket.readyState === WebSocket.OPEN || previousSocket.readyState === WebSocket.CONNECTING)
       ) {
         socketRef.current = null;
+        socketInputQueueRef.current.detach();
         closeNetworkSocket(previousSocket);
       }
 
@@ -325,6 +519,10 @@ export function usePaneViewModel({
         if (typeof event.data === "string") {
           handleControlMessage(event.data, {
             onReady: (message) => {
+              socketInputQueueRef.current.attach((data) => {
+                if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
+                socket.send(new TextEncoder().encode(data));
+              });
               retryCountRef.current = 0;
               terminalClosedRef.current = false;
               setStatus("connected");
@@ -334,6 +532,7 @@ export function usePaneViewModel({
               terminalResumeStore.write(resumeKey, nextResume);
             },
             onClosed: (message) => {
+              socketInputQueueRef.current.detach(true);
               terminalClosedRef.current = true;
               terminalResumeStore.clear(resumeKey);
               resumeRef.current = null;
@@ -341,6 +540,7 @@ export function usePaneViewModel({
               setErrorMessage(message.reason === "detached" ? "Terminal detached" : "Terminal session closed");
             },
             onError: ({ code, message, retryable }) => {
+              socketInputQueueRef.current.detach();
               if (code === "resume_not_found" && resumeAttempt && !fallbackAttachSent) {
                 fallbackAttachSent = true;
                 resumeRef.current = null;
@@ -367,6 +567,7 @@ export function usePaneViewModel({
 
       socket.addEventListener("error", () => {
         if (!isCurrentSocket() || terminalClosedRef.current) return;
+        socketInputQueueRef.current.detach();
         setStatus("error");
         setErrorMessage("WebSocket connection failed");
         scheduleReconnect();
@@ -374,6 +575,7 @@ export function usePaneViewModel({
 
       socket.addEventListener("close", () => {
         if (!isCurrentSocket()) return;
+        socketInputQueueRef.current.detach();
         socketRef.current = null;
         if (terminalClosedRef.current) return;
         setStatus("connecting");
@@ -399,43 +601,11 @@ export function usePaneViewModel({
       setStatus("closed");
     };
 
-    let scrollRemainder = 0;
     const sendTerminalInput = (data: string) => {
       if (isMockMode()) return;
-      const socket = socketRef.current;
-      if (socket?.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data));
+      socketInputQueueRef.current.write(data);
     };
-    const scrollInputBatcher = createTerminalInputBatcher(sendTerminalInput);
-    const sendInteractiveTerminalInput = (data: string) => {
-      scrollInputBatcher.flush();
-      sendTerminalInput(data);
-    };
-    const scrollTerminal = (deltaY: number, clientX: number, clientY: number) => {
-      terminalOutputScheduler.markScroll();
-      const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen") ?? terminal.element ?? container;
-      const rect = screen.getBoundingClientRect();
-      const cellWidth = terminal.cols > 0 && rect.width > 0 ? rect.width / terminal.cols : 0;
-      const cellHeight = terminal.rows > 0 && rect.height > 0 ? rect.height / terminal.rows : 0;
-      if (!cellWidth || !cellHeight) return;
-
-      scrollRemainder += -deltaY / cellHeight;
-      const lineDelta = scrollRemainder > 0 ? Math.floor(scrollRemainder) : Math.ceil(scrollRemainder);
-      if (!lineDelta) return;
-      scrollRemainder -= lineDelta;
-      const column = Math.min(terminal.cols, Math.max(1, Math.floor((clientX - rect.left) / cellWidth) + 1));
-      const row = Math.min(terminal.rows, Math.max(1, Math.floor((clientY - rect.top) / cellHeight) + 1));
-      const direction = lineDelta > 0 ? "down" : "up";
-      const wheelInput = Array.from({ length: Math.abs(lineDelta) }, () =>
-        terminalMouseWheelInput(direction, column, row),
-      ).join("");
-      scrollInputBatcher.enqueue(wheelInput);
-    };
-    const flickOptions = {
-      onGestureStart: () => {
-        scrollRemainder = 0;
-      },
-      onScroll: scrollTerminal,
-    };
+    terminalInputQueueRef.current.attach(sendTerminalInput);
 
     if (isMockMode()) {
       setStatus("connected");
@@ -446,13 +616,6 @@ export function usePaneViewModel({
       resizeObserver.observe(container);
       window.addEventListener("resize", sendResize);
       sendResize();
-      const flickCleanup = installTerminalFlickInput(
-        container,
-        () => {
-          // The mock is intentionally read-only. Real input is wired to muximod below.
-        },
-        flickOptions,
-      );
       const inputDisposable = terminal.onData(() => {
         // The mock is intentionally read-only.
       });
@@ -461,14 +624,21 @@ export function usePaneViewModel({
         disposed = true;
         connectRef.current = null;
         detachRef.current = null;
+        resetNativeKeyboard();
         clearRetryTimer();
         resizeObserver.disconnect();
         window.removeEventListener("resize", sendResize);
+        window.removeEventListener("resize", syncNativeKeyboardVisibility);
+        visualViewport?.removeEventListener("resize", syncNativeKeyboardVisibility);
+        helperInput?.removeEventListener("focus", handleKeyboardFocus);
+        helperInput?.removeEventListener("blur", handleKeyboardBlur);
         if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-        flickCleanup();
-        scrollInputBatcher.dispose();
         terminalOutputScheduler.dispose();
         inputDisposable.dispose();
+        terminalInputQueueRef.current.detach(true);
+        socketInputQueueRef.current.detach(true);
+        nativeKeyboardFocusPendingRef.current = false;
+        terminalRef.current = null;
         terminal.dispose();
       };
     }
@@ -478,20 +648,12 @@ export function usePaneViewModel({
     window.addEventListener("resize", sendResize);
 
     const inputDisposable = terminal.onData((data) => {
-      sendInteractiveTerminalInput(data);
+      sendTerminalInput(inputTransformRef.current(data));
     });
     const binaryInputDisposable = terminal.onBinary((data) => {
-      scrollInputBatcher.flush();
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) socket.send(binaryStringToBytes(data));
     });
-    const flickCleanup = installTerminalFlickInput(
-      container,
-      (data) => {
-        sendInteractiveTerminalInput(data);
-      },
-      flickOptions,
-    );
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       sendControl(socketRef.current, { type: "resize", version: terminalProtocolVersion, cols, rows });
     });
@@ -508,19 +670,26 @@ export function usePaneViewModel({
       disposed = true;
       connectRef.current = null;
       detachRef.current = null;
+      resetNativeKeyboard();
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       clearRetryTimer();
       document.removeEventListener("visibilitychange", claimWhenVisible);
       window.removeEventListener("focus", claimWhenVisible);
       resizeObserver.disconnect();
       window.removeEventListener("resize", sendResize);
+      window.removeEventListener("resize", syncNativeKeyboardVisibility);
+      visualViewport?.removeEventListener("resize", syncNativeKeyboardVisibility);
+      helperInput?.removeEventListener("focus", handleKeyboardFocus);
+      helperInput?.removeEventListener("blur", handleKeyboardBlur);
       inputDisposable.dispose();
       binaryInputDisposable.dispose();
-      flickCleanup();
-      scrollInputBatcher.dispose();
       terminalOutputScheduler.dispose();
       resizeDisposable.dispose();
       const cleanupMode = terminalSessionCleanupMode(target, currentTargetRef.current);
+      terminalInputQueueRef.current.detach(cleanupMode === "detach");
+      socketInputQueueRef.current.detach(cleanupMode === "detach");
+      nativeKeyboardFocusPendingRef.current = false;
+      terminalRef.current = null;
       if (cleanupMode === "detach") {
         terminalClosedRef.current = true;
         resumeRef.current = null;
@@ -537,7 +706,7 @@ export function usePaneViewModel({
       }
       terminal.dispose();
     };
-  }, [claim, clearRetryTimer, connection, target, terminalContainer]);
+  }, [claim, clearRetryTimer, connection, focus, target, terminalContainer]);
 
   return {
     target,
@@ -550,6 +719,12 @@ export function usePaneViewModel({
     reconnect,
     claim,
     detach,
+    sendInput,
+    focus,
+    blur,
+    keepNativeKeyboardOpen,
+    toggleNativeKeyboard,
+    nativeKeyboardVisible,
     pasteImage,
   };
 }
