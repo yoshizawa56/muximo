@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { muximoBridge } from "../../../../../../../platform/muximo-bridge";
 import { useTerminalResources } from "../../../../../-terminal-resources";
-import { encodeCustomKeyboardSequence } from "./-custom-keyboard-input";
+import { encodeCustomKeyboardNativeInput, encodeCustomKeyboardSequence } from "./-custom-keyboard-input";
 import type {
-  CustomKeyboardFlickPreview,
+  CustomKeyboardModifier,
   CustomKeyboardSettingsViewModel,
   CustomKeyboardViewModel,
 } from "./-custom-keyboard-viewmodel";
@@ -43,31 +44,46 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
   const panes = panesQuery.data?.panes ?? [];
   const selectedPane = panes.find((pane) => pane.id === paneId) ?? null;
   const selectedTarget = selectedPane?.tmuxPaneId ?? "";
-  const [flickPreview, setFlickPreview] = useState<CustomKeyboardFlickPreview | null>(null);
+  const [activeKeyboardModifiers, setActiveKeyboardModifiers] = useState<CustomKeyboardModifier[]>([]);
+  const activeKeyboardModifiersRef = useRef<CustomKeyboardModifier[]>([]);
+  const onNativeKeyboardInput = useCallback((data: string) => {
+    const modifiers = activeKeyboardModifiersRef.current;
+    if (modifiers.length === 0) return data;
+    activeKeyboardModifiersRef.current = [];
+    setActiveKeyboardModifiers([]);
+    return encodeCustomKeyboardNativeInput(data, modifiers);
+  }, []);
+  const onActiveKeyboardModifiersChange = useCallback((modifiers: readonly CustomKeyboardModifier[]) => {
+    const nextModifiers = [...modifiers];
+    activeKeyboardModifiersRef.current = nextModifiers;
+    setActiveKeyboardModifiers(nextModifiers);
+  }, []);
   const terminal = usePaneViewModel({
     target: selectedTarget,
     connection,
-    onFlickPreviewChange: setFlickPreview,
+    transformInput: onNativeKeyboardInput,
   });
-  const keyboardController = useCustomKeyboardViewModel({
-    flickPreview,
-    onSequence: (sequence, activeModifiers) => {
+  const onKeyboardSequence = useCallback(
+    (
+      sequence: Parameters<typeof encodeCustomKeyboardSequence>[0],
+      activeModifiers: Parameters<typeof encodeCustomKeyboardSequence>[1],
+    ) => {
       terminal.sendInput(encodeCustomKeyboardSequence(sequence, activeModifiers));
     },
+    [terminal.sendInput],
+  );
+  const keyboardController = useCustomKeyboardViewModel({
+    nativeKeyboardVisible: terminal.nativeKeyboardVisible,
+    activeModifiers: activeKeyboardModifiers,
+    onActiveModifiersChange: onActiveKeyboardModifiersChange,
+    onSequence: onKeyboardSequence,
+    onKeyEffect: muximoBridge.keyPressHaptic,
     onNativeFileSelected: (_action, file) => {
       terminal.pasteImage(file);
     },
-    onNativeKeyboardToggle: (visible) => {
-      if (visible) terminal.focus();
-      else terminal.blur();
-    },
+    onKeepNativeKeyboardOpen: terminal.keepNativeKeyboardOpen,
+    onNativeKeyboardToggle: terminal.toggleNativeKeyboard,
   });
-  useEffect(() => {
-    terminal.setFlickRepeat({
-      startDelayMs: keyboardController.repeatStartDelayMs,
-      intervalMs: keyboardController.repeatIntervalMs,
-    });
-  }, [keyboardController.repeatIntervalMs, keyboardController.repeatStartDelayMs, terminal.setFlickRepeat]);
   const paneBoard = usePaneBoardViewModel({
     selectedTarget,
     sessionName,

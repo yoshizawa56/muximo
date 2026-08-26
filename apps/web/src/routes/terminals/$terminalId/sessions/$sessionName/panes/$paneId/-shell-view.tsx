@@ -26,7 +26,7 @@ export function ShellView({
   }
 
   return (
-    <main className="h-[var(--app-viewport-height)] min-h-0 bg-[#020503] p-3 text-[#d9f4dc] md:p-6">
+    <main className="h-[var(--app-viewport-height)] min-h-0 bg-[#020503] p-2 pb-1 text-[#d9f4dc] md:p-6">
       <div className="mx-auto flex h-full max-w-[1100px] flex-col overflow-hidden rounded-[17px] border border-[#1c4b28] bg-[#071108] shadow-[0_25px_80px_rgb(0_0_0_/_46%)]">
         <header className="flex min-h-[54px] shrink-0 items-center gap-2 border-b border-[#17391f] bg-[rgb(6_15_8_/_95%)] px-3">
           <span className="size-2 rounded-full bg-[#39d65b] shadow-[0_0_0_4px_rgb(57_214_91_/_11%)]" />

@@ -1,4 +1,5 @@
 import { AppIcon } from "../../../../../../../app/components/app-icon";
+import { AppSafeAreaOverlay } from "../../../../../../../app/components/app-layout";
 import type { PaneLayoutOverlayVariant } from "../../-pane-layout-overlay-view";
 import type { ControlRoomViewModel } from "./-control-room-viewmodel";
 import { CustomKeyboardSettingsView, CustomKeyboardView } from "./-custom-keyboard-view";
@@ -221,7 +222,7 @@ export function ControlRoomView({
               className="relative flex min-h-[450px] flex-1 flex-col overflow-hidden rounded-[15px] border border-[#1d4c29] bg-terminal shadow-[var(--shadow-app),0_0_0_7px_rgb(57_214_91_/_5%),0_0_70px_rgb(21_116_42_/_12%)] max-[920px]:min-h-0 max-[920px]:rounded-none max-[920px]:border-0 max-[920px]:shadow-none max-[620px]:rounded-[9px]"
               aria-label={`${viewModel.target} terminal`}
             >
-              <div className="flex min-h-0 w-full flex-1 flex-col px-6 pb-[18px] pt-[23px] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-[max(12px,var(--safe-area-bottom))] max-[920px]:pt-3">
+              <div className="flex min-h-0 w-full flex-1 flex-col px-6 pb-[18px] pt-[23px] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-1 max-[920px]:pt-3">
                 <div
                   ref={viewModel.terminalContainerRef}
                   className="terminal-container min-h-0 w-full flex-1 touch-none [-webkit-touch-callout:none]"
@@ -313,9 +314,9 @@ export function ControlRoomView({
         </aside>
       </div>
       {controlRoomViewModel.keyboardSettingsOpen ? (
-        <div className="fixed inset-0 z-50">
+        <AppSafeAreaOverlay className="z-50">
           <CustomKeyboardSettingsView viewModel={keyboardSettings} />
-        </div>
+        </AppSafeAreaOverlay>
       ) : null}
     </main>
   );
