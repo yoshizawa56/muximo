@@ -15,7 +15,7 @@ import {
 } from "@muximo/domain";
 import { errorFields, type Logger } from "../logging/index.js";
 import { isPathWithin, realpathAfterMkdir, realpathSafe, resolveFromRoot, unlinkEmptyDirectory } from "./filesystem.js";
-import { gitOutputOrEmpty, gitRequired, gitStatus, gitStatusCode, listUnmanagedFiles } from "./git.js";
+import { gitOutputOrEmpty, gitOutputRaw, gitRequired, gitStatus, gitStatusCode, listUnmanagedFiles } from "./git.js";
 
 export type WorktreeAdapterOptions = {
   environment: NodeJS.ProcessEnv;
@@ -145,7 +145,11 @@ export class GitWorktreeAdapter implements WorktreePort {
       }
       unlinkEmptyDirectory(session.worktreeRoot);
       if (session.branch) {
-        const head = gitOutputOrEmpty(session.workspaceRoot, ["rev-parse", "--verify", session.branch]);
+        const head = gitOutputOrEmpty(
+          session.workspaceRoot,
+          ["rev-parse", "--verify", session.branch],
+          this.options.environment,
+        );
         if (head && head === session.baseCommit) gitStatusCode(session.workspaceRoot, ["branch", "-d", session.branch]);
         else if (head)
           this.options.logger.info("worktree.branch_retained", { branch: session.branch, kind: "managed" });
@@ -196,7 +200,11 @@ export class GitWorktreeAdapter implements WorktreePort {
     }
     unlinkEmptyDirectory(input.worktreeRoot);
     if (input.branch) {
-      const head = gitOutputOrEmpty(input.workspaceRoot, ["rev-parse", "--verify", input.branch]);
+      const head = gitOutputOrEmpty(
+        input.workspaceRoot,
+        ["rev-parse", "--verify", input.branch],
+        this.options.environment,
+      );
       if (head && head === input.baseCommit) gitStatusCode(input.workspaceRoot, ["branch", "-d", input.branch]);
       else if (head) this.options.logger.info("worktree.branch_retained", { branch: input.branch, kind: "shell" });
     }
@@ -208,7 +216,7 @@ export class GitWorktreeAdapter implements WorktreePort {
   }
 
   private isRegisteredAtInternal(workspaceRoot: string, worktreePath: string): boolean {
-    return gitOutputOrEmpty(workspaceRoot, ["worktree", "list", "--porcelain"])
+    return gitOutputRaw(workspaceRoot, ["worktree", "list", "--porcelain"], this.options.environment)
       .split("\n")
       .some((line) => line === `worktree ${worktreePath}`);
   }

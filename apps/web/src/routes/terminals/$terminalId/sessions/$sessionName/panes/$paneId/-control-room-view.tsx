@@ -22,7 +22,7 @@ export function ControlRoomView({
   const onNewPane = controlRoomViewModel.onNewPane;
   const windowMapSurfaceRef = useWindowMapGesture(paneBoard.open);
   const { notices, open: dismissNotice } = useWaitingNotices(paneBoard.panes);
-  const selectedPane = paneBoard.panes.find((pane) => pane.tmuxPaneId === viewModel.target);
+  const selectedPane = paneBoard.panes.find((pane) => pane.hostPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
   const agentName = selectedPane?.agentId ?? (selectedPane?.kind === "shell" ? "shell" : "agent");
   const shellMode = selectedPane?.kind === "shell";
@@ -245,7 +245,7 @@ export function ControlRoomView({
                 agents={notices.map(toToastAgent)}
                 onOpen={(agent) => {
                   dismissNotice(agent.id);
-                  const pane = paneBoard.panes.find((candidate) => candidate.tmuxPaneId === agent.target);
+                  const pane = paneBoard.panes.find((candidate) => candidate.hostPaneId === agent.target);
                   if (pane) paneBoard.select(pane);
                 }}
               />

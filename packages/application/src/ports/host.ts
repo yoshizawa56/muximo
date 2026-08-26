@@ -16,7 +16,7 @@ export type HostPaneReference = {
 };
 
 export type HostPaneSnapshot = HostPaneReference & {
-  hostServerId?: string;
+  hostServerId: string;
   muximodSessionId?: string;
   muximodExecutionId?: string;
   windowName: string;
@@ -116,7 +116,6 @@ export interface MuximodViewportPort {
 export interface MuximodWorkspaceCatalogPort extends WorkspaceDirectoryPort {
   toDirectoryOption(workspace: WorkspaceRecord): MuximodWorkspaceDirectory;
   browseDirectories(parentPath?: string): Promise<MuximodWorkspaceDirectory[]>;
-  resolveLegacyDirectory(directory: string): Promise<string>;
   resolveWorkspaceDirectory(
     workspaceId: WorkspaceId,
     findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,

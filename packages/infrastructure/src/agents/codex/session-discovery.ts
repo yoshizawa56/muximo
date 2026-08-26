@@ -221,7 +221,6 @@ function codexSessionCandidates(
     filesScanned: files.length,
     sessionMetaFiles: 0,
     payloadMetadataFiles: 0,
-    flatMetadataFiles: 0,
     baselineEntries: baseline.size,
     candidateFiles: 0,
     uniqueCandidates: 0,
@@ -244,8 +243,7 @@ function codexSessionCandidates(
       continue;
     }
     diagnostics.sessionMetaFiles += 1;
-    if (inspection.shape === "payload") diagnostics.payloadMetadataFiles += 1;
-    else diagnostics.flatMetadataFiles += 1;
+    diagnostics.payloadMetadataFiles += 1;
     const meta = inspection.meta;
     if (!meta.session_id) {
       reject("missing_session_id");

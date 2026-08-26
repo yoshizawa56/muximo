@@ -1,5 +1,5 @@
 import type { PaneRecord, PaneState } from "@muximo/domain";
-import type { MuximodApplication, MuximodClock, MuximodTerminalEndpoint } from "../../ports/application.js";
+import type { ApplicationClock, MuximodApplication, MuximodTerminalEndpoint } from "../../ports/application.js";
 import type {
   MuximodHostPort,
   MuximodSessionManagementPort,
@@ -27,7 +27,7 @@ export type MuximodApplicationResources = {
   getTerminal: () => Promise<MuximodTerminalEndpoint>;
   host: MuximodHostPort;
   sessionManagement: MuximodSessionManagementPort;
-  clock: MuximodClock;
+  clock: ApplicationClock;
   paneRepository: PaneRepository;
   agentSessionRepository: AgentSessionRepository;
   workspaceCatalog: MuximodWorkspaceCatalogPort;

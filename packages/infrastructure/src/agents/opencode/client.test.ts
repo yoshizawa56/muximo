@@ -46,13 +46,13 @@ const sseCases = [
     ],
   },
   {
-    name: "parses named events with a bare payload",
+    name: "ignores an event without the global envelope",
     input: {
       sseText: ["event: session.idle", 'data: {"sessionID":"s1"}', "", ""].join("\n"),
     },
     assert: [
       returns<EmptyContext, SseResult>({
-        events: [{ type: "session.idle", properties: { sessionID: "s1" } }],
+        events: [],
         endedWithStreamClosed: true,
       }),
     ],
@@ -60,9 +60,13 @@ const sseCases = [
   {
     name: "skips malformed JSON and keeps valid events",
     input: {
-      sseText: ["data: {not json", "", 'data: {"type":"session.idle","properties":{"sessionID":"s1"}}', "", ""].join(
-        "\n",
-      ),
+      sseText: [
+        "data: {not json",
+        "",
+        'data: {"payload":{"type":"session.idle","properties":{"sessionID":"s1"}}}',
+        "",
+        "",
+      ].join("\n"),
     },
     assert: [
       returns<EmptyContext, SseResult>({
@@ -74,7 +78,9 @@ const sseCases = [
   {
     name: "ignores comment keepalive blocks",
     input: {
-      sseText: [": ping", "", 'data: {"type":"session.idle","properties":{"sessionID":"s1"}}', "", ""].join("\n"),
+      sseText: [": ping", "", 'data: {"payload":{"type":"session.idle","properties":{"sessionID":"s1"}}}', "", ""].join(
+        "\n",
+      ),
     },
     assert: [
       returns<EmptyContext, SseResult>({
@@ -86,7 +92,7 @@ const sseCases = [
   {
     name: "handles CRLF block separators",
     input: {
-      sseText: 'data: {"type":"session.idle","properties":{"sessionID":"s1"}}\r\n\r\n',
+      sseText: 'data: {"payload":{"type":"session.idle","properties":{"sessionID":"s1"}}}\r\n\r\n',
     },
     assert: [
       returns<EmptyContext, SseResult>({
@@ -98,9 +104,13 @@ const sseCases = [
   {
     name: "joins multi-line data payloads",
     input: {
-      sseText: ["event: session.status", 'data: {"sessionID":"s1",', 'data: "status":{"type":"idle"}}', "", ""].join(
-        "\n",
-      ),
+      sseText: [
+        "event: session.status",
+        'data: {"payload":{"type":"session.status","properties":{"sessionID":"s1",',
+        'data: "status":{"type":"idle"}}}}',
+        "",
+        "",
+      ].join("\n"),
     },
     assert: [
       returns<EmptyContext, SseResult>({

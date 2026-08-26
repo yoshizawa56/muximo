@@ -1,5 +1,5 @@
 import { clearPatch, normalizeAgentSessionName, Pane, WorkspaceId } from "@muximo/domain";
-import type { CreatePaneInput, MuximodClock } from "../../ports/application.js";
+import type { ApplicationClock, CreatePaneInput } from "../../ports/application.js";
 import { ApplicationError, type MuximodPaneSummary } from "../../ports/application.js";
 import type { MuximodHostPort, MuximodViewportPort, MuximodWorkspaceCatalogPort } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository, WorkspaceRepository } from "../../ports/repositories.js";
@@ -15,7 +15,7 @@ export async function createPane(
   workspaceCatalog: MuximodWorkspaceCatalogPort,
   workspaceRepository: WorkspaceRepository,
   agentStatus: AgentStatusStore,
-  clock: MuximodClock,
+  clock: ApplicationClock,
 ): Promise<MuximodPaneSummary> {
   const workspace = input.workspaceId
     ? await workspaceCatalog.resolveSelection(
@@ -29,7 +29,7 @@ export async function createPane(
   if (!(await host.hasSession(input.sessionName))) {
     throw new ApplicationError("session_not_found", `terminal host session does not exist: ${input.sessionName}`);
   }
-  if (input.placement !== "window" && (input.cwd || (input.workspaceId && !input.useWorktree))) {
+  if (input.placement !== "window" && input.workspaceId && !input.useWorktree) {
     throw new ApplicationError(
       "split_directory_override_unsupported",
       "Split panes always inherit the target pane cwd",
@@ -42,12 +42,7 @@ export async function createPane(
     throw new ApplicationError("agent_not_allowed", "agentId is not allowed for a shell pane");
   }
 
-  const cwd =
-    input.placement === "window"
-      ? input.cwd
-        ? await workspaceCatalog.resolveLegacyDirectory(input.cwd)
-        : workspace?.rootPath
-      : undefined;
+  const cwd = input.placement === "window" ? workspace?.rootPath : undefined;
 
   const paneName = input.kind === "agent" ? normalizeAgentSessionName(input.name) : input.name;
   const commandInput = paneName === input.name ? input : { ...input, name: paneName };

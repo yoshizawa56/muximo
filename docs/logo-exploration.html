@@ -801,9 +801,15 @@
         const terminalGrid = document.querySelector("#terminal-grid");
         const environmentGrid = document.querySelector("#environment-grid");
         const otherGrid = document.querySelector("#other-grid");
-        terminalConcepts.forEach((concept) => terminalGrid.append(createCard(concept, savedFeedback)));
-        environmentConcepts.forEach((concept) => environmentGrid.append(createCard(concept, savedFeedback)));
-        otherConcepts.forEach((concept) => otherGrid.append(createCard(concept, savedFeedback)));
+        terminalConcepts.forEach((concept) => {
+          terminalGrid.append(createCard(concept, savedFeedback));
+        });
+        environmentConcepts.forEach((concept) => {
+          environmentGrid.append(createCard(concept, savedFeedback));
+        });
+        otherConcepts.forEach((concept) => {
+          otherGrid.append(createCard(concept, savedFeedback));
+        });
       }
 
       document.querySelector("#copy-all").addEventListener("click", async () => {

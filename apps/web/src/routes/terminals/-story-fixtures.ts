@@ -59,7 +59,7 @@ export const storyWorkspaces: WorkspaceDirectory[] = [
 export const storyPanes: PaneSummary[] = [
   {
     id: "pane-review",
-    tmuxPaneId: "%0",
+    hostPaneId: "%0",
     sessionName: "muximo",
     windowId: "@0",
     paneIndex: 0,
@@ -77,7 +77,7 @@ export const storyPanes: PaneSummary[] = [
   },
   {
     id: "pane-build",
-    tmuxPaneId: "%1",
+    hostPaneId: "%1",
     sessionName: "muximo",
     windowId: "@0",
     paneIndex: 1,
@@ -95,7 +95,7 @@ export const storyPanes: PaneSummary[] = [
   },
   {
     id: "pane-shell",
-    tmuxPaneId: "%2",
+    hostPaneId: "%2",
     sessionName: "muximo",
     windowId: "@1",
     paneIndex: 0,
@@ -113,7 +113,7 @@ export const storyPanes: PaneSummary[] = [
   },
   {
     id: "pane-approval",
-    tmuxPaneId: "%3",
+    hostPaneId: "%3",
     sessionName: "muximo",
     windowId: "@2",
     paneIndex: 0,

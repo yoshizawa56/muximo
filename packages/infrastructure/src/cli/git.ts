@@ -22,19 +22,20 @@ export function gitRequired(cwd: string, args: string[], message: string, enviro
 }
 
 export function gitOutputRaw(cwd: string, args: string[], environment?: NodeJS.ProcessEnv): string {
+  return execFileSync("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    env: environment,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+}
+
+/** Runs an optional probe whose absence is represented by an empty result. */
+export function gitOutputOrEmpty(cwd: string, args: string[], environment?: NodeJS.ProcessEnv): string {
   try {
-    return execFileSync("git", ["-C", cwd, ...args], {
-      encoding: "utf8",
-      env: environment,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    return gitOutputRaw(cwd, args, environment).trim();
   } catch {
     return "";
   }
-}
-
-export function gitOutputOrEmpty(cwd: string, args: string[], environment?: NodeJS.ProcessEnv): string {
-  return gitOutputRaw(cwd, args, environment).trim();
 }
 
 export function gitStatusCode(cwd: string, args: string[], environment?: NodeJS.ProcessEnv): number {

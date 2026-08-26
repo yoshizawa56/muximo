@@ -32,7 +32,7 @@ const workspace = {
 const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", managed: true };
 const pane = {
   id: "pane-1",
-  tmuxPaneId: "%0",
+  hostPaneId: "%0",
   sessionName: "integration",
   windowId: "@0",
   kind: "shell" as const,

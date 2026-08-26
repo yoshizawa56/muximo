@@ -48,18 +48,6 @@ export const runOptionSpecs = defineOptions(
     exposure: "cli",
     completion: { kind: "file" },
   },
-  {
-    key: "setupTask",
-    flags: ["--setup-task [value]"],
-    description: "Legacy setup task option retained for a validation message.",
-    exposure: "cli",
-  },
-  {
-    key: "cleanupTask",
-    flags: ["--cleanup-task [value]"],
-    description: "Legacy cleanup task option retained for a validation message.",
-    exposure: "cli",
-  },
 );
 
 const optionalWorktreeSchema = z.union([z.string().min(1), z.boolean()]).optional();
@@ -74,24 +62,6 @@ export const runSchema = z
     setupHook: optionalHookSchema,
     cleanupHook: optionalHookSchema,
     backendArgs: z.array(z.string()).default([]),
-    setupTask: z.union([z.string(), z.literal(true)]).optional(),
-    cleanupTask: z.union([z.string(), z.literal(true)]).optional(),
-  })
-  .superRefine((input, context) => {
-    if (input.setupTask !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["setupTask"],
-        message: "--setup-task is no longer supported; use workspace hooks or --setup-hook",
-      });
-    }
-    if (input.cleanupTask !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["cleanupTask"],
-        message: "--cleanup-task is no longer supported; use workspace hooks or --cleanup-hook",
-      });
-    }
   })
   .transform((input) => {
     const worktreeName = typeof input.worktree === "string" ? input.worktree : undefined;

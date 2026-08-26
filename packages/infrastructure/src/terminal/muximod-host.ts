@@ -235,7 +235,7 @@ function toHostPaneSnapshot(pane: TmuxLiveSnapshot["panes"][number]): HostPaneSn
     hostPaneId: pane.paneId,
     windowId: pane.windowId,
     sessionName: pane.sessionName,
-    ...(pane.tmuxServerId ? { hostServerId: pane.tmuxServerId } : {}),
+    hostServerId: pane.tmuxServerId,
     muximodSessionId: pane.muximodSessionId,
     muximodExecutionId: pane.muximodExecutionId,
     windowName: pane.windowName,

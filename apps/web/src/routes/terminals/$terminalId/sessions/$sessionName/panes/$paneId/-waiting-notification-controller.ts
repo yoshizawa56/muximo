@@ -88,7 +88,7 @@ function prepareNotice(pane: PaneSummary): WaitingNotice | null {
   if (!state) return null;
   return {
     id: pane.id,
-    target: pane.tmuxPaneId,
+    target: pane.hostPaneId,
     name: pane.name,
     kind: pane.kind === "agent" ? "agent" : "shell",
     agentId: pane.agentId,

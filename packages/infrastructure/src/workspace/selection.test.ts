@@ -32,11 +32,6 @@ const rootsCases = [
     assert: [returns<EmptyContext, string[]>(["/work", "/projects"])],
   },
   {
-    name: "supports the compatibility roots variable",
-    input: { env: { MUXIMOD_ALLOWED_ROOTS: "/scratch" }, fallback: "/muximod" },
-    assert: [returns<EmptyContext, string[]>(["/scratch"])],
-  },
-  {
     name: "falls back to the daemon working directory",
     input: { env: {}, fallback: "/muximod" },
     assert: [returns<EmptyContext, string[]>(["/muximod"])],

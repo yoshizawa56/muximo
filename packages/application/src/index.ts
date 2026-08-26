@@ -53,7 +53,6 @@ export type {
   CreateSessionInput,
   ManageSessionInput,
   ManageSessionResult,
-  MuximodClock,
   MuximodPanePlacement,
   MuximodPaneSummary,
   MuximodSessionSummary,

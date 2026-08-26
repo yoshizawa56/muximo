@@ -9,7 +9,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import type { MuximodClock, MuximodSessionSummary } from "../../ports/application.js";
+import type { ApplicationClock, MuximodSessionSummary } from "../../ports/application.js";
 import type { HostPaneSnapshot, MuximodHostPort, TerminalHostSnapshot } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
 import { listSessions } from "./list-sessions.js";
@@ -70,7 +70,7 @@ const listTable: OperationTable<ListFixture, "default", Input, MuximodSessionSum
   }),
 };
 
-const clock: MuximodClock = { now: () => "2026-08-24T00:00:00.000Z" };
+const clock: ApplicationClock = { now: () => "2026-08-24T00:00:00.000Z" };
 
 function createFixture(): FixtureHandle<ListFixture> {
   let records: PaneRecord[] = [];

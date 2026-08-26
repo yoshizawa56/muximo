@@ -42,14 +42,12 @@ export class SessionWorktreeLookupAdapter implements SessionWorktreeLookupPort {
     sessionName: string,
     fallbackCwd: string,
   ): Promise<string> {
-    try {
-      const session = await this.options.sessions.findByName(workspaceId, sessionName);
-      if (session?.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
-        return session.worktreePath;
-      }
-    } catch {
-      // A shell remains usable when optional session metadata is unavailable.
+    const session = await this.options.sessions.findByName(workspaceId, sessionName);
+    if (session?.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
+      return session.worktreePath;
     }
+    // A missing session or removed worktree explicitly means that the shell
+    // stays in its requested working directory.
     return realpathSafe(fallbackCwd);
   }
 }

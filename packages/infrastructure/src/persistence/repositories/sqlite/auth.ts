@@ -61,9 +61,6 @@ export class AuthStore implements AuthStorePort {
       .values({
         pairingId,
         serverId: this.serverId,
-        // Keep the legacy NOT NULL column populated for databases created by
-        // v1. It is no longer part of the pairing model or returned to clients.
-        webOrigin: "",
         muximodBaseUrl: input.muximodBaseUrl,
         secretHash: hashOpaque(input.secret),
         status: "offered",

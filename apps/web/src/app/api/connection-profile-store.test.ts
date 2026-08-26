@@ -150,19 +150,18 @@ const hasProfileName = (expected: string): Assertion<ProfileContext, ProfileResu
   },
 });
 
-const hasProfileEndpoint = (expected: string): Assertion<ProfileContext, ProfileResult> => ({
-  name: `returns endpoint ${expected}`,
-  check: (_ctx, result) => {
-    if (!result.ok) throw result.error;
-    expect(result.value?.muximodBaseUrl).toBe(expected);
-  },
-});
-
 const hasNoCredentialFields = (): Assertion<ProfileContext, ProfileResult> => ({
   name: "persists no credential fields",
   check: (ctx) => {
     expect(ctx.raw).not.toContain("key");
     expect(ctx.raw).not.toContain("password");
+  },
+});
+
+const hasRawProfile = (expected: string | null): Assertion<ProfileContext, ProfileResult> => ({
+  name: `stores raw profile ${expected ?? "as empty"}`,
+  check: (ctx) => {
+    expect(ctx.raw).toBe(expected);
   },
 });
 
@@ -176,25 +175,26 @@ const profileCases = [
     assert: [hasProfileName("Workstation"), hasNoCredentialFields()],
   },
   {
-    name: "ignores malformed stored data",
+    name: "resets malformed stored data",
     steps: [{ type: "set-raw", value: "not-json" }, { type: "read" }],
-    assert: [returns<ProfileContext, ProfileResult>(null)],
+    assert: [returns<ProfileContext, ProfileResult>(null), hasRawProfile(null)],
   },
   {
-    name: "reads the legacy serveUrl field as a muximod endpoint",
+    name: "resets a profile with an unsupported endpoint field",
     steps: [
       {
         type: "set-raw",
         value: JSON.stringify({
           id: "default",
           name: "Workstation",
+          muximodBaseUrl: "https://workstation.tailnet.ts.net",
           serveUrl: "https://workstation.tailnet.ts.net/",
           updatedAt: "2026-08-15T00:00:00.000Z",
         }),
       },
       { type: "read" },
     ],
-    assert: [hasProfileEndpoint("https://workstation.tailnet.ts.net")],
+    assert: [returns<ProfileContext, ProfileResult>(null), hasRawProfile(null)],
   },
   {
     name: "clears a saved profile",

@@ -32,11 +32,9 @@ export async function withMuximodRequest<Result>(
 export function formatMuximodConnectionError(stage: MuximodRequestStage, endpoint: string, cause: unknown): string {
   const returnedByMuximod = isMuximodApiError(cause);
   const title = returnedByMuximod ? "Muximod returned an error" : "Could not communicate with muximod";
-  return [
-    `${title} while ${stage}.`,
-    `Endpoint: ${displayEndpoint(endpoint)}`,
-    `Details: ${errorDetails(cause)}`,
-  ].join("\n");
+  return [`${title} while ${stage}.`, `Endpoint: ${displayEndpoint(endpoint)}`, `Details: ${errorDetails(cause)}`].join(
+    "\n",
+  );
 }
 
 function errorDetails(cause: unknown): string {
