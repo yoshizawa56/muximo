@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#050805" />
+    <title>Muximo logo lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --canvas: #050805;
+        --paper: #0c130e;
+        --paper-raised: #101b12;
+        --terminal: #020503;
+        --ink: #d9f4dc;
+        --muted: #88a48b;
+        --faint: #57705b;
+        --line: #1b3121;
+        --line-strong: #2d5638;
+        --lime: #8bff9a;
+        --lime-deep: #39d65b;
+        --blue: #72c8ff;
+        --amber: #f1c76d;
+        --shadow: 0 20px 60px rgb(0 0 0 / 32%);
+        --radius: 18px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-width: 320px;
+        background: var(--canvas);
+      }
+
+      body {
+        min-width: 320px;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 50% -10%, rgb(57 214 91 / 15%), transparent 35rem),
+          linear-gradient(rgb(69 214 91 / 4%) 1px, transparent 1px),
+          linear-gradient(90deg, rgb(69 214 91 / 4%) 1px, transparent 1px),
+          var(--canvas);
+        background-size: auto, 32px 32px, 32px 32px, auto;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+        line-height: 1.5;
+      }
+
+      button,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button:focus-visible,
+      textarea:focus-visible {
+        outline: 3px solid rgb(139 255 154 / 72%);
+        outline-offset: 3px;
+      }
+
+      .page-shell {
+        width: min(1280px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 56px 0 72px;
+      }
+
+      .page-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 32px;
+        align-items: end;
+        padding-bottom: 36px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow,
+      .section-kicker,
+      .concept-id,
+      .sample-label,
+      .feedback-label {
+        color: var(--lime);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 760px;
+        margin-top: 10px;
+        color: var(--ink);
+        font-size: clamp(34px, 5vw, 64px);
+        font-weight: 650;
+        letter-spacing: -0.055em;
+        line-height: 0.98;
+      }
+
+      .lede {
+        max-width: 720px;
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 16px;
+      }
+
+      .header-note {
+        max-width: 280px;
+        color: var(--faint);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.65;
+        text-align: right;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin-top: 20px;
+      }
+
+      .button {
+        min-height: 38px;
+        padding: 8px 13px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        color: var(--ink);
+        background: var(--paper-raised);
+        font-size: 13px;
+        font-weight: 650;
+        transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+      }
+
+      .button:hover {
+        border-color: var(--lime-deep);
+        background: #142419;
+      }
+
+      .button.primary {
+        border-color: rgb(139 255 154 / 50%);
+        color: var(--canvas);
+        background: var(--lime);
+      }
+
+      .button.primary:hover {
+        border-color: var(--lime);
+        background: #c1ffc8;
+      }
+
+      .button.subtle {
+        color: var(--muted);
+        background: transparent;
+      }
+
+      .toolbar-status {
+        min-height: 20px;
+        color: var(--lime);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+      }
+
+      .section {
+        padding-top: 44px;
+      }
+
+      .section-heading {
+        display: flex;
+        gap: 24px;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 18px;
+      }
+
+      .section-heading h2 {
+        color: var(--ink);
+        font-size: 22px;
+        font-weight: 650;
+        letter-spacing: -0.025em;
+      }
+
+      .section-description {
+        max-width: 660px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .logo-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .logo-card {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgb(12 19 14 / 86%);
+        box-shadow: var(--shadow);
+      }
+
+      .logo-card.featured {
+        border-color: rgb(139 255 154 / 32%);
+      }
+
+      .logo-card-header {
+        min-height: 94px;
+        padding: 18px 18px 12px;
+      }
+
+      .concept-id {
+        color: var(--faint);
+      }
+
+      .logo-card h3 {
+        margin-top: 5px;
+        color: var(--ink);
+        font-size: 17px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+
+      .concept-description {
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .logo-stage {
+        display: grid;
+        place-items: center;
+        min-height: 250px;
+        padding: 24px;
+        background:
+          linear-gradient(rgb(139 255 154 / 4%) 1px, transparent 1px),
+          linear-gradient(90deg, rgb(139 255 154 / 4%) 1px, transparent 1px),
+          var(--terminal);
+        background-size: 20px 20px;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .logo-svg {
+        display: block;
+        width: min(100%, 204px);
+        height: auto;
+        aspect-ratio: 1;
+      }
+
+      .size-check {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 58px;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgb(2 5 3 / 42%);
+      }
+
+      .sample-label {
+        color: var(--faint);
+        line-height: 1.45;
+      }
+
+      .sample-label span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.03em;
+        text-transform: none;
+      }
+
+      .sample-strip {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .mini-logo {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        background: #050805;
+      }
+
+      .mini-logo svg {
+        display: block;
+        width: var(--sample-size);
+        height: var(--sample-size);
+      }
+
+      .feedback {
+        display: grid;
+        gap: 9px;
+        padding: 16px 18px 18px;
+      }
+
+      .feedback-label {
+        color: var(--muted);
+      }
+
+      .feedback textarea {
+        display: block;
+        width: 100%;
+        min-height: 92px;
+        resize: vertical;
+        padding: 10px 11px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        color: var(--ink);
+        background: #071108;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .feedback textarea::placeholder {
+        color: #638167;
+      }
+
+      .feedback-footer {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .copy-status {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--lime);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .copy-button {
+        flex: 0 0 auto;
+        min-height: 34px;
+        padding: 7px 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: 9px;
+        color: var(--ink);
+        background: transparent;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .copy-button:hover {
+        border-color: var(--lime-deep);
+        background: #142419;
+      }
+
+      @media (max-width: 980px) {
+        .logo-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 640px) {
+        .page-shell {
+          width: min(100% - 20px, 560px);
+          padding-top: 32px;
+        }
+
+        .page-header {
+          display: block;
+        }
+
+        .header-note {
+          max-width: none;
+          margin-top: 20px;
+          text-align: left;
+        }
+
+        .section-heading {
+          display: block;
+        }
+
+        .section-description {
+          margin-top: 8px;
+        }
+
+        .logo-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .logo-stage {
+          min-height: 280px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="page-header">
+        <div>
+          <div class="eyebrow">Muximo / logo lab / v1</div>
+          <h1>Terminal M, explored.</h1>
+          <p class="lede">
+            A square-icon study for Muximo. The first family keeps the terminal prompt and the letter M together; the second group tests other visual metaphors for comparison.
+          </p>
+          <div class="toolbar">
+            <button class="button primary" id="copy-all" type="button">Copy all written feedback</button>
+            <button class="button subtle" id="clear-all" type="button">Clear saved feedback</button>
+            <span class="toolbar-status" id="toolbar-status" aria-live="polite"></span>
+          </div>
+        </div>
+        <p class="header-note">
+          All marks use a 1:1 viewBox.<br />
+          Small-size checks: 24px / 16px / 12px.<br />
+          Feedback is saved in this browser.
+        </p>
+      </header>
+
+      <section class="section" aria-labelledby="terminal-family-heading">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">Primary direction</div>
+            <h2 id="terminal-family-heading">Terminal M family</h2>
+          </div>
+          <p class="section-description">
+            Six variations on the same idea: prompt, terminal window, and Muximo's initial reduced into a compact app mark.
+          </p>
+        </div>
+        <div class="logo-grid" id="terminal-grid"></div>
+      </section>
+
+      <section class="section" aria-labelledby="environment-heading">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">Environment variants</div>
+            <h2 id="environment-heading">Local / Stg</h2>
+          </div>
+          <p class="section-description">
+            The same Terminal M silhouette with the monogram swapped to L or S for environment-specific app icons.
+          </p>
+        </div>
+        <div class="logo-grid" id="environment-grid"></div>
+      </section>
+
+      <section class="section" aria-labelledby="other-directions-heading">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">Comparison directions</div>
+            <h2 id="other-directions-heading">One-pass alternatives</h2>
+          </div>
+          <p class="section-description">
+            One representative mark for each alternate metaphor, kept here to check whether another route feels more ownable.
+          </p>
+        </div>
+        <div class="logo-grid" id="other-grid"></div>
+      </section>
+    </main>
+
+    <script>
+      const STORAGE_KEY = "muximo-logo-lab-feedback-v1";
+
+      const terminalConcepts = [
+        {
+          id: "terminal-m-01",
+          title: "Prompt M / outline",
+          description: "A calm terminal frame with a distinct prompt and M glyph.",
+          featured: true,
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="terminal-m-01-title">
+              <title id="terminal-m-01-title">Terminal M outline logo</title>
+              <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" />
+              <rect x="19" y="21" width="62" height="58" rx="12" fill="none" stroke="#8bff9a" stroke-width="4" />
+              <path d="M29 31h2M36 31h2M43 31h2" fill="none" stroke="#39d65b" stroke-width="3" stroke-linecap="round" />
+              <g transform="translate(-4 0) translate(50 0) scale(0.92 1) translate(-50 0)">
+                <path d="m31 44 10 9-10 9M47 62h8" fill="none" stroke="#d9f4dc" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M61 62V43l9 11 9-11v19" fill="none" stroke="#8bff9a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+              </g>
+            </svg>`,
+        },
+        {
+          id: "terminal-m-02",
+          title: "Prompt M / split",
+          description: "The prompt and M occupy two panes inside one terminal window.",
+          featured: true,
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="terminal-m-02-title">
+              <title id="terminal-m-02-title">Terminal M split logo</title>
+              <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" stroke="#39d65b" stroke-width="3" />
+              <path d="M22 30h56M50 30v48" fill="none" stroke="#2d5638" stroke-width="3" />
+              <path d="M24 22h2M31 22h2M38 22h2" fill="none" stroke="#8bff9a" stroke-width="3" stroke-linecap="round" />
+              <path d="m30 47 9 8-9 8M44 66h7" fill="none" stroke="#d9f4dc" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M60 66V44l9 12 9-12v22" fill="none" stroke="#8bff9a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>`,
+        },
+        {
+          id: "terminal-m-03",
+          title: "Prompt M / filled",
+          description: "A higher-contrast badge built for a fast app-icon read.",
+          featured: true,
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="terminal-m-03-title">
+              <title id="terminal-m-03-title">Terminal M filled logo</title>
+              <rect x="8" y="8" width="84" height="84" rx="25" fill="#8bff9a" />
+              <rect x="19" y="22" width="62" height="56" rx="12" fill="#071108" />
+              <circle cx="29" cy="32" r="2.2" fill="#39d65b" />
+              <circle cx="36" cy="32" r="2.2" fill="#39d65b" />
+              <circle cx="43" cy="32" r="2.2" fill="#39d65b" />
+              <path d="m29 45 10 9-10 9M46 63h9" fill="none" stroke="#d9f4dc" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M61 63V44l9 11 9-11v19" fill="none" stroke="#8bff9a" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>`,
+        },
+        {
+          id: "terminal-m-04",
+          title: "Prompt M / merged",
+          description: "The prompt's chevron flows directly into the first shoulder of M.",
+          featured: true,
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="terminal-m-04-title">
+              <title id="terminal-m-04-title">Terminal M merged logo</title>
+              <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" />
+              <path d="M22 30h56" fill="none" stroke="#2d5638" stroke-width="3" />
+              <path d="M28 22h2M35 22h2M42 22h2" fill="none" stroke="#39d65b" stroke-width="3" stroke-linecap="round" />
+              <path d="m27 46 11 9-11 9 13-9h8v18M48 73V46l11 14 11-14v27" fill="none" stroke="#8bff9a" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M31 76h37" fill="none" stroke="#d9f4dc" stroke-width="3.2" stroke-linecap="round" />
+            </svg>`,
+        },
+        {
+          id: "terminal-m-05",
+          title: "Prompt M / command line",
+          description: "A compact command-line glyph with the terminal frame reduced away.",
+          featured: true,
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="terminal-m-05-title">
+              <title id="terminal-m-05-title">Terminal M command line logo</title>
+              <rect x="10" y="22" width="80" height="56" rx="18" fill="#071108" stroke="#8bff9a" stroke-width="4" />
+              <path d="m25 45 10 9-10 9M42 64h12" fill="none" stroke="#d9f4dc" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M61 64V44l9 11 9-11v20" fill="none" stroke="#8bff9a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M22 30h56" fill="none" stroke="#2d5638" stroke-width="3" />
+              <path d="M27 30h3M35 30h3" fill="none" stroke="#39d65b" stroke-width="3" stroke-linecap="round" />
+            </svg>`,
+        },
+        {
+          id: "terminal-m-06",
+          title: "Prompt M / cursor",
+          description: "A cursor-led mark that reads as command, motion, and M in one stroke.",
+          featured: true,
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="terminal-m-06-title">
+              <title id="terminal-m-06-title">Terminal M cursor logo</title>
+              <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" stroke="#2d5638" stroke-width="3" />
+              <path d="M25 38h50" fill="none" stroke="#2d5638" stroke-width="3" stroke-linecap="round" />
+              <path d="M27 29h3M35 29h3M43 29h3" fill="none" stroke="#39d65b" stroke-width="3" stroke-linecap="round" />
+              <path d="m27 55 10 9 10-9M47 73V51l11 14 11-14v22" fill="none" stroke="#8bff9a" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M27 76h48" fill="none" stroke="#d9f4dc" stroke-width="3" stroke-linecap="round" />
+              <path d="M78 73v7" fill="none" stroke="#8bff9a" stroke-width="3" stroke-linecap="round" />
+            </svg>`,
+        },
+      ];
+
+      const otherConcepts = [
+        {
+          id: "pane-grid-01",
+          title: "Pane grid",
+          description: "Four terminal panes arranged into an abstract M-shaped flow.",
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="pane-grid-01-title">
+              <title id="pane-grid-01-title">Pane grid logo</title>
+              <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" />
+              <path d="M23 23h54v54H23zM50 23v54M23 50h54" fill="none" stroke="#8bff9a" stroke-width="4" stroke-linejoin="round" />
+              <path d="M23 23 50 50l27-27M23 77l27-27 27 27" fill="none" stroke="#d9f4dc" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="50" cy="50" r="4" fill="#8bff9a" />
+            </svg>`,
+        },
+        {
+          id: "split-m-01",
+          title: "Split M",
+          description: "Two terminal surfaces converge into a single monogram.",
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="split-m-01-title">
+              <title id="split-m-01-title">Split M logo</title>
+              <path d="M18 20h27v60H18z" fill="#071108" stroke="#72c8ff" stroke-width="4" />
+              <path d="M55 20h27v60H55z" fill="#071108" stroke="#8bff9a" stroke-width="4" />
+              <path d="M31 37v26M69 37v26M31 50h38" fill="none" stroke="#2d5638" stroke-width="3" stroke-linecap="round" />
+              <path d="M27 72 50 51l23 21" fill="none" stroke="#d9f4dc" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>`,
+        },
+        {
+          id: "control-room-01",
+          title: "Control room",
+          description: "A central M hub coordinates several active work surfaces.",
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="control-room-01-title">
+              <title id="control-room-01-title">Control room logo</title>
+              <circle cx="50" cy="50" r="16" fill="#071108" stroke="#8bff9a" stroke-width="4" />
+              <path d="M50 34V22M63 42l10-10M66 50h13M63 58l10 10M50 66v12M37 58 27 68M34 50H21M37 42 27 32" fill="none" stroke="#2d5638" stroke-width="3" stroke-linecap="round" />
+              <path d="M43 59V41l7 9 7-9v18" fill="none" stroke="#d9f4dc" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="50" cy="22" r="4" fill="#72c8ff" />
+              <circle cx="79" cy="50" r="4" fill="#f1c76d" />
+              <circle cx="50" cy="78" r="4" fill="#39d65b" />
+              <circle cx="21" cy="50" r="4" fill="#8bff9a" />
+            </svg>`,
+        },
+        {
+          id: "remote-bridge-01",
+          title: "Remote bridge",
+          description: "A mobile control point linked to a remote terminal host.",
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="remote-bridge-01-title">
+              <title id="remote-bridge-01-title">Remote bridge logo</title>
+              <rect x="14" y="25" width="27" height="50" rx="8" fill="#071108" stroke="#8bff9a" stroke-width="4" />
+              <rect x="59" y="28" width="27" height="44" rx="7" fill="#071108" stroke="#72c8ff" stroke-width="4" />
+              <path d="M22 63h11M68 56h9M26 33h3" fill="none" stroke="#d9f4dc" stroke-width="3" stroke-linecap="round" />
+              <path d="M45 42c4-4 7-4 10 0M45 50c4-4 7-4 10 0M45 58c4-4 7-4 10 0" fill="none" stroke="#f1c76d" stroke-width="3" stroke-linecap="round" />
+              <path d="M23 49h9" fill="none" stroke="#8bff9a" stroke-width="3" stroke-linecap="round" />
+            </svg>`,
+        },
+        {
+          id: "friendly-m-01",
+          title: "Friendly M",
+          description: "A softer, rounded M that keeps the terminal reference subtle.",
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="friendly-m-01-title">
+              <title id="friendly-m-01-title">Friendly M logo</title>
+              <rect x="9" y="9" width="82" height="82" rx="31" fill="#8bff9a" />
+              <path d="M26 65V42c0-6 8-8 12-3l12 14 12-14c4-5 12-3 12 3v23" fill="none" stroke="#071108" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="32" cy="30" r="3" fill="#39d65b" />
+              <circle cx="50" cy="30" r="3" fill="#39d65b" />
+              <circle cx="68" cy="30" r="3" fill="#39d65b" />
+            </svg>`,
+        },
+      ];
+
+      const environmentConcepts = [
+        {
+          id: "environment-local",
+          title: "Local / L",
+          description: "The primary mark adapted for a local development environment.",
+          featured: true,
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="environment-local-title">
+              <title id="environment-local-title">Local environment logo</title>
+              <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" />
+              <rect x="19" y="21" width="62" height="58" rx="12" fill="none" stroke="#72c8ff" stroke-width="4" />
+              <path d="M29 31h2M36 31h2M43 31h2" fill="none" stroke="#3d9ed5" stroke-width="3" stroke-linecap="round" />
+              <g transform="translate(-4 0) translate(50 0) scale(0.92 1) translate(-50 0)">
+                <path d="m31 44 10 9-10 9M47 62h8" fill="none" stroke="#d9f4dc" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M61 43v19h14" fill="none" stroke="#72c8ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+              </g>
+            </svg>`,
+        },
+        {
+          id: "environment-stg",
+          title: "Stg / S",
+          description: "The same mark adapted for a staging environment.",
+          featured: true,
+          svg: `
+            <svg class="logo-svg" viewBox="0 0 100 100" role="img" aria-labelledby="environment-stg-title">
+              <title id="environment-stg-title">Staging environment logo</title>
+              <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" />
+              <rect x="19" y="21" width="62" height="58" rx="12" fill="none" stroke="#f1c76d" stroke-width="4" />
+              <path d="M29 31h2M36 31h2M43 31h2" fill="none" stroke="#c99a3f" stroke-width="3" stroke-linecap="round" />
+              <g transform="translate(-4 0) translate(50 0) scale(0.92 1) translate(-50 0)">
+                <path d="m31 44 10 9-10 9M47 62h8" fill="none" stroke="#d9f4dc" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M76 46c-2-2-4-3-7-3h-1c-4 0-6 2-6 5s2 4 6 5l2 1c4 1 6 2 6 5s-2 4-6 4h-1c-3 0-5-1-7-3" fill="none" stroke="#f1c76d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+              </g>
+            </svg>`,
+        },
+      ];
+
+      function loadFeedback() {
+        try {
+          return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+        } catch {
+          return {};
+        }
+      }
+
+      function saveFeedback(id, value) {
+        const feedback = loadFeedback();
+        if (value.trim()) {
+          feedback[id] = value;
+        } else {
+          delete feedback[id];
+        }
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(feedback));
+        } catch {
+          // Feedback remains usable even when browser storage is unavailable.
+        }
+      }
+
+      function createCard(concept, savedFeedback) {
+        const card = document.createElement("article");
+        const miniSvg = concept.svg
+          .replace(/ role="img" aria-labelledby="[^"]+"/, ' aria-hidden="true" focusable="false"')
+          .replace(/\s*<title[\s\S]*?<\/title>/, "");
+        card.className = `logo-card${concept.featured ? " featured" : ""}`;
+        card.dataset.id = concept.id;
+        card.dataset.title = concept.title;
+        card.innerHTML = `
+          <header class="logo-card-header">
+            <div class="concept-id">${concept.id}</div>
+            <h3>${concept.title}</h3>
+            <p class="concept-description">${concept.description}</p>
+          </header>
+          <div class="logo-stage">${concept.svg}</div>
+          <div class="size-check">
+            <div class="sample-label">Small-size check<span>Same square mark at a glance</span></div>
+            <div class="sample-strip" aria-label="Small-size previews">
+              <div class="mini-logo" style="--sample-size: 24px">${miniSvg}</div>
+              <div class="mini-logo" style="--sample-size: 16px">${miniSvg}</div>
+              <div class="mini-logo" style="--sample-size: 12px">${miniSvg}</div>
+            </div>
+          </div>
+          <div class="feedback">
+            <label class="feedback-label" for="feedback-${concept.id}">Your feedback</label>
+            <textarea id="feedback-${concept.id}" placeholder="What works? What should change? Consider silhouette, spacing, stroke weight, color, and small-size recognition."></textarea>
+            <div class="feedback-footer">
+              <span class="copy-status" aria-live="polite"></span>
+              <button class="copy-button" type="button">Copy feedback</button>
+            </div>
+          </div>`;
+
+        const textarea = card.querySelector("textarea");
+        textarea.value = savedFeedback[concept.id] || "";
+        textarea.addEventListener("input", () => saveFeedback(concept.id, textarea.value));
+
+        const copyButton = card.querySelector(".copy-button");
+        const copyStatus = card.querySelector(".copy-status");
+        copyButton.addEventListener("click", async () => {
+          const text = [
+            "Muximo logo feedback",
+            `Concept: ${concept.title} (${concept.id})`,
+            "",
+            textarea.value.trim() || "No written feedback yet.",
+          ].join("\\n");
+
+          try {
+            await copyText(text);
+            copyStatus.textContent = "Copied to clipboard";
+            copyButton.textContent = "Copied";
+            window.setTimeout(() => {
+              copyStatus.textContent = "";
+              copyButton.textContent = "Copy feedback";
+            }, 1800);
+          } catch {
+            copyStatus.textContent = "Copy failed — select manually";
+          }
+        });
+
+        return card;
+      }
+
+      async function copyText(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+
+        const helper = document.createElement("textarea");
+        helper.value = text;
+        helper.setAttribute("readonly", "");
+        helper.style.position = "fixed";
+        helper.style.opacity = "0";
+        document.body.append(helper);
+        helper.select();
+        const copied = document.execCommand("copy");
+        helper.remove();
+        if (!copied) {
+          throw new Error("Clipboard access was unavailable");
+        }
+      }
+
+      function renderConcepts() {
+        const savedFeedback = loadFeedback();
+        const terminalGrid = document.querySelector("#terminal-grid");
+        const environmentGrid = document.querySelector("#environment-grid");
+        const otherGrid = document.querySelector("#other-grid");
+        terminalConcepts.forEach((concept) => terminalGrid.append(createCard(concept, savedFeedback)));
+        environmentConcepts.forEach((concept) => environmentGrid.append(createCard(concept, savedFeedback)));
+        otherConcepts.forEach((concept) => otherGrid.append(createCard(concept, savedFeedback)));
+      }
+
+      document.querySelector("#copy-all").addEventListener("click", async () => {
+        const cards = [...document.querySelectorAll(".logo-card")];
+        const entries = cards
+          .map((card) => {
+            const feedback = card.querySelector("textarea").value.trim();
+            if (!feedback) {
+              return "";
+            }
+            return [`Concept: ${card.dataset.title} (${card.dataset.id})`, feedback].join("\\n");
+          })
+          .filter(Boolean);
+        const text = ["Muximo logo feedback", "", entries.join("\\n\\n") || "No written feedback yet."].join("\\n");
+        const status = document.querySelector("#toolbar-status");
+
+        try {
+          await copyText(text);
+          status.textContent = "Copied all written feedback";
+          window.setTimeout(() => {
+            status.textContent = "";
+          }, 1800);
+        } catch {
+          status.textContent = "Copy failed — select manually";
+        }
+      });
+
+      document.querySelector("#clear-all").addEventListener("click", () => {
+        if (!window.confirm("Clear all saved feedback from this browser?")) {
+          return;
+        }
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch {
+          // There may be no browser storage to clear.
+        }
+        document.querySelectorAll("textarea").forEach((textarea) => {
+          textarea.value = "";
+        });
+        document.querySelector("#toolbar-status").textContent = "Saved feedback cleared";
+        window.setTimeout(() => {
+          document.querySelector("#toolbar-status").textContent = "";
+        }, 1800);
+      });
+
+      renderConcepts();
+    </script>
+  </body>
+</html>

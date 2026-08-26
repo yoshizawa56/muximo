@@ -7,7 +7,7 @@
     "iosScheme": "capacitor"
   },
   "ios": {
-    "backgroundColor": "#071309",
+    "backgroundColor": "#000000",
     "contentInset": "never",
     "loggingBehavior": "production",
     "preferredContentMode": "mobile",
