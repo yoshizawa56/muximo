@@ -40,6 +40,12 @@ type IntegrationFixture = {
   desktopStatus: string;
   desktopStatusAfterRelease: string;
   mobileStatus: string;
+  mobileDefaultCommand: string;
+  mobileManagedSessionId: string;
+  mobileManagedMarker: string;
+  mobileSessionVisible: boolean;
+  sourceDefaultCommandAfterRelease: string;
+  sourceManagedSessionIdAfterRelease: string;
   output: string;
 };
 type IntegrationContext = Omit<IntegrationFixture, "tmux" | "pty" | "manager" | "selectedPaneId" | "output">;
@@ -69,6 +75,12 @@ const integrationFixture = (): FixtureHandle<IntegrationFixture> => {
     desktopStatus: "",
     desktopStatusAfterRelease: "",
     mobileStatus: "",
+    mobileDefaultCommand: "",
+    mobileManagedSessionId: "",
+    mobileManagedMarker: "",
+    mobileSessionVisible: false,
+    sourceDefaultCommandAfterRelease: "",
+    sourceManagedSessionIdAfterRelease: "",
     output: "",
   };
   fixture.expectedCwd = realpathSync(tmux.directory);
@@ -102,6 +114,12 @@ const cases = [
       hasObserved<IntegrationContext, undefined>("desktopStatus", "on"),
       hasObserved<IntegrationContext, undefined>("desktopStatusAfterRelease", "on"),
       hasObserved<IntegrationContext, undefined>("mobileStatus", "off"),
+      hasObserved<IntegrationContext, undefined>("mobileDefaultCommand", "source-default-command"),
+      hasObserved<IntegrationContext, undefined>("mobileManagedSessionId", "managed-issue11"),
+      hasObserved<IntegrationContext, undefined>("mobileManagedMarker", "1"),
+      hasObserved<IntegrationContext, undefined>("mobileSessionVisible", false),
+      hasObserved<IntegrationContext, undefined>("sourceDefaultCommandAfterRelease", "source-default-command"),
+      hasObserved<IntegrationContext, undefined>("sourceManagedSessionIdAfterRelease", "managed-issue11"),
     ],
   },
 ] satisfies readonly ScenarioCase<"default", IntegrationStep, undefined, IntegrationContext>[];
@@ -141,6 +159,15 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
       fixture.outputHasErase = fixture.output.includes("\u001b[K");
       fixture.desktopStatus = fixture.tmux.readSessionStatus(prepared.pane.sessionName);
       fixture.mobileStatus = fixture.tmux.readSessionStatus(prepared.attachTarget);
+      fixture.mobileDefaultCommand = fixture.tmux.readSessionOption(prepared.attachTarget, "default-command");
+      fixture.mobileManagedSessionId = fixture.tmux.readSessionEnvironment(
+        prepared.attachTarget,
+        "MUXIMOD_MANAGED_SESSION_ID",
+      );
+      fixture.mobileManagedMarker = fixture.tmux.readSessionOption(prepared.attachTarget, "@muximod.managed");
+      fixture.mobileSessionVisible = fixture.tmux.adapter
+        .listPanesSnapshot()
+        .panes.some((pane) => pane.sessionName.startsWith("muximo-mobile-"));
       fixture.tmux.adapter.splitWindow(undefined, "right", fixture.selectedPaneId, true);
       await fixture.manager.reassertMobileViewport(fixture.selectedPaneId);
       await delay(100);
@@ -153,6 +180,14 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
       fixture.afterSplitVisible = !afterSplit.visibleLayout.includes("{");
       await lease.release();
       fixture.desktopStatusAfterRelease = fixture.tmux.readSessionStatus(prepared.pane.sessionName);
+      fixture.sourceDefaultCommandAfterRelease = fixture.tmux.readSessionOption(
+        prepared.pane.sessionName,
+        "default-command",
+      );
+      fixture.sourceManagedSessionIdAfterRelease = fixture.tmux.readSessionEnvironment(
+        prepared.pane.sessionName,
+        "MUXIMOD_MANAGED_SESSION_ID",
+      );
     }
   },
   observe: (fixture) => ({
@@ -172,6 +207,12 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
     desktopStatus: fixture.desktopStatus,
     desktopStatusAfterRelease: fixture.desktopStatusAfterRelease,
     mobileStatus: fixture.mobileStatus,
+    mobileDefaultCommand: fixture.mobileDefaultCommand,
+    mobileManagedSessionId: fixture.mobileManagedSessionId,
+    mobileManagedMarker: fixture.mobileManagedMarker,
+    mobileSessionVisible: fixture.mobileSessionVisible,
+    sourceDefaultCommandAfterRelease: fixture.sourceDefaultCommandAfterRelease,
+    sourceManagedSessionIdAfterRelease: fixture.sourceManagedSessionIdAfterRelease,
   }),
 };
 
@@ -186,6 +227,9 @@ class RealTmuxFixture {
   public splitPaneId?: string;
   public constructor() {
     this.require(["new-session", "-d", "-s", "issue11", "-x", "120", "-y", "40", "-c", this.directory]);
+    this.require(["set-option", "-t", "=issue11:", "default-command", "source-default-command"]);
+    this.require(["set-environment", "-t", "=issue11", "MUXIMOD_MANAGED_SESSION_ID", "managed-issue11"]);
+    this.require(["set-option", "-t", "=issue11:", "@muximod.managed", "1"]);
   }
   public createSplitWindow(): string {
     const original = this.adapter.resolvePane("issue11:0.0");
@@ -205,6 +249,15 @@ class RealTmuxFixture {
   }
   public readSessionStatus(target: string): string {
     return this.adapter.require(["display-message", "-p", "-t", target, "#{status}"]).trim();
+  }
+  public readSessionOption(target: string, name: string): string {
+    return this.adapter.require(["show-options", "-v", "-t", target, name]).trim();
+  }
+  public readSessionEnvironment(target: string, name: string): string {
+    return this.adapter
+      .require(["show-environment", "-t", target, name])
+      .trim()
+      .slice(name.length + 1);
   }
   private require(args: string[]): void {
     this.adapter.require(args);

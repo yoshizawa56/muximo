@@ -14,6 +14,20 @@ type AgentRuntime = {
 
 const stableAgentSessionMetadataKey = "@muximod.agent_session_id";
 const stableAgentExecutionMetadataKey = "@muximod.agent_execution_id";
+const stableMobileViewportMetadataKey = "@muximod.mobile_viewport";
+const tmuxFormatSeparator = "\u001f";
+
+type TmuxSessionOption = {
+  name: string;
+  value: string;
+};
+
+type TmuxSessionEnvironment = {
+  name: string;
+  value?: string;
+  removed: boolean;
+  hidden: boolean;
+};
 
 export type TmuxWindowSize = "largest" | "smallest" | "manual" | "latest";
 export type TmuxWindowMouse = "on" | "off";
@@ -47,6 +61,7 @@ export type TmuxPane = TmuxPaneRef & {
   muximodAgentId?: string;
   muximodWorkspaceId?: string;
   muximodManagedSessionId?: string;
+  isMuximoMobileViewport?: boolean;
 };
 
 export type TmuxLiveSnapshot = {
@@ -190,24 +205,129 @@ export class TmuxAdapter {
   }
 
   public createGroupedSession(groupSession: string, sessionName: string): void {
+    const sourceSessionTarget = exactSessionTarget(groupSession);
+    const sourcePaneTarget = exactSessionPaneTarget(groupSession);
+    const mobileSessionTarget = exactSessionTarget(sessionName);
+    const mobilePaneTarget = exactSessionPaneTarget(sessionName);
+    if (this.hasSession(mobileSessionTarget)) {
+      throw new Error(`Temporary tmux session already exists: ${sessionName}`);
+    }
+
+    const options = this.readSessionOptions(sourcePaneTarget);
+    const environment = this.readSessionEnvironment(sourceSessionTarget);
     // Keep the new session alive long enough for the mobile PTY to attach,
     // even when the source server config collects unattached sessions. Run
     // this in the same tmux command queue as creation so the session is
     // protected before the server checks for unattached sessions.
-    this.require([
+    const createArgs = [
       "new-session",
       "-d",
       "-s",
       sessionName,
       "-t",
-      `=${groupSession}`,
+      sourceSessionTarget,
       ";",
       "set-option",
       "-t",
-      `=${sessionName}:`,
+      mobilePaneTarget,
       "destroy-unattached",
       "off",
+      ";",
+      "set-option",
+      "-t",
+      mobilePaneTarget,
+      stableMobileViewportMetadataKey,
+      "1",
+    ];
+    let mayHaveCreated = false;
+    try {
+      mayHaveCreated = true;
+      this.require(createArgs);
+      for (const entry of environment) this.copySessionEnvironment(mobileSessionTarget, entry);
+      for (const option of options) {
+        // The temporary session must stay alive until the mobile client
+        // attaches, regardless of the source session's cleanup policy.
+        if (option.name === "destroy-unattached" || option.name === stableMobileViewportMetadataKey) continue;
+        this.setSessionOption(mobilePaneTarget, option.name, option.value);
+      }
+    } catch (error) {
+      if (mayHaveCreated) {
+        try {
+          this.killSession(mobileSessionTarget);
+        } catch {
+          // Preserve the original setup error; cleanup is best effort.
+        }
+      }
+      throw error;
+    }
+  }
+
+  private readSessionOptions(target: string): TmuxSessionOption[] {
+    const output = this.require([
+      "show-options",
+      "-A",
+      "-F",
+      ["#{option_name}", "#{option_array_key}", "#{option_value}", "#{option_is_array}"].join(tmuxFormatSeparator),
+      "-t",
+      target,
     ]);
+    const options: TmuxSessionOption[] = [];
+    for (const line of output
+      .split("\n")
+      .map((value) => value.trimEnd())
+      .filter(Boolean)) {
+      const [name, arrayKey, value, isArray] = splitTmuxFormatLine(line, tmuxFormatSeparator);
+      if (!name || value === undefined || isArray === undefined) {
+        throw new Error(`Could not parse tmux session option: ${line}`);
+      }
+      // Empty array options have no value to copy. Setting the base option
+      // would not recreate the empty array and can be rejected by tmux.
+      if (isArray === "1" && !arrayKey) continue;
+      options.push({ name: arrayKey ? `${name}[${arrayKey}]` : name, value });
+    }
+    return options;
+  }
+
+  private readSessionEnvironment(target: string): TmuxSessionEnvironment[] {
+    const environment: TmuxSessionEnvironment[] = [];
+    for (const hidden of [false, true]) {
+      const args = ["show-environment"];
+      if (hidden) args.push("-h");
+      args.push("-t", target);
+      const output = this.require(args);
+      for (const line of output
+        .split("\n")
+        .map((value) => value.trimEnd())
+        .filter(Boolean)) {
+        if (line.startsWith("-")) {
+          const name = line.slice(1);
+          if (!name) throw new Error(`Could not parse tmux session environment: ${line}`);
+          environment.push({ name, removed: true, hidden });
+          continue;
+        }
+        const separator = line.indexOf("=");
+        if (separator <= 0) throw new Error(`Could not parse tmux session environment: ${line}`);
+        environment.push({
+          name: line.slice(0, separator),
+          value: line.slice(separator + 1),
+          removed: false,
+          hidden,
+        });
+      }
+    }
+    return environment;
+  }
+
+  private copySessionEnvironment(target: string, entry: TmuxSessionEnvironment): void {
+    const args = ["set-environment"];
+    if (entry.hidden) args.push("-h");
+    if (entry.removed) args.push("-r");
+    args.push("-t", target, entry.name);
+    if (!entry.removed) {
+      if (entry.value === undefined) throw new Error(`Missing value for tmux session environment: ${entry.name}`);
+      args.push(entry.value);
+    }
+    this.require(args);
   }
 
   public attachSession(target: string): number {
@@ -342,7 +462,7 @@ export class TmuxAdapter {
   }
 
   public listPanesSnapshot(): TmuxLiveSnapshot {
-    const separator = "\u001f";
+    const separator = tmuxFormatSeparator;
     const args = [
       "list-panes",
       "-a",
@@ -375,6 +495,7 @@ export class TmuxAdapter {
         "#{pid}",
         "#{start_time}",
         "#{socket_path}",
+        `#{${stableMobileViewportMetadataKey}}`,
       ].join(separator),
     ];
     const result = this.command(args);
@@ -421,6 +542,7 @@ export class TmuxAdapter {
           serverPid,
           serverStartTime,
           socketPath,
+          mobileViewport,
         ] = splitTmuxFormatLine(line, separator);
         if (
           !paneId ||
@@ -463,8 +585,10 @@ export class TmuxAdapter {
           muximodManagedSessionId: nonEmpty(muximodManagedSessionId),
           muximodSessionId: nonEmpty(muximodSessionId),
           muximodExecutionId: nonEmpty(muximodExecutionId),
+          ...(mobileViewport === "1" ? { isMuximoMobileViewport: true } : {}),
         } satisfies TmuxPane;
-      });
+      })
+      .filter((pane) => !pane.isMuximoMobileViewport);
 
     return {
       panes,
@@ -770,6 +894,14 @@ function resolveTmuxCwd(cwd: string): string {
 function splitTmuxFormatLine(line: string, separator: string): string[] {
   const fields = line.split(separator);
   return fields.length > 1 ? fields : line.split("\\037");
+}
+
+function exactSessionTarget(sessionName: string): string {
+  return `=${sessionName}`;
+}
+
+function exactSessionPaneTarget(sessionName: string): string {
+  return `${exactSessionTarget(sessionName)}:`;
 }
 
 function isTmuxServerGone(stderr: string): boolean {
