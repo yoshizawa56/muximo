@@ -26,12 +26,11 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
       input: scopedSessionName ? { session: scopedSessionName } : {},
       enabled: Boolean(connection) && Boolean(sessionName),
       staleTime: 1_000,
-      retry: 1,
     }),
   );
   const panes = panesQuery.data?.panes ?? [];
   const selectedPane = panes.find((pane) => pane.id === paneId) ?? null;
-  const selectedTarget = selectedPane?.tmuxPaneId ?? "";
+  const selectedTarget = selectedPane?.hostPaneId ?? "";
   const terminal = usePaneViewModel({ target: selectedTarget, connection });
   const paneBoard = usePaneBoardViewModel({
     selectedTarget,
@@ -40,7 +39,7 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
     utils: resources.utils,
     alwaysOpen: true,
     onSelect: (target) => {
-      const pane = panes.find((candidate) => candidate.tmuxPaneId === target);
+      const pane = panes.find((candidate) => candidate.hostPaneId === target);
       if (pane)
         void navigate({
           to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId",

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { invalidateSessionData } from "../../../../../../../app/api/invalidation";
+import { muximodErrorMessage } from "../../../../../../../app/api/muximod-error.js";
 import { useMuximodConnection } from "../../../../../../../app/api/use-muximod-connection";
 import { fallbackSession, fallbackTerminal, useTerminalResources } from "../../../../../-terminal-resources";
 import {
@@ -49,7 +50,6 @@ export function useNewPaneViewModel(): NewPaneViewModel {
       input: scopedSessionName ? { session: scopedSessionName } : {},
       enabled: Boolean(connection) && Boolean(sessionName),
       staleTime: 1_000,
-      retry: 1,
     }),
   );
   const existingPanes = panesQuery.data?.panes ?? [];
@@ -62,7 +62,7 @@ export function useNewPaneViewModel(): NewPaneViewModel {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (placement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.tmuxPaneId ?? null);
+    if (placement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.hostPaneId ?? null);
   }, [existingPanes, placement, targetPaneId]);
 
   useEffect(() => {
@@ -101,7 +101,7 @@ export function useNewPaneViewModel(): NewPaneViewModel {
     onAgentChange: setAgentId,
     onPlacementChange: (nextPlacement) => {
       setPlacement(nextPlacement);
-      if (nextPlacement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.tmuxPaneId ?? null);
+      if (nextPlacement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.hostPaneId ?? null);
     },
     onTargetPaneChange: setTargetPaneId,
     onCreate: () => {
@@ -151,7 +151,7 @@ export function useNewPaneViewModel(): NewPaneViewModel {
             params: { terminalId, sessionName: selectedSession.name, paneId: pane.id },
           });
         })
-        .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)))
+        .catch((error: unknown) => setErrorMessage(muximodErrorMessage(error)))
         .finally(() => setIsCreating(false));
     },
     onBack: () => {

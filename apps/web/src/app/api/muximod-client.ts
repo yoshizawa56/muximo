@@ -2,6 +2,9 @@ import type { MuximodEvent, muximodContract } from "@muximo/contract";
 import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
+import { isMuximodApiError, MuximodApiError } from "./muximod-error.js";
+
+export { MuximodApiError } from "./muximod-error.js";
 
 export type MuximodRouteKind = "serve" | "same-origin" | "lan" | "ssh";
 
@@ -15,6 +18,7 @@ export type MuximodConnection = {
 
 export type MuximodAuthProvider = {
   getAccessToken: () => Promise<string>;
+  invalidateAccessToken?: () => void;
   getWebSocketTicket: (endpoint: "terminal") => Promise<string>;
 };
 
@@ -29,18 +33,6 @@ type MuximodClientContext = {
 
 export type MuximodRpcClient = ContractRouterClient<typeof muximodContract, MuximodClientContext>;
 
-export class MuximodApiError extends Error {
-  public constructor(
-    message: string,
-    public readonly status: number,
-    public readonly code: string | null,
-    public readonly details: Record<string, unknown> | null,
-  ) {
-    super(message);
-    this.name = "MuximodApiError";
-  }
-}
-
 /**
  * Stable cache/namespace identity for a connection. Query utils and
  * invalidation scope every key under this segment so two connections can
@@ -50,8 +42,8 @@ export function muximodConnectionKey(connection: MuximodConnection | undefined):
   return connection ? `${connection.route ?? "custom"}:${connection.httpBaseUrl}` : "unconfigured";
 }
 
-export function createServeConnection(serveUrl: string): MuximodConnection {
-  return createUrlConnection(serveUrl, "serve");
+export function createServeConnection(muximodBaseUrl: string): MuximodConnection {
+  return createUrlConnection(muximodBaseUrl, "serve");
 }
 
 export function createSameOriginConnection(origin: string): MuximodConnection {
@@ -79,7 +71,7 @@ const rpcCache = new WeakMap<MuximodConnection, MuximodRpcClient>();
 export function muximodRpc(connection: MuximodConnection): MuximodRpcClient {
   const cached = rpcCache.get(connection);
   if (cached) return cached;
-  const client = normalizeRpcErrors(createRawRpcClient(connection));
+  const client = normalizeRpcErrors(createRawRpcClient(connection), connection);
   rpcCache.set(connection, client);
   return client;
 }
@@ -110,7 +102,7 @@ function createRawRpcClient(connection: MuximodConnection): MuximodRpcClient {
  */
 const rpcNodeMethodKeys = new Set(["then", "bind", "call", "apply", "toString", "valueOf", "toJSON"]);
 
-function normalizeRpcErrors<T>(value: T): T {
+function normalizeRpcErrors<T>(value: T, connection: MuximodConnection): T {
   const cache = new WeakMap<object, unknown>();
   const wrap = function wrapNode<V>(child: V): V {
     if (typeof child !== "function" && !isRecord(child)) return child;
@@ -125,11 +117,11 @@ function normalizeRpcErrors<T>(value: T): T {
           const result = Reflect.apply(applyTarget, thisArg, argumentsList);
           return result instanceof Promise
             ? result.catch((error: unknown) => {
-                throw toMuximodApiError(error);
+                throw normalizeRpcError(error, connection);
               })
             : result;
         } catch (error: unknown) {
-          throw toMuximodApiError(error);
+          throw normalizeRpcError(error, connection);
         }
       },
       get(getTarget: object, property: string | symbol): unknown {
@@ -144,6 +136,12 @@ function normalizeRpcErrors<T>(value: T): T {
     return proxied;
   };
   return wrap(value);
+}
+
+function normalizeRpcError(error: unknown, connection: MuximodConnection): unknown {
+  const normalized = toMuximodApiError(error);
+  if (isMuximodApiError(normalized) && normalized.status === 401) connection.auth?.invalidateAccessToken?.();
+  return normalized;
 }
 
 function toMuximodApiError(error: unknown): unknown {

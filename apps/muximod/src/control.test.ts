@@ -22,7 +22,7 @@ import {
 import { describe, it } from "vitest";
 import { MuximodControlServer } from "./control.js";
 
-type ControlRequest = { agentSessionId: string; tmuxPaneId: string; executionId: string };
+type ControlRequest = { agentSessionId: string; hostPaneId: string; executionId: string };
 type ControlStep = { type: "adopt" | "observe" | "release" };
 type ControlFixture = {
   server: MuximodControlServer;
@@ -42,7 +42,7 @@ type ControlContext = {
   observations: readonly string[];
 };
 
-const request: ControlRequest = { agentSessionId: "session-id", tmuxPaneId: "%1", executionId: "execution-id-123456" };
+const request: ControlRequest = { agentSessionId: "session-id", hostPaneId: "%1", executionId: "execution-id-123456" };
 
 const fixture = (): FixtureHandle<ControlFixture> => {
   const instanceDirectory = mkdtempSync(join(tmpdir(), "muximod-control-test-"));

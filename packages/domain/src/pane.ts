@@ -22,7 +22,7 @@ const paneSchema = z
   .object({
     id: PaneId.schema,
     hostPaneId: z.string().min(1),
-    hostServerId: z.string().min(1).optional(),
+    hostServerId: z.string().min(1),
     agentSessionId: AgentSessionId.schema.optional(),
     agentExecutionId: z.string().min(1).optional(),
     sessionName: z.string().min(1),
@@ -54,7 +54,7 @@ export type PaneRecord = Pane;
 export type PaneCreateInput = {
   id: PaneId;
   hostPaneId: string;
-  hostServerId?: string;
+  hostServerId: string;
   agentSessionId?: AgentSessionId;
   agentExecutionId?: string;
   sessionName: string;

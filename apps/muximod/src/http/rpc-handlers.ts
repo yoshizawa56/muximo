@@ -2,6 +2,7 @@ import type {
   AuthPairingClaimRequest as ApplicationAuthPairingClaimRequest,
   CreatePaneInput,
   CreateSessionInput,
+  ManageSessionInput,
   MuximodPaneSummary,
   MuximodSessionSummary,
   MuximodTerminalEndpoint,
@@ -13,6 +14,7 @@ import {
   authInfoSchema,
   type CreatePaneRequest,
   type CreateSessionRequest,
+  type ManageSessionRequest,
   muximodCapabilitiesSchema,
   muximodContract,
   type pairingClaimRequestSchema,
@@ -98,7 +100,6 @@ function toApplicationCreatePane(input: CreatePaneRequest): CreatePaneInput {
     sessionName: input.sessionName,
     kind: input.kind,
     name: input.name,
-    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
     agentId: input.agentId,
     useWorktree: input.useWorktree,
@@ -110,9 +111,12 @@ function toApplicationCreatePane(input: CreatePaneRequest): CreatePaneInput {
 function toApplicationCreateSession(input: CreateSessionRequest): CreateSessionInput {
   return {
     name: input.name,
-    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-    ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
+    workspaceId: input.workspaceId,
   };
+}
+
+function toApplicationManageSession(input: ManageSessionRequest): ManageSessionInput {
+  return { name: input.name };
 }
 
 function toApplicationPairingClaim(
@@ -174,8 +178,7 @@ function toProtocolSession(value: MuximodSessionSummary) {
 function toProtocolPane(value: MuximodPaneSummary) {
   return paneSummarySchema.parse({
     id: value.id,
-    // The public wire name is retained at this outer adapter only.
-    tmuxPaneId: value.hostPaneId,
+    hostPaneId: value.hostPaneId,
     sessionName: value.sessionName,
     windowId: value.windowId,
     kind: value.kind,
@@ -334,6 +337,12 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
           const session = await deps.application.sessions.create(toApplicationCreateSession(input));
           return { session: toProtocolSession(session) };
         }, context),
+      ),
+      manage: os.sessions.manage.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () => ({ session: await deps.application.sessions.manage(toApplicationManageSession(input)) }),
+          context,
+        ),
       ),
     },
     panes: {

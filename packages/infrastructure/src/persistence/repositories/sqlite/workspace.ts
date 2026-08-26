@@ -72,17 +72,21 @@ function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
     isGit: row.isGit,
     ...(row.setupScriptPath !== null ? { setupScriptPath: row.setupScriptPath } : {}),
     ...(row.cleanupScriptPath !== null ? { cleanupScriptPath: row.cleanupScriptPath } : {}),
-    worktreeCopyPatterns: parseWorktreeCopyPatterns(row.worktreeCopyPatterns),
+    worktreeCopyPatterns: parseWorktreeCopyPatterns(row.id, row.worktreeCopyPatterns),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });
 }
 
-function parseWorktreeCopyPatterns(value: string): string[] {
+function parseWorktreeCopyPatterns(workspaceId: string, value: string): string[] {
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string") ? parsed : [];
-  } catch {
-    return [];
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`workspace '${workspaceId}' has invalid worktree copy patterns JSON`, { cause: error });
   }
+  if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
+    throw new Error(`workspace '${workspaceId}' has invalid worktree copy patterns; expected an array of strings`);
+  }
+  return parsed;
 }

@@ -77,9 +77,7 @@ export function createAgentDatabase(file: string | undefined, options: AgentData
   const databaseFile = file ?? defaultCreateDatabaseFile(process.env);
   const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
   const configuredInstanceDirectory =
-    file === undefined && process.env.MUXIMOD_INSTANCE_DIR?.trim()
-      ? resolveMuximodPaths(process.env).instanceDirectory
-      : undefined;
+    file === undefined ? resolveMuximodPaths(process.env).instanceDirectory : undefined;
   const instanceDirectory = options.instanceDirectory ?? configuredInstanceDirectory;
   if (databasePath !== ":memory:") {
     if (instanceDirectory) {
@@ -134,9 +132,7 @@ function secureDatabaseFiles(databasePath: string): void {
 }
 
 function defaultCreateDatabaseFile(env: NodeJS.ProcessEnv): string {
-  const configured = [env.MUXIMOD_INSTANCE_DIR, env.MUXIMOD_DB_FILE, env.MUXIMO_DATABASE_FILE].some((value) =>
-    Boolean(value?.trim()),
-  );
+  const configured = Boolean(env.MUXIMOD_INSTANCE_DIR?.trim());
   if (!configured) return ":memory:";
   return resolveMuximodPaths(env).databaseFile;
 }
@@ -149,7 +145,6 @@ export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.en
     throw new Error(
       `database migration files not found; set MUXIMOD_MIGRATIONS_DIR (searched: ${[
         env.MUXIMOD_MIGRATIONS_DIR ? resolve(process.cwd(), env.MUXIMOD_MIGRATIONS_DIR) : undefined,
-        env.MUXIMO_MIGRATIONS_DIR ? resolve(process.cwd(), env.MUXIMO_MIGRATIONS_DIR) : undefined,
         join(moduleDirectory, "../drizzle"),
         join(executableDirectory, "migrations"),
         join(process.cwd(), "packages/infrastructure/drizzle"),
@@ -163,7 +158,7 @@ export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.en
 }
 
 function findAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const configured = env.MUXIMOD_MIGRATIONS_DIR ?? env.MUXIMO_MIGRATIONS_DIR;
+  const configured = env.MUXIMOD_MIGRATIONS_DIR;
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   const executableDirectory = dirname(process.execPath);
   const candidates = [
@@ -192,7 +187,8 @@ function materializeEmbeddedMigrations(): string {
   return migrationsFolder;
 }
 
-// Auth tables are bootstrapped for legacy databases here; AuthStore CRUD uses auth-schema.ts through Drizzle.
+// Authentication tables are bootstrapped here because they use a separate
+// schema module from the application data migrations.
 function ensureAuthSchema(sqlite: Database): void {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS auth_metadata (
@@ -219,7 +215,6 @@ function ensureAuthSchema(sqlite: Database): void {
     CREATE TABLE IF NOT EXISTS auth_pairings (
       pairing_id TEXT PRIMARY KEY NOT NULL,
       server_id TEXT NOT NULL,
-      web_origin TEXT NOT NULL DEFAULT '',
       muximod_base_url TEXT NOT NULL,
       secret_hash TEXT NOT NULL UNIQUE,
       claim_token_hash TEXT UNIQUE,
@@ -251,4 +246,113 @@ function ensureAuthSchema(sqlite: Database): void {
     CREATE INDEX IF NOT EXISTS auth_sessions_device_index ON auth_sessions (device_id);
     CREATE INDEX IF NOT EXISTS auth_sessions_expiry_index ON auth_sessions (expires_at);
   `);
+  migrateAuthPairingsWithoutWebOrigin(sqlite);
+}
+
+/** Applies the explicit auth schema change that removed the unused web_origin column. */
+function migrateAuthPairingsWithoutWebOrigin(sqlite: Database): void {
+  const columns = sqlite.prepare("PRAGMA table_info(auth_pairings)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "web_origin")) return;
+
+  const requiredColumns = [
+    "pairing_id",
+    "server_id",
+    "muximod_base_url",
+    "secret_hash",
+    "claim_token_hash",
+    "status",
+    "offered_at",
+    "expires_at",
+    "claim_expires_at",
+    "claimed_at",
+    "approved_at",
+    "pending_public_key_jwk",
+    "pending_fingerprint",
+    "pending_display_name",
+    "pending_device_type",
+    "pending_platform",
+    "pending_client_version",
+    "device_id",
+  ];
+  const existingColumns = new Set(columns.map((column) => column.name));
+  const missingColumn = requiredColumns.find((column) => !existingColumns.has(column));
+  if (missingColumn) throw new Error(`auth_pairings schema is missing required column: ${missingColumn}`);
+
+  try {
+    sqlite.exec("BEGIN IMMEDIATE");
+    sqlite.exec(`
+      CREATE TABLE auth_pairings_without_web_origin (
+        pairing_id TEXT PRIMARY KEY NOT NULL,
+        server_id TEXT NOT NULL,
+        muximod_base_url TEXT NOT NULL,
+        secret_hash TEXT NOT NULL UNIQUE,
+        claim_token_hash TEXT UNIQUE,
+        status TEXT NOT NULL,
+        offered_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        claim_expires_at TEXT,
+        claimed_at TEXT,
+        approved_at TEXT,
+        pending_public_key_jwk TEXT,
+        pending_fingerprint TEXT,
+        pending_display_name TEXT,
+        pending_device_type TEXT,
+        pending_platform TEXT,
+        pending_client_version TEXT,
+        device_id TEXT
+      );
+      INSERT INTO auth_pairings_without_web_origin (
+        pairing_id,
+        server_id,
+        muximod_base_url,
+        secret_hash,
+        claim_token_hash,
+        status,
+        offered_at,
+        expires_at,
+        claim_expires_at,
+        claimed_at,
+        approved_at,
+        pending_public_key_jwk,
+        pending_fingerprint,
+        pending_display_name,
+        pending_device_type,
+        pending_platform,
+        pending_client_version,
+        device_id
+      )
+      SELECT
+        pairing_id,
+        server_id,
+        muximod_base_url,
+        secret_hash,
+        claim_token_hash,
+        status,
+        offered_at,
+        expires_at,
+        claim_expires_at,
+        claimed_at,
+        approved_at,
+        pending_public_key_jwk,
+        pending_fingerprint,
+        pending_display_name,
+        pending_device_type,
+        pending_platform,
+        pending_client_version,
+        device_id
+      FROM auth_pairings;
+      DROP INDEX IF EXISTS auth_pairings_status_index;
+      DROP TABLE auth_pairings;
+      ALTER TABLE auth_pairings_without_web_origin RENAME TO auth_pairings;
+      CREATE INDEX auth_pairings_status_index ON auth_pairings (status);
+    `);
+    sqlite.exec("COMMIT");
+  } catch (error) {
+    try {
+      sqlite.exec("ROLLBACK");
+    } catch {
+      // Preserve the schema migration error if rollback itself fails.
+    }
+    throw new Error("auth_pairings schema migration failed", { cause: error });
+  }
 }

@@ -43,6 +43,13 @@
       "when": 1787000000000,
       "tag": "0005_codex_session_state",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787679734346,
+      "tag": "0006_remove_tmux_server_default",
+      "breakpoints": true
     }
   ]
 }

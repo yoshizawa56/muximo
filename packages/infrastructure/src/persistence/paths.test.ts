@@ -17,7 +17,7 @@ type ResolvedPaths = ReturnType<typeof resolveMuximodPaths>;
 const longInstanceDirectory = `/tmp/${"a".repeat(120)}`;
 const resolveCases = [
   {
-    name: "keeps the legacy default layout when no profile is configured",
+    name: "uses the default instance layout when no profile is configured",
     input: { environment: { HOME: "/home/test" } },
     assert: [
       returns<Context, ResolvedPaths>({
@@ -25,7 +25,7 @@ const resolveCases = [
         databaseFile: "/home/test/.local/state/muximo/muximod.sqlite",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
         pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
-        controlSocket: "/home/test/.local/state/muximo/muximod.sqlite.control.sock",
+        controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
   },
@@ -64,15 +64,18 @@ const resolveCases = [
     ],
   },
   {
-    name: "preserves legacy database-derived paths without an instance directory",
-    input: { environment: { HOME: "/home/test", MUXIMOD_DB_FILE: "/tmp/legacy.sqlite" } },
+    name: "keeps runtime paths in the instance directory with an explicit database override",
+    input: {
+      environment: { HOME: "/home/test" },
+      overrides: { databaseFile: "/tmp/custom.sqlite" },
+    },
     assert: [
       returns<Context, ResolvedPaths>({
         instanceDirectory: "/home/test/.local/state/muximo",
-        databaseFile: "/tmp/legacy.sqlite",
+        databaseFile: "/tmp/custom.sqlite",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
-        pidFile: "/tmp/legacy.sqlite.pid",
-        controlSocket: "/tmp/legacy.sqlite.control.sock",
+        pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
+        controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
   },
@@ -98,7 +101,7 @@ const resolveCases = [
         databaseFile: "/home/test/.local/state/muximo/muximod.sqlite",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
         pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
-        controlSocket: "/home/test/.local/state/muximo/muximod.sqlite.control.sock",
+        controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
   },
@@ -111,7 +114,7 @@ const resolveCases = [
         databaseFile: "/home/test/.local/state/muximo/muximod.sqlite",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
         pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
-        controlSocket: "/home/test/.local/state/muximo/muximod.sqlite.control.sock",
+        controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
   },

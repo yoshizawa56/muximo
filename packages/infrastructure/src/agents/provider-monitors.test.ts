@@ -81,9 +81,11 @@ const cases = [
       sessionId: "codex-live-thread",
       records: [
         '{"type":"session_meta","payload":{"session_id":"codex-live-thread","cwd":"/workspace","originator":"codex_cli_rs"}}',
-        '{"type":"task_started"}',
+        '{"type":"event_msg","payload":{"type":"task_started"}}',
       ],
-      appendRecords: ['{"type":"task_complete","last_agent_message":"Finished while monitored."}'],
+      appendRecords: [
+        '{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"Finished while monitored."}}',
+      ],
     },
     assert: [
       returns<EmptyContext, MonitorResult>({

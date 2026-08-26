@@ -1,3 +1,4 @@
+import { MuximoLogo } from "../../app/components/muximo-logo";
 import { QrPairingScanner } from "./-qr-pairing-scanner";
 import type { SettingsViewModel } from "./-settings-viewmodel";
 
@@ -5,17 +6,20 @@ export function SettingsView({ viewModel }: { viewModel: SettingsViewModel }) {
   return (
     <main className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-x-hidden overflow-y-auto bg-flow-grid bg-[length:auto,32px_32px,32px_32px,auto] text-ink">
       <header className="flex min-h-[58px] shrink-0 items-center justify-between border-b border-[#17391f] bg-[#030a05]/72 px-7 backdrop-blur-[16px] max-[620px]:min-h-[calc(56px+var(--safe-area-top))] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pt-[var(--safe-area-top)]">
-        {viewModel.hasSavedProfile ? (
-          <button
-            className="inline-flex items-center gap-[7px] font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime"
-            type="button"
-            onClick={viewModel.onBack}
-          >
-            ‹ <span>connections</span>
-          </button>
-        ) : (
-          <span className="font-mono text-[0.64rem] text-[#76ad7e]">connection setup</span>
-        )}
+        <div className="flex min-w-0 items-center gap-3">
+          <MuximoLogo size={26} />
+          {viewModel.hasSavedProfile ? (
+            <button
+              className="inline-flex items-center gap-[7px] font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime"
+              type="button"
+              onClick={viewModel.onBack}
+            >
+              ‹ <span>connections</span>
+            </button>
+          ) : (
+            <span className="font-mono text-[0.64rem] text-[#76ad7e]">connection setup</span>
+          )}
+        </div>
         <span className="inline-flex items-center gap-2 font-mono text-[0.55rem] tracking-[0.11em] text-[#78ae80]">
           <span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" /> MUXIMOD
           CONNECTION

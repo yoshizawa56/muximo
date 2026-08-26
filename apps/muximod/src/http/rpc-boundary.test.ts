@@ -1,4 +1,4 @@
-import type { CreatePaneInput, CreateSessionInput, MuximodApplication } from "@muximo/application";
+import type { CreatePaneInput, CreateSessionInput, ManageSessionInput, MuximodApplication } from "@muximo/application";
 import { type AuthInfo, muximodHealthSchema } from "@muximo/contract";
 import { Pane, PaneId } from "@muximo/domain";
 import {
@@ -45,10 +45,11 @@ const workspace = {
   cleanupScriptPath: null,
   worktreeCopyPatterns: [],
 };
-const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell" };
+const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", managed: true };
 const pane = Pane.create({
   id: PaneId.create("pane-1"),
   hostPaneId: "%1",
+  hostServerId: "server-http-test-00000000",
   sessionName: "integration",
   windowId: "@1",
   kind: "shell",
@@ -65,6 +66,7 @@ type AppFixture = {
   app: MuximodApp;
   events: Array<{ event: string; client: string }>;
   sessionInputs: CreateSessionInput[];
+  managedSessionInputs: ManageSessionInput[];
   paneInputs: CreatePaneInput[];
   originalFetch: typeof globalThis.fetch;
 };
@@ -81,6 +83,10 @@ type RpcInput =
       input: { name: string; workspaceId: string };
     }
   | {
+      operation: "manage-session";
+      input: { name: string };
+    }
+  | {
       operation: "create-pane";
       input: {
         sessionName: string;
@@ -95,6 +101,7 @@ type RpcInput =
     };
 type RpcContext = {
   sessionInputs: readonly CreateSessionInput[];
+  managedSessionInputs: readonly ManageSessionInput[];
   paneInputs: readonly CreatePaneInput[];
 };
 
@@ -117,11 +124,12 @@ const appFixture =
   () => {
     const events: Array<{ event: string; client: string }> = [];
     const sessionInputs: CreateSessionInput[] = [];
+    const managedSessionInputs: ManageSessionInput[] = [];
     const paneInputs: CreatePaneInput[] = [];
     const originalFetch = globalThis.fetch;
     const app = createMuximodApp({
       auth: testAuth,
-      application: createTestApplication(events, { sessionInputs, paneInputs }),
+      application: createTestApplication(events, { sessionInputs, managedSessionInputs, paneInputs }),
       isReady: () => ready,
       originPolicy: createOriginPolicy({ allowedOrigins: ["http://web.example"], allowNoOrigin: true }),
       hookToken: "test-token",
@@ -132,7 +140,7 @@ const appFixture =
       return response ?? new Response(null, { status: 101 });
     }) as typeof globalThis.fetch;
     return {
-      fixture: { app, events, sessionInputs, paneInputs, originalFetch },
+      fixture: { app, events, sessionInputs, managedSessionInputs, paneInputs, originalFetch },
       cleanup: () => {
         globalThis.fetch = originalFetch;
       },
@@ -237,7 +245,7 @@ const httpTable: OperationTable<AppFixture, "default" | "not-ready", HttpInput, 
       input.operation === "health"
         ? new Request("http://muximod.local/health")
         : input.operation === "unknown"
-          ? new Request("http://muximod.local/legacy/sessions")
+          ? new Request("http://muximod.local/unknown/sessions")
           : input.operation === "hook"
             ? new Request("http://muximod.local/internal/tmux-hook", {
                 method: "POST",
@@ -268,7 +276,7 @@ const rpcCases = [
     input: { operation: "info" },
     assert: [
       {
-        name: "returns a protocol-compatible auth response",
+        name: "returns a typed auth response",
         check: (_context, result) => {
           if (!result.ok) throw result.error;
           const value = result.value as AuthInfo;
@@ -288,12 +296,12 @@ const rpcCases = [
     input: { operation: "list-panes" },
     assert: [
       {
-        name: "returns tmuxPaneId without leaking hostPaneId",
+        name: "returns hostPaneId as the stable wire field",
         check: (_context, result) => {
           if (!result.ok) throw result.error;
           const panes = result.value as Array<Record<string, unknown>>;
-          expect(panes).toEqual([expect.objectContaining({ tmuxPaneId: "%1" })]);
-          expect(panes[0]).not.toHaveProperty("hostPaneId");
+          expect(panes).toEqual([expect.objectContaining({ hostPaneId: "%1" })]);
+          expect(panes[0]).not.toHaveProperty("tmuxPaneId");
         },
       },
     ],
@@ -312,6 +320,19 @@ const rpcCases = [
         check: (context, result) => {
           if (!result.ok) throw result.error;
           expect(context.sessionInputs).toEqual([{ name: "integration", workspaceId: "workspace-1" }]);
+        },
+      },
+    ],
+  },
+  {
+    name: "passes existing session adoption to one application usecase",
+    input: { operation: "manage-session", input: { name: "desktop" } },
+    assert: [
+      {
+        name: "keeps session management inside the application",
+        check: (context, result) => {
+          if (!result.ok) throw result.error;
+          expect(context.managedSessionInputs).toEqual([{ name: "desktop" }]);
         },
       },
     ],
@@ -364,6 +385,7 @@ const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcCont
       ...(input.operation === "authorized-sessions" ||
       input.operation === "list-panes" ||
       input.operation === "create-session" ||
+      input.operation === "manage-session" ||
       input.operation === "create-pane"
         ? { auth: { getAccessToken: async () => "test-token" } }
         : {}),
@@ -374,10 +396,15 @@ const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcCont
       return client.sessions();
     if (input.operation === "list-panes") return client.panes();
     if (input.operation === "create-session") return client.createSession(input.input);
+    if (input.operation === "manage-session") return (await client.manageSession(input.input)).session;
     if (input.operation === "create-pane") return client.createPane(input.input);
     throw new Error(`unsupported RPC test operation: ${input.operation}`);
   },
-  observe: (fixture) => ({ sessionInputs: [...fixture.sessionInputs], paneInputs: [...fixture.paneInputs] }),
+  observe: (fixture) => ({
+    sessionInputs: [...fixture.sessionInputs],
+    managedSessionInputs: [...fixture.managedSessionInputs],
+    paneInputs: [...fixture.paneInputs],
+  }),
 };
 
 describe("muximod transport boundary", () => {
@@ -409,7 +436,11 @@ const testAuth: MuximodAuthPort = {
 
 function createTestApplication(
   events: Array<{ event: string; client: string }>,
-  calls: { sessionInputs: CreateSessionInput[]; paneInputs: CreatePaneInput[] },
+  calls: {
+    sessionInputs: CreateSessionInput[];
+    managedSessionInputs: ManageSessionInput[];
+    paneInputs: CreatePaneInput[];
+  },
 ): MuximodApplication {
   return {
     terminal: {
@@ -435,6 +466,10 @@ function createTestApplication(
       create: async (input) => {
         calls.sessionInputs.push(input);
         return session;
+      },
+      manage: async (input) => {
+        calls.managedSessionInputs.push(input);
+        return { name: input.name, changed: true };
       },
     },
     panes: {

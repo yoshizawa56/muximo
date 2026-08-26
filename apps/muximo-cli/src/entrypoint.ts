@@ -90,6 +90,7 @@ function createNoopHandlers(): CliHandlers {
     run: async () => 0,
     shell: async () => 0,
     tmuxNewSession: async () => 0,
+    tmuxManageSession: async () => 0,
     sessionList: async () => 0,
     sessionResume: async () => 0,
     sessionCleanup: async () => 0,

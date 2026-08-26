@@ -1,7 +1,8 @@
 import type { PaneRecord, PaneState } from "@muximo/domain";
-import type { MuximodApplication, MuximodClock, MuximodTerminalEndpoint } from "../../ports/application.js";
+import type { ApplicationClock, MuximodApplication, MuximodTerminalEndpoint } from "../../ports/application.js";
 import type {
   MuximodHostPort,
+  MuximodSessionManagementPort,
   MuximodViewportPort,
   MuximodWorkspaceCatalogPort,
   TerminalHostSnapshot,
@@ -15,6 +16,7 @@ import { listCurrentPanes } from "../panes/list-current-panes.js";
 import type { AgentStatusStore } from "../sessions/agent-status.js";
 import { createSession } from "../sessions/create-session.js";
 import { listSessions } from "../sessions/list-sessions.js";
+import { manageSession } from "../sessions/manage-session.js";
 import { reconcilePanes } from "../terminals/reconcile-panes.js";
 import type { DeleteWorkspace } from "../workspaces/delete-workspace.js";
 import type { ListWorkspaces } from "../workspaces/list-workspaces.js";
@@ -24,7 +26,8 @@ import type { UpdateWorkspace } from "../workspaces/update-workspace.js";
 export type MuximodApplicationResources = {
   getTerminal: () => Promise<MuximodTerminalEndpoint>;
   host: MuximodHostPort;
-  clock: MuximodClock;
+  sessionManagement: MuximodSessionManagementPort;
+  clock: ApplicationClock;
   paneRepository: PaneRepository;
   agentSessionRepository: AgentSessionRepository;
   workspaceCatalog: MuximodWorkspaceCatalogPort;
@@ -58,6 +61,7 @@ export type MuximodApplicationRuntime = MuximodApplication & {
 export function createMuximodApplication(resources: MuximodApplicationResources): MuximodApplicationRuntime {
   const {
     host,
+    sessionManagement,
     clock,
     paneRepository,
     agentSessionRepository,
@@ -114,6 +118,7 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
           agentStatus,
           clock,
         ),
+      manage: (input) => manageSession(input, sessionManagement),
     },
     panes: {
       list: (sessionName) =>

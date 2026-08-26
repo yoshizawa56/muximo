@@ -261,28 +261,32 @@ export class OpenCodeServerManager {
   }
 
   private readRegistry(): OpenCodeServerRegistry {
+    let contents: string;
     try {
-      const parsed: unknown = JSON.parse(readFileSync(this.options.registryFile, "utf8"));
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const registry: OpenCodeServerRegistry = {};
-        for (const [root, entry] of Object.entries(parsed as Record<string, unknown>)) {
-          const value = entry as Partial<OpenCodeServerEntry>;
-          if (typeof value?.port === "number" && typeof value.pid === "number" && typeof root === "string") {
-            registry[root] = {
-              workspaceRoot: root,
-              pid: value.pid,
-              port: value.port,
-              version: typeof value.version === "string" ? value.version : "",
-              startedAt: typeof value.startedAt === "string" ? value.startedAt : new Date(this.now()).toISOString(),
-            };
-          }
-        }
-        return registry;
-      }
-    } catch {
-      // A missing or unreadable registry is treated as empty.
+      contents = readFileSync(this.options.registryFile, "utf8");
+    } catch (error) {
+      if (isFileNotFoundError(error)) return {};
+      throw new Error(`OpenCode server registry could not be read: ${this.options.registryFile}`, { cause: error });
     }
-    return {};
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(contents);
+    } catch (error) {
+      throw new Error(`OpenCode server registry contains invalid JSON: ${this.options.registryFile}`, { cause: error });
+    }
+    if (!isRecord(parsed)) {
+      throw new Error(`OpenCode server registry must be an object: ${this.options.registryFile}`);
+    }
+
+    const registry: OpenCodeServerRegistry = {};
+    for (const [root, entry] of Object.entries(parsed)) {
+      if (!isOpenCodeServerEntry(entry, root)) {
+        throw new Error(`OpenCode server registry entry is invalid: ${root}`);
+      }
+      registry[root] = entry;
+    }
+    return registry;
   }
 
   private writeRegistry(registry: OpenCodeServerRegistry): void {
@@ -328,16 +332,18 @@ export class OpenCodeServerManager {
   }
 
   private async readVersion(port: number): Promise<string> {
+    const response = await this.request(`http://127.0.0.1:${port}/global/health`);
+    if (!response.ok) throw new Error(`OpenCode health endpoint returned ${response.status} while reading its version`);
+    let body: unknown;
     try {
-      const response = await this.request(`http://127.0.0.1:${port}/global/health`);
-      if (!response.ok) return "";
-      const body: unknown = await response.json().catch(() => undefined);
-      return body && typeof body === "object" && typeof (body as { version?: unknown }).version === "string"
-        ? (body as { version: string }).version
-        : "";
-    } catch {
-      return "";
+      body = await response.json();
+    } catch (error) {
+      throw new Error("OpenCode health endpoint returned invalid JSON while reading its version", { cause: error });
     }
+    if (!isRecord(body) || typeof body.version !== "string" || body.version.length === 0) {
+      throw new Error("OpenCode health endpoint returned an invalid version");
+    }
+    return body.version;
   }
 
   private async disposeEntry(entry: OpenCodeServerEntry): Promise<void> {
@@ -612,6 +618,42 @@ function probeLoopbackPort(port: number): Promise<boolean> {
 
 function isLockExistsError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function isOpenCodeServerEntry(value: unknown, workspaceRoot: string): value is OpenCodeServerEntry {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value).sort();
+  if (keys.join(",") !== ["pid", "port", "startedAt", "version", "workspaceRoot"].join(",")) return false;
+  return (
+    value.workspaceRoot === workspaceRoot &&
+    isPositiveInteger(value.pid) &&
+    isPort(value.port) &&
+    typeof value.version === "string" &&
+    value.version.length > 0 &&
+    typeof value.startedAt === "string" &&
+    isIsoTimestamp(value.startedAt)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isPort(value: unknown): value is number {
+  return isPositiveInteger(value) && value <= 65_535;
+}
+
+function isIsoTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 const defaultSignaller: ProcessSignaller = {

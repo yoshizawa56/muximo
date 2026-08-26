@@ -1,4 +1,7 @@
-import type { DaemonOptions, ProcessResult } from "@muximo/application";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { DaemonOptions, DaemonPidRecord, ProcessResult } from "@muximo/application";
 import {
   hasError,
   hasObserved,
@@ -10,7 +13,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { buildMuximodDaemonEnvironment, MuximodDaemonProcess } from "./daemon.js";
+import { buildMuximodDaemonEnvironment, MuximodDaemonProcess, restartMarkerPath } from "./daemon.js";
 
 type EmptyContext = {};
 
@@ -131,8 +134,136 @@ const processTable: OperationTable<
   }),
 };
 
+type FileFixture = { root: string; daemon: MuximodDaemonProcess };
+type FileInput = { content?: string };
+type PidResult = DaemonPidRecord | undefined;
+
+const pidCases = [
+  {
+    name: "returns no pid record when the file is absent",
+    input: {},
+    assert: [returns<FileFixture, PidResult>(undefined)],
+  },
+  {
+    name: "reads the current pid record format",
+    input: {
+      content: JSON.stringify({ pid: 42, host: "127.0.0.1", port: 4_317, startedAt: "2026-08-23T00:00:00.000Z" }),
+    },
+    assert: [
+      returns<FileFixture, PidResult>({
+        pid: 42,
+        host: "127.0.0.1",
+        port: 4_317,
+        startedAt: "2026-08-23T00:00:00.000Z",
+      }),
+    ],
+  },
+  {
+    name: "rejects a pid record without the startedAt field",
+    input: { content: JSON.stringify({ pid: 42, host: "127.0.0.1", port: 4_317 }) },
+    assert: [hasError<FileFixture, PidResult>({ message: /pid file has an invalid format/ })],
+  },
+  {
+    name: "rejects a pid record with an unknown field",
+    input: {
+      content: JSON.stringify({
+        pid: 42,
+        host: "127.0.0.1",
+        port: 4_317,
+        startedAt: "2026-08-23T00:00:00.000Z",
+        legacy: true,
+      }),
+    },
+    assert: [hasError<FileFixture, PidResult>({ message: /pid file has an invalid format/ })],
+  },
+  {
+    name: "rejects malformed pid JSON",
+    input: { content: "not-json" },
+    assert: [hasError<FileFixture, PidResult>({ message: /pid file contains invalid JSON/ })],
+  },
+] satisfies readonly OperationCase<"default", FileInput, PidResult, FileFixture>[];
+
+const pidTable: OperationTable<FileFixture, "default", FileInput, PidResult, FileFixture> = {
+  defaultFixture: () => {
+    const root = mkdtempSync(join(tmpdir(), "muximo-daemon-pid-"));
+    return {
+      fixture: { root, daemon: new MuximodDaemonProcess({ executable: "muximod-test" }) },
+      cleanup: () => rmSync(root, { recursive: true, force: true }),
+    };
+  },
+  cases: pidCases,
+  execute: (fixture, input) => {
+    const path = join(fixture.root, "muximod.pid");
+    if (input.content !== undefined) writeFileSync(path, input.content);
+    return fixture.daemon.readPidRecord(path);
+  },
+  observe: (fixture) => fixture,
+};
+
+type RestartInput = { content?: string };
+type RestartResult = boolean | undefined;
+
+const restartMarkerCases = [
+  {
+    name: "returns no refresh instruction when the restart marker is absent",
+    input: {},
+    assert: [returns<FileFixture, RestartResult>(undefined)],
+  },
+  {
+    name: "reads a restart marker that requests server refresh",
+    input: {
+      content: JSON.stringify({ pid: 42, refreshServers: true, startedAt: "2026-08-23T00:00:00.000Z" }),
+    },
+    assert: [returns<FileFixture, RestartResult>(true)],
+  },
+  {
+    name: "reads a restart marker that skips server refresh",
+    input: {
+      content: JSON.stringify({ pid: 42, refreshServers: false, startedAt: "2026-08-23T00:00:00.000Z" }),
+    },
+    assert: [returns<FileFixture, RestartResult>(false)],
+  },
+  {
+    name: "rejects a restart marker without its current refresh field",
+    input: { content: JSON.stringify({ pid: 42, startedAt: "2026-08-23T00:00:00.000Z" }) },
+    assert: [hasError<FileFixture, RestartResult>({ message: /restart marker has an invalid format/ })],
+  },
+  {
+    name: "rejects a restart marker with an unknown field",
+    input: {
+      content: JSON.stringify({
+        pid: 42,
+        refreshServers: false,
+        startedAt: "2026-08-23T00:00:00.000Z",
+        legacy: true,
+      }),
+    },
+    assert: [hasError<FileFixture, RestartResult>({ message: /restart marker has an invalid format/ })],
+  },
+] satisfies readonly OperationCase<"default", RestartInput, RestartResult, FileFixture>[];
+
+const restartMarkerTable: OperationTable<FileFixture, "default", RestartInput, RestartResult, FileFixture> = {
+  defaultFixture: () => {
+    const root = mkdtempSync(join(tmpdir(), "muximo-daemon-restart-"));
+    return {
+      fixture: { root, daemon: new MuximodDaemonProcess({ executable: "muximod-test" }) },
+      cleanup: () => rmSync(root, { recursive: true, force: true }),
+    };
+  },
+  cases: restartMarkerCases,
+  execute: (fixture, input) => {
+    const pidFile = join(fixture.root, "muximod.pid");
+    const path = restartMarkerPath(pidFile);
+    if (input.content !== undefined) writeFileSync(path, input.content);
+    return fixture.daemon.consumeRestartMarker(pidFile);
+  },
+  observe: (fixture) => fixture,
+};
+
 describe("muximod process adapter", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, environmentTable);
   runOperationTable(register, processTable);
+  runOperationTable(register, pidTable);
+  runOperationTable(register, restartMarkerTable);
 });

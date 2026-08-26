@@ -1,4 +1,4 @@
-import type { MuximodClock, MuximodSessionSummary } from "../../ports/application.js";
+import type { ApplicationClock, MuximodSessionSummary } from "../../ports/application.js";
 import type { MuximodHostPort } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
 import type { AgentStatusStore } from "../sessions/agent-status.js";
@@ -10,8 +10,12 @@ export async function listSessions(
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   agentStatus: AgentStatusStore,
-  clock: MuximodClock,
+  clock: ApplicationClock,
 ): Promise<MuximodSessionSummary[]> {
-  const panes = await reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock);
-  return summarizeSessions(panes);
+  const snapshot = await host.listPanesSnapshot();
+  const panes = await reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock, snapshot);
+  const managedSessionNames = new Set(
+    snapshot.panes.filter((pane) => pane.muximodManagedSessionId).map((pane) => pane.sessionName),
+  );
+  return summarizeSessions(panes, managedSessionNames);
 }

@@ -1,4 +1,4 @@
-import type { AgentBackend, AgentSessionRecord, WorkspaceId, WorkspaceRecord } from "@muximo/domain";
+import type { AgentBackend, AgentSessionRecord, PaneState, WorkspaceId, WorkspaceRecord } from "@muximo/domain";
 import type { ClaimExecutionInput } from "./repositories.js";
 
 /** Provider-neutral input for starting a managed agent session. */
@@ -203,7 +203,18 @@ export interface SessionResourcePort {
   releaseIfUnused(session: AgentSessionRecord, remaining: readonly AgentSessionRecord[]): Promise<void>;
 }
 
-/** Publishes agent state to the current pane/control transport. */
+/** Provider state and output observed for a managed agent session. */
+export type AgentStateObservation = {
+  state: PaneState;
+  recentOutput?: string;
+};
+
+/** Receives provider observations for the currently running agent session. */
+export interface AgentObservationPort {
+  observe(session: AgentSessionRecord, observation: AgentStateObservation): Promise<void>;
+}
+
+/** Publishes agent lifecycle state to the current pane/control transport. */
 export interface PanePublicationPort {
   adopt(session: AgentSessionRecord): Promise<void>;
   release(session: AgentSessionRecord): Promise<void>;

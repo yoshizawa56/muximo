@@ -4,9 +4,6 @@ export type ApplicationClock = {
   now(): string;
 };
 
-/** @deprecated Use ApplicationClock in application use cases. */
-export type MuximodClock = ApplicationClock;
-
 export type TerminalHostHookEvent =
   | "client-attached"
   | "client-active"
@@ -34,7 +31,6 @@ export type CreatePaneInput = {
   sessionName: string;
   kind: "agent" | "shell";
   name: string;
-  cwd?: string;
   workspaceId?: string;
   agentId: AgentBackend | null;
   useWorktree: boolean;
@@ -44,8 +40,16 @@ export type CreatePaneInput = {
 
 export type CreateSessionInput = {
   name: string;
-  cwd?: string;
-  workspaceId?: string;
+  workspaceId: string;
+};
+
+export type ManageSessionInput = {
+  name: string;
+};
+
+export type ManageSessionResult = {
+  name: string;
+  changed: boolean;
 };
 
 export type MuximodWorkspaceDirectory = {
@@ -90,6 +94,7 @@ export type MuximodSessionSummary = {
   paneCount: number;
   waitingCount: number;
   detail: string;
+  managed: boolean;
 };
 
 export type MuximodPaneSummary = PaneRecord;
@@ -112,6 +117,7 @@ export type MuximodApplication = {
   sessions: {
     list(): Promise<MuximodSessionSummary[]>;
     create(input: CreateSessionInput): Promise<MuximodSessionSummary>;
+    manage(input: ManageSessionInput): Promise<ManageSessionResult>;
   };
   panes: {
     list(sessionName?: string): Promise<MuximodPaneSummary[]>;

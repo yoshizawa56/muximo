@@ -35,12 +35,23 @@ export function ConnectingView({ viewModel }: { viewModel: ConnectingViewModel }
             </div>
           ))}
         </div>
+        {viewModel.errorMessage ? (
+          <p className="mt-3 text-[0.64rem] leading-[1.5] text-[#ff9a8f]" role="alert">
+            {viewModel.errorMessage}
+          </p>
+        ) : null}
         <button
-          className="mt-6 flex min-h-[45px] w-full items-center justify-between gap-3 rounded-[9px] border border-[#4a9a57] bg-lime px-[15px] text-[0.71rem] font-bold text-[#061008] transition-colors hover:bg-[#b0ffb8] max-[920px]:min-h-[52px] max-[920px]:text-[0.88rem]"
+          className="mt-6 flex min-h-[45px] w-full items-center justify-between gap-3 rounded-[9px] border border-[#4a9a57] bg-lime px-[15px] text-[0.71rem] font-bold text-[#061008] transition-colors hover:bg-[#b0ffb8] disabled:cursor-wait disabled:opacity-60 max-[920px]:min-h-[52px] max-[920px]:text-[0.88rem]"
           type="button"
+          disabled={viewModel.isManaging}
           onClick={viewModel.onOpenSessionOverview}
         >
-          Open session overview<span className="text-[1.1rem]">→</span>
+          {viewModel.errorMessage
+            ? "Retry session setup"
+            : viewModel.isManaging
+              ? "Preparing session…"
+              : "Open session overview"}
+          <span className="text-[1.1rem]">→</span>
         </button>
         <button
           className="mt-2 flex min-h-[37px] w-full items-center justify-center rounded-[9px] border border-[#214d2b] bg-transparent text-[0.63rem] text-[#78a77f] transition-colors hover:border-[#3c8248] hover:text-[#b6eabd] max-[920px]:min-h-11"

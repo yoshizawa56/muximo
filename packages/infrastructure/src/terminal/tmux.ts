@@ -25,7 +25,7 @@ export type TmuxPaneRef = {
 };
 
 export type TmuxPane = TmuxPaneRef & {
-  tmuxServerId?: string;
+  tmuxServerId: string;
   muximodSessionId?: string;
   muximodExecutionId?: string;
   windowName: string;

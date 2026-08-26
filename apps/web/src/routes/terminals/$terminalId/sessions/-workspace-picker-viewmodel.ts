@@ -2,6 +2,7 @@ import type { WorkspaceDirectory } from "@muximo/contract";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { invalidateWorkspaceData } from "../../../../app/api/invalidation";
+import { muximodErrorMessage } from "../../../../app/api/muximod-error.js";
 import { useMuximodConnection } from "../../../../app/api/use-muximod-connection";
 
 export type WorkspacePickerStatus = "loading" | "ready" | "error";
@@ -63,11 +64,7 @@ export function workspacePickerState(input: WorkspacePickerInput): WorkspacePick
 }
 
 export function workspacePickerErrorMessage(error: unknown): string | null {
-  if (!error) return null;
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error && "message" in error && typeof error.message === "string")
-    return error.message;
-  return String(error);
+  return error ? muximodErrorMessage(error) : null;
 }
 
 export function useWorkspacePickerViewModel({
@@ -95,7 +92,6 @@ export function useWorkspacePickerViewModel({
     utils.workspaces.list.queryOptions({
       input: {},
       staleTime: 5_000,
-      retry: 1,
       enabled: Boolean(connection),
     }),
   );

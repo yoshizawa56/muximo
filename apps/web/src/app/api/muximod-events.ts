@@ -1,11 +1,12 @@
-import { consumeEventIterator } from "@orpc/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { isMockMode } from "../../mock/mock-data";
-import { invalidateOnMuximodEvent, invalidateOnReconnect } from "./invalidation.js";
 import type { MuximodConnection } from "./muximod-client.js";
 import { openMuximodEvents } from "./muximod-client.js";
+import { createMuximodEventCoordinator } from "./muximod-event-coordinator.js";
 import { muximodQueryUtils } from "./orpc-utils.js";
+
+const coordinatorCache = new WeakMap<MuximodConnection, ReturnType<typeof createMuximodEventCoordinator>>();
 
 export function useMuximodEvents(connection: MuximodConnection | undefined): void {
   const queryClient = useQueryClient();
@@ -14,55 +15,14 @@ export function useMuximodEvents(connection: MuximodConnection | undefined): voi
   useEffect(() => {
     if (isMockMode() || !connection?.auth || !utils) return;
 
-    let disposed = false;
-    let stopEvents: (() => Promise<void>) | undefined;
-    let reconnectTimer: number | undefined;
-    let retry = 0;
-
-    const scheduleReconnect = () => {
-      if (disposed || reconnectTimer !== undefined) return;
-      const delay = Math.min(1_000 * 2 ** retry, 30_000);
-      retry = Math.min(retry + 1, 5);
-      reconnectTimer = window.setTimeout(() => {
-        reconnectTimer = undefined;
-        connect();
-      }, delay);
-    };
-
-    const connect = async () => {
-      if (disposed) return;
-      try {
-        const current = await openMuximodEvents(connection);
-        if (disposed) {
-          await current.return?.();
-          return;
-        }
-        retry = 0;
-        invalidateOnReconnect(queryClient, utils);
-        stopEvents = consumeEventIterator(current, {
-          onEvent: (event) => invalidateOnMuximodEvent(queryClient, utils, event),
-          onError: () => {
-            stopEvents = undefined;
-            scheduleReconnect();
-          },
-          onSuccess: () => {
-            stopEvents = undefined;
-            scheduleReconnect();
-          },
-        });
-      } catch {
-        scheduleReconnect();
-      }
-    };
-
-    void connect();
-
-    return () => {
-      disposed = true;
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      reconnectTimer = undefined;
-      void stopEvents?.();
-      stopEvents = undefined;
-    };
+    return eventCoordinatorFor(connection).subscribe({ queryClient, utils });
   }, [connection, utils, queryClient]);
+}
+
+function eventCoordinatorFor(connection: MuximodConnection): ReturnType<typeof createMuximodEventCoordinator> {
+  const cached = coordinatorCache.get(connection);
+  if (cached) return cached;
+  const coordinator = createMuximodEventCoordinator({ open: () => openMuximodEvents(connection) });
+  coordinatorCache.set(connection, coordinator);
+  return coordinator;
 }

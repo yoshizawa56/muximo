@@ -34,6 +34,8 @@ export const ReadyWithWaitingSession: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: /muximo.*2 agents/i }));
     await expect(args.viewModel.onSelectSession).toHaveBeenCalledWith(storySession);
+    await expect(canvas.getByText("MANAGED")).toBeInTheDocument();
+    await expect(canvas.getByText("UNMANAGED")).toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: /new session/i }));
     await expect(args.viewModel.onCreateSession).toHaveBeenCalledOnce();
   },

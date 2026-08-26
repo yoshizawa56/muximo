@@ -101,14 +101,14 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
 
   public async adoptAgentSession(input: {
     agentSessionId: string;
-    tmuxPaneId: string;
+    hostPaneId: string;
     executionId: string;
   }): Promise<void> {
     const response = await this.request({ type: "adopt_agent_session", ...input });
     if (
       response.type !== "agent_session_adopted" ||
       response.agentSessionId !== input.agentSessionId ||
-      response.tmuxPaneId !== input.tmuxPaneId ||
+      response.hostPaneId !== input.hostPaneId ||
       response.executionId !== input.executionId
     ) {
       throw unexpectedResponse("agent_session_adopted", response.type);
@@ -117,15 +117,16 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
 
   public async observeAgentSession(input: {
     agentSessionId: string;
-    tmuxPaneId: string;
+    hostPaneId: string;
     executionId: string;
     state: AgentStatus;
+    recentOutput?: string;
   }): Promise<void> {
     const response = await this.request({ type: "observe_agent_session", ...input });
     if (
       response.type !== "agent_session_observed" ||
       response.agentSessionId !== input.agentSessionId ||
-      response.tmuxPaneId !== input.tmuxPaneId ||
+      response.hostPaneId !== input.hostPaneId ||
       response.executionId !== input.executionId ||
       response.state !== input.state
     ) {
@@ -135,14 +136,14 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
 
   public async releaseAgentSession(input: {
     agentSessionId: string;
-    tmuxPaneId: string;
+    hostPaneId: string;
     executionId: string;
   }): Promise<void> {
     const response = await this.request({ type: "release_agent_session", ...input });
     if (
       response.type !== "agent_session_released" ||
       response.agentSessionId !== input.agentSessionId ||
-      response.tmuxPaneId !== input.tmuxPaneId ||
+      response.hostPaneId !== input.hostPaneId ||
       response.executionId !== input.executionId
     ) {
       throw unexpectedResponse("agent_session_released", response.type);

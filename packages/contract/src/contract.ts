@@ -9,6 +9,8 @@ import {
   authSessionResponseSchema,
   createPaneRequestSchema,
   createSessionRequestSchema,
+  managedSessionResponseSchema,
+  manageSessionRequestSchema,
   muximodCapabilitiesSchema,
   muximodEventSchema,
   muximodHealthSchema,
@@ -71,6 +73,7 @@ export const muximodContract = {
   sessions: {
     list: oc.input(emptyInput).output(sessionListResponseSchema),
     create: oc.input(createSessionRequestSchema).output(sessionResponseSchema),
+    manage: oc.input(manageSessionRequestSchema).output(managedSessionResponseSchema),
   },
   panes: {
     list: oc.input(paneListInput).output(paneListResponseSchema),

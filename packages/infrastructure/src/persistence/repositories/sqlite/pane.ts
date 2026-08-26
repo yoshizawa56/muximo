@@ -1,6 +1,6 @@
 import type { PaneFilter, PaneRepository } from "@muximo/application";
 import { AgentSessionId, Pane, PaneId, type PaneRecord, WorkspaceId } from "@muximo/domain";
-import { and, eq, like, lt, notInArray, or } from "drizzle-orm";
+import { and, eq, like, lt, notInArray } from "drizzle-orm";
 import { type PaneRow, panes } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
@@ -77,7 +77,7 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
     const condition = and(
       lt(panes.lastSeenAt, olderThan),
       notInArray(panes.id, [...activePaneIds]),
-      or(eq(panes.hostServerId, "legacy"), like(panes.hostServerId, `${hostServerScope}:%`)),
+      like(panes.hostServerId, `${hostServerScope}:%`),
     );
     const candidates = this.db().select({ id: panes.id }).from(panes).where(condition).all();
     this.db().delete(panes).where(condition).run();
@@ -90,7 +90,7 @@ function toPaneRow(record: PaneRecord, now: string): typeof panes.$inferInsert {
   return {
     id: pane.id,
     hostPaneId: pane.hostPaneId,
-    hostServerId: pane.hostServerId ?? "legacy",
+    hostServerId: pane.hostServerId,
     agentSessionId: pane.agentSessionId ?? null,
     agentExecutionId: pane.agentExecutionId ?? null,
     sessionName: pane.sessionName,
@@ -112,7 +112,7 @@ function toPaneRecord(row: PaneRow): PaneRecord {
   return Pane.restore({
     id: PaneId.create(row.id),
     hostPaneId: row.hostPaneId,
-    ...(row.hostServerId === "legacy" ? {} : { hostServerId: row.hostServerId }),
+    hostServerId: row.hostServerId,
     ...(row.agentSessionId ? { agentSessionId: AgentSessionId.create(row.agentSessionId) } : {}),
     ...(row.agentExecutionId ? { agentExecutionId: row.agentExecutionId } : {}),
     sessionName: row.sessionName,

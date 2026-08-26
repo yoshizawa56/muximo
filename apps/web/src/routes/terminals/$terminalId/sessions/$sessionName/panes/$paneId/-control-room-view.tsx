@@ -1,4 +1,5 @@
 import { AppIcon } from "../../../../../../../app/components/app-icon";
+import { MuximoLogo } from "../../../../../../../app/components/muximo-logo";
 import type { PaneLayoutOverlayVariant } from "../../-pane-layout-overlay-view";
 import type { ControlRoomViewModel } from "./-control-room-viewmodel";
 import { PaneBoardView } from "./-pane-board-view";
@@ -21,7 +22,7 @@ export function ControlRoomView({
   const onNewPane = controlRoomViewModel.onNewPane;
   const windowMapSurfaceRef = useWindowMapGesture(paneBoard.open);
   const { notices, open: dismissNotice } = useWaitingNotices(paneBoard.panes);
-  const selectedPane = paneBoard.panes.find((pane) => pane.tmuxPaneId === viewModel.target);
+  const selectedPane = paneBoard.panes.find((pane) => pane.hostPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
   const agentName = selectedPane?.agentId ?? (selectedPane?.kind === "shell" ? "shell" : "agent");
   const shellMode = selectedPane?.kind === "shell";
@@ -55,6 +56,7 @@ export function ControlRoomView({
       className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-hidden text-ink [touch-action:pan-x_pan-y]"
     >
       <header className="flex min-h-[52px] shrink-0 items-center gap-2 border-b border-line bg-[rgb(6_13_8_/_92%)] px-[10px] backdrop-blur-[18px] max-[920px]:min-h-[calc(50px+var(--safe-area-top))] max-[920px]:pl-[max(8px,var(--safe-area-left))] max-[920px]:pr-[max(8px,var(--safe-area-right))] max-[920px]:pt-[var(--safe-area-top)]">
+        <MuximoLogo size={23} />
         {onSessionSelect ? (
           <button
             className={headerButtonClass}
@@ -243,7 +245,7 @@ export function ControlRoomView({
                 agents={notices.map(toToastAgent)}
                 onOpen={(agent) => {
                   dismissNotice(agent.id);
-                  const pane = paneBoard.panes.find((candidate) => candidate.tmuxPaneId === agent.target);
+                  const pane = paneBoard.panes.find((candidate) => candidate.hostPaneId === agent.target);
                   if (pane) paneBoard.select(pane);
                 }}
               />

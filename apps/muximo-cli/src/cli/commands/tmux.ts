@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { tmuxSessionNameSchema } from "@muximo/contract";
 import type { Command } from "commander";
 import { z } from "zod";
 import { defineOptions, registerOptions } from "../options/index.js";
@@ -29,9 +30,20 @@ export const tmuxNewSessionOptionSpecs = defineOptions(
 );
 
 export const tmuxNewSessionSchema = z.object({
-  name: z.string().trim().min(1, { error: "tmux session name is required" }),
+  name: tmuxSessionNameSchema,
   cwd: z.string().trim().min(1, { error: "tmux session cwd is required" }),
   detached: z.boolean().default(false),
+});
+
+export const tmuxManageSessionOptionSpecs = defineOptions({
+  key: "name",
+  flags: ["-s, --name <name>"],
+  description: "Name of the existing tmux session.",
+  exposure: "cli",
+});
+
+export const tmuxManageSessionSchema = z.object({
+  name: tmuxSessionNameSchema,
 });
 
 export function registerTmuxCommands(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
@@ -55,6 +67,21 @@ export function registerTmuxCommands(parent: Command, handlers: CliHandlers, con
         commandPath: ["tmux", "new-session"],
         context,
         handler: handlers.tmuxNewSession,
+      }),
+    );
+  });
+
+  const manageSession = command.command("manage-session").description("Adopt an existing tmux session into muximo");
+  registerOptions(manageSession, tmuxManageSessionOptionSpecs);
+  manageSession.action(async (options) => {
+    const resolved = resolveCommandOptions(options, tmuxManageSessionOptionSpecs, context);
+    context.report(
+      await invokeCliHandler({
+        schema: tmuxManageSessionSchema,
+        rawInput: { ...resolved, name: resolved.name ?? "" },
+        commandPath: ["tmux", "manage-session"],
+        context,
+        handler: handlers.tmuxManageSession,
       }),
     );
   });

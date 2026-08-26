@@ -92,7 +92,7 @@ export function PaneBoardView({
             ) : null}
             <div className="mr-[-7px] flex min-h-0 flex-1 flex-col gap-[5px] overflow-auto pr-[7px] overscroll-contain [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]">
               {viewModel.panes.map((pane) => {
-                const selected = pane.tmuxPaneId === viewModel.selectedTarget;
+                const selected = pane.hostPaneId === viewModel.selectedTarget;
                 const avatarClass =
                   pane.kind === "shell" ? "text-[#53606a] bg-[#dce4e9]" : "text-[#4e713d] bg-[#dcefc8]";
                 const stateClass =

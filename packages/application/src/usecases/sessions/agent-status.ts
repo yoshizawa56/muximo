@@ -20,16 +20,22 @@ export function agentStatusKey(agentSessionId: string, executionId: string): str
 }
 
 /**
- * Managed executions must use the provider observation or this neutral
- * lifecycle fallback. Persisted pane state is intentionally not reused here,
- * because it may belong to an earlier execution.
+ * Managed executions use the in-memory provider observation first. A persisted
+ * observation may be supplied only after the caller has verified that it
+ * belongs to the current execution.
  */
 export function readManagedAgentObservation(
   agentSessionId: string,
   executionId: string,
   agentStatus: AgentStatusStore,
+  persisted?: AgentStatusObservation,
 ): AgentStatusObservation {
-  return agentStatus.get(agentStatusKey(agentSessionId, executionId)) ?? { state: "running" };
+  const current = agentStatus.get(agentStatusKey(agentSessionId, executionId));
+  if (!current) return persisted ?? { state: "running" };
+  if (current.recentOutput === undefined && persisted?.recentOutput !== undefined) {
+    return { ...current, recentOutput: persisted.recentOutput };
+  }
+  return current;
 }
 
 export function normalizeAgentStatusObservation(observation: AgentStatusObservation): AgentStatusObservation {

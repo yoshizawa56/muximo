@@ -1,5 +1,6 @@
 import type { AppIconName } from "../../../../../../../app/components/app-icon";
 import { AppIcon } from "../../../../../../../app/components/app-icon";
+import { MuximoLogo } from "../../../../../../../app/components/muximo-logo";
 import { WorkspacePickerView } from "../../../-workspace-picker-view";
 import { workspacePickerState } from "../../../-workspace-picker-viewmodel";
 import { agentOptions } from "./-agent-options";
@@ -34,13 +35,16 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
   return (
     <main className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-x-hidden overflow-y-auto bg-flow-grid bg-[length:auto,32px_32px,32px_32px,auto] text-ink">
       <header className="flex min-h-[58px] shrink-0 items-center justify-between gap-3 border-b border-[#17391f] bg-[#030a05]/72 px-7 backdrop-blur-[16px] max-[620px]:min-h-[calc(56px+var(--safe-area-top))] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pt-[var(--safe-area-top)]">
-        <button
-          className="inline-flex min-w-0 items-center gap-2 font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime"
-          type="button"
-          onClick={viewModel.onBack}
-        >
-          ‹ <span className="truncate">{viewModel.session.name}</span>
-        </button>
+        <div className="flex min-w-0 items-center gap-3">
+          <MuximoLogo size={26} />
+          <button
+            className="inline-flex min-w-0 items-center gap-2 font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime"
+            type="button"
+            onClick={viewModel.onBack}
+          >
+            ‹ <span className="truncate">{viewModel.session.name}</span>
+          </button>
+        </div>
         <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[0.52rem] text-[#78ae80]">
           <span className="size-[5px] rounded-full bg-lime-deep" /> {viewModel.terminal.name}
         </span>
@@ -158,8 +162,8 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
                 onChange={(event) => viewModel.onTargetPaneChange(event.target.value)}
               >
                 {viewModel.existingPanes.map((pane) => (
-                  <option value={pane.tmuxPaneId} key={pane.id}>
-                    {pane.name} · {pane.tmuxPaneId}
+                  <option value={pane.hostPaneId} key={pane.id}>
+                    {pane.name} · {pane.hostPaneId}
                   </option>
                 ))}
               </select>

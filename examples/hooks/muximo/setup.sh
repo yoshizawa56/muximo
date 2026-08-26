@@ -48,7 +48,7 @@ mkdir -p "$(dirname -- "$database_file")"
 home_directory=${HOME:-}
 default_instance_directory=${MUXIMOD_INSTANCE_DIR:-$home_directory/.local/state/muximo}
 default_database_file=$default_instance_directory/muximod.sqlite
-base_database_file=${MUXIMO_BASE_DB_FILE:-${MUXIMOD_DB_FILE:-$default_database_file}}
+base_database_file=${MUXIMO_BASE_DB_FILE:-$default_database_file}
 case "$base_database_file" in
   ~) base_database_file=$home_directory ;;
   ~/*) base_database_file=$home_directory/${base_database_file#~/} ;;
@@ -93,8 +93,7 @@ fi
   --slot-count "$port_slot_count" \
   --port MUXIMOD_PORT=4317 \
   --port VITE_DEV_PORT=5227 \
-  --set "MUXIMOD_INSTANCE_DIR=$instance_directory" \
-  --set "MUXIMOD_DB_FILE=$database_file"
+  --set "MUXIMOD_INSTANCE_DIR=$instance_directory"
 
 if [ "${MUXIMO_INSTALL_DEPENDENCIES:-0}" = "1" ]; then
   command -v bun >/dev/null 2>&1 || hook_die "MUXIMO_INSTALL_DEPENDENCIES=1 requires bun"
@@ -105,8 +104,6 @@ fi
 if [ -n "${MUXIMO_MIGRATION_COMMAND:-}" ]; then
   hook_log "running configured SQLite migration"
   MUXIMOD_INSTANCE_DIR="$instance_directory" \
-  MUXIMOD_DB_FILE="$database_file" \
-  MUXIMO_SQLITE_FILE="$database_file" \
     sh -c "$MUXIMO_MIGRATION_COMMAND"
 else
   hook_log "SQLite migration skipped; set MUXIMO_MIGRATION_COMMAND to enable one"
