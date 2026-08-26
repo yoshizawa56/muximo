@@ -1,6 +1,7 @@
 import {
   type Assertion,
   type FixtureHandle,
+  hasError,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -131,25 +132,26 @@ const profileCases = [
     assert: [hasProfileName("Workstation"), hasNoCredentialFields()],
   },
   {
-    name: "ignores malformed stored data",
+    name: "rejects malformed stored data",
     steps: [{ type: "set-raw", value: "not-json" }, { type: "read" }],
-    assert: [returns<ProfileContext, ProfileResult>(null)],
+    assert: [hasError<ProfileContext, ProfileResult>({ message: "stored connection profile is not valid JSON" })],
   },
   {
-    name: "ignores a profile with an unsupported endpoint field",
+    name: "rejects a profile with an unsupported endpoint field",
     steps: [
       {
         type: "set-raw",
         value: JSON.stringify({
           id: "default",
           name: "Workstation",
+          muximodBaseUrl: "https://workstation.tailnet.ts.net",
           serveUrl: "https://workstation.tailnet.ts.net/",
           updatedAt: "2026-08-15T00:00:00.000Z",
         }),
       },
       { type: "read" },
     ],
-    assert: [returns<ProfileContext, ProfileResult>(null)],
+    assert: [hasError<ProfileContext, ProfileResult>({ message: "stored connection profile contains unknown fields" })],
   },
   {
     name: "clears a saved profile",

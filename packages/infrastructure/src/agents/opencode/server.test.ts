@@ -44,6 +44,7 @@ type SeededEntry = {
 };
 
 type ServerInput = {
+  rawRegistry?: string;
   seededEntry?: SeededEntry;
   seededEntries?: readonly SeededEntry[];
   seededAlive?: boolean;
@@ -74,6 +75,7 @@ type ServerResult = {
   killed: readonly { pid: number; signal: string }[];
   registry: Record<string, unknown>;
   errorCode?: string;
+  errorMessage?: string;
   retryable?: boolean;
   failure:
     | "health_timeout"
@@ -189,6 +191,59 @@ const cases = [
         killed: [],
         registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
         failure: "none",
+      }),
+    ],
+  },
+  {
+    name: "rejects a registry entry without the current format",
+    input: {
+      operation: "ensure" as const,
+      rawRegistry: JSON.stringify({
+        "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: "2026-08-15T00:00:00.000Z" },
+      }),
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [],
+        registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        errorMessage: "OpenCode server registry entry is invalid: /ws",
+        failure: "health_timeout",
+      }),
+    ],
+  },
+  {
+    name: "rejects a registry entry with an unknown field",
+    input: {
+      operation: "ensure" as const,
+      rawRegistry: JSON.stringify({
+        "/ws": {
+          workspaceRoot: "/ws",
+          pid: 42,
+          port: 7_000,
+          version: "1.2.3",
+          startedAt: "2026-08-15T00:00:00.000Z",
+          legacy: true,
+        },
+      }),
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [],
+        registry: {
+          "/ws": {
+            pid: 42,
+            port: 7_000,
+            version: "1.2.3",
+            startedAt: expectAnyStartedAt,
+            legacy: true,
+          },
+        },
+        errorMessage: "OpenCode server registry entry is invalid: /ws",
+        failure: "health_timeout",
       }),
     ],
   },
@@ -650,12 +705,14 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         writeFileSync(`${harness.registryFile}.lock`, `${process.pid}\n`);
         harness.alivePids.add(process.pid);
       }
+      if (input.rawRegistry !== undefined) writeFileSync(harness.registryFile, input.rawRegistry);
       const seededEntries = input.seededEntries ?? (input.seededEntry ? [input.seededEntry] : []);
       if (seededEntries.length > 0) {
         const registry = Object.fromEntries(
           seededEntries.map((seeded) => [
             seeded.root ?? "/ws",
             {
+              workspaceRoot: seeded.root ?? "/ws",
               pid: seeded.pid,
               port: seeded.port,
               version: "1.2.3",
@@ -682,6 +739,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
       let failure: ServerResult["failure"] = "none";
       let errorCode: string | undefined;
       let retryable: boolean | undefined;
+      let errorMessage: string | undefined;
       try {
         if (input.operation === "dispose") {
           const disposed = await manager.dispose("/ws");
@@ -698,6 +756,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        if (input.rawRegistry !== undefined) errorMessage = message;
         const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
         if (
           code === "opencode_registry_lock_timeout" ||
@@ -730,6 +789,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         killed: harness.killed,
         registry: normalizedRegistry,
         ...(errorCode ? { errorCode, retryable } : {}),
+        ...(errorMessage ? { errorMessage } : {}),
         failure,
       };
       if (input.operation === "refresh-all") {

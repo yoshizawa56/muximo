@@ -9,20 +9,29 @@ export type BrowserConnectionProfile = {
   updatedAt: string;
 };
 
+export class BrowserConnectionProfileError extends Error {
+  public constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "BrowserConnectionProfileError";
+    if (cause !== undefined) Object.defineProperty(this, "cause", { configurable: true, value: cause });
+  }
+}
+
 const storageKey = "muximo.connection-profile.v1";
 
 export function readBrowserConnectionProfile(
   storage: Storage | undefined = getStorage(),
 ): BrowserConnectionProfile | null {
   if (!storage) return null;
+  const raw = storage.getItem(storageKey);
+  if (!raw) return null;
+  let value: unknown;
   try {
-    const raw = storage.getItem(storageKey);
-    if (!raw) return null;
-    const value: unknown = JSON.parse(raw);
-    return parseProfile(value);
-  } catch {
-    return null;
+    value = JSON.parse(raw);
+  } catch (error) {
+    throw new BrowserConnectionProfileError("stored connection profile is not valid JSON", error);
   }
+  return parseProfile(value);
 }
 
 export function saveBrowserConnectionProfile(
@@ -65,23 +74,50 @@ export function normalizeMuximodBaseUrl(value: string): string {
 }
 
 function parseProfile(value: unknown): BrowserConnectionProfile {
-  if (!value || typeof value !== "object") throw new Error("Invalid connection profile");
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new BrowserConnectionProfileError("stored connection profile has an invalid shape");
+  }
   const candidate = value as Record<string, unknown>;
+  const allowedKeys = new Set(["id", "name", "muximodBaseUrl", "serverId", "updatedAt"]);
+  if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) {
+    throw new BrowserConnectionProfileError("stored connection profile contains unknown fields");
+  }
   if (
-    typeof candidate.id !== "string" ||
+    candidate.id !== "default" ||
     typeof candidate.name !== "string" ||
+    candidate.name.length === 0 ||
+    candidate.name !== candidate.name.trim() ||
     typeof candidate.muximodBaseUrl !== "string" ||
-    typeof candidate.updatedAt !== "string"
+    typeof candidate.updatedAt !== "string" ||
+    !isIsoTimestamp(candidate.updatedAt) ||
+    (candidate.serverId !== undefined &&
+      (typeof candidate.serverId !== "string" ||
+        candidate.serverId.length === 0 ||
+        candidate.serverId !== candidate.serverId.trim()))
   ) {
-    throw new Error("Invalid connection profile");
+    throw new BrowserConnectionProfileError("stored connection profile has an invalid shape");
+  }
+  let muximodBaseUrl: string;
+  try {
+    muximodBaseUrl = normalizeMuximodBaseUrl(candidate.muximodBaseUrl);
+  } catch (error) {
+    throw new BrowserConnectionProfileError("stored connection profile has an invalid muximod URL", error);
+  }
+  if (muximodBaseUrl !== candidate.muximodBaseUrl) {
+    throw new BrowserConnectionProfileError("stored connection profile has a non-canonical muximod URL");
   }
   return {
-    id: candidate.id,
+    id: "default",
     name: candidate.name,
-    muximodBaseUrl: normalizeMuximodBaseUrl(candidate.muximodBaseUrl),
+    muximodBaseUrl,
     ...(typeof candidate.serverId === "string" ? { serverId: candidate.serverId } : {}),
     updatedAt: candidate.updatedAt,
   };
+}
+
+function isIsoTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
 function getStorage(): Storage | undefined {

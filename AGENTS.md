@@ -9,6 +9,8 @@
 
 ## Alpha compatibility policy
 
-- Muximo is currently alpha software. Do not preserve backward compatibility, legacy aliases, migration shims, or fallback paths solely for existing clients, data, configuration, or internal implementations.
+- Muximo is currently alpha software. Do not preserve backward compatibility, legacy aliases, compatibility shims, or fallback paths solely for existing clients, data, configuration, or internal implementations.
 - Keep only the current implementation and its current contract. When an interface or data shape improves, remove the old shape and update all in-repository callers, tests, fixtures, examples, and documentation in the same change.
 - Prefer a clear failure for unsupported old input over silently accepting, translating, or storing it.
+- Add future compatibility deliberately through an explicit versioned contract or migration with tests; never make the current implementation accept old shapes implicitly.
+- Keep schema migration history and add explicit forward migrations when existing data must be moved to the current schema; those migrations must not become compatibility aliases or silent fallback paths.

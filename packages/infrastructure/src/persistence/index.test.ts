@@ -1,3 +1,4 @@
+import { Database as BunDatabase } from "bun:sqlite";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -95,8 +96,9 @@ type DatabaseFixture = {
   prePruneCurrent?: PaneRecord;
   claimResults: boolean[];
   backendResults: boolean[];
+  malformedWorkspaceError?: string;
 };
-type DatabaseKey = "default" | "pending" | "restart";
+type DatabaseKey = "default" | "pending" | "restart" | "auth-migration";
 type DatabaseStep =
   | { type: "write-round-trip" }
   | { type: "verify-timestamp-preservation" }
@@ -105,6 +107,8 @@ type DatabaseStep =
   | { type: "verify-generations" }
   | { type: "verify-upsert-identity" }
   | { type: "verify-agent-association" }
+  | { type: "verify-malformed-workspace" }
+  | { type: "verify-auth-migration" }
   | { type: "verify-execution-claim" }
   | { type: "verify-atomic-claim-timestamp" };
 type DatabaseResult = undefined;
@@ -125,6 +129,9 @@ type DatabaseContext = {
   pruneCount: number | undefined;
   claimResults: readonly boolean[];
   backendResults: readonly boolean[];
+  malformedWorkspaceError: string | undefined;
+  authPairingColumns: readonly string[];
+  authPairingCount: number;
   claimSession: AgentSessionRecord | undefined;
   timestampWorkspace: { name: string; createdAt: string; updatedAt: string } | undefined;
   timestampSession: { name: string; createdAt: string; updatedAt: string } | undefined;
@@ -186,6 +193,59 @@ const pendingMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHan
   );
   const database = createAgentDatabase(":memory:", { migrationsFolder });
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
+};
+
+const authMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHandle<DatabaseFixture> => {
+  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-auth-"));
+  const file = join(root, "muximod.sqlite");
+  const sqlite = new BunDatabase(file);
+  sqlite.exec(`
+    CREATE TABLE auth_pairings (
+      pairing_id TEXT PRIMARY KEY NOT NULL,
+      server_id TEXT NOT NULL,
+      web_origin TEXT NOT NULL DEFAULT '',
+      muximod_base_url TEXT NOT NULL,
+      secret_hash TEXT NOT NULL UNIQUE,
+      claim_token_hash TEXT UNIQUE,
+      status TEXT NOT NULL,
+      offered_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      claim_expires_at TEXT,
+      claimed_at TEXT,
+      approved_at TEXT,
+      pending_public_key_jwk TEXT,
+      pending_fingerprint TEXT,
+      pending_display_name TEXT,
+      pending_device_type TEXT,
+      pending_platform TEXT,
+      pending_client_version TEXT,
+      device_id TEXT
+    );
+    CREATE INDEX auth_pairings_status_index ON auth_pairings (status);
+  `);
+  sqlite
+    .prepare(
+      `INSERT INTO auth_pairings (
+        pairing_id, server_id, web_origin, muximod_base_url, secret_hash, status, offered_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      "pairing-1",
+      "server-1",
+      "",
+      "https://muximod.example",
+      "secret-hash",
+      "offered",
+      "2026-08-23T00:00:00.000Z",
+      "2026-08-24T00:00:00.000Z",
+    );
+  sqlite.close();
+  const database = createAgentDatabase(file);
+  registerCleanup?.(() => {
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  return { fixture: { database, root, claimResults: [], backendResults: [] } };
 };
 
 const matchesObserved = <Result>(
@@ -272,6 +332,44 @@ const cases = [
     ],
   },
   {
+    name: "fails clearly when persisted workspace patterns are malformed",
+    steps: [{ type: "verify-malformed-workspace" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>(
+        "malformedWorkspaceError",
+        "workspace 'workspace-1' has invalid worktree copy patterns; expected an array of strings",
+      ),
+    ],
+  },
+  {
+    name: "migrates the removed auth pairing column without losing rows",
+    fixture: "auth-migration",
+    steps: [{ type: "verify-auth-migration" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("authPairingColumns", [
+        "pairing_id",
+        "server_id",
+        "muximod_base_url",
+        "secret_hash",
+        "claim_token_hash",
+        "status",
+        "offered_at",
+        "expires_at",
+        "claim_expires_at",
+        "claimed_at",
+        "approved_at",
+        "pending_public_key_jwk",
+        "pending_fingerprint",
+        "pending_display_name",
+        "pending_device_type",
+        "pending_platform",
+        "pending_client_version",
+        "device_id",
+      ]),
+      hasObserved<DatabaseContext, DatabaseResult>("authPairingCount", 1),
+    ],
+  },
+  {
     name: "claims one agent execution and persists a discovered backend session ID atomically",
     steps: [{ type: "verify-execution-claim" }],
     assert: [
@@ -305,6 +403,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
     default: normalFixture,
     pending: pendingMigrationFixture,
     restart: restartFixture,
+    "auth-migration": authMigrationFixture,
   },
   cases,
   execute: async (fixture, steps) => {
@@ -406,6 +505,21 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           } satisfies PaneRecord);
           break;
         }
+        case "verify-malformed-workspace": {
+          const workspaces = new DrizzleWorkspaceRepository(databases.db);
+          await workspaces.upsert(workspace);
+          databases.sqlite
+            .prepare("UPDATE workspaces SET worktree_copy_patterns = ? WHERE id = ?")
+            .run("{}", workspace.id);
+          try {
+            await workspaces.findById(workspace.id);
+          } catch (error) {
+            fixture.malformedWorkspaceError = error instanceof Error ? error.message : String(error);
+          }
+          break;
+        }
+        case "verify-auth-migration":
+          break;
         case "verify-execution-claim": {
           const sessions = new DrizzleAgentSessionRepository(databases.db);
           await sessions.insert(AgentSession.update(session, { backendSessionId: clearPatch }));
@@ -460,7 +574,9 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
     return {
       pane: await panes.findById(pane.id),
       waitingPanes: await panes.list({ state: "waiting_input" }),
-      workspace: await new DrizzleWorkspaceRepository(database.db).findById(workspace.id),
+      workspace: fixture.malformedWorkspaceError
+        ? undefined
+        : await new DrizzleWorkspaceRepository(database.db).findById(workspace.id),
       session: await sessions.findByName(workspace.id, session.name),
       auditCount: database.db.select().from(auditEvents).all().length,
       migrationCount: database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all().length,
@@ -476,6 +592,13 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       pruneCount: fixture.pruneCount,
       claimResults: [...fixture.claimResults],
       backendResults: [...fixture.backendResults],
+      malformedWorkspaceError: fixture.malformedWorkspaceError,
+      authPairingColumns: (
+        database.sqlite.query("PRAGMA table_info(auth_pairings)").all() as Array<{ name: string }>
+      ).map((column) => column.name),
+      authPairingCount: (
+        database.sqlite.query("SELECT COUNT(*) AS count FROM auth_pairings").get() as { count: number }
+      ).count,
       claimSession: await sessions.findById(session.id),
       timestampWorkspace: await readWorkspaceTimestamps(database, "workspace-timestamps"),
       timestampSession: await readSessionTimestamps(database, "session-timestamps"),

@@ -265,7 +265,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       });
       new TerminalSession(socket, {
         cwd: process.cwd(),
-        defaultTarget,
         viewportManager,
         spawnPty,
         sessions: terminalSessions,

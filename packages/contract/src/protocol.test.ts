@@ -18,9 +18,11 @@ import {
   encodeClientControlFrame,
   encodeServerControlFrame,
   maxPasteImageBase64Length,
+  muximodCapabilitiesSchema,
   muximodControlRequestSchema,
   muximodControlResponseSchema,
   muximodEventSchema,
+  muximodHealthSchema,
   paneListResponseSchema,
   serverControlMessageSchema,
   terminalProtocolVersion,
@@ -177,6 +179,18 @@ const clientCases = [
     },
     assert: [isInvalid(["data"])],
   },
+  {
+    name: "rejects an attach request with an unknown field",
+    input: {
+      type: "attach",
+      version: terminalProtocolVersion,
+      target: "muximod",
+      cols: 80,
+      rows: 24,
+      legacyTarget: "muximod",
+    },
+    assert: [isInvalid()],
+  },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 const serverCases = [
@@ -213,6 +227,17 @@ const serverCases = [
     },
     assert: [isValid()],
   },
+  {
+    name: "rejects a viewport frame with an unknown field",
+    input: {
+      type: "viewport",
+      version: terminalProtocolVersion,
+      owner: "desktop",
+      reason: "desktop_activity",
+      legacyOwner: "desktop",
+    },
+    assert: [isInvalid()],
+  },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 const eventCases = [
@@ -224,6 +249,72 @@ const eventCases = [
   {
     name: "rejects an event without a session scope",
     input: { type: "session_updated", reason: "pane_deleted", revision: 2 },
+    assert: [isInvalid()],
+  },
+  {
+    name: "rejects an event with an unknown field",
+    input: { type: "session_updated", sessionName: "muximod", reason: "pane_changed", revision: 3, oldRevision: 2 },
+    assert: [isInvalid()],
+  },
+] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+
+const healthCases = [
+  {
+    name: "accepts the current health contract",
+    input: { ok: true, service: "muximod", protocolVersion: terminalProtocolVersion },
+    assert: [isValid()],
+  },
+  {
+    name: "rejects a health response for an unsupported protocol version",
+    input: { ok: true, service: "muximod", protocolVersion: 2 },
+    assert: [isInvalid(["protocolVersion"])],
+  },
+  {
+    name: "rejects a health response with an unknown field",
+    input: { ok: true, service: "muximod", protocolVersion: terminalProtocolVersion, legacy: true },
+    assert: [isInvalid()],
+  },
+] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+
+const capabilitiesCases = [
+  {
+    name: "accepts the current capabilities contract",
+    input: {
+      protocolVersion: terminalProtocolVersion,
+      features: {
+        tmuxSessions: true,
+        terminalWebSocket: true,
+        paneState: true,
+        resourceInvalidationEvents: true,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "rejects capabilities for an unsupported protocol version",
+    input: {
+      protocolVersion: 2,
+      features: {
+        tmuxSessions: true,
+        terminalWebSocket: true,
+        paneState: true,
+        resourceInvalidationEvents: true,
+      },
+    },
+    assert: [isInvalid(["protocolVersion"])],
+  },
+  {
+    name: "rejects an unknown capability",
+    input: {
+      protocolVersion: terminalProtocolVersion,
+      features: {
+        tmuxSessions: true,
+        terminalWebSocket: true,
+        paneState: true,
+        resourceInvalidationEvents: true,
+        legacyFeature: true,
+      },
+    },
     assert: [isInvalid()],
   },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
@@ -400,6 +491,11 @@ const paneListCases = [
     },
     assert: [isValid()],
   },
+  {
+    name: "rejects a pane list with an unknown field",
+    input: { panes: [], legacyPanes: [] },
+    assert: [isInvalid()],
+  },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 type PaneCreateInput = {
@@ -466,7 +562,7 @@ const sessionTable: OperationTable<undefined, "default", SessionCreateInput, Val
   observe: () => ({}),
 };
 
-type WorkspaceInput = { workspaceId: string; mode: "workspace" | "worktree" };
+type WorkspaceInput = { workspaceId: string; mode: "workspace" | "worktree" } & Record<string, unknown>;
 const workspaceCases = [
   {
     name: "accepts a direct workspace selection",
@@ -477,6 +573,11 @@ const workspaceCases = [
     name: "accepts a workspace worktree selection",
     input: { workspaceId: "workspace-1", mode: "worktree" },
     assert: [isValid()],
+  },
+  {
+    name: "rejects a workspace selection with an unknown field",
+    input: { workspaceId: "workspace-1", mode: "workspace", legacyMode: "workspace" },
+    assert: [isInvalid()],
   },
 ] satisfies readonly OperationCase<"default", WorkspaceInput, ValidationResult, EmptyContext>[];
 const workspaceTable: OperationTable<undefined, "default", WorkspaceInput, ValidationResult, EmptyContext> = {
@@ -542,6 +643,20 @@ const paneWorkspaceCases = [
       targetPaneId: "%0",
     },
     assert: [isValid()],
+  },
+  {
+    name: "rejects a pane request with an unknown field",
+    input: {
+      sessionName: "muximod",
+      kind: "shell",
+      name: "shell",
+      agentId: null,
+      useWorktree: false,
+      placement: "window",
+      targetPaneId: null,
+      legacyName: "shell",
+    },
+    assert: [isInvalid()],
   },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 const paneWorkspaceTable: OperationTable<undefined, "default", unknown, ValidationResult, EmptyContext> =
@@ -663,6 +778,8 @@ describe("protocol schemas", () => {
   runOperationTable(register, createValidationTable(clientCases, clientControlMessageSchema));
   runOperationTable(register, createValidationTable(serverCases, serverControlMessageSchema));
   runOperationTable(register, createValidationTable(eventCases, muximodEventSchema));
+  runOperationTable(register, createValidationTable(healthCases, muximodHealthSchema));
+  runOperationTable(register, createValidationTable(capabilitiesCases, muximodCapabilitiesSchema));
   runOperationTable(register, pairingTable);
   runOperationTable(register, createValidationTable(paneListCases, paneListResponseSchema));
   runOperationTable(register, paneCreateTable);

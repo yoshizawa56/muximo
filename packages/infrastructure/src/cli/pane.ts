@@ -119,7 +119,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, ShellPan
 
   public restoreShell(): void {
     const name =
-      this.options.environment.MUXIMO_PANE_NAME ?? this.options.environment.MUXIMO_MANAGED_SESSION_NAME ?? "shell";
+      this.options.environment.MUXIMOD_PANE_NAME ?? this.options.environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell";
     this.markShell(name);
   }
 

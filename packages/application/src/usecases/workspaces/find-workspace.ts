@@ -21,9 +21,11 @@ export async function findWorkspace(
   let resolved: Awaited<ReturnType<WorkspaceDirectoryPort["resolveDirectory"]>> | undefined;
   try {
     resolved = await directories.resolveDirectory(reference);
-  } catch {
+  } catch (error) {
     // A selector is commonly a workspace name. Directory resolution is only
-    // a fallback for path selectors, so expected path failures are ignored.
+    // a fallback for path selectors, so only an adapter-declared invalid
+    // directory selector may fall through to name matching.
+    if (!isInvalidDirectorySelectorError(error)) throw error;
   }
   if (resolved) {
     const byPath = records.find(
@@ -43,4 +45,13 @@ export async function findWorkspace(
     );
   }
   throw new WorkspaceNotFoundError(reference);
+}
+
+function isInvalidDirectorySelectorError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "invalid_directory"
+  );
 }

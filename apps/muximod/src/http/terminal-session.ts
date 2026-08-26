@@ -24,7 +24,6 @@ type TerminalViewportManager = TerminalViewportPort;
 
 export type TerminalSessionOptions = {
   cwd: string;
-  defaultTarget: string;
   viewportManager: TerminalViewportManager;
   /** How long a transport can be absent before the PTY and lease are released. */
   resumeGraceMs?: number;
@@ -328,7 +327,7 @@ export class TerminalSession {
 
   private async attachFresh(message: AttachMessage): Promise<void> {
     const generation = ++this.attachGeneration;
-    const target = message.target || this.options.defaultTarget;
+    const target = message.target;
     this.state = "attaching";
     this.cols = message.cols;
     this.rows = message.rows;

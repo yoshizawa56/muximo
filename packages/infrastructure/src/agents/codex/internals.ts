@@ -90,15 +90,18 @@ export function codexMeta(file: string): CodexMeta | undefined {
 }
 
 export function readCodexBaseline(value: string | null | undefined): string[] {
-  if (!value) return [];
+  if (value === null || value === undefined) return [];
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(value) as { codexSessions?: unknown };
-    return Array.isArray(parsed.codexSessions)
-      ? parsed.codexSessions.filter((item): item is string => typeof item === "string")
-      : [];
-  } catch {
-    return [];
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error("Codex session baseline is not valid JSON", { cause: error });
   }
+  const sessions = isRecord(parsed) && Object.keys(parsed).length === 1 ? parsed.codexSessions : undefined;
+  if (!Array.isArray(sessions) || !sessions.every((session) => typeof session === "string" && session.length > 0)) {
+    throw new Error("Codex session baseline must contain codexSessions as an array of non-empty strings");
+  }
+  return sessions;
 }
 
 export function preferredCodexSessionId(candidates: CodexSessionCandidate[]): string | undefined {
@@ -179,6 +182,10 @@ export const supportedCodexOriginators = new Set([
   "codex_exec",
   "codex_chatgpt_ios_remote",
 ]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /**
  * Clean TypeScript implementation of the dotfiles `muximo` wrapper.
