@@ -5,7 +5,7 @@ export type BrowserConnectionProfile = {
   id: string;
   name: string;
   muximodBaseUrl: string;
-  serverId?: string;
+  serverId: string;
   updatedAt: string;
 };
 
@@ -17,48 +17,93 @@ export class BrowserConnectionProfileError extends Error {
   }
 }
 
-const storageKey = "muximo.connection-profile.v1";
+const storageKey = "muximo.connection-profiles.v2";
+const legacyStorageKey = "muximo.connection-profile.v1";
 /** Keeps the RPC link and browser auth coordinator shared across view models. */
 const connectionCache = new Map<string, MuximodConnection>();
 
-export function readBrowserConnectionProfile(
+export function readBrowserConnectionProfiles(storage: Storage | undefined = getStorage()): BrowserConnectionProfile[] {
+  if (!storage) return [];
+
+  const raw = storage.getItem(storageKey);
+  if (raw) {
+    try {
+      return parseProfiles(JSON.parse(raw));
+    } catch {
+      storage.removeItem(storageKey);
+    }
+  }
+
+  return migrateLegacyProfile(storage);
+}
+
+export function selectBrowserConnectionProfile(
+  profileId?: string,
   storage: Storage | undefined = getStorage(),
 ): BrowserConnectionProfile | null {
-  if (!storage) return null;
-  const raw = storage.getItem(storageKey);
-  if (!raw) return null;
-  try {
-    return parseProfile(JSON.parse(raw));
-  } catch {
-    storage.removeItem(storageKey);
-    return null;
-  }
+  const profiles = readBrowserConnectionProfiles(storage);
+  if (!profileId) return profiles[0] ?? null;
+  return profiles.find((profile) => profile.id === profileId) ?? null;
 }
 
 export function saveBrowserConnectionProfile(
-  input: Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl"> &
-    Pick<Partial<BrowserConnectionProfile>, "serverId">,
+  input: Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl" | "serverId">,
   storage: Storage | undefined = getStorage(),
 ): BrowserConnectionProfile {
-  const previous = readBrowserConnectionProfile(storage);
+  const profiles = readBrowserConnectionProfiles(storage);
   const muximodBaseUrl = normalizeMuximodBaseUrl(input.muximodBaseUrl);
+  const id = input.serverId.trim();
+  if (!id) throw new BrowserConnectionProfileError("connection profile serverId is required");
+
+  const previous = profiles.find((profile) => profile.id === id);
   if (previous && previous.muximodBaseUrl !== muximodBaseUrl) connectionCache.delete(previous.muximodBaseUrl);
+
   const profile: BrowserConnectionProfile = {
-    id: "default",
-    name: input.name.trim() || new URL(muximodBaseUrl).hostname,
+    id,
+    name: normalizeProfileName(input.name, muximodBaseUrl),
     muximodBaseUrl,
-    ...(input.serverId ? { serverId: input.serverId } : {}),
+    serverId: id,
     updatedAt: new Date().toISOString(),
   };
   parseProfile(profile);
-  storage?.setItem(storageKey, JSON.stringify(profile));
+  const nextProfiles = previous
+    ? profiles.map((candidate) => (candidate.id === id ? profile : candidate))
+    : [...profiles, profile];
+  writeProfiles(storage, nextProfiles);
   return profile;
 }
 
-export function clearBrowserConnectionProfile(storage: Storage | undefined = getStorage()): void {
-  const previous = readBrowserConnectionProfile(storage);
-  if (previous) connectionCache.delete(previous.muximodBaseUrl);
-  storage?.removeItem(storageKey);
+export function renameBrowserConnectionProfile(
+  profileId: string,
+  name: string,
+  storage: Storage | undefined = getStorage(),
+): BrowserConnectionProfile {
+  const profiles = readBrowserConnectionProfiles(storage);
+  const previous = profiles.find((profile) => profile.id === profileId);
+  if (!previous) throw new BrowserConnectionProfileError("connection profile was not found");
+
+  const profile: BrowserConnectionProfile = {
+    ...previous,
+    name: normalizeProfileName(name, previous.muximodBaseUrl, false),
+    updatedAt: new Date().toISOString(),
+  };
+  parseProfile(profile);
+  writeProfiles(
+    storage,
+    profiles.map((candidate) => (candidate.id === profileId ? profile : candidate)),
+  );
+  return profile;
+}
+
+export function removeBrowserConnectionProfile(profileId: string, storage: Storage | undefined = getStorage()): void {
+  const profiles = readBrowserConnectionProfiles(storage);
+  const previous = profiles.find((profile) => profile.id === profileId);
+  if (!previous) return;
+  connectionCache.delete(previous.muximodBaseUrl);
+  writeProfiles(
+    storage,
+    profiles.filter((profile) => profile.id !== profileId),
+  );
 }
 
 export function connectionForProfile(profile: BrowserConnectionProfile | null): MuximodConnection | undefined {
@@ -77,10 +122,58 @@ export function normalizeMuximodBaseUrl(value: string): string {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error("muximod URL must use https:// (http:// is allowed only for local development)");
   }
+  url.username = "";
+  url.password = "";
   url.hash = "";
   url.search = "";
   url.pathname = url.pathname.replace(/\/+$/, "");
   return url.toString().replace(/\/$/, "");
+}
+
+export function defaultConnectionProfileName(muximodBaseUrl: string): string {
+  return new URL(normalizeMuximodBaseUrl(muximodBaseUrl)).host;
+}
+
+function writeProfiles(storage: Storage | undefined, profiles: readonly BrowserConnectionProfile[]): void {
+  if (!storage) return;
+  if (profiles.length === 0) {
+    storage.removeItem(storageKey);
+    storage.removeItem(legacyStorageKey);
+    return;
+  }
+  storage.setItem(storageKey, JSON.stringify(profiles));
+  storage.removeItem(legacyStorageKey);
+}
+
+function migrateLegacyProfile(storage: Storage): BrowserConnectionProfile[] {
+  const raw = storage.getItem(legacyStorageKey);
+  if (!raw) return [];
+  try {
+    const legacy = parseLegacyProfile(JSON.parse(raw));
+    if (!legacy.serverId) throw new BrowserConnectionProfileError("legacy connection profile has no serverId");
+    const profile: BrowserConnectionProfile = {
+      id: legacy.serverId,
+      name: legacy.name,
+      muximodBaseUrl: legacy.muximodBaseUrl,
+      serverId: legacy.serverId,
+      updatedAt: legacy.updatedAt,
+    };
+    parseProfile(profile);
+    writeProfiles(storage, [profile]);
+    return [profile];
+  } catch {
+    storage.removeItem(legacyStorageKey);
+    return [];
+  }
+}
+
+function parseProfiles(value: unknown): BrowserConnectionProfile[] {
+  if (!Array.isArray(value)) throw new BrowserConnectionProfileError("stored connection profiles must be an array");
+  const profiles = value.map(parseProfile);
+  if (new Set(profiles.map((profile) => profile.id)).size !== profiles.length) {
+    throw new BrowserConnectionProfileError("stored connection profiles contain duplicate ids");
+  }
+  return profiles;
 }
 
 function parseProfile(value: unknown): BrowserConnectionProfile {
@@ -93,17 +186,19 @@ function parseProfile(value: unknown): BrowserConnectionProfile {
     throw new BrowserConnectionProfileError("stored connection profile contains unknown fields");
   }
   if (
-    candidate.id !== "default" ||
+    typeof candidate.id !== "string" ||
+    candidate.id.length === 0 ||
+    candidate.id !== candidate.id.trim() ||
     typeof candidate.name !== "string" ||
     candidate.name.length === 0 ||
     candidate.name !== candidate.name.trim() ||
     typeof candidate.muximodBaseUrl !== "string" ||
+    typeof candidate.serverId !== "string" ||
+    candidate.serverId.length === 0 ||
+    candidate.serverId !== candidate.serverId.trim() ||
+    candidate.id !== candidate.serverId ||
     typeof candidate.updatedAt !== "string" ||
-    !isIsoTimestamp(candidate.updatedAt) ||
-    (candidate.serverId !== undefined &&
-      (typeof candidate.serverId !== "string" ||
-        candidate.serverId.length === 0 ||
-        candidate.serverId !== candidate.serverId.trim()))
+    !isIsoTimestamp(candidate.updatedAt)
   ) {
     throw new BrowserConnectionProfileError("stored connection profile has an invalid shape");
   }
@@ -116,6 +211,55 @@ function parseProfile(value: unknown): BrowserConnectionProfile {
   if (muximodBaseUrl !== candidate.muximodBaseUrl) {
     throw new BrowserConnectionProfileError("stored connection profile has a non-canonical muximod URL");
   }
+  validateProfileName(candidate.name);
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    muximodBaseUrl,
+    serverId: candidate.serverId,
+    updatedAt: candidate.updatedAt,
+  };
+}
+
+type LegacyBrowserConnectionProfile = {
+  id: "default";
+  name: string;
+  muximodBaseUrl: string;
+  serverId?: string;
+  updatedAt: string;
+};
+
+function parseLegacyProfile(value: unknown): LegacyBrowserConnectionProfile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new BrowserConnectionProfileError("legacy connection profile has an invalid shape");
+  }
+  const candidate = value as Record<string, unknown>;
+  const allowedKeys = new Set(["id", "name", "muximodBaseUrl", "serverId", "updatedAt"]);
+  if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) {
+    throw new BrowserConnectionProfileError("legacy connection profile contains unknown fields");
+  }
+  if (
+    candidate.id !== "default" ||
+    typeof candidate.name !== "string" ||
+    typeof candidate.muximodBaseUrl !== "string" ||
+    typeof candidate.updatedAt !== "string" ||
+    !isIsoTimestamp(candidate.updatedAt)
+  ) {
+    throw new BrowserConnectionProfileError("legacy connection profile has an invalid shape");
+  }
+  const muximodBaseUrl = normalizeMuximodBaseUrl(candidate.muximodBaseUrl);
+  if (muximodBaseUrl !== candidate.muximodBaseUrl) {
+    throw new BrowserConnectionProfileError("legacy connection profile has a non-canonical muximod URL");
+  }
+  validateProfileName(candidate.name);
+  if (
+    candidate.serverId !== undefined &&
+    (typeof candidate.serverId !== "string" ||
+      candidate.serverId.length === 0 ||
+      candidate.serverId !== candidate.serverId.trim())
+  ) {
+    throw new BrowserConnectionProfileError("legacy connection profile has an invalid serverId");
+  }
   return {
     id: "default",
     name: candidate.name,
@@ -123,6 +267,19 @@ function parseProfile(value: unknown): BrowserConnectionProfile {
     ...(typeof candidate.serverId === "string" ? { serverId: candidate.serverId } : {}),
     updatedAt: candidate.updatedAt,
   };
+}
+
+function normalizeProfileName(name: string, muximodBaseUrl: string, allowDefault = true): string {
+  const normalized = name.trim();
+  if (!normalized && allowDefault) return defaultConnectionProfileName(muximodBaseUrl);
+  validateProfileName(normalized);
+  return normalized;
+}
+
+function validateProfileName(name: string): void {
+  if (name.length === 0 || name.length > 120 || !/^[^\u0000\r\n]+$/.test(name)) {
+    throw new BrowserConnectionProfileError("connection profile name must be 1 to 120 characters without line breaks");
+  }
 }
 
 function isIsoTimestamp(value: string): boolean {

@@ -1,6 +1,8 @@
 import type { PairingCodePayload } from "@muximo/contract";
 import { encodePairingCode } from "@muximo/contract";
 import {
+  type Assertion,
+  type FixtureHandle,
   hasError,
   noFixture,
   type OperationCase,
@@ -9,8 +11,8 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { describe, it } from "vitest";
-import { parsePairingQrPayload } from "./browser-auth";
+import { describe, expect, it } from "vitest";
+import { type BrowserPairingPreview, inspectPairingQr, parsePairingQrPayload } from "./browser-auth";
 
 type EmptyContext = {};
 type PairingPayloadInput = { code: string };
@@ -51,4 +53,76 @@ const table: OperationTable<undefined, "default", PairingPayloadInput, PairingCo
 
 describe("browser pairing code parsing", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
+});
+
+type InspectRequest = { method: string; url: string; body: string };
+type InspectFixture = { originalFetch: typeof globalThis.fetch; requests: InspectRequest[] };
+type InspectContext = { requests: readonly InspectRequest[] };
+type InspectInput = { code: string };
+
+const inspectFixture = (): FixtureHandle<InspectFixture> => {
+  const originalFetch = globalThis.fetch;
+  const requests: InspectRequest[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    requests.push({ method: request.method, url: request.url, body: await request.clone().text() });
+    return new Response(
+      JSON.stringify({
+        json: {
+          protocolVersion: 1,
+          serverId: "server-preview-123456",
+          serverTime: "2026-08-15T00:00:00.000Z",
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+  return {
+    fixture: { originalFetch, requests },
+    cleanup: () => {
+      globalThis.fetch = originalFetch;
+    },
+  };
+};
+
+const hasPublicInfoRequest = (): Assertion<InspectContext, BrowserPairingPreview> => ({
+  name: "requests only the public auth.info endpoint",
+  check: (context) => {
+    expect(context.requests.map(({ method, url }) => ({ method, url }))).toEqual([
+      { method: "POST", url: "https://muximo-host.tailnet.ts.net:8444/rpc/auth/info" },
+    ]);
+  },
+});
+
+const hasNoPairingSecret = (): Assertion<InspectContext, BrowserPairingPreview> => ({
+  name: "does not send the pairing secret during preview",
+  check: (context) => {
+    expect(context.requests.every(({ body }) => !body.includes(payload.pairingSecret))).toBe(true);
+  },
+});
+
+const inspectCases = [
+  {
+    name: "reads the endpoint and server identity before a claim is sent",
+    input: { code: encodePairingCode(payload) },
+    assert: [
+      returns<InspectContext, BrowserPairingPreview>({
+        muximodBaseUrl: normalizedPayload.muximodBaseUrl,
+        serverId: "server-preview-123456",
+      }),
+      hasPublicInfoRequest(),
+      hasNoPairingSecret(),
+    ],
+  },
+] satisfies readonly OperationCase<"default", InspectInput, BrowserPairingPreview, InspectContext>[];
+
+const inspectTable: OperationTable<InspectFixture, "default", InspectInput, BrowserPairingPreview, InspectContext> = {
+  defaultFixture: inspectFixture,
+  cases: inspectCases,
+  execute: (_fixture, input) => inspectPairingQr(input.code),
+  observe: (fixture) => ({ requests: [...fixture.requests] }),
+};
+
+describe("browser pairing preview", () => {
+  runOperationTable(it as unknown as TestRegistrar, inspectTable);
 });

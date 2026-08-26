@@ -1,6 +1,7 @@
 import {
   type Assertion,
   type FixtureHandle,
+  hasError,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -14,11 +15,14 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   type BrowserConnectionProfile,
-  clearBrowserConnectionProfile,
   connectionForProfile,
+  defaultConnectionProfileName,
   normalizeMuximodBaseUrl,
-  readBrowserConnectionProfile,
+  readBrowserConnectionProfiles,
+  removeBrowserConnectionProfile,
+  renameBrowserConnectionProfile,
   saveBrowserConnectionProfile,
+  selectBrowserConnectionProfile,
 } from "./connection-profile-store";
 
 class MemoryStorage implements Storage {
@@ -58,8 +62,8 @@ const normalizeCases = [
     assert: [returns<EmptyContext, string>("https://workstation.tailnet.ts.net:8449")],
   },
   {
-    name: "removes path and query details",
-    input: "https://example.test/muximod/?ignored=1",
+    name: "removes credentials while preserving the endpoint path",
+    input: "https://user:password@example.test/muximod/?ignored=1",
     assert: [returns<EmptyContext, string>("https://example.test/muximod")],
   },
 ] satisfies readonly OperationCase<"default", string, string, EmptyContext>[];
@@ -73,7 +77,7 @@ const normalizeTable: OperationTable<undefined, "default", string, string, Empty
 
 const connectionCases = [
   {
-    name: "does not create a transport without a saved profile",
+    name: "does not create a transport without a selected profile",
     input: null,
     assert: [returns<EmptyContext, ReturnType<typeof connectionForProfile>>(undefined)],
   },
@@ -114,9 +118,10 @@ const sharedConnectionTable: OperationTable<
   cases: sharedConnectionCases,
   execute: (_fixture, input) => {
     const profile: BrowserConnectionProfile = {
-      id: "default",
+      id: "server-shared-123456",
       name: "Shared workstation",
       muximodBaseUrl: input.muximodBaseUrl,
+      serverId: "server-shared-123456",
       updatedAt: "2026-08-15T00:00:00.000Z",
     };
     const first = connectionForProfile(profile);
@@ -130,23 +135,46 @@ const sharedConnectionTable: OperationTable<
 };
 
 type ProfileFixture = { storage: MemoryStorage };
+type ProfileInput = Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl" | "serverId">;
 type ProfileStep =
-  | { type: "save"; input: Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl"> }
-  | { type: "set-raw"; value: string }
-  | { type: "clear" }
-  | { type: "read" };
-type ProfileContext = { raw: string | null };
-type ProfileResult = BrowserConnectionProfile | null;
+  | { type: "save"; input: ProfileInput }
+  | { type: "rename"; profileId: string; name: string }
+  | { type: "remove"; profileId: string }
+  | { type: "set-raw"; key: "v1" | "v2"; value: string }
+  | { type: "read"; profileId?: string };
+type ProfileContext = { raw: string | null; legacyRaw: string | null };
+type ProfileResult = BrowserConnectionProfile[] | BrowserConnectionProfile | null;
 
 const profileFixture = (): FixtureHandle<ProfileFixture> => ({
   fixture: { storage: new MemoryStorage() },
 });
 
-const hasProfileName = (expected: string): Assertion<ProfileContext, ProfileResult> => ({
-  name: `returns profile ${expected}`,
+const hasProfileNames = (expected: readonly string[]): Assertion<ProfileContext, ProfileResult> => ({
+  name: `returns profiles ${expected.join(", ") || "as empty"}`,
   check: (_ctx, result) => {
     if (!result.ok) throw result.error;
-    expect(result.value?.name).toBe(expected);
+    const profiles = Array.isArray(result.value) ? result.value : result.value ? [result.value] : [];
+    expect(profiles.map((profile) => profile.name)).toEqual(expected);
+  },
+});
+
+const hasProfileIds = (expected: readonly string[]): Assertion<ProfileContext, ProfileResult> => ({
+  name: `returns profile ids ${expected.join(", ") || "as empty"}`,
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    const profiles = Array.isArray(result.value) ? result.value : result.value ? [result.value] : [];
+    expect(profiles.map((profile) => profile.id)).toEqual(expected);
+  },
+});
+
+const hasRawProfile = (expected: string | null): Assertion<ProfileContext, ProfileResult> => ({
+  name: `stores the v2 profile data ${expected === null ? "as empty" : "in the expected shape"}`,
+  check: (ctx) => {
+    if (expected === null) {
+      expect(ctx.raw).toBeNull();
+      return;
+    }
+    expect(ctx.raw).toBe(expected);
   },
 });
 
@@ -155,55 +183,197 @@ const hasNoCredentialFields = (): Assertion<ProfileContext, ProfileResult> => ({
   check: (ctx) => {
     expect(ctx.raw).not.toContain("key");
     expect(ctx.raw).not.toContain("password");
-  },
-});
-
-const hasRawProfile = (expected: string | null): Assertion<ProfileContext, ProfileResult> => ({
-  name: `stores raw profile ${expected ?? "as empty"}`,
-  check: (ctx) => {
-    expect(ctx.raw).toBe(expected);
+    expect(ctx.raw).not.toContain("pairingSecret");
   },
 });
 
 const profileCases = [
   {
-    name: "round-trips a profile without credentials",
+    name: "round-trips multiple named profiles without credentials",
     steps: [
-      { type: "save", input: { name: "Workstation", muximodBaseUrl: "https://workstation.tailnet.ts.net/" } },
+      {
+        type: "save",
+        input: {
+          name: "Workstation",
+          muximodBaseUrl: "https://workstation.tailnet.ts.net/",
+          serverId: "server-workstation-123456",
+        },
+      },
+      {
+        type: "save",
+        input: {
+          name: "Feature branch",
+          muximodBaseUrl: "http://127.0.0.1:4318",
+          serverId: "server-feature-123456",
+        },
+      },
       { type: "read" },
     ],
-    assert: [hasProfileName("Workstation"), hasNoCredentialFields()],
+    assert: [hasProfileNames(["Workstation", "Feature branch"]), hasNoCredentialFields()],
+  },
+  {
+    name: "updates an existing server profile without creating a duplicate",
+    steps: [
+      {
+        type: "save",
+        input: {
+          name: "Old name",
+          muximodBaseUrl: "http://127.0.0.1:4317",
+          serverId: "server-feature-123456",
+        },
+      },
+      {
+        type: "save",
+        input: {
+          name: "New name",
+          muximodBaseUrl: "http://127.0.0.1:4318",
+          serverId: "server-feature-123456",
+        },
+      },
+      { type: "read" },
+    ],
+    assert: [hasProfileNames(["New name"]), hasProfileIds(["server-feature-123456"])],
+  },
+  {
+    name: "selects the profile requested by the URL identity",
+    steps: [
+      {
+        type: "save",
+        input: {
+          name: "Feature branch",
+          muximodBaseUrl: "http://127.0.0.1:4318",
+          serverId: "server-feature-123456",
+        },
+      },
+      {
+        type: "save",
+        input: {
+          name: "Staging",
+          muximodBaseUrl: "https://staging.example.ts.net",
+          serverId: "server-staging-123456",
+        },
+      },
+      { type: "read", profileId: "server-staging-123456" },
+    ],
+    assert: [hasProfileNames(["Staging"]), hasProfileIds(["server-staging-123456"])],
+  },
+  {
+    name: "uses the endpoint host and port when the pairing name is blank",
+    steps: [
+      {
+        type: "save",
+        input: {
+          name: "  ",
+          muximodBaseUrl: "http://127.0.0.1:4318",
+          serverId: "server-feature-123456",
+        },
+      },
+      { type: "read" },
+    ],
+    assert: [hasProfileNames(["127.0.0.1:4318"])],
+  },
+  {
+    name: "renames one profile locally",
+    steps: [
+      {
+        type: "save",
+        input: {
+          name: "Feature branch",
+          muximodBaseUrl: "http://127.0.0.1:4318",
+          serverId: "server-feature-123456",
+        },
+      },
+      { type: "rename", profileId: "server-feature-123456", name: "Review branch" },
+      { type: "read" },
+    ],
+    assert: [hasProfileNames(["Review branch"])],
+  },
+  {
+    name: "removes only the selected profile",
+    steps: [
+      {
+        type: "save",
+        input: {
+          name: "Feature branch",
+          muximodBaseUrl: "http://127.0.0.1:4318",
+          serverId: "server-feature-123456",
+        },
+      },
+      {
+        type: "save",
+        input: {
+          name: "Staging",
+          muximodBaseUrl: "https://staging.example.ts.net",
+          serverId: "server-staging-123456",
+        },
+      },
+      { type: "remove", profileId: "server-feature-123456" },
+      { type: "read" },
+    ],
+    assert: [hasProfileNames(["Staging"]), hasProfileIds(["server-staging-123456"])],
+  },
+  {
+    name: "migrates a valid single-profile v1 record",
+    steps: [
+      {
+        type: "set-raw",
+        key: "v1",
+        value: JSON.stringify({
+          id: "default",
+          name: "Workstation",
+          muximodBaseUrl: "https://workstation.tailnet.ts.net",
+          serverId: "server-workstation-123456",
+          updatedAt: "2026-08-15T00:00:00.000Z",
+        }),
+      },
+      { type: "read" },
+    ],
+    assert: [hasProfileNames(["Workstation"]), hasProfileIds(["server-workstation-123456"])],
   },
   {
     name: "resets malformed stored data",
-    steps: [{ type: "set-raw", value: "not-json" }, { type: "read" }],
-    assert: [returns<ProfileContext, ProfileResult>(null), hasRawProfile(null)],
+    steps: [{ type: "set-raw", key: "v2", value: "not-json" }, { type: "read" }],
+    assert: [hasProfileNames([]), hasRawProfile(null)],
   },
   {
     name: "resets a profile with an unsupported endpoint field",
     steps: [
       {
         type: "set-raw",
-        value: JSON.stringify({
-          id: "default",
-          name: "Workstation",
-          muximodBaseUrl: "https://workstation.tailnet.ts.net",
-          serveUrl: "https://workstation.tailnet.ts.net/",
-          updatedAt: "2026-08-15T00:00:00.000Z",
-        }),
+        key: "v2",
+        value: JSON.stringify([
+          {
+            id: "server-workstation-123456",
+            name: "Workstation",
+            muximodBaseUrl: "https://workstation.tailnet.ts.net",
+            serverId: "server-workstation-123456",
+            updatedAt: "2026-08-15T00:00:00.000Z",
+            serveUrl: "https://workstation.tailnet.ts.net/",
+          },
+        ]),
       },
       { type: "read" },
     ],
-    assert: [returns<ProfileContext, ProfileResult>(null), hasRawProfile(null)],
+    assert: [hasProfileNames([]), hasRawProfile(null)],
   },
   {
-    name: "clears a saved profile",
+    name: "rejects an empty rename",
     steps: [
-      { type: "save", input: { name: "Workstation", muximodBaseUrl: "https://workstation.tailnet.ts.net" } },
-      { type: "clear" },
-      { type: "read" },
+      {
+        type: "save",
+        input: {
+          name: "Feature branch",
+          muximodBaseUrl: "http://127.0.0.1:4318",
+          serverId: "server-feature-123456",
+        },
+      },
+      { type: "rename", profileId: "server-feature-123456", name: " " },
     ],
-    assert: [returns<ProfileContext, ProfileResult>(null)],
+    assert: [
+      hasError<ProfileContext, ProfileResult>({
+        message: "connection profile name must be 1 to 120 characters without line breaks",
+      }),
+    ],
   },
 ] satisfies readonly ScenarioCase<"default", ProfileStep, ProfileResult, ProfileContext>[];
 
@@ -213,20 +383,62 @@ const profileTable: ScenarioTable<ProfileFixture, "default", ProfileStep, Profil
   execute: (fixture, steps) => {
     let result: ProfileResult = null;
     for (const step of steps) {
-      if (step.type === "save") result = saveBrowserConnectionProfile(step.input, fixture.storage);
-      if (step.type === "set-raw") fixture.storage.setItem("muximo.connection-profile.v1", step.value);
-      if (step.type === "clear") clearBrowserConnectionProfile(fixture.storage);
-      if (step.type === "read") result = readBrowserConnectionProfile(fixture.storage);
+      if (step.type === "save") {
+        result = saveBrowserConnectionProfile(step.input, fixture.storage);
+      }
+      if (step.type === "rename") {
+        result = renameBrowserConnectionProfile(step.profileId, step.name, fixture.storage);
+      }
+      if (step.type === "remove") {
+        removeBrowserConnectionProfile(step.profileId, fixture.storage);
+        result = readBrowserConnectionProfiles(fixture.storage);
+      }
+      if (step.type === "set-raw") {
+        fixture.storage.setItem(
+          step.key === "v1" ? "muximo.connection-profile.v1" : "muximo.connection-profiles.v2",
+          step.value,
+        );
+      }
+      if (step.type === "read") {
+        result = step.profileId
+          ? selectBrowserConnectionProfile(step.profileId, fixture.storage)
+          : readBrowserConnectionProfiles(fixture.storage);
+      }
     }
     return result;
   },
-  observe: (fixture) => ({ raw: fixture.storage.getItem("muximo.connection-profile.v1") }),
+  observe: (fixture) => ({
+    raw: fixture.storage.getItem("muximo.connection-profiles.v2"),
+    legacyRaw: fixture.storage.getItem("muximo.connection-profile.v1"),
+  }),
 };
 
-describe("browser connection profile", () => {
+type DefaultNameInput = { muximodBaseUrl: string };
+const defaultNameCases = [
+  {
+    name: "uses a hostname without a port",
+    input: { muximodBaseUrl: "https://workstation.tailnet.ts.net" },
+    assert: [returns<EmptyContext, string>("workstation.tailnet.ts.net")],
+  },
+  {
+    name: "includes a development port",
+    input: { muximodBaseUrl: "http://127.0.0.1:4318" },
+    assert: [returns<EmptyContext, string>("127.0.0.1:4318")],
+  },
+] satisfies readonly OperationCase<"default", DefaultNameInput, string, EmptyContext>[];
+
+const defaultNameTable: OperationTable<undefined, "default", DefaultNameInput, string, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: defaultNameCases,
+  execute: (_fixture, input) => defaultConnectionProfileName(input.muximodBaseUrl),
+  observe: () => ({}),
+};
+
+describe("browser connection profiles", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, normalizeTable);
   runOperationTable(register, connectionTable);
   runOperationTable(register, sharedConnectionTable);
+  runOperationTable(register, defaultNameTable);
   runScenarioTable(register, profileTable);
 });

@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useSearch } from "@tanstack/react-router";
+import { useMemo } from "react";
 import {
   type BrowserConnectionProfile,
   connectionForProfile,
-  readBrowserConnectionProfile,
+  selectBrowserConnectionProfile,
 } from "./connection-profile-store";
 import type { MuximodConnection } from "./muximod-client";
 import { muximodConnectionKey, unconfiguredMuximodConnection } from "./muximod-client";
@@ -18,8 +19,10 @@ export type MuximodConnectionState = {
 };
 
 export function useMuximodConnection(): MuximodConnectionState {
-  const [profile] = useState<BrowserConnectionProfile | null>(() => readBrowserConnectionProfile());
-  const [connection] = useState<MuximodConnection | undefined>(() => connectionForProfile(profile));
+  const search = useSearch({ strict: false });
+  const profileId = typeof search.connection === "string" ? search.connection : undefined;
+  const profile = useMemo(() => selectBrowserConnectionProfile(profileId), [profileId]);
+  const connection = useMemo(() => connectionForProfile(profile), [profile]);
   const utils = useMemo(() => muximodQueryUtils(connection ?? unconfiguredMuximodConnection), [connection]);
 
   return {

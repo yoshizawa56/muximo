@@ -6,6 +6,7 @@ import { useMuximodEvents } from "../../app/api/muximod-events";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 
 export type TerminalsViewModel = {
+  connectionName: string | null;
   terminals: TerminalEndpoint[];
   status?: "loading" | "ready" | "error";
   errorMessage?: string | null;
@@ -16,7 +17,7 @@ export type TerminalsViewModel = {
 
 export function useTerminalsViewModel(): TerminalsViewModel {
   const navigate = useNavigate();
-  const { connection, utils } = useMuximodConnection();
+  const { connection, profile, utils } = useMuximodConnection();
   useMuximodEvents(connection);
   const terminalsQuery = useQuery(
     utils.terminals.list.queryOptions({
@@ -28,6 +29,7 @@ export function useTerminalsViewModel(): TerminalsViewModel {
   const terminals = terminalsQuery.data?.terminals ?? [];
 
   return {
+    connectionName: profile?.name ?? null,
     terminals,
     status: connection ? queryStatus(terminalsQuery.status) : undefined,
     errorMessage: connection ? errorMessage(terminalsQuery.error) : null,
