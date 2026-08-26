@@ -25,13 +25,12 @@ export function readBrowserConnectionProfile(
   if (!storage) return null;
   const raw = storage.getItem(storageKey);
   if (!raw) return null;
-  let value: unknown;
   try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    throw new BrowserConnectionProfileError("stored connection profile is not valid JSON", error);
+    return parseProfile(JSON.parse(raw));
+  } catch {
+    storage.removeItem(storageKey);
+    return null;
   }
-  return parseProfile(value);
 }
 
 export function saveBrowserConnectionProfile(

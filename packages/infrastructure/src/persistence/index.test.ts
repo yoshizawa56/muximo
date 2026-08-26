@@ -94,16 +94,19 @@ type DatabaseFixture = {
   pruneCount?: number;
   prePruneOld?: PaneRecord;
   prePruneCurrent?: PaneRecord;
+  legacyPaneAfterMigration?: PaneRecord;
+  currentPaneAfterMigration?: PaneRecord;
   claimResults: boolean[];
   backendResults: boolean[];
   malformedWorkspaceError?: string;
 };
-type DatabaseKey = "default" | "pending" | "restart" | "auth-migration";
+type DatabaseKey = "default" | "pending" | "restart" | "legacy-pane-migration" | "auth-migration";
 type DatabaseStep =
   | { type: "write-round-trip" }
   | { type: "verify-timestamp-preservation" }
   | { type: "verify-pending" }
   | { type: "verify-restart" }
+  | { type: "verify-legacy-pane-migration" }
   | { type: "verify-generations" }
   | { type: "verify-upsert-identity" }
   | { type: "verify-agent-association" }
@@ -124,6 +127,8 @@ type DatabaseContext = {
   currentIdentity: PaneRecord | undefined;
   oldAfterPrune: PaneRecord | undefined;
   currentAfterPrune: PaneRecord | undefined;
+  legacyPaneAfterMigration: PaneRecord | undefined;
+  currentPaneAfterMigration: PaneRecord | undefined;
   identityPane: PaneRecord | undefined;
   adoptedPane: PaneRecord | undefined;
   pruneCount: number | undefined;
@@ -163,6 +168,40 @@ const restartFixture = async (registerCleanup?: CleanupRegistrar): Promise<Fixtu
     await new DrizzlePaneRepository(beforeRestart.db).upsert(pane);
   } finally {
     beforeRestart.close();
+  }
+
+  const database = createAgentDatabase(file);
+  return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
+};
+
+const legacyPaneMigrationFixture = async (
+  registerCleanup?: CleanupRegistrar,
+): Promise<FixtureHandle<DatabaseFixture>> => {
+  const root = mkdtempSync(join(tmpdir(), "muximo-persistence-legacy-pane-"));
+  registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
+  const migrationsFolder = join(root, "drizzle");
+  cpSync(defaultAgentMigrationsFolder(), migrationsFolder, { recursive: true });
+  const journalPath = join(migrationsFolder, "meta", "_journal.json");
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
+    entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+  };
+  journal.entries = journal.entries.filter((entry) => entry.tag !== "0006_remove_tmux_server_default");
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+  rmSync(join(migrationsFolder, "0006_remove_tmux_server_default.sql"));
+  rmSync(join(migrationsFolder, "meta", "0006_snapshot.json"));
+
+  const file = join(root, "muximod.sqlite");
+  const beforeMigration = createAgentDatabase(file, { migrationsFolder });
+  try {
+    const panes = new DrizzlePaneRepository(beforeMigration.db);
+    await panes.upsert({ ...pane, id: PaneId.create("pane-legacy-migrated"), hostServerId: "legacy" });
+    await panes.upsert({
+      ...pane,
+      id: PaneId.create("pane-current-migrated"),
+      hostServerId: "scope-current:server-current",
+    });
+  } finally {
+    beforeMigration.close();
   }
 
   const database = createAgentDatabase(file);
@@ -305,6 +344,15 @@ const cases = [
     ],
   },
   {
+    name: "discards panes without a current tmux server identity during migration",
+    fixture: "legacy-pane-migration",
+    steps: [{ type: "verify-legacy-pane-migration" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("legacyPaneAfterMigration", undefined),
+      matchesObserved<DatabaseResult>("currentPaneAfterMigration", { id: "pane-current-migrated" }),
+    ],
+  },
+  {
     name: "keeps host server generations distinct and prunes only stale rows",
     steps: [{ type: "verify-generations" }],
     assert: [
@@ -403,6 +451,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
     default: normalFixture,
     pending: pendingMigrationFixture,
     restart: restartFixture,
+    "legacy-pane-migration": legacyPaneMigrationFixture,
     "auth-migration": authMigrationFixture,
   },
   cases,
@@ -461,6 +510,8 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
         case "verify-pending":
           break;
         case "verify-restart":
+          break;
+        case "verify-legacy-pane-migration":
           break;
         case "verify-generations": {
           const panes = new DrizzlePaneRepository(databases.db);
@@ -587,6 +638,8 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       currentIdentity: fixture.prePruneCurrent,
       oldAfterPrune: await panes.findById(PaneId.create("pane-old")),
       currentAfterPrune: await panes.findById(PaneId.create("pane-current")),
+      legacyPaneAfterMigration: await panes.findById(PaneId.create("pane-legacy-migrated")),
+      currentPaneAfterMigration: await panes.findById(PaneId.create("pane-current-migrated")),
       identityPane: await panes.findByHostPaneIdentity("server-1", pane.hostPaneId),
       adoptedPane: await panes.findById(PaneId.create("pane-adopted")),
       pruneCount: fixture.pruneCount,

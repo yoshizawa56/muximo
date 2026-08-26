@@ -266,7 +266,7 @@ export class OpenCodeServerManager {
       contents = readFileSync(this.options.registryFile, "utf8");
     } catch (error) {
       if (isFileNotFoundError(error)) return {};
-      throw new Error(`OpenCode server registry could not be read: ${this.options.registryFile}`);
+      throw new Error(`OpenCode server registry could not be read: ${this.options.registryFile}`, { cause: error });
     }
 
     let parsed: unknown;

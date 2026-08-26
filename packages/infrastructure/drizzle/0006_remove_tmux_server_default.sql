@@ -56,7 +56,9 @@ SELECT
 	`last_seen_at`,
 	`created_at`,
 	`updated_at`
-FROM `panes`;
+FROM `panes`
+-- The pre-identity sentinel cannot identify a live tmux server and is not recoverable.
+WHERE `tmux_server_id` <> 'legacy';
 --> statement-breakpoint
 DROP TABLE `panes`;
 --> statement-breakpoint

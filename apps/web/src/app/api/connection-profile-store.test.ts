@@ -1,7 +1,6 @@
 import {
   type Assertion,
   type FixtureHandle,
-  hasError,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -122,6 +121,13 @@ const hasNoCredentialFields = (): Assertion<ProfileContext, ProfileResult> => ({
   },
 });
 
+const hasRawProfile = (expected: string | null): Assertion<ProfileContext, ProfileResult> => ({
+  name: `stores raw profile ${expected ?? "as empty"}`,
+  check: (ctx) => {
+    expect(ctx.raw).toBe(expected);
+  },
+});
+
 const profileCases = [
   {
     name: "round-trips a profile without credentials",
@@ -132,12 +138,12 @@ const profileCases = [
     assert: [hasProfileName("Workstation"), hasNoCredentialFields()],
   },
   {
-    name: "rejects malformed stored data",
+    name: "resets malformed stored data",
     steps: [{ type: "set-raw", value: "not-json" }, { type: "read" }],
-    assert: [hasError<ProfileContext, ProfileResult>({ message: "stored connection profile is not valid JSON" })],
+    assert: [returns<ProfileContext, ProfileResult>(null), hasRawProfile(null)],
   },
   {
-    name: "rejects a profile with an unsupported endpoint field",
+    name: "resets a profile with an unsupported endpoint field",
     steps: [
       {
         type: "set-raw",
@@ -151,7 +157,7 @@ const profileCases = [
       },
       { type: "read" },
     ],
-    assert: [hasError<ProfileContext, ProfileResult>({ message: "stored connection profile contains unknown fields" })],
+    assert: [returns<ProfileContext, ProfileResult>(null), hasRawProfile(null)],
   },
   {
     name: "clears a saved profile",
