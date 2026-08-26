@@ -263,9 +263,9 @@ export class TmuxAdapter {
   }
 
   private readSessionOptions(target: string): TmuxSessionOption[] {
-    // Keep enumeration separate from value reads because older tmux versions
-    // support -A and -v but do not support show-options -F.
-    const output = this.require(["show-options", "-A", "-t", target]);
+    // Only explicitly configured options need copying. The new session
+    // inherits the same global options as the source session.
+    const output = this.require(["show-options", "-t", target]);
     const options: TmuxSessionOption[] = [];
     for (const line of output
       .split("\n")

@@ -214,7 +214,7 @@ const groupedSessionConfigurationCases = [
     assert: [
       returns<EmptyContext, GroupedSessionConfiguration>({
         reads: [
-          ["show-options", "-A", "-t", "=work:"],
+          ["show-options", "-t", "=work:"],
           ["show-options", "-v", "-t", "=work:", "default-command"],
           ["show-options", "-v", "-t", "=work:", "destroy-unattached"],
           ["show-options", "-v", "-t", "=work:", "status"],
