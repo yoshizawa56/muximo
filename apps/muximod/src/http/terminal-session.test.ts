@@ -44,6 +44,7 @@ type SessionContext = {
   firstErrors: readonly string[];
   binaryFrames: readonly string[];
   writes: readonly string[];
+  attachTargets: readonly string[];
   pasteCalls: number;
   pasteTargets: readonly string[];
   events: readonly string[];
@@ -94,6 +95,7 @@ const cases = [
       hasObserved<SessionContext, undefined>("secondResumed", true),
       hasObserved<SessionContext, undefined>("binaryFrames", ["resumed output"]),
       hasObserved<SessionContext, undefined>("writes", ["ls"]),
+      hasObserved<SessionContext, undefined>("attachTargets", ["=muximo-mobile:@0.%0"]),
     ],
   },
   {
@@ -296,6 +298,7 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
         .map((message) => message.code) ?? [],
     binaryFrames: fixture.sockets.second?.binaryFrames() ?? [],
     writes: [...fixture.pty.writes],
+    attachTargets: fixture.manager.buildAttachProcess.mock.calls.map(([target]) => target),
     pasteCalls: fixture.paster.mock.calls.length,
     pasteTargets: fixture.paster.mock.calls.map((call) => call[0].paneId),
     leaseClaimCalls: fixture.lease.claimMobile.mock.calls.length,
@@ -323,6 +326,7 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
   const prepared = {
     target: "%0",
     pane: { paneId: "%0", windowId: "@0", sessionName: "muximod" },
+    attachTarget: "=muximo-mobile:@0.%0",
     snapshot: {} as never,
     attach: vi.fn(async () => lease),
     release: vi.fn(async () => undefined),

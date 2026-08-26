@@ -37,6 +37,9 @@ type IntegrationFixture = {
   afterSplitVisible: boolean;
   afterSplitCwd: string;
   expectedCwd: string;
+  desktopStatus: string;
+  desktopStatusAfterRelease: string;
+  mobileStatus: string;
   output: string;
 };
 type IntegrationContext = Omit<IntegrationFixture, "tmux" | "pty" | "manager" | "selectedPaneId" | "output">;
@@ -63,6 +66,9 @@ const integrationFixture = (): FixtureHandle<IntegrationFixture> => {
     afterSplitVisible: false,
     afterSplitCwd: "",
     expectedCwd: "",
+    desktopStatus: "",
+    desktopStatusAfterRelease: "",
+    mobileStatus: "",
     output: "",
   };
   fixture.expectedCwd = realpathSync(tmux.directory);
@@ -93,6 +99,9 @@ const cases = [
       hasObserved<IntegrationContext, undefined>("afterSplitSelected", true),
       hasObserved<IntegrationContext, undefined>("afterSplitVisible", true),
       splitInheritsCwd,
+      hasObserved<IntegrationContext, undefined>("desktopStatus", "on"),
+      hasObserved<IntegrationContext, undefined>("desktopStatusAfterRelease", "on"),
+      hasObserved<IntegrationContext, undefined>("mobileStatus", "off"),
     ],
   },
 ] satisfies readonly ScenarioCase<"default", IntegrationStep, undefined, IntegrationContext>[];
@@ -110,7 +119,7 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
       fixture.stagedZoomed = staged.zoomed;
       fixture.stagedSelected = staged.activePaneId === fixture.selectedPaneId;
       fixture.stagedVisible = !staged.visibleLayout.includes("{");
-      fixture.pty = await spawnPty("tmux", fixture.tmux.adapter.attachArgs(prepared.pane.paneId), {
+      fixture.pty = await spawnPty("tmux", fixture.tmux.adapter.attachArgs(prepared.attachTarget), {
         name: "xterm-256color",
         cols: 80,
         rows: 24,
@@ -130,6 +139,8 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
       fixture.finalVisible = !final.visibleLayout.includes("{");
       fixture.clientSelected = client?.paneId === fixture.selectedPaneId;
       fixture.outputHasErase = fixture.output.includes("\u001b[K");
+      fixture.desktopStatus = fixture.tmux.readSessionStatus(prepared.pane.sessionName);
+      fixture.mobileStatus = fixture.tmux.readSessionStatus(prepared.attachTarget);
       fixture.tmux.adapter.splitWindow(undefined, "right", fixture.selectedPaneId, true);
       await fixture.manager.reassertMobileViewport(fixture.selectedPaneId);
       await delay(100);
@@ -141,6 +152,7 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
       fixture.afterSplitSelected = afterSplit.activePaneId === fixture.selectedPaneId;
       fixture.afterSplitVisible = !afterSplit.visibleLayout.includes("{");
       await lease.release();
+      fixture.desktopStatusAfterRelease = fixture.tmux.readSessionStatus(prepared.pane.sessionName);
     }
   },
   observe: (fixture) => ({
@@ -157,6 +169,9 @@ const table: ScenarioTable<IntegrationFixture, "default", IntegrationStep, undef
     afterSplitSelected: fixture.afterSplitSelected,
     afterSplitVisible: fixture.afterSplitVisible,
     afterSplitCwd: fixture.afterSplitCwd,
+    desktopStatus: fixture.desktopStatus,
+    desktopStatusAfterRelease: fixture.desktopStatusAfterRelease,
+    mobileStatus: fixture.mobileStatus,
   }),
 };
 
@@ -187,6 +202,9 @@ class RealTmuxFixture {
       /* tmux may already be gone */
     }
     rmSync(this.directory, { recursive: true, force: true });
+  }
+  public readSessionStatus(target: string): string {
+    return this.adapter.require(["display-message", "-p", "-t", target, "#{status}"]).trim();
   }
   private require(args: string[]): void {
     this.adapter.require(args);

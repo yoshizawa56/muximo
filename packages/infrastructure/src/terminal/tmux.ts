@@ -189,6 +189,10 @@ export class TmuxAdapter {
     }
   }
 
+  public createGroupedSession(groupSession: string, sessionName: string): void {
+    this.require(["new-session", "-d", "-s", sessionName, "-t", `=${groupSession}`]);
+  }
+
   public attachSession(target: string): number {
     const result = spawnSync("tmux", [...this.commandPrefix, "attach-session", "-t", target], {
       stdio: "inherit",

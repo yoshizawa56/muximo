@@ -163,6 +163,24 @@ const sessionOptionTable: OperationTable<RecordingFixture, "default", {}, string
   observe: () => ({}),
 };
 
+type GroupedSessionInput = { groupSession: string; sessionName: string };
+const groupedSessionCases = [
+  {
+    name: "creates a detached session grouped with the exact source session",
+    input: { groupSession: "work", sessionName: "muximo-mobile-1" },
+    assert: [returns<EmptyContext, string[]>(["new-session", "-d", "-s", "muximo-mobile-1", "-t", "=work"])],
+  },
+] satisfies readonly OperationCase<"default", GroupedSessionInput, string[], EmptyContext>[];
+const groupedSessionTable: OperationTable<RecordingFixture, "default", GroupedSessionInput, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: groupedSessionCases,
+  execute: (fixture, input) => {
+    fixture.adapter.createGroupedSession(input.groupSession, input.sessionName);
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
+
 const sessionEnvironmentCases = [
   {
     name: "uses the session environment for managed wrappers",
@@ -218,10 +236,11 @@ const resolveTable: OperationTable<undefined, "default", ResolveInput, string, E
 };
 
 type RedrawInput = {};
+type AttachInput = { target: string };
 const attachCases = [
   {
     name: "attaches to the resolved pane target",
-    input: {},
+    input: { target: "%1" },
     assert: [
       returns<EmptyContext, string[]>([
         "-S",
@@ -234,11 +253,26 @@ const attachCases = [
       ]),
     ],
   },
-] satisfies readonly OperationCase<"default", RedrawInput, string[], EmptyContext>[];
-const attachTable: OperationTable<RecordingFixture, "default", RedrawInput, string[], EmptyContext> = {
+  {
+    name: "attaches to a pane through the isolated mobile session",
+    input: { target: "=muximo-mobile-1:@0.%1" },
+    assert: [
+      returns<EmptyContext, string[]>([
+        "-S",
+        "/private/tmp/muximo-test.sock",
+        "attach-session",
+        "-f",
+        "active-pane",
+        "-t",
+        "=muximo-mobile-1:@0.%1",
+      ]),
+    ],
+  },
+] satisfies readonly OperationCase<"default", AttachInput, string[], EmptyContext>[];
+const attachTable: OperationTable<RecordingFixture, "default", AttachInput, string[], EmptyContext> = {
   defaultFixture: recordingFixture,
   cases: attachCases,
-  execute: (fixture) => fixture.adapter.attachArgs("%1"),
+  execute: (fixture, input) => fixture.adapter.attachArgs(input.target),
   observe: () => ({}),
 };
 
@@ -474,6 +508,7 @@ describe("tmux adapter", () => {
   runOperationTable(register, switchTable);
   runOperationTable(register, createSessionTable);
   runOperationTable(register, sessionOptionTable);
+  runOperationTable(register, groupedSessionTable);
   runOperationTable(register, sessionEnvironmentTable);
   runOperationTable(register, resolveTable);
   runOperationTable(register, attachTable);
