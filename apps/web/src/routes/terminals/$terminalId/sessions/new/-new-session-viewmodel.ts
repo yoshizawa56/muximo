@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useState } from "react";
 import { invalidateSessionData } from "../../../../../app/api/invalidation";
+import { muximodErrorMessage } from "../../../../../app/api/muximod-error.js";
 import { useMuximodConnection } from "../../../../../app/api/use-muximod-connection";
 import { fallbackTerminal, useTerminalResources } from "../../../-terminal-resources";
 import {
@@ -70,7 +71,7 @@ export function useNewSessionViewModel(): NewSessionViewModel {
             params: { terminalId, sessionName: session.name },
           });
         })
-        .catch((error: unknown) => setErrorMessage(error instanceof Error ? error.message : String(error)))
+        .catch((error: unknown) => setErrorMessage(muximodErrorMessage(error)))
         .finally(() => setIsCreating(false));
     },
   };

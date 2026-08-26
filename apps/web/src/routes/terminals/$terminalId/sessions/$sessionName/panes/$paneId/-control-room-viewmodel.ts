@@ -26,7 +26,6 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
       input: scopedSessionName ? { session: scopedSessionName } : {},
       enabled: Boolean(connection) && Boolean(sessionName),
       staleTime: 1_000,
-      retry: 1,
     }),
   );
   const panes = panesQuery.data?.panes ?? [];

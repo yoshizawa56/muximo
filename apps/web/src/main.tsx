@@ -4,10 +4,21 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@xterm/xterm/css/xterm.css";
 import { AppErrorBoundary } from "./app/app-error-boundary";
+import { muximodRetryDelay, shouldRetryMuximodQuery } from "./app/api/muximod-retry-policy.js";
 import "./styles.css";
 import { router } from "./router";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: shouldRetryMuximodQuery,
+      retryDelay: muximodRetryDelay,
+    },
+    mutations: {
+      retry: false,
+    },
+  },
+});
 const bootSplashStartedAt = performance.now();
 
 function hideBootSplash(): void {
@@ -17,7 +28,6 @@ function hideBootSplash(): void {
   bootSplash.classList.add("is-hidden");
   window.setTimeout(() => bootSplash.remove(), 220);
 }
-
 const rootElement = document.getElementById("root");
 if (!rootElement) {
   hideBootSplash();

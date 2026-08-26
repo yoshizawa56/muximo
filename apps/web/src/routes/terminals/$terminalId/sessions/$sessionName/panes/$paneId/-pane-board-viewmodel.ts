@@ -1,6 +1,7 @@
 import type { PaneSummary as ProtocolPaneSummary } from "@muximo/contract";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
+import { muximodErrorMessage } from "../../../../../../../app/api/muximod-error.js";
 import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
 import type { MuximodQueryUtils } from "../../../../../../../app/api/orpc-utils";
 import { isMockMode } from "../../../../../../../mock/mock-data";
@@ -68,7 +69,7 @@ export function usePaneBoardViewModel({
     selectedTarget,
     panes: query.data?.panes ?? [],
     status: query.isPending ? "loading" : query.isError ? "error" : "ready",
-    errorMessage: query.error instanceof Error ? query.error.message : query.isError ? "Unable to load panes" : null,
+    errorMessage: query.isError ? muximodErrorMessage(query.error, "Unable to load panes") : null,
     open,
     close,
     toggle,

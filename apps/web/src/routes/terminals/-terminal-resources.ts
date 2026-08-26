@@ -1,5 +1,6 @@
 import type { TerminalEndpoint, TmuxSession } from "@muximo/contract";
 import { useQuery } from "@tanstack/react-query";
+import { muximodErrorMessage } from "../../app/api/muximod-error.js";
 import { useMuximodEvents } from "../../app/api/muximod-events";
 import type { MuximodQueryUtils } from "../../app/api/orpc-utils";
 import { useMuximodConnection } from "../../app/api/use-muximod-connection";
@@ -36,7 +37,6 @@ export function useTerminalResources({
     utils.terminals.list.queryOptions({
       input: {},
       staleTime: 5_000,
-      retry: 1,
       enabled: Boolean(connection),
     }),
   );
@@ -48,7 +48,6 @@ export function useTerminalResources({
       input: {},
       staleTime: 1_000,
       refetchInterval: pollSessions ? 5_000 : false,
-      retry: 1,
       enabled: Boolean(connection) && Boolean(terminalId),
     }),
   );
@@ -94,5 +93,5 @@ export function queryStatus(status: "pending" | "error" | "success"): "loading" 
 }
 
 export function errorMessage(error: unknown): string | null {
-  return error instanceof Error ? error.message : error ? String(error) : null;
+  return error ? muximodErrorMessage(error) : null;
 }
