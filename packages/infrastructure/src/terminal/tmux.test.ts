@@ -179,7 +179,7 @@ const groupedSessionCases = [
         ";",
         "set-option",
         "-t",
-        "=muximo-mobile-1",
+        "=muximo-mobile-1:",
         "destroy-unattached",
         "off",
       ]),

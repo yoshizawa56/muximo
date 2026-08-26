@@ -204,7 +204,7 @@ export class TmuxAdapter {
       ";",
       "set-option",
       "-t",
-      `=${sessionName}`,
+      `=${sessionName}:`,
       "destroy-unattached",
       "off",
     ]);

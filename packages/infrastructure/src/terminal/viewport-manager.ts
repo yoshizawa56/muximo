@@ -133,7 +133,7 @@ export class TmuxViewportManager {
     try {
       // `status` is a session option. The grouped session shares the source
       // session's windows but keeps this option private to the mobile client.
-      this.adapter.setSessionOption(`=${mobileSessionName}`, "status", "off");
+      this.adapter.setSessionOption(`=${mobileSessionName}:`, "status", "off");
       this.primeMobileViewport(record, cols, rows);
     } catch (error) {
       this.releaseRecord(record);
@@ -292,7 +292,7 @@ export class TmuxViewportManager {
     // cleans up after a crashed muximod process; normal release still kills it
     // explicitly.
     try {
-      this.adapter.setSessionOption(`=${record.mobileSessionName}`, "destroy-unattached", "on");
+      this.adapter.setSessionOption(`=${record.mobileSessionName}:`, "destroy-unattached", "on");
     } catch {
       // Explicit release remains the primary cleanup path if tmux rejects it.
     }
