@@ -114,11 +114,11 @@ const cases = [
       hasObserved<IntegrationContext, undefined>("desktopStatus", "on"),
       hasObserved<IntegrationContext, undefined>("desktopStatusAfterRelease", "on"),
       hasObserved<IntegrationContext, undefined>("mobileStatus", "off"),
-      hasObserved<IntegrationContext, undefined>("mobileDefaultCommand", "source-default-command"),
+      hasObserved<IntegrationContext, undefined>("mobileDefaultCommand", "exec /bin/sh"),
       hasObserved<IntegrationContext, undefined>("mobileManagedSessionId", "managed-issue11"),
       hasObserved<IntegrationContext, undefined>("mobileManagedMarker", "1"),
       hasObserved<IntegrationContext, undefined>("mobileSessionVisible", false),
-      hasObserved<IntegrationContext, undefined>("sourceDefaultCommandAfterRelease", "source-default-command"),
+      hasObserved<IntegrationContext, undefined>("sourceDefaultCommandAfterRelease", "exec /bin/sh"),
       hasObserved<IntegrationContext, undefined>("sourceManagedSessionIdAfterRelease", "managed-issue11"),
     ],
   },
@@ -227,7 +227,7 @@ class RealTmuxFixture {
   public splitPaneId?: string;
   public constructor() {
     this.require(["new-session", "-d", "-s", "issue11", "-x", "120", "-y", "40", "-c", this.directory]);
-    this.require(["set-option", "-t", "=issue11:", "default-command", "source-default-command"]);
+    this.require(["set-option", "-t", "=issue11:", "default-command", "exec /bin/sh"]);
     this.require(["set-environment", "-t", "=issue11", "MUXIMOD_MANAGED_SESSION_ID", "managed-issue11"]);
     this.require(["set-option", "-t", "=issue11:", "@muximod.managed", "1"]);
   }
