@@ -152,9 +152,11 @@ function resolveTailscaleHostname(environment) {
 function normalizeHostname(value) {
   if (!value) return undefined;
   try {
-    return new URL(value.includes("://") ? value : `https://${value}`).hostname.replace(/\.+$/, "");
-  } catch {
-    return value.trim().replace(/\.+$/, "") || undefined;
+    const hostname = new URL(value.includes("://") ? value : `https://${value}`).hostname.replace(/\.+$/, "");
+    if (!hostname) throw new Error("hostname is empty");
+    return hostname;
+  } catch (error) {
+    throw new DevRuntimeError(`invalid Tailscale hostname: ${value}`, { cause: error });
   }
 }
 

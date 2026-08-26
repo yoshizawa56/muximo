@@ -110,13 +110,8 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     controlSocket: options.controlSocket,
   });
   const databaseFile = paths.databaseFile;
-  const configuredDatabaseFile =
-    options.databaseFile ?? process.env.MUXIMOD_DB_FILE ?? process.env.MUXIMO_DATABASE_FILE;
-  const usePrivateInstanceDirectory =
-    Boolean(process.env.MUXIMOD_INSTANCE_DIR?.trim()) || !configuredDatabaseFile?.trim();
   const database = createAgentDatabase(databaseFile, {
-    instanceDirectory:
-      databaseFile === ":memory:" || !usePrivateInstanceDirectory ? undefined : paths.instanceDirectory,
+    instanceDirectory: databaseFile === ":memory:" ? undefined : paths.instanceDirectory,
   });
   const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
@@ -166,7 +161,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   const eventHub = new MuximodEventHub();
   const hookToken = randomBytes(24).toString("hex");
-  const defaultTarget = process.env.MUXIMOD_DEFAULT_TMUX_TARGET ?? "muximod";
   const authStore = new AuthStore(database.db, database.sqlite);
   const authChallenges = new MemoryAuthChallengeStore();
   const authRateLimits = new MemoryAuthRateLimitStore();
@@ -269,7 +263,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       });
       new TerminalSession(socket, {
         cwd: process.cwd(),
-        defaultTarget,
         viewportManager,
         spawnPty,
         sessions: terminalSessions,

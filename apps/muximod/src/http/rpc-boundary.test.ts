@@ -49,6 +49,7 @@ const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0
 const pane = Pane.create({
   id: PaneId.create("pane-1"),
   hostPaneId: "%1",
+  hostServerId: "server-http-test-00000000",
   sessionName: "integration",
   windowId: "@1",
   kind: "shell",
@@ -244,7 +245,7 @@ const httpTable: OperationTable<AppFixture, "default" | "not-ready", HttpInput, 
       input.operation === "health"
         ? new Request("http://muximod.local/health")
         : input.operation === "unknown"
-          ? new Request("http://muximod.local/legacy/sessions")
+          ? new Request("http://muximod.local/unknown/sessions")
           : input.operation === "hook"
             ? new Request("http://muximod.local/internal/tmux-hook", {
                 method: "POST",
@@ -275,7 +276,7 @@ const rpcCases = [
     input: { operation: "info" },
     assert: [
       {
-        name: "returns a protocol-compatible auth response",
+        name: "returns a typed auth response",
         check: (_context, result) => {
           if (!result.ok) throw result.error;
           const value = result.value as AuthInfo;
@@ -295,12 +296,12 @@ const rpcCases = [
     input: { operation: "list-panes" },
     assert: [
       {
-        name: "returns tmuxPaneId without leaking hostPaneId",
+        name: "returns hostPaneId as the stable wire field",
         check: (_context, result) => {
           if (!result.ok) throw result.error;
           const panes = result.value as Array<Record<string, unknown>>;
-          expect(panes).toEqual([expect.objectContaining({ tmuxPaneId: "%1" })]);
-          expect(panes[0]).not.toHaveProperty("hostPaneId");
+          expect(panes).toEqual([expect.objectContaining({ hostPaneId: "%1" })]);
+          expect(panes[0]).not.toHaveProperty("tmuxPaneId");
         },
       },
     ],

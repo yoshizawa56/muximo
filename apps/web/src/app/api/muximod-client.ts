@@ -50,8 +50,8 @@ export function muximodConnectionKey(connection: MuximodConnection | undefined):
   return connection ? `${connection.route ?? "custom"}:${connection.httpBaseUrl}` : "unconfigured";
 }
 
-export function createServeConnection(serveUrl: string): MuximodConnection {
-  return createUrlConnection(serveUrl, "serve");
+export function createServeConnection(muximodBaseUrl: string): MuximodConnection {
+  return createUrlConnection(muximodBaseUrl, "serve");
 }
 
 export function createSameOriginConnection(origin: string): MuximodConnection {

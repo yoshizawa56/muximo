@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">
+  <title>Muximo splash screen</title>
   <rect width="1000" height="1000" fill="#000000" />
   <g transform="matrix(2.789 0 0 2.789 360.55 360.55)">
     <rect x="8" y="8" width="84" height="84" rx="24" fill="#071108" />

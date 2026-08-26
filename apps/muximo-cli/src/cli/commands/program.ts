@@ -1,18 +1,18 @@
 import { Command } from "commander";
+import { registerOptions } from "../options/index.js";
+import { registerCompletionCommand } from "./completion.js";
 import { registerDaemonCommands } from "./daemon.js";
 import { registerDevCommand } from "./dev.js";
 import { registerDoctorCommand } from "./doctor.js";
-import { registerOptions } from "../options/index.js";
+import { globalOptionSpecs } from "./global.js";
 import { registerPairCommand } from "./pair.js";
 import { registerRunCommand } from "./run.js";
 import { registerServeCommand } from "./serve.js";
-import { registerSessionAliases, registerSessionCommands } from "./session/index.js";
+import { registerSessionCommands } from "./session/index.js";
 import { registerShellCommand } from "./shell.js";
 import { registerTmuxCommands } from "./tmux.js";
 import type { CliCommandContext, CliHandlers } from "./types.js";
 import { registerWorkspaceCommands } from "./workspace/index.js";
-import { globalOptionSpecs } from "./global.js";
-import { registerCompletionCommand } from "./completion.js";
 
 export function buildCliProgram(handlers: CliHandlers, context: CliCommandContext): Command {
   const program = new Command();
@@ -35,7 +35,6 @@ export function buildCliProgram(handlers: CliHandlers, context: CliCommandContex
   registerTmuxCommands(program, handlers, context);
   registerWorkspaceCommands(program, handlers, context);
   registerSessionCommands(program, handlers, context);
-  registerSessionAliases(program, handlers, context);
   registerDoctorCommand(program, handlers, context);
   registerDaemonCommands(program, handlers, context);
   registerPairCommand(program, handlers, context);

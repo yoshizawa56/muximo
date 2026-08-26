@@ -146,10 +146,6 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
     return this.resolveRegisteredWorkspace(workspace);
   }
 
-  public async resolveLegacyDirectory(directory: string): Promise<string> {
-    return this.policy.assertDirectory(directory);
-  }
-
   public async resolveSelection(
     selection: WorkspaceSelection,
     reader: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
@@ -196,7 +192,7 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
 }
 
 export function allowedRootsFromEnvironment(env: NodeJS.ProcessEnv = process.env, fallback = process.cwd()): string[] {
-  const configured = (env.MUXIMOD_WORKSPACE_ROOTS ?? env.MUXIMOD_ALLOWED_ROOTS)?.trim();
+  const configured = env.MUXIMOD_WORKSPACE_ROOTS?.trim();
   return configured
     ? configured
         .split(delimiter)

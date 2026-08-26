@@ -50,13 +50,6 @@ export function registerSessionResumeCommand(
   return command;
 }
 
-export function registerRootResumeCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
-  return registerSessionResumeCommand(parent, handlers, context, {
-    commandName: "resume",
-    commandPath: ["resume"],
-  });
-}
-
 export function registerNestedSessionResumeCommand(
   parent: Command,
   handlers: CliHandlers,

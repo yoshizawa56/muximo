@@ -1,14 +1,8 @@
-import {
-  type PairingCodePayload,
-  type PairingQrPayload,
-  pairingCodePayloadSchema,
-  pairingQrPayloadSchema,
-} from "./protocol.js";
+import { type PairingCodePayload, type PairingQrPayload, pairingCodePayloadSchema } from "./protocol.js";
 
 export { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 
 const pairingCodePrefix = "ma3:";
-const legacyPairingCodePrefix = "ma2:";
 const pairingCodeLengthBytes = 2;
 const maxPairingCodeFieldBytes = 0xffff;
 
@@ -30,10 +24,6 @@ export function decodeBase64Url(value: string): Uint8Array {
 
 export function encodeJsonBase64Url(value: unknown): string {
   return encodeBase64Url(new TextEncoder().encode(JSON.stringify(value)));
-}
-
-export function decodeJsonBase64Url(value: string): unknown {
-  return JSON.parse(new TextDecoder().decode(decodeBase64Url(value)));
 }
 
 export function encodePairingCode(payload: PairingQrPayload | PairingCodePayload): string {
@@ -63,14 +53,6 @@ export function encodePairingCode(payload: PairingQrPayload | PairingCodePayload
 
 export function decodePairingCode(value: string): PairingCodePayload {
   const trimmed = value.trim();
-  if (trimmed.startsWith(legacyPairingCodePrefix)) {
-    const legacy = pairingQrPayloadSchema.parse(decodeJsonBase64Url(trimmed.slice(legacyPairingCodePrefix.length)));
-    return pairingCodePayloadSchema.parse({
-      muximodBaseUrl: normalizePairingEndpoint(legacy.muximodBaseUrl),
-      pairingId: legacy.pairingId,
-      pairingSecret: legacy.pairingSecret,
-    });
-  }
   if (!trimmed.startsWith(pairingCodePrefix)) throw new Error("QR code is not a muximo pairing code");
   const bytes = decodeBase64Url(trimmed.slice(pairingCodePrefix.length));
   let offset = 0;

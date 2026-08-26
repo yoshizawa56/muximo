@@ -10,7 +10,7 @@ export const panes = sqliteTable(
   {
     id: text("id").primaryKey(),
     hostPaneId: text("tmux_pane_id").notNull(),
-    hostServerId: text("tmux_server_id").notNull().default("legacy"),
+    hostServerId: text("tmux_server_id").notNull(),
     agentSessionId: text("agent_session_id"),
     agentExecutionId: text("agent_execution_id"),
     sessionName: text("session_name").notNull(),

@@ -54,7 +54,7 @@ export function usePaneBoardViewModel({
   const toggle = useCallback(() => setIsOpen((current) => !current), []);
   const select = useCallback(
     (pane: PaneSummary) => {
-      onSelect(pane.tmuxPaneId);
+      onSelect(pane.hostPaneId);
       setIsOpen(false);
     },
     [onSelect],

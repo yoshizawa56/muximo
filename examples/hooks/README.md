@@ -62,13 +62,13 @@ MUXIMO_MIGRATION_COMMAND='bun run db:migrate' \
 muximo run codex --worktree review
 ```
 
-`MUXIMO_MIGRATION_COMMAND` is executed with `sh -c` as a trusted local setting. The worktree instance directory is provided through `MUXIMOD_INSTANCE_DIR`; the generated database path is also exposed through the legacy `MUXIMOD_DB_FILE` and `MUXIMO_SQLITE_FILE` variables for migration scripts.
+`MUXIMO_MIGRATION_COMMAND` is executed with `sh -c` as a trusted local setting. The worktree instance directory is provided through `MUXIMOD_INSTANCE_DIR`; muximod derives the database path from that directory.
 
 ## Configuration
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `MUXIMO_BASE_DB_FILE` | `MUXIMOD_DB_FILE` or `$MUXIMOD_INSTANCE_DIR/muximod.sqlite` (default `~/.local/state/muximo/muximod.sqlite`) | Source SQLite database |
+| `MUXIMO_BASE_DB_FILE` | `$MUXIMOD_INSTANCE_DIR/muximod.sqlite` (default `~/.local/state/muximo/muximod.sqlite`) | Source SQLite database |
 | `MUXIMO_INSTANCE_PATH` | `.local` | Instance directory inside the worktree |
 | `MUXIMO_DB_PATH` | `$MUXIMO_INSTANCE_PATH/muximod.sqlite` | Advanced database path override inside the worktree |
 | `MUXIMO_ENV_FILE` | `.env` | Environment file for ports and the database path |

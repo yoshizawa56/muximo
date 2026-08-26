@@ -38,9 +38,7 @@ export function registerSessionCleanupCommand(
   context: CliCommandContext,
   options: SessionCleanupCommandOptions,
 ): Command {
-  const command = parent
-    .command(`${options.commandName} <reference>`)
-    .description("Clean up a managed session");
+  const command = parent.command(`${options.commandName} <reference>`).description("Clean up a managed session");
   registerOptions(command, sessionCleanupOptionSpecs);
 
   command.action(async (reference, commandOptions) => {
@@ -56,17 +54,6 @@ export function registerSessionCleanupCommand(
     );
   });
   return command;
-}
-
-export function registerRootCleanupCommand(
-  parent: Command,
-  handlers: CliHandlers,
-  context: CliCommandContext,
-): Command {
-  return registerSessionCleanupCommand(parent, handlers, context, {
-    commandName: "cleanup",
-    commandPath: ["cleanup"],
-  });
 }
 
 export function registerNestedSessionCleanupCommand(

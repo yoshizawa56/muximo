@@ -1,5 +1,5 @@
 import type { PaneRecord } from "@muximo/domain";
-import type { MuximodClock } from "../../ports/application.js";
+import type { ApplicationClock } from "../../ports/application.js";
 import type { MuximodHostPort } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
 import type { AgentStatusStore } from "../sessions/agent-status.js";
@@ -10,7 +10,7 @@ export async function listCurrentPanes(
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   agentStatus: AgentStatusStore,
-  clock: MuximodClock,
+  clock: ApplicationClock,
   sessionName?: string,
 ): Promise<PaneRecord[]> {
   const panes = await reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock);

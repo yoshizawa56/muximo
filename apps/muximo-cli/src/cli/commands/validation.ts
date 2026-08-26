@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { resolveCliOptions, type CliOptionSpec } from "../options/index.js";
+import { type CliOptionSpec, resolveCliOptions } from "../options/index.js";
 import type { CliCommandContext } from "./types.js";
 
 export type CliSchema<TOutput> = z.ZodType<TOutput>;

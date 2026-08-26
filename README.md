@@ -2,7 +2,7 @@
 
 Muximo is a mobile control room for tmux-hosted agents and shells. It lets you inspect and operate work on a development host from an iPhone or browser while the real processes remain in tmux.
 
-> **Pre-alpha:** Muximo is still under active development. Configuration, APIs, and data formats may change.
+> **Alpha:** Muximo is still under active development. Configuration, APIs, and data formats may change without compatibility guarantees.
 
 [![CI](https://github.com/yoshizawa56/muximo/actions/workflows/ci.yml/badge.svg)](https://github.com/yoshizawa56/muximo/actions/workflows/ci.yml)
 
@@ -115,9 +115,9 @@ Start and manage agent sessions on the host:
 muximo run codex --worktree review
 muximo run claude --no-worktree -n quick-fix
 muximo run opencode --worktree experiment
-muximo resume review
-muximo list --json
-muximo cleanup review
+muximo session resume review
+muximo session list --json
+muximo session cleanup review
 ```
 
 Manage workspaces and tmux sessions:
@@ -146,7 +146,8 @@ bun run dev
 `bun run dev` starts an isolated muximod and Web profile for the current linked worktree while continuing to use the normal user tmux server. To inspect the Web UI without a running muximod:
 
 ```sh
-VITE_MUXIMOD_MOCK_MODE=true bun run --filter @muximo/web dev
+cd apps/web
+VITE_MUXIMOD_MOCK_MODE=true bun dev
 ```
 
 For the Capacitor iOS workflow, use `mise ios` to build, sync, and open the native project. To run the local CLI through the repository's toolchain, use `mise muximo <option>`, for example `mise muximo --help`.

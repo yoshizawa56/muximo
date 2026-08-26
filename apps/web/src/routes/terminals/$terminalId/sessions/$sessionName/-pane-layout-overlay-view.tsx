@@ -22,7 +22,7 @@ export function PaneLayoutOverlay({
   variant?: PaneLayoutOverlayVariant;
 }) {
   const windows = useMemo(() => groupByWindow(panes), [panes]);
-  const selectedPane = panes.find((pane) => pane.tmuxPaneId === selectedTarget);
+  const selectedPane = panes.find((pane) => pane.hostPaneId === selectedTarget);
   const [activeWindowId, setActiveWindowId] = useState(selectedPane?.windowId ?? windows[0]?.id ?? "");
   const overlayRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -219,12 +219,12 @@ export function PaneLayoutOverlay({
                   : "bg-lime-deep";
               return (
                 <button
-                  className={`flex min-w-0 min-h-[72px] flex-col items-start justify-end overflow-hidden rounded-[7px] border border-[#1b4526] bg-pane-grid bg-[#071409] bg-[length:100%_16px] p-[9px] text-left text-[#89bd91] transition-[border-color,background,box-shadow] hover:border-lime-deep hover:bg-[#0b2511] hover:text-[#e0ffe3] hover:shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)] max-[620px]:min-h-[62px] max-[620px]:p-[7px] ${activeWindow.hasGeometry && !useCompactPaneList ? "absolute min-h-0 rounded-none" : useCompactPaneList ? "relative min-h-14" : ""} ${pane.tmuxPaneId === selectedTarget ? "border-lime-deep bg-[#0b2511] text-[#e0ffe3] shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)]" : ""} ${ghost ? "min-h-0 justify-end rounded-[3px] border-[rgb(139_255_154_/_42%)] bg-[rgb(3_14_6_/_18%)] p-[9px] shadow-[inset_0_0_0_1px_rgb(0_0_0_/_14%)] backdrop-blur-[1px] [text-shadow:0_1px_8px_#000] hover:bg-[rgb(57_214_91_/_31%)]" : ""}`}
+                  className={`flex min-w-0 min-h-[72px] flex-col items-start justify-end overflow-hidden rounded-[7px] border border-[#1b4526] bg-pane-grid bg-[#071409] bg-[length:100%_16px] p-[9px] text-left text-[#89bd91] transition-[border-color,background,box-shadow] hover:border-lime-deep hover:bg-[#0b2511] hover:text-[#e0ffe3] hover:shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)] max-[620px]:min-h-[62px] max-[620px]:p-[7px] ${activeWindow.hasGeometry && !useCompactPaneList ? "absolute min-h-0 rounded-none" : useCompactPaneList ? "relative min-h-14" : ""} ${pane.hostPaneId === selectedTarget ? "border-lime-deep bg-[#0b2511] text-[#e0ffe3] shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)]" : ""} ${ghost ? "min-h-0 justify-end rounded-[3px] border-[rgb(139_255_154_/_42%)] bg-[rgb(3_14_6_/_18%)] p-[9px] shadow-[inset_0_0_0_1px_rgb(0_0_0_/_14%)] backdrop-blur-[1px] [text-shadow:0_1px_8px_#000] hover:bg-[rgb(57_214_91_/_31%)]" : ""}`}
                   key={pane.id}
                   type="button"
                   onClick={() => onSelect(pane)}
                   aria-label={`Select pane ${pane.paneIndex ?? "unknown"}: ${pane.name}`}
-                  title={pane.recentOutput ? `${pane.tmuxPaneId}\n${pane.recentOutput}` : pane.tmuxPaneId}
+                  title={pane.recentOutput ? `${pane.hostPaneId}\n${pane.recentOutput}` : pane.hostPaneId}
                   style={
                     activeWindow.hasGeometry && !useCompactPaneList ? paneGeometryStyle(pane, activeWindow) : undefined
                   }

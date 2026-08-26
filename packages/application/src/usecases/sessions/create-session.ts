@@ -1,5 +1,5 @@
 import { clearPatch, Pane, type PaneRecord, WorkspaceId } from "@muximo/domain";
-import { ApplicationError, type MuximodClock, type MuximodSessionSummary } from "../../ports/application.js";
+import { type ApplicationClock, ApplicationError, type MuximodSessionSummary } from "../../ports/application.js";
 import type { MuximodHostPort, MuximodWorkspaceCatalogPort } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository, WorkspaceRepository } from "../../ports/repositories.js";
 import type { AgentStatusStore } from "../sessions/agent-status.js";
@@ -7,23 +7,25 @@ import { reconcilePanes } from "../terminals/reconcile-panes.js";
 import { summarizeSessions } from "./summarize-sessions.js";
 
 export async function createSession(
-  input: { name: string; cwd?: string; workspaceId?: string },
+  input: { name: string; workspaceId: string },
   host: MuximodHostPort,
   paneRepository: PaneRepository,
   agentSessionRepository: AgentSessionRepository,
   workspaceCatalog: MuximodWorkspaceCatalogPort,
   workspaceRepository: WorkspaceRepository,
   agentStatus: AgentStatusStore,
-  clock: MuximodClock,
+  clock: ApplicationClock,
 ): Promise<MuximodSessionSummary> {
-  const cwd = await resolveInitialCwd(input, workspaceCatalog, workspaceRepository);
+  const workspace = await workspaceCatalog.resolveWorkspaceDirectory(WorkspaceId.create(input.workspaceId), (id) =>
+    workspaceRepository.findById(id),
+  );
   if (await host.hasSession(input.name)) {
     throw new ApplicationError("session_exists", `terminal host session already exists: ${input.name}`);
   }
 
   let created = false;
   try {
-    const managedSessionId = await host.createManagedSession(input.name, cwd);
+    const managedSessionId = await host.createManagedSession(input.name, workspace.rootPath);
     created = true;
     const panes = await reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock);
     const initialPane = panes.find((pane) => pane.sessionName === input.name);
@@ -61,19 +63,4 @@ export async function createSession(
     }
     throw error;
   }
-}
-
-async function resolveInitialCwd(
-  input: { cwd?: string; workspaceId?: string },
-  workspaceCatalog: MuximodWorkspaceCatalogPort,
-  workspaceRepository: WorkspaceRepository,
-): Promise<string> {
-  if (input.workspaceId) {
-    const workspace = await workspaceCatalog.resolveWorkspaceDirectory(WorkspaceId.create(input.workspaceId), (id) =>
-      workspaceRepository.findById(id),
-    );
-    return workspace.rootPath;
-  }
-  if (input.cwd) return workspaceCatalog.resolveLegacyDirectory(input.cwd);
-  throw new ApplicationError("session_cwd_required", "A session working directory is required");
 }

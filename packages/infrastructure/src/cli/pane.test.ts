@@ -33,7 +33,7 @@ type PaneResult = {
   diagnosticEvents: readonly string[];
 };
 
-type PaneMode = "success" | "fallback" | "failure";
+type PaneMode = "success" | "fallback" | "failure" | "restore";
 type LifecycleInput = { mode: PaneMode };
 type ObservationInput = { mode: "success" };
 
@@ -81,6 +81,23 @@ const lifecycleCases = [
       hasObserved<PaneResult, PaneResult>("diagnosticEvents", ["pane.adopt_failed", "pane.release_failed"]),
     ],
   },
+  {
+    name: "restores the current pane label from muximod environment metadata",
+    input: { mode: "restore" },
+    assert: [
+      {
+        name: "writes the canonical pane metadata",
+        check: (context: PaneResult) => {
+          expect(context.paneOptions.slice(-4)).toEqual([
+            { name: "@muximod.kind", value: "shell" },
+            { name: "@muximod.agent_id", value: "" },
+            { name: "@muximod.pane_name", value: "current-pane" },
+            { name: "@muximod.managed_session_id", value: "managed-id" },
+          ]);
+        },
+      },
+    ],
+  },
 ] satisfies readonly OperationCase<"default", LifecycleInput, PaneResult, PaneResult>[];
 
 const observationCases = [
@@ -104,6 +121,7 @@ const lifecycleTable: OperationTable<PaneFixture, "default", LifecycleInput, Pan
     const session = createSession(fixture.root);
     await fixture.adapter.adopt(session);
     await fixture.adapter.release(session);
+    if (input.mode === "restore") fixture.adapter.restoreShell();
     return observePane(fixture);
   },
   observe: observePane,
@@ -184,7 +202,13 @@ function createPaneFixture(registerCleanup?: (cleanup: () => void) => void): { f
 
 function createAdapter(fixture: PaneFixture, mode: PaneMode): TmuxPanePublicationAdapter {
   return new TmuxPanePublicationAdapter({
-    environment: { TMUX: "1", TMUX_PANE: "%1", MUXIMOD_MANAGED_SESSION_ID: "managed-id" },
+    environment: {
+      TMUX: "1",
+      TMUX_PANE: "%1",
+      MUXIMOD_MANAGED_SESSION_ID: "managed-id",
+      MUXIMOD_MANAGED_SESSION_NAME: "muximod",
+      MUXIMOD_PANE_NAME: "current-pane",
+    },
     databaseFile: join(fixture.root, "muximod.sqlite"),
     tmux: fixture.tmux,
     connect: async () => {
@@ -217,7 +241,7 @@ class RecordingTmux extends TmuxAdapter {
     private readonly options: PaneFixture["paneOptions"],
     private readonly writes: PaneFixture["paneWrites"],
   ) {
-    super("/tmp/muximo-pane-adapter.sock");
+    super("/tmp/muximo-pane-adapter.sock", undefined, { MUXIMO_WORKTREE_ID: "" });
   }
 
   public override setPaneOption(_paneId: string, name: string, value: string): void {

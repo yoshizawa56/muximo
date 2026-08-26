@@ -62,7 +62,7 @@ export function useNewPaneViewModel(): NewPaneViewModel {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (placement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.tmuxPaneId ?? null);
+    if (placement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.hostPaneId ?? null);
   }, [existingPanes, placement, targetPaneId]);
 
   useEffect(() => {
@@ -101,7 +101,7 @@ export function useNewPaneViewModel(): NewPaneViewModel {
     onAgentChange: setAgentId,
     onPlacementChange: (nextPlacement) => {
       setPlacement(nextPlacement);
-      if (nextPlacement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.tmuxPaneId ?? null);
+      if (nextPlacement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.hostPaneId ?? null);
     },
     onTargetPaneChange: setTargetPaneId,
     onCreate: () => {

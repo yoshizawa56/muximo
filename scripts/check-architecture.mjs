@@ -71,14 +71,14 @@ const entityRules = {
   schemaParseAllowedRoots: ["packages/domain/src/", "packages/contract/src/"],
 };
 
-const cliLegacyDirectories = ["apps/muximo-cli/src/cli/host", "apps/muximo-cli/src/cli/runtime"];
-const cliLegacyTerms =
+const forbiddenCliDirectories = ["apps/muximo-cli/src/cli/host", "apps/muximo-cli/src/cli/runtime"];
+const forbiddenCliTerms =
   /\b(?:CliRuntime|SessionLifecycleRuntime|RuntimeSessionHostAdapter|CliSessionHostPort|CommandEngine|MuximoCommand)\b/;
 const muximodCliDirectory = "apps/muximod/src/cli";
 const cliProviderLifecycleImport = /(?:from\s+|import\s*\(\s*)["'][^"']*\/agents\/(?:codex|claude|opencode)(?:\/|["'])/;
 const cliProviderLifecycleTerms =
   /\b(?:CodexBackendProvider|ClaudeBackendProvider|OpenCodeBackendProvider|OpenCodeServerManager|manageCodexThread|manageCodexThreadFromEnvironment|ensureCodexRemoteControl|CodexRpcClient|MUXIMO_CODEX_NAME_BIN)\b/;
-const applicationLegacyPaths = [
+const forbiddenApplicationPaths = [
   "packages/application/src/ports/cli.ts",
   "packages/application/src/ports/terminal.ts",
   "packages/application/src/usecases/cli",
@@ -88,7 +88,7 @@ const applicationPresentationTerms =
   /\b(?:Cli[A-Z][A-Za-z0-9_]*|SessionOutputPort|CommandEngine|MuximoCommand|Presenter|Presentation|codexProfile|codexRemote|codexSessionBaseline)\b|\b(?:console\.(?:log|warn|error)|process\.(?:stdout|stderr)|Writable)\b/;
 const applicationTerminalTransportTerms =
   /\b(?:MuximodPty(?:Exit|Process|Spawner|SpawnOptions)?|MuximodPreparedViewport|MuximodViewport(?:Event|Lease)|MuximodImage(?:PasteInput|Paster)|MuximodTerminal(?:Pane|ProcessSpec|ViewportPort))\b/;
-const legacyInfrastructureDaemonPath = "packages/infrastructure/src/cli/daemon.ts";
+const forbiddenInfrastructureDaemonPath = "packages/infrastructure/src/cli/daemon.ts";
 
 // The application layer has no models/ directory: port-owned data lives in the
 // port file, use-case inputs live in the use case file, and shared business
@@ -100,21 +100,21 @@ for (const sourceRoot of ["packages/application/src/models"]) {
   }
 }
 
-for (const relativePath of cliLegacyDirectories) {
+for (const relativePath of forbiddenCliDirectories) {
   if (existsSync(join(root, relativePath))) {
-    errors.push(`${relativePath}: legacy CLI host/runtime directory is forbidden; compose focused ports directly`);
+    errors.push(`${relativePath}: CLI host/runtime directory is forbidden; compose focused ports directly`);
   }
 }
 
-for (const relativePath of applicationLegacyPaths) {
+for (const relativePath of forbiddenApplicationPaths) {
   if (existsSync(join(root, relativePath))) {
     errors.push(`${relativePath}: application must not expose CLI transport or dispatcher vocabulary`);
   }
 }
 
-if (existsSync(join(root, legacyInfrastructureDaemonPath))) {
+if (existsSync(join(root, forbiddenInfrastructureDaemonPath))) {
   errors.push(
-    `${legacyInfrastructureDaemonPath}: daemon process infrastructure is shared by apps; move it under packages/infrastructure/src/process`,
+    `${forbiddenInfrastructureDaemonPath}: daemon process infrastructure is shared by apps; move it under packages/infrastructure/src/process`,
   );
 }
 
@@ -223,14 +223,14 @@ function appName(relativePath) {
 
 function inspectCliBoundary(source, relativePath) {
   if (!relativePath.startsWith("apps/muximo-cli/src/")) return;
-  if (cliLegacyTerms.test(source)) {
-    errors.push(`${relativePath}: legacy CLI runtime/engine façade naming is forbidden`);
+  if (forbiddenCliTerms.test(source)) {
+    errors.push(`${relativePath}: CLI runtime/engine façade naming is forbidden`);
   }
   if (relativePath.startsWith("apps/muximo-cli/src/cli/") && /from\s+["']node:child_process["']/.test(source)) {
     errors.push(`${relativePath}: concrete process spawning belongs in packages/infrastructure/src/cli`);
   }
   if (relativePath.startsWith("apps/muximo-cli/src/cli/") && /from\s+["'][^"']*\/(?:runtime|host)\//.test(source)) {
-    errors.push(`${relativePath}: CLI handlers/adapters may not import legacy host/runtime layers`);
+    errors.push(`${relativePath}: CLI handlers/adapters may not import host/runtime layers`);
   }
   if (cliProviderLifecycleImport.test(source) || cliProviderLifecycleTerms.test(source)) {
     errors.push(
@@ -258,7 +258,7 @@ function inspectApplicationBoundary(source, relativePath) {
     errors.push(`${relativePath}: daemon timing must be supplied through required clock and scheduler ports`);
   }
   if (source.includes("MUXIMO_CODEX_NAME_BIN")) {
-    errors.push(`${relativePath}: undocumented Codex name helper compatibility is forbidden`);
+    errors.push(`${relativePath}: Codex name helper is forbidden unless its boundary is documented`);
   }
 }
 

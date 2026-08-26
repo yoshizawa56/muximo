@@ -8,7 +8,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import type { MuximodClock } from "../../ports/application.js";
+import type { ApplicationClock } from "../../ports/application.js";
 import type { MuximodHostPort, TerminalHostSnapshot } from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
 import { reconcilePanes } from "./reconcile-panes.js";
@@ -119,7 +119,7 @@ const table: OperationTable<ReconcileFixture, "default", Input, ReconcileResult,
   }),
 };
 
-const clock: MuximodClock = { now: () => "2026-08-24T00:00:00.000Z" };
+const clock: ApplicationClock = { now: () => "2026-08-24T00:00:00.000Z" };
 
 function createFixture(): { fixture: ReconcileFixture } {
   const session = AgentSession.create({

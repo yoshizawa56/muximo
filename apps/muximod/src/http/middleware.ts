@@ -17,19 +17,16 @@ export function mapError(error: unknown): MuximodHttpError {
   if (error instanceof MuximodHttpError) return error;
   if (error instanceof z.ZodError) return new MuximodHttpError(400, "invalid_request", "Request validation failed");
   if (isRecord(error) && typeof error.code === "string" && typeof error.message === "string") {
-    const compatibility = mapExternalCompatibility(error.code, error.message);
-    const status = errorStatus(compatibility.code, error.status);
+    const mappedError = mapExternalError(error.code, error.message);
+    const status = errorStatus(mappedError.code, error.status);
     const details = isRecord(error.details) ? error.details : undefined;
-    return new MuximodHttpError(status, compatibility.code, compatibility.message, details);
+    return new MuximodHttpError(status, mappedError.code, mappedError.message, details);
   }
   return new MuximodHttpError(503, "muximod_unavailable", "muximod could not complete the request");
 }
 
-/**
- * The HTTP protocol historically exposed provider-specific failures. Keep
- * those wire names at this outer adapter while application errors stay neutral.
- */
-function mapExternalCompatibility(code: string, message: string): { code: string; message: string } {
+/** Maps application failures to the HTTP vocabulary. */
+function mapExternalError(code: string, message: string): { code: string; message: string } {
   if (code === "terminal_host_unavailable") return { code: "tmux_unavailable", message: "tmux is unavailable" };
   if (code === "terminal_host_pane_not_found") {
     return { code: "tmux_pane_not_found", message: message.replace("terminal host ", "tmux ") };

@@ -51,6 +51,7 @@ type PureInput =
   | { kind: "configure-serve" }
   | { kind: "allowed-host" }
   | { kind: "health" }
+  | { kind: "invalid-host" }
   | { kind: "muximod-health" }
   | { kind: "probe-websocket" };
 type PureFixture = ReturnType<typeof createPureFixture>;
@@ -102,6 +103,16 @@ const pureCases = [
       succeeds("adds the Tailscale hostname to Vite", (config) => {
         assert.equal(config.baseEnvironment.MUXIMO_TAILSCALE_HOSTNAME, "local-host.tailnet.ts.net");
         assert.equal(config.baseEnvironment.VITE_ALLOWED_HOSTS, "local-host.tailnet.ts.net");
+      }),
+    ],
+  },
+  {
+    name: "rejects an invalid configured Tailscale hostname",
+    input: { kind: "invalid-host" },
+    assert: [
+      fails("reports the invalid hostname", (error) => {
+        assert.equal(error.name, "DevRuntimeError");
+        assert.match(error.message, /invalid Tailscale hostname/);
       }),
     ],
   },
@@ -176,6 +187,16 @@ const pureTable = {
           MUXIMO_DEV_STATE_ROOT: fixture.stateRoot,
           MUXIMO_DEV_SERVE_PROVIDER: "tailscale",
           MUXIMO_TAILSCALE_HOSTNAME: "local-host.tailnet.ts.net.",
+        },
+        process.cwd(),
+      );
+    }
+    if (input.kind === "invalid-host") {
+      return resolveDevConfig(
+        {
+          MUXIMO_DEV_STATE_ROOT: fixture.stateRoot,
+          MUXIMO_DEV_SERVE_PROVIDER: "tailscale",
+          MUXIMO_TAILSCALE_HOSTNAME: "https://[invalid",
         },
         process.cwd(),
       );

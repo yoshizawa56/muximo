@@ -87,13 +87,24 @@ export class MuximodDaemonProcess implements DaemonRuntimePort {
   }
 
   public readPidRecord(path: string): DaemonPidRecord | undefined {
+    let contents: string;
     try {
-      const record = JSON.parse(readFileSync(path, "utf8")) as Partial<DaemonPidRecord>;
-      if (!Number.isInteger(record.pid) || !record.host || !Number.isInteger(record.port)) return undefined;
-      return record as DaemonPidRecord;
-    } catch {
-      return undefined;
+      contents = readFileSync(path, "utf8");
+    } catch (error) {
+      if (isFileNotFoundError(error)) return undefined;
+      throw new Error(`muximod pid file could not be read: ${path}`, { cause: error });
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(contents);
+    } catch (error) {
+      throw new Error(`muximod pid file contains invalid JSON: ${path}`, { cause: error });
+    }
+    if (!isDaemonPidRecord(parsed)) {
+      throw new Error(`muximod pid file has an invalid format: ${path}`);
+    }
+    return parsed;
   }
 
   public writePidRecord(path: string, record: DaemonPidRecord): void {
@@ -128,12 +139,18 @@ export class MuximodDaemonProcess implements DaemonRuntimePort {
   public consumeRestartMarker(pidFile: string): boolean | undefined {
     const path = restartMarkerPath(pidFile);
     if (!existsSync(path)) return undefined;
-    let refreshServers = true;
+    let refreshServers: boolean;
     try {
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as { refreshServers?: unknown };
-      refreshServers = parsed.refreshServers !== false;
-    } catch {
-      // An unreadable marker defaults to a plain restart.
+      const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+      if (!isRestartMarkerRecord(parsed)) throw new Error("restart marker does not match the current format");
+      refreshServers = parsed.refreshServers;
+    } catch (error) {
+      try {
+        unlinkSync(path);
+      } catch {
+        // The marker may already have been removed while it was being read.
+      }
+      throw new Error(`muximod restart marker has an invalid format: ${path}`, { cause: error });
     }
     try {
       unlinkSync(path);
@@ -162,6 +179,53 @@ export const systemDaemonScheduler: DaemonScheduler = {
 
 export function restartMarkerPath(pidFile: string): string {
   return `${pidFile}.restart`;
+}
+
+function isDaemonPidRecord(value: unknown): value is DaemonPidRecord {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value).sort();
+  if (keys.join(",") !== ["host", "pid", "port", "startedAt"].join(",")) return false;
+  return (
+    isPositiveInteger(value.pid) &&
+    typeof value.host === "string" &&
+    value.host.length > 0 &&
+    isPort(value.port) &&
+    typeof value.startedAt === "string" &&
+    isIsoTimestamp(value.startedAt)
+  );
+}
+
+function isRestartMarkerRecord(value: unknown): value is { pid: number; refreshServers: boolean; startedAt: string } {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value).sort();
+  if (keys.join(",") !== ["pid", "refreshServers", "startedAt"].join(",")) return false;
+  return (
+    isPositiveInteger(value.pid) &&
+    typeof value.refreshServers === "boolean" &&
+    typeof value.startedAt === "string" &&
+    isIsoTimestamp(value.startedAt)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isPort(value: unknown): value is number {
+  return isPositiveInteger(value) && value <= 65_535;
+}
+
+function isIsoTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 /** Builds the child environment; lifecycle commands never become child argv. */
