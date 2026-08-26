@@ -134,10 +134,11 @@ export function createMuximodEventCoordinator(options: MuximodEventCoordinatorOp
   }
 
   function notifyEvent(event: MuximodEvent): void {
-    for (const subscriber of subscribers) invalidateOnMuximodEvent(subscriber.queryClient, subscriber.utils, event);
+    for (const subscriber of subscribers.values())
+      invalidateOnMuximodEvent(subscriber.queryClient, subscriber.utils, event);
   }
 
   function notifyReconnect(): void {
-    for (const subscriber of subscribers) invalidateOnReconnect(subscriber.queryClient, subscriber.utils);
+    for (const subscriber of subscribers.values()) invalidateOnReconnect(subscriber.queryClient, subscriber.utils);
   }
 }
