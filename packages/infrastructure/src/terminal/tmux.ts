@@ -263,27 +263,20 @@ export class TmuxAdapter {
   }
 
   private readSessionOptions(target: string): TmuxSessionOption[] {
-    const output = this.require([
-      "show-options",
-      "-A",
-      "-F",
-      ["#{option_name}", "#{option_array_key}", "#{option_value}", "#{option_is_array}"].join(tmuxFormatSeparator),
-      "-t",
-      target,
-    ]);
+    // Keep enumeration separate from value reads because older tmux versions
+    // support -A and -v but do not support show-options -F.
+    const output = this.require(["show-options", "-A", "-t", target]);
     const options: TmuxSessionOption[] = [];
     for (const line of output
       .split("\n")
       .map((value) => value.trimEnd())
       .filter(Boolean)) {
-      const [name, arrayKey, value, isArray] = splitTmuxFormatLine(line, tmuxFormatSeparator);
-      if (!name || value === undefined || isArray === undefined) {
-        throw new Error(`Could not parse tmux session option: ${line}`);
-      }
+      const name = line.match(/^\S+/)?.[0]?.replace(/\*$/, "");
+      if (!name) throw new Error(`Could not parse tmux session option: ${line}`);
       // Empty array options have no value to copy. Setting the base option
       // would not recreate the empty array and can be rejected by tmux.
-      if (isArray === "1" && !arrayKey) continue;
-      options.push({ name: arrayKey ? `${name}[${arrayKey}]` : name, value });
+      if (!/\s/.test(line)) continue;
+      options.push({ name, value: removeTrailingNewline(this.require(["show-options", "-v", "-t", target, name])) });
     }
     return options;
   }
@@ -894,6 +887,10 @@ function resolveTmuxCwd(cwd: string): string {
 function splitTmuxFormatLine(line: string, separator: string): string[] {
   const fields = line.split(separator);
   return fields.length > 1 ? fields : line.split("\\037");
+}
+
+function removeTrailingNewline(value: string): string {
+  return value.endsWith("\n") ? value.slice(0, -1) : value;
 }
 
 function exactSessionTarget(sessionName: string): string {

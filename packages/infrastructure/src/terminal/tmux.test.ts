@@ -214,14 +214,12 @@ const groupedSessionConfigurationCases = [
     assert: [
       returns<EmptyContext, GroupedSessionConfiguration>({
         reads: [
-          [
-            "show-options",
-            "-A",
-            "-F",
-            "#{option_name}\u001f#{option_array_key}\u001f#{option_value}\u001f#{option_is_array}",
-            "-t",
-            "=work:",
-          ],
+          ["show-options", "-A", "-t", "=work:"],
+          ["show-options", "-v", "-t", "=work:", "default-command"],
+          ["show-options", "-v", "-t", "=work:", "destroy-unattached"],
+          ["show-options", "-v", "-t", "=work:", "status"],
+          ["show-options", "-v", "-t", "=work:", "@muximod.managed"],
+          ["show-options", "-v", "-t", "=work:", "status-format[0]"],
           ["show-environment", "-t", "=work"],
           ["show-environment", "-h", "-t", "=work"],
         ],
@@ -252,7 +250,7 @@ const groupedSessionConfigurationCases = [
           ["set-option", "-t", "=muximo-mobile-1:", "default-command", "muximo shell"],
           ["set-option", "-t", "=muximo-mobile-1:", "status", "on"],
           ["set-option", "-t", "=muximo-mobile-1:", "@muximod.managed", "1"],
-          ["set-option", "-t", "=muximo-mobile-1:", "status-format[main]", "custom"],
+          ["set-option", "-t", "=muximo-mobile-1:", "status-format[0]", "custom"],
         ],
       }),
     ],
@@ -747,15 +745,24 @@ class GroupedSessionConfigurationTmuxAdapter extends TmuxAdapter {
   public override require(args: string[]): string {
     if (args[0] === "show-options") {
       this.reads.push(args);
+      if (args.includes("-v")) {
+        const name = args.at(-1);
+        const values: Record<string, string> = {
+          "default-command": "muximo shell",
+          "destroy-unattached": "on",
+          status: "on",
+          "@muximod.managed": "1",
+          "status-format[0]": "custom",
+        };
+        return `${values[name ?? ""] ?? ""}\n`;
+      }
       return [
-        ["default-command", "", "muximo shell", "0"],
-        ["destroy-unattached", "", "on", "0"],
-        ["status", "", "on", "0"],
-        ["@muximod.managed", "", "1", "0"],
-        ["status-format", "main", "custom", "1"],
-      ]
-        .map((fields) => fields.join("\u001f"))
-        .join("\n");
+        'default-command "muximo shell"',
+        "destroy-unattached on",
+        "status on",
+        "@muximod.managed 1",
+        'status-format[0] "custom"',
+      ].join("\n");
     }
     if (args[0] === "show-environment") {
       this.reads.push(args);
