@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { muximodErrorMessage } from "./api/muximod-error.js";
 import { MuximoLogo } from "./components/muximo-logo";
 
 type AppErrorViewProps = {
@@ -66,16 +67,7 @@ export function AppErrorView({
 }
 
 export function errorMessage(error: unknown): string {
-  if (error == null) return "Unknown error";
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "string" && error) return error;
-
-  try {
-    const serialized = JSON.stringify(error);
-    return serialized && serialized !== "{}" ? serialized : "Unknown error";
-  } catch {
-    return "Unknown error";
-  }
+  return muximodErrorMessage(error);
 }
 
 function reloadPage() {

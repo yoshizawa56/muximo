@@ -92,6 +92,43 @@ const connectionTable: OperationTable<
   observe: () => ({}),
 };
 
+type SharedConnectionInput = { muximodBaseUrl: string };
+type SharedConnectionResult = { sameConnection: boolean; sameAuthProvider: boolean };
+
+const sharedConnectionCases = [
+  {
+    name: "shares one authenticated connection for repeated profile lookups",
+    input: { muximodBaseUrl: "https://shared-workstation.tailnet.ts.net" },
+    assert: [returns<EmptyContext, SharedConnectionResult>({ sameConnection: true, sameAuthProvider: true })],
+  },
+] satisfies readonly OperationCase<"default", SharedConnectionInput, SharedConnectionResult, EmptyContext>[];
+
+const sharedConnectionTable: OperationTable<
+  undefined,
+  "default",
+  SharedConnectionInput,
+  SharedConnectionResult,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: sharedConnectionCases,
+  execute: (_fixture, input) => {
+    const profile: BrowserConnectionProfile = {
+      id: "default",
+      name: "Shared workstation",
+      muximodBaseUrl: input.muximodBaseUrl,
+      updatedAt: "2026-08-15T00:00:00.000Z",
+    };
+    const first = connectionForProfile(profile);
+    const second = connectionForProfile(profile);
+    return {
+      sameConnection: first === second,
+      sameAuthProvider: first?.auth === second?.auth,
+    };
+  },
+  observe: () => ({}),
+};
+
 type ProfileFixture = { storage: MemoryStorage };
 type ProfileStep =
   | { type: "save"; input: Pick<BrowserConnectionProfile, "name" | "muximodBaseUrl"> }
@@ -190,5 +227,6 @@ describe("browser connection profile", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, normalizeTable);
   runOperationTable(register, connectionTable);
+  runOperationTable(register, sharedConnectionTable);
   runScenarioTable(register, profileTable);
 });

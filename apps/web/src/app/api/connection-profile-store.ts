@@ -10,6 +10,8 @@ export type BrowserConnectionProfile = {
 };
 
 const storageKey = "muximo.connection-profile.v1";
+/** Keeps the RPC link and browser auth coordinator shared across view models. */
+const connectionCache = new Map<string, MuximodConnection>();
 
 export function readBrowserConnectionProfile(
   storage: Storage | undefined = getStorage(),
@@ -30,10 +32,13 @@ export function saveBrowserConnectionProfile(
     Pick<Partial<BrowserConnectionProfile>, "serverId">,
   storage: Storage | undefined = getStorage(),
 ): BrowserConnectionProfile {
+  const previous = readBrowserConnectionProfile(storage);
+  const muximodBaseUrl = normalizeMuximodBaseUrl(input.muximodBaseUrl);
+  if (previous && previous.muximodBaseUrl !== muximodBaseUrl) connectionCache.delete(previous.muximodBaseUrl);
   const profile: BrowserConnectionProfile = {
     id: "default",
-    name: input.name.trim() || new URL(input.muximodBaseUrl).hostname,
-    muximodBaseUrl: normalizeMuximodBaseUrl(input.muximodBaseUrl),
+    name: input.name.trim() || new URL(muximodBaseUrl).hostname,
+    muximodBaseUrl,
     ...(input.serverId ? { serverId: input.serverId } : {}),
     updatedAt: new Date().toISOString(),
   };
@@ -43,13 +48,19 @@ export function saveBrowserConnectionProfile(
 }
 
 export function clearBrowserConnectionProfile(storage: Storage | undefined = getStorage()): void {
+  const previous = readBrowserConnectionProfile(storage);
+  if (previous) connectionCache.delete(previous.muximodBaseUrl);
   storage?.removeItem(storageKey);
 }
 
 export function connectionForProfile(profile: BrowserConnectionProfile | null): MuximodConnection | undefined {
   if (!profile) return undefined;
-  const connection = createServeConnection(profile.muximodBaseUrl);
+  const muximodBaseUrl = normalizeMuximodBaseUrl(profile.muximodBaseUrl);
+  const cached = connectionCache.get(muximodBaseUrl);
+  if (cached) return cached;
+  const connection = createServeConnection(muximodBaseUrl);
   connection.auth = createBrowserMuximodAuth(connection);
+  connectionCache.set(muximodBaseUrl, connection);
   return connection;
 }
 
