@@ -258,7 +258,7 @@ function inspectApplicationBoundary(source, relativePath) {
     errors.push(`${relativePath}: daemon timing must be supplied through required clock and scheduler ports`);
   }
   if (source.includes("MUXIMO_CODEX_NAME_BIN")) {
-    errors.push(`${relativePath}: Codex name helper is forbidden unless its boundary is documented`);
+    errors.push(`${relativePath}: Codex name helper is forbidden in the application layer`);
   }
 }
 
