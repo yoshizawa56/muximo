@@ -55,6 +55,7 @@ export function useSettingsViewModel(): SettingsViewModel {
   const [editingProfileName, setEditingProfileName] = useState("");
   const [appInfo, setAppInfo] = useState<MuximoAppInfo>(muximoFallbackAppInfo);
   const pendingPairingCode = useRef<string | null>(null);
+  const pairingAttempt = useRef(0);
 
   const activeProfileId =
     typeof search.connection === "string" && profiles.some((profile) => profile.id === search.connection)
@@ -68,6 +69,11 @@ export function useSettingsViewModel(): SettingsViewModel {
     setPairingName("");
   };
 
+  const invalidatePairingAttempt = () => {
+    pairingAttempt.current += 1;
+    clearPairingPreview();
+  };
+
   useEffect(() => {
     let disposed = false;
     void muximoBridge
@@ -78,6 +84,8 @@ export function useSettingsViewModel(): SettingsViewModel {
       .catch(() => undefined);
     return () => {
       disposed = true;
+      pairingAttempt.current += 1;
+      pendingPairingCode.current = null;
     };
   }, []);
 
@@ -95,11 +103,12 @@ export function useSettingsViewModel(): SettingsViewModel {
     editingProfileId,
     editingProfileName,
     onBack: () => {
+      invalidatePairingAttempt();
       if (!activeProfileId) return;
       void navigate({ to: "/terminals", search: { connection: activeProfileId } });
     },
     onOpenQrScanner: () => {
-      clearPairingPreview();
+      invalidatePairingAttempt();
       setErrorMessage(null);
       setPairingMessage(null);
       setIsScanningQr(true);
@@ -107,6 +116,8 @@ export function useSettingsViewModel(): SettingsViewModel {
     onCloseQrScanner: () => setIsScanningQr(false),
     onQrValue: (value) => {
       if (isPreparingPairing || isPairingQr || pendingPairingCode.current) return;
+      const attempt = pairingAttempt.current + 1;
+      pairingAttempt.current = attempt;
       pendingPairingCode.current = value;
       setIsScanningQr(false);
       setIsPreparingPairing(true);
@@ -114,14 +125,17 @@ export function useSettingsViewModel(): SettingsViewModel {
       setPairingMessage("Checking QR code…");
       void inspectPairingQr(value)
         .then((preview) => {
+          if (pairingAttempt.current !== attempt) return;
           setPairingPreview(preview);
           setPairingName(defaultConnectionProfileName(preview.muximodBaseUrl));
         })
         .catch((error: unknown) => {
+          if (pairingAttempt.current !== attempt) return;
           pendingPairingCode.current = null;
           setErrorMessage(muximodErrorMessage(error));
         })
         .finally(() => {
+          if (pairingAttempt.current !== attempt) return;
           setIsPreparingPairing(false);
           setPairingMessage(null);
         });
@@ -131,6 +145,7 @@ export function useSettingsViewModel(): SettingsViewModel {
       const value = pendingPairingCode.current;
       const preview = pairingPreview;
       if (!value || !preview || isPairingQr) return;
+      const attempt = pairingAttempt.current;
       pendingPairingCode.current = null;
       const name = pairingName.trim() || defaultConnectionProfileName(preview.muximodBaseUrl);
       setPairingName(name);
@@ -139,13 +154,16 @@ export function useSettingsViewModel(): SettingsViewModel {
       setErrorMessage(null);
       void pairBrowserFromQr(value, {
         deviceName: "",
+        expectedServerId: preview.serverId,
         onProgress: (progress) => {
+          if (pairingAttempt.current !== attempt) return;
           if (progress.phase === "claiming") setPairingMessage("Preparing to register device…");
           else if (progress.phase === "awaiting_approval") setPairingMessage("Waiting for approval from muximod…");
           else setPairingMessage("Registered. Connecting…");
         },
       })
         .then((result) => {
+          if (pairingAttempt.current !== attempt) return;
           const profile = saveBrowserConnectionProfile({
             name,
             muximodBaseUrl: result.payload.muximodBaseUrl,
@@ -156,16 +174,18 @@ export function useSettingsViewModel(): SettingsViewModel {
           void navigate({ to: "/terminals", search: { connection: profile.id } });
         })
         .catch((error: unknown) => {
+          if (pairingAttempt.current !== attempt) return;
           clearPairingPreview();
           setErrorMessage(muximodErrorMessage(error));
         })
         .finally(() => {
+          if (pairingAttempt.current !== attempt) return;
           setIsPairingQr(false);
           setPairingMessage(null);
         });
     },
     onCancelPairing: () => {
-      clearPairingPreview();
+      invalidatePairingAttempt();
       setIsPreparingPairing(false);
       setIsPairingQr(false);
       setPairingMessage(null);

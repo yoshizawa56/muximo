@@ -58,7 +58,7 @@ describe("browser pairing code parsing", () => {
 type InspectRequest = { method: string; url: string; body: string };
 type InspectFixture = { originalFetch: typeof globalThis.fetch; requests: InspectRequest[] };
 type InspectContext = { requests: readonly InspectRequest[] };
-type InspectInput = { code: string };
+type InspectInput = { code: string; expectedServerId?: string };
 
 const inspectFixture = (): FixtureHandle<InspectFixture> => {
   const originalFetch = globalThis.fetch;
@@ -114,12 +114,23 @@ const inspectCases = [
       hasNoPairingSecret(),
     ],
   },
+  {
+    name: "rejects a changed server identity before pairing",
+    input: { code: encodePairingCode(payload), expectedServerId: "server-before-preview" },
+    assert: [
+      hasError<InspectContext, BrowserPairingPreview>({
+        message: "muximod server identity changed; scan the QR code again",
+      }),
+      hasPublicInfoRequest(),
+      hasNoPairingSecret(),
+    ],
+  },
 ] satisfies readonly OperationCase<"default", InspectInput, BrowserPairingPreview, InspectContext>[];
 
 const inspectTable: OperationTable<InspectFixture, "default", InspectInput, BrowserPairingPreview, InspectContext> = {
   defaultFixture: inspectFixture,
   cases: inspectCases,
-  execute: (_fixture, input) => inspectPairingQr(input.code),
+  execute: (_fixture, input) => inspectPairingQr(input.code, { expectedServerId: input.expectedServerId }),
   observe: (fixture) => ({ requests: [...fixture.requests] }),
 };
 
