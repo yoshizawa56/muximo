@@ -168,7 +168,22 @@ const groupedSessionCases = [
   {
     name: "creates a detached session grouped with the exact source session",
     input: { groupSession: "work", sessionName: "muximo-mobile-1" },
-    assert: [returns<EmptyContext, string[]>(["new-session", "-d", "-s", "muximo-mobile-1", "-t", "=work"])],
+    assert: [
+      returns<EmptyContext, string[]>([
+        "new-session",
+        "-d",
+        "-s",
+        "muximo-mobile-1",
+        "-t",
+        "=work",
+        ";",
+        "set-option",
+        "-t",
+        "=muximo-mobile-1",
+        "destroy-unattached",
+        "off",
+      ]),
+    ],
   },
 ] satisfies readonly OperationCase<"default", GroupedSessionInput, string[], EmptyContext>[];
 const groupedSessionTable: OperationTable<RecordingFixture, "default", GroupedSessionInput, string[], EmptyContext> = {

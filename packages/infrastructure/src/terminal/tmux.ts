@@ -190,7 +190,24 @@ export class TmuxAdapter {
   }
 
   public createGroupedSession(groupSession: string, sessionName: string): void {
-    this.require(["new-session", "-d", "-s", sessionName, "-t", `=${groupSession}`]);
+    // Keep the new session alive long enough for the mobile PTY to attach,
+    // even when the source server config collects unattached sessions. Run
+    // this in the same tmux command queue as creation so the session is
+    // protected before the server checks for unattached sessions.
+    this.require([
+      "new-session",
+      "-d",
+      "-s",
+      sessionName,
+      "-t",
+      `=${groupSession}`,
+      ";",
+      "set-option",
+      "-t",
+      `=${sessionName}`,
+      "destroy-unattached",
+      "off",
+    ]);
   }
 
   public attachSession(target: string): number {
