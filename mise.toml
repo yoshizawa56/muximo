@@ -15,6 +15,17 @@ run = "bun dev"
 description = "Start the source development stack and upsert its Tailscale Serve route"
 run = "bun run --filter @muximo/muximo-cli dev -- dev serve tailscale"
 
+[tasks.ios]
+description = "Build, sync, and open the Web iOS app"
+raw = true
+run = "bun -F @muximo/web cap:sync && bun -F @muximo/web cap:open"
+
+[tasks.muximo]
+description = "Run the local muximo CLI with the supplied arguments"
+raw = true
+raw_args = true
+run = "bun run --filter @muximo/muximo-cli dev --"
+
 [tasks.check]
 description = "Run the public-repository audit and project checks"
 run = "bun run audit:public && bun run typecheck && bun run test && bun run build"

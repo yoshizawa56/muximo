@@ -12,6 +12,8 @@ bun run --filter @muximo/web cap:sync
 bun run --filter @muximo/web cap:open
 ```
 
+The same sync-and-open sequence is available as `mise ios`. `cap:sync` already performs the Web build before syncing the native project.
+
 `cap:sync` builds `apps/web/dist` and copies it into the iOS project. Run the Debug app from Xcode or use `cap:run` after the native project has been prepared.
 
 The `Local` scheme loads a fixed Web URL from the ignored `apps/web/ios/local.xcconfig`. Create it from the committed example and set the local Serve URL:

@@ -147,6 +147,8 @@ bun run dev
 VITE_MUXIMOD_MOCK_MODE=true bun run --filter @muximo/web dev
 ```
 
+For the Capacitor iOS workflow, use `mise ios` to build, sync, and open the native project. To run the local CLI through the repository's toolchain, use `mise muximo <option>`, for example `mise muximo --help`.
+
 Useful repository checks are:
 
 ```sh
