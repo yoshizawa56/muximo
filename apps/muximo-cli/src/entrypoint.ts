@@ -6,6 +6,8 @@ import type { CliHandlers } from "./cli/commands/types.js";
 import { createCliComposition } from "./cli/compose.js";
 import { resolveCliOptions } from "./cli/options/index.js";
 
+export type CliMuximodLaunchOptions = { schemaMode: "migrate" } | { schemaMode: "push"; baseInstanceDir: string };
+
 export type CliEntrypointOptions = {
   schemaSynchronizer: DatabaseSchemaSynchronizer;
   includeDevelopmentCommands: boolean;
@@ -13,6 +15,7 @@ export type CliEntrypointOptions = {
   input?: Readable;
   out?: Writable;
   err?: Writable;
+  muximod?: CliMuximodLaunchOptions;
 };
 
 /** Process boundary: argv/env/I/O invocation and exit status only. */
@@ -45,6 +48,8 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
   const composition = createCliComposition({
     schemaSynchronizer: options.schemaSynchronizer,
     includeDevelopmentCommands: options.includeDevelopmentCommands,
+    muximodSchemaMode: options.muximod?.schemaMode ?? "migrate",
+    muximodBaseInstanceDir: options.muximod?.schemaMode === "push" ? options.muximod.baseInstanceDir : undefined,
     env: environment,
     input: options.input,
     io,

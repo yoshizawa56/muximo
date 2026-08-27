@@ -1,4 +1,4 @@
-import type { MuximodEvent, muximodContract } from "@muximo/contract";
+import type { MuximodEvent, muximodContract } from "@muximo/contract/api";
 import type { QueryClient } from "@tanstack/react-query";
 import type { MuximodQueryUtils } from "./orpc-utils.js";
 
@@ -16,7 +16,13 @@ import type { MuximodQueryUtils } from "./orpc-utils.js";
 type ContractRoot = typeof muximodContract;
 export type ResourceGroup = Exclude<keyof ContractRoot, "auth" | "events" | "health" | "capabilities">;
 
-const resourceGroups = ["workspaces", "terminals", "sessions", "panes"] as const satisfies readonly ResourceGroup[];
+const resourceGroups = [
+  "workspaces",
+  "terminals",
+  "sessions",
+  "panes",
+  "agentSessions",
+] as const satisfies readonly ResourceGroup[];
 
 type UnhandledResourceGroup = Exclude<ResourceGroup, (typeof resourceGroups)[number]>;
 const _everyResourceGroupIsHandled: UnhandledResourceGroup extends never
@@ -50,7 +56,7 @@ export function invalidateOnMuximodEvent(
 
 /** Sessions changed (created, removed, or pane activity inside them). */
 export function invalidateSessionData(queryClient: QueryClient, utils: MuximodQueryUtils): void {
-  invalidateGroups(queryClient, utils, ["sessions", "panes"]);
+  invalidateGroups(queryClient, utils, ["sessions", "panes", "agentSessions"]);
 }
 
 /** Workspaces changed (registered, updated, or unregistered). */

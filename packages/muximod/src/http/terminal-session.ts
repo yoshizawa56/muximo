@@ -7,7 +7,7 @@ import {
   maxPasteImageBytes,
   type ServerControlMessage,
   terminalProtocolVersion,
-} from "@muximo/contract";
+} from "@muximo/contract/api";
 import {
   type ImagePaster,
   type MuximodSocket,

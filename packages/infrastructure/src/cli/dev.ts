@@ -3,12 +3,11 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { errorFields, type Logger } from "../logging/index.js";
-import { normalizeAllowedOrigins } from "../process/daemon.js";
 
 export type DevSupervisorInput = { serveProvider?: "tailscale" };
 export type DevSupervisorDependencies = { logger?: Logger };
 
-/** Starts the repository development supervisor with exact browser-origin configuration. */
+/** Starts the repository development supervisor. */
 export async function runDevCommand(
   input: DevSupervisorInput,
   environment: NodeJS.ProcessEnv,
@@ -17,7 +16,6 @@ export async function runDevCommand(
   const logger = dependencies.logger;
   const repositoryRoot = findRepositoryRoot(environment.MUXIMO_REPOSITORY_ROOT ?? process.cwd());
   if (!repositoryRoot) throw new Error("muximo dev requires a source checkout containing portless.json");
-  const allowedOrigins = resolveDevAllowedOrigins(input, environment);
   const childEnvironment: NodeJS.ProcessEnv = { ...environment };
   const childCwd = input.serveProvider ? join(repositoryRoot, "apps/serve") : repositoryRoot;
   const startedAt = Date.now();
@@ -30,7 +28,6 @@ export async function runDevCommand(
     pid: child.pid,
     repositoryRoot,
     serveProvider: input.serveProvider ?? "none",
-    allowedOrigins,
     childCwd,
   });
   let forwarding = false;
@@ -66,23 +63,6 @@ export async function runDevCommand(
   }
 }
 
-export function resolveDevAllowedOrigins(input: DevSupervisorInput, environment: NodeJS.ProcessEnv): string[] {
-  const configured = environment.MUXIMOD_ALLOWED_ORIGINS;
-  if (configured !== undefined) return normalizeAllowedOrigins(configured.split(","));
-  const webHost = normalizeBrowserHost(environment.VITE_DEV_HOST ?? "0.0.0.0");
-  const webPort = readPort(environment.VITE_DEV_PORT, 5227);
-  const origins = [`http://${formatHost(webHost)}:${webPort}`];
-  if (input.serveProvider === "tailscale") {
-    const hostname = environment.MUXIMO_TAILSCALE_HOSTNAME?.trim();
-    if (hostname) {
-      const externalPort = readPort(environment.MUXIMO_DEV_SERVE_PORT, 443);
-      const protocolOrigin = externalPort === 443 ? `https://${hostname}` : `https://${hostname}:${externalPort}`;
-      origins.push(new URL(protocolOrigin).origin);
-    }
-  }
-  return normalizeAllowedOrigins(origins);
-}
-
 function findRepositoryRoot(start: string): string | undefined {
   let current = resolve(start);
   while (true) {
@@ -97,21 +77,6 @@ function findRepositoryRoot(start: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function normalizeBrowserHost(value: string): string {
-  return value === "0.0.0.0" || value === "::" ? "127.0.0.1" : value;
-}
-
-function formatHost(value: string): string {
-  return value.includes(":") && !value.startsWith("[") ? `[${value}]` : value;
-}
-
-function readPort(value: string | undefined, fallback: number): number {
-  const port = Number(value ?? fallback);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535)
-    throw new Error("development port must be between 1 and 65535");
-  return port;
 }
 
 function signalExitCode(signal: NodeJS.Signals | null): number {

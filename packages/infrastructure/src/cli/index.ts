@@ -5,6 +5,7 @@ export * from "./filesystem.js";
 export * from "./git.js";
 export * from "./health.js";
 export * from "./hooks.js";
+export * from "./log.js";
 export * from "./observation.js";
 export * from "./pane.js";
 export * from "./serve.js";

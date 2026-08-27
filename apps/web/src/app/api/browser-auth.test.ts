@@ -1,5 +1,5 @@
-import type { PairingCodePayload } from "@muximo/contract";
-import { encodePairingCode } from "@muximo/contract";
+import type { PairingCodePayload } from "@muximo/contract/shared";
+import { encodePairingCode } from "@muximo/contract/shared";
 import {
   type Assertion,
   type FixtureHandle,

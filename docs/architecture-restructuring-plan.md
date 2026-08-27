@@ -59,7 +59,7 @@ builds the `MuximodApplication` facade from these instances):
   (no new class needed).
 
 Rules: no behavior changes; facade method signatures stay identical so
-`apps/muximod/src/http` keeps compiling. Tests move beside their use case.
+`packages/muximod/src/http` keeps compiling. Tests move beside their use case.
 
 ## Phase 1d — DONE — decompose `usecases/auth/auth-service.ts` (285 lines)
 
@@ -73,33 +73,34 @@ Rules: no behavior changes; facade method signatures stay identical so
 4. Keep replay/rate-limit behavior identical; service.test scenarios move to
    the new files (or stay as one lifecycle scenario under usecases/auth/).
 
-## Phase 2 — DONE — slim apps/muximod
+## Phase 2 — DONE — move muximod into its package
 
-Allowed final set:
+`apps/muximod` was removed. The muximod runtime, HTTP transport, private
+control socket, process bootstrap, and lifecycle composition now live in
+`packages/muximod`:
 
 ```
-src/index.ts            process entrypoint (argv branch only)
-src/server.ts           composition root (only place constructing adapters)
-src/http/app.ts         transport assembly (~150 lines target)
-src/http/rpc-handlers.ts  contract procedure -> use case calls
-src/http/middleware.ts    origin/CORS/error classification
-src/http/ws-terminal.ts   upgrade + ticket verification -> gateway handoff
-src/http/tmux-hook.ts     hook endpoint handler
-src/events.ts           SSE publisher
-src/control/*.ts        unix-socket control handlers
+packages/muximod/src/index.ts              public package exports
+packages/muximod/src/launch.ts             typed lifecycle and snapshot bootstrap
+packages/muximod/src/process-entrypoint.ts private child-process bootstrap
+packages/muximod/src/process-files.ts     PID and restart marker ownership
+packages/muximod/src/entrypoint.ts         private runtime process entrypoint
+packages/muximod/src/server.ts             runtime composition root
+packages/muximod/src/http/                API, events, and terminal transport
+packages/muximod/src/control.ts           private Unix-socket control transport
 ```
 
-Moves:
-- `terminal-session.ts` (612) -> `infrastructure/src/terminal/session-gateway.ts`
-  (NOTE: file imports @muximo/contract + spawnPty/PtyProcess/PreparedViewport/
-  TmuxViewportManager/ViewportLease from @muximo/infrastructure — convert those
-  to relative imports inside infra; verify infra package.json already depends on
-  contract before moving)
-  (+registry). Resume tokens stay inside the gateway (connection-level
-  concern); device binding checks become injected callbacks if needed.
-- `daemon.ts` (667→542) keeps process lifecycle only; health diagnostics moved to
-  src/cli/health-diagnostics.ts and OpenCode registry cleanup to
-  src/cli/opencode-registry.ts (re-exported through daemon for the runtime facade).
+`packages/muximod` is the only owner of muximod DI, child-process creation,
+PID/restart files, full push snapshots, and runtime resource cleanup. Its
+private process bootstrap receives a validated typed launch payload through an
+internal process-boundary serialization; it is not a public CLI command and is
+not present in help or completion.
+
+The API and private control-socket surfaces have separate contract exports:
+`@muximo/contract/api`, `@muximo/contract/control`, and
+`@muximo/contract/shared`. HTTP exposes browser operations; pairing and host
+control remain on the private Unix socket. Only the minimal pairing values are
+shared between those surfaces.
 
 ## Phase 3 — DONE — CLI decomposition
 
@@ -117,17 +118,24 @@ receive an application-generated `ClaimExecutionInput.updatedAt`.
 
 Concrete CLI capabilities live under `packages/infrastructure/src/cli/`: backend
 launch/discovery, worktrees, hooks, panes, workspace, observations, shell, tmux sessions,
-serve, dev, and diagnostics. The shared daemon process and timing adapters live under
-`packages/infrastructure/src/process/`. Pairing UI and control-socket
-transport remain CLI-local adapters. Browser origins are normalized and passed exactly
-to daemon options/environment; wildcard origins are rejected.
+serve, dev, and diagnostics. Muximod lifecycle and timing adapters live under
+`packages/muximod`; they are selected by the CLI composition root with either
+`migrate` or `push` schema mode. Pairing UI and control-socket clients remain
+CLI-local adapters. Browser origins are normalized and passed exactly to daemon
+options; wildcard origins are rejected.
 
 The former host/runtime directories, engine/lifecycle façade classes, broad session host
-port, manual parser paths, and CLI-to-muximod package dependency are removed. Provider
-implementation metadata is persisted through infrastructure-owned state rather than domain
-record mutation. Application results are typed business outcomes; CLI presenters own
-messages and process status mapping. `apps/muximod` remains a private server entrypoint
-without a public Commander/Zod CLI.
+port, manual parser paths, and direct CLI implementations of daemon-backed workspace and
+agent-session workflows are removed. The CLI calls the muximod API over local HTTP for
+workspace and agent-session operations, obtaining a short-lived local API token through
+the private control socket. Provider implementation metadata is persisted through
+infrastructure-owned state rather than domain record mutation. Application results are
+typed business outcomes; CLI presenters own messages and process status mapping.
+
+`apps/muximo-cli/dev.ts` is the development overlay. It detects a linked worktree,
+selects `push`, supplies the base instance directory, and invokes the normal CLI
+entrypoint. `apps/serve` supervises Portless, Web, and the CLI foreground serve command;
+it does not parse Muximo environment variables or construct muximod configuration.
 
 ## Verification per phase
 

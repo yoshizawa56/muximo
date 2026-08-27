@@ -12,6 +12,13 @@ const csvEnvironmentValue = (value: string): string[] =>
 
 export const serveOptionSpecs = defineOptions(
   {
+    key: "foreground",
+    flags: ["--foreground"],
+    description: "Keep the serving process attached to the current process.",
+    exposure: "cli",
+    defaultValue: false,
+  },
+  {
     key: "port",
     flags: ["--port <port>"],
     description: "External port exposed by the serving provider.",
@@ -93,6 +100,7 @@ export const serveOptionSpecs = defineOptions(
 
 const serveSchema = z.object({
   provider: z.literal("tailscale"),
+  foreground: z.boolean().default(false),
   muximodHost: z.string().min(1).default("127.0.0.1"),
   muximodPort: z.coerce.number().int().min(1).max(65_535).default(4317),
   externalPort: z.coerce.number().int().min(1).max(65_535).default(8444),
@@ -114,6 +122,7 @@ export function registerServeCommand(parent: Command, handlers: CliHandlers, con
         schema: serveSchema,
         rawInput: {
           provider: "tailscale",
+          foreground: resolved.foreground,
           muximodHost: resolved.muximodHost,
           muximodPort: resolved.muximodPort,
           externalPort: resolved.port,

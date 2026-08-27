@@ -9,10 +9,7 @@
     "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@muximo/infrastructure": "workspace:*",
-    "@muximo/muximod": "workspace:*",
-    "@muximo/portless-support": "workspace:*",
-    "@muximo/web": "workspace:*"
+    "@muximo/portless-support": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

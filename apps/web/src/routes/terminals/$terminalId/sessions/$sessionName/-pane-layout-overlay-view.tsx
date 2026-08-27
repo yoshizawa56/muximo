@@ -1,4 +1,4 @@
-import type { PaneSummary } from "@muximo/contract";
+import type { PaneSummary } from "@muximo/contract/api";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppIcon } from "../../../../../app/components/app-icon";

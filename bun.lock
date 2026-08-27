@@ -23,6 +23,9 @@
         "@muximo/contract": "workspace:*",
         "@muximo/domain": "workspace:*",
         "@muximo/infrastructure": "workspace:*",
+        "@muximo/muximod": "workspace:*",
+        "@orpc/client": "^1.15.0",
+        "@orpc/contract": "^1.15.0",
         "commander": "^15.0.0",
         "qrcode": "^1.5.4",
         "zod": "^4.4.3",
@@ -36,36 +39,11 @@
         "vitest": "^4.1.10",
       },
     },
-    "apps/muximod": {
-      "name": "@muximo/muximod",
-      "version": "0.1.0",
-      "dependencies": {
-        "@muximo/application": "workspace:*",
-        "@muximo/contract": "workspace:*",
-        "@muximo/domain": "workspace:*",
-        "@muximo/infrastructure": "workspace:*",
-        "@orpc/server": "^1.15.0",
-        "zod": "^4.4.3",
-      },
-      "devDependencies": {
-        "@muximo/portless-support": "workspace:*",
-        "@muximo/test-support": "workspace:*",
-        "@orpc/client": "^1.15.0",
-        "@orpc/contract": "^1.15.0",
-        "@types/node": "^26.1.2",
-        "bun-types": "^1.3.14",
-        "typescript": "^7.0.2",
-        "vitest": "^4.1.10",
-      },
-    },
     "apps/serve": {
       "name": "serve",
       "version": "0.1.0",
       "dependencies": {
-        "@muximo/infrastructure": "workspace:*",
-        "@muximo/muximod": "workspace:*",
         "@muximo/portless-support": "workspace:*",
-        "@muximo/web": "workspace:*",
       },
       "devDependencies": {
         "@types/node": "^26.1.2",
@@ -165,6 +143,25 @@
         "@types/node": "^26.1.2",
         "bun-types": "^1.3.14",
         "drizzle-kit": "^0.31.10",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10",
+      },
+    },
+    "packages/muximod": {
+      "name": "@muximo/muximod",
+      "version": "0.1.0",
+      "dependencies": {
+        "@muximo/application": "workspace:*",
+        "@muximo/contract": "workspace:*",
+        "@muximo/domain": "workspace:*",
+        "@muximo/infrastructure": "workspace:*",
+        "@orpc/server": "^1.15.0",
+        "zod": "^4.4.3",
+      },
+      "devDependencies": {
+        "@muximo/test-support": "workspace:*",
+        "@types/node": "^26.1.2",
+        "bun-types": "^1.3.14",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10",
       },
@@ -365,7 +362,7 @@
 
     "@muximo/muximo-cli": ["@muximo/muximo-cli@workspace:apps/muximo-cli"],
 
-    "@muximo/muximod": ["@muximo/muximod@workspace:apps/muximod"],
+    "@muximo/muximod": ["@muximo/muximod@workspace:packages/muximod"],
 
     "@muximo/portless-support": ["@muximo/portless-support@workspace:packages/portless-support"],
 

@@ -1,4 +1,4 @@
-import type { TerminalEndpoint, TmuxSession } from "@muximo/contract";
+import type { TerminalEndpoint, TmuxSession } from "@muximo/contract/api";
 import { useQuery } from "@tanstack/react-query";
 import { muximodErrorMessage } from "../../app/api/muximod-error.js";
 import { useMuximodEvents } from "../../app/api/muximod-events";

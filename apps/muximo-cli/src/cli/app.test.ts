@@ -134,6 +134,58 @@ const cases = [
     ],
   },
   {
+    name: "dispatches the top-level list alias to the session list handler",
+    input: { args: ["list", "--json"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionList",
+          input: { global: false, names: false, json: true, all: false },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the top-level ls alias to the session list handler",
+    input: { args: ["ls", "--json"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionList",
+          input: { global: false, names: false, json: true, all: false },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the top-level resume alias to the session resume handler",
+    input: { args: ["resume", "review"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionResume",
+          input: { global: false, reference: "review", backendArgs: [] },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the top-level cleanup alias to the session cleanup handler",
+    input: { args: ["cleanup", "review"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionCleanup",
+          input: { global: false, force: false, reference: "review" },
+        },
+      ]),
+    ],
+  },
+  {
     name: "dispatches existing tmux session adoption through the typed handler",
     input: { args: ["tmux", "manage-session", "--name", "desktop"] },
     assert: [
@@ -174,12 +226,65 @@ const cases = [
           command: "serve",
           input: {
             provider: "tailscale",
+            foreground: false,
             muximodHost: "127.0.0.1",
             muximodPort: 4317,
             externalPort: 8444,
             pidFile: undefined,
             logLevel: "info",
             logFile: undefined,
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches daemon log with its default line limit",
+    input: { args: ["daemon", "log"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "daemon",
+          input: {
+            command: "log",
+            foreground: false,
+            refreshServers: false,
+            host: "127.0.0.1",
+            port: 4317,
+            pidFile: undefined,
+            controlSocket: undefined,
+            muximodBaseUrl: undefined,
+            logLevel: undefined,
+            logFile: undefined,
+            lines: 100,
+            allowedOrigins: undefined,
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches daemon log options to the selected log file",
+    input: { args: ["daemon", "log", "--lines", "2", "--log-file", "/tmp/cli.log"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "daemon",
+          input: {
+            command: "log",
+            foreground: false,
+            refreshServers: false,
+            host: "127.0.0.1",
+            port: 4317,
+            pidFile: undefined,
+            controlSocket: undefined,
+            muximodBaseUrl: undefined,
+            logLevel: undefined,
+            logFile: "/tmp/cli.log",
+            lines: 2,
+            allowedOrigins: undefined,
           },
         },
       ]),
@@ -195,6 +300,7 @@ const cases = [
           command: "serve",
           input: {
             provider: "tailscale",
+            foreground: false,
             muximodHost: "127.0.0.1",
             muximodPort: 4317,
             externalPort: 8444,
@@ -244,6 +350,7 @@ const cases = [
           command: "serve",
           input: {
             provider: "tailscale",
+            foreground: false,
             muximodHost: "0.0.0.0",
             muximodPort: 5001,
             externalPort: 9443,
@@ -286,6 +393,7 @@ const cases = [
           command: "serve",
           input: {
             provider: "tailscale",
+            foreground: false,
             muximodHost: "127.0.0.1",
             muximodPort: 5002,
             externalPort: 9444,

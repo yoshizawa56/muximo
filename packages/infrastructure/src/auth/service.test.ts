@@ -1,4 +1,4 @@
-import { AuthService, type AuthStorePort } from "@muximo/application";
+import { AuthService, AuthStoreError, type AuthStorePort } from "@muximo/application";
 import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 import {
   type FixtureHandle,
@@ -29,7 +29,11 @@ type AuthFixture = {
   device?: Awaited<ReturnType<AuthService["approvePairing"]>>;
   challenge?: Awaited<ReturnType<AuthService["createChallenge"]>>;
   session?: Awaited<ReturnType<AuthService["createSession"]>>;
+  localSession?: Awaited<ReturnType<AuthService["createLocalSession"]>>;
   contextDeviceId: string | null;
+  localContextSessionId: string | null;
+  localContextDeviceId: string | null;
+  localTicketError: string | null;
   claimStatus: string | null;
   approvedStatus: string | null;
   deviceId: string | null;
@@ -98,6 +102,9 @@ const authFixture = async (): Promise<FixtureHandle<AuthFixture>> => {
     publicKey,
     keyFingerprint,
     contextDeviceId: null,
+    localContextSessionId: null,
+    localContextDeviceId: null,
+    localTicketError: null,
     claimStatus: null,
     approvedStatus: null,
     deviceId: null,
@@ -255,6 +262,68 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
 
 describe("muximod device authentication", () => {
   runScenarioTable(it as unknown as TestRegistrar, table);
+});
+
+type LocalAuthStep =
+  | { type: "create-local-session" }
+  | { type: "authenticate-local-session" }
+  | { type: "issue-local-ticket" };
+type LocalAuthContext = {
+  localContextSessionId: string | null;
+  localContextDeviceId: string | null;
+  localTicketError: string | null;
+};
+
+const localAuthCases = [
+  {
+    name: "allows local CLI sessions to call the API but not open terminal sockets",
+    steps: [{ type: "create-local-session" }, { type: "authenticate-local-session" }, { type: "issue-local-ticket" }],
+    assert: [
+      hasObserved<LocalAuthContext, undefined>("localContextSessionId", expect.any(String)),
+      hasObserved<LocalAuthContext, undefined>("localContextDeviceId", "local-cli"),
+      hasObserved<LocalAuthContext, undefined>("localTicketError", "local_session_terminal_forbidden"),
+    ],
+  },
+] satisfies readonly ScenarioCase<"default", LocalAuthStep, undefined, LocalAuthContext>[];
+
+const localAuthTable: ScenarioTable<AuthFixture, "default", LocalAuthStep, undefined, LocalAuthContext> = {
+  defaultFixture: authFixture,
+  cases: localAuthCases,
+  execute: async (fixture, steps) => {
+    for (const step of steps) {
+      if (step.type === "create-local-session") {
+        fixture.localSession = await fixture.auth.createLocalSession();
+        continue;
+      }
+      if (step.type === "authenticate-local-session") {
+        const session = fixture.localSession;
+        if (!session) throw new Error("local session was not created");
+        const context = await fixture.auth.authenticateAccessToken(session.accessToken);
+        fixture.localContextSessionId = context?.sessionId ?? null;
+        fixture.localContextDeviceId = context?.deviceId ?? null;
+        continue;
+      }
+      const session = fixture.localSession;
+      if (!session) throw new Error("local session was not created");
+      const context = await fixture.auth.authenticateAccessToken(session.accessToken);
+      if (!context) throw new Error("local session could not be authenticated");
+      try {
+        await fixture.auth.issueWebSocketTicket(context, "terminal");
+      } catch (error) {
+        if (!(error instanceof AuthStoreError)) throw error;
+        fixture.localTicketError = error.code;
+      }
+    }
+  },
+  observe: (fixture) => ({
+    localContextSessionId: fixture.localContextSessionId,
+    localContextDeviceId: fixture.localContextDeviceId,
+    localTicketError: fixture.localTicketError,
+  }),
+};
+
+describe("muximod local CLI authentication", () => {
+  runScenarioTable(it as unknown as TestRegistrar, localAuthTable);
 });
 
 type RevokeTarget = "device" | "session";

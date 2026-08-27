@@ -1,5 +1,6 @@
 import type { CreatePaneInput, CreateSessionInput, ManageSessionInput, MuximodApplication } from "@muximo/application";
-import { type AuthInfo, muximodHealthSchema, protocolVersion } from "@muximo/contract";
+import { type AuthInfo, muximodHealthSchema } from "@muximo/contract/api";
+import { protocolVersion } from "@muximo/contract/shared";
 import { Pane, PaneId } from "@muximo/domain";
 import {
   type Assertion,
@@ -443,6 +444,18 @@ function createTestApplication(
   },
 ): MuximodApplication {
   return {
+    agentSessions: {
+      run: async () => {
+        throw new Error("not used");
+      },
+      resume: async () => {
+        throw new Error("not used");
+      },
+      cleanup: async () => {
+        throw new Error("not used");
+      },
+      list: async () => ({ allViews: [], views: [] }),
+    },
     terminal: {
       get: async () => ({
         id: "terminal",

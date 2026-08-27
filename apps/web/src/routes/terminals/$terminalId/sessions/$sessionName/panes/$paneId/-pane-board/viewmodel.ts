@@ -1,4 +1,4 @@
-import type { PaneSummary as ProtocolPaneSummary } from "@muximo/contract";
+import type { PaneSummary as ProtocolPaneSummary } from "@muximo/contract/api";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import type { MuximodConnection } from "../../../../../../../../app/api/muximod-client.js";

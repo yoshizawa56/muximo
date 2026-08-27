@@ -14,7 +14,6 @@ type ServeFixture = {
   commands: Array<{ args: readonly string[]; environment: NodeJS.ProcessEnv }>;
   origin?: string;
   daemonOrigin?: string;
-  daemonEnvironment?: string;
   wildcard?: boolean;
   ensureCount?: number;
   commandCount?: number;
@@ -35,7 +34,6 @@ const cases = [
     assert: [
       hasObserved<ServeFixture, TailscaleServeResult>("origin", "https://web.tailnet.ts.net"),
       hasObserved<ServeFixture, TailscaleServeResult>("daemonOrigin", "https://web.tailnet.ts.net"),
-      hasObserved<ServeFixture, TailscaleServeResult>("daemonEnvironment", "https://web.tailnet.ts.net"),
       hasObserved<ServeFixture, TailscaleServeResult>("wildcard", false),
     ],
   },
@@ -71,6 +69,7 @@ const table: OperationTable<ServeFixture, "default", ServeInput, TailscaleServeR
     ensureTailscaleServe(
       {
         provider: "tailscale",
+        foreground: false,
         muximodHost: "127.0.0.1",
         muximodPort: 4317,
         externalPort: 443,
@@ -94,10 +93,7 @@ const table: OperationTable<ServeFixture, "default", ServeInput, TailscaleServeR
   observe: (fixture, result) => {
     fixture.origin = result.ok ? result.value.allowedOrigins[0] : undefined;
     fixture.daemonOrigin = fixture.ensureCalls[0]?.origins[0];
-    fixture.daemonEnvironment = result.ok ? result.value.daemonEnvironment.MUXIMOD_ALLOWED_ORIGINS : undefined;
-    fixture.wildcard = result.ok
-      ? (result.value.daemonEnvironment.MUXIMOD_ALLOWED_ORIGINS?.includes("*") ?? false)
-      : false;
+    fixture.wildcard = result.ok ? result.value.allowedOrigins.includes("*") : false;
     fixture.ensureCount = fixture.ensureCalls.length;
     fixture.commandCount = fixture.commands.length;
     return fixture;

@@ -1,5 +1,4 @@
-import type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "@muximo/application";
-import { clearPatch, type Patch, type WorkspaceRecord } from "@muximo/domain";
+import type { RegisterWorkspaceRequest, UpdateWorkspaceRequest, WorkspaceDirectory } from "@muximo/contract/api";
 import type {
   CliHandlers,
   CliIo,
@@ -10,12 +9,12 @@ import type {
 } from "../commands/types.js";
 import { displayWorkspacePath, presentWorkspaceList } from "../presenters/workspace.js";
 
-type WorkspaceListService = { execute(): Promise<readonly WorkspaceRecord[]> };
-type WorkspaceAddService = { execute(input: RegisterWorkspaceInput): Promise<WorkspaceRecord> };
+type WorkspaceListService = { execute(): Promise<readonly WorkspaceDirectory[]> };
+type WorkspaceAddService = { execute(input: RegisterWorkspaceRequest): Promise<WorkspaceDirectory> };
 type WorkspaceUpdateService = {
-  execute(selector: string, input: UpdateWorkspaceInput): Promise<WorkspaceRecord>;
+  execute(selector: string, input: UpdateWorkspaceRequest): Promise<WorkspaceDirectory>;
 };
-type WorkspaceDeleteService = { execute(selector: string): Promise<WorkspaceRecord> };
+type WorkspaceDeleteService = { execute(selector: string): Promise<WorkspaceDirectory> };
 
 export type WorkspaceHandlerDependencies = {
   list: WorkspaceListService;
@@ -36,7 +35,7 @@ export function createWorkspaceHandlers(
       }),
     workspaceAdd: async (input: CliWorkspaceAddInput) => {
       const workspace = await dependencies.add.execute(toAddInput(input));
-      writeInfo(dependencies.io, `workspace '${workspace.name}' added (${displayWorkspacePath(workspace.rootPath)})`);
+      writeInfo(dependencies.io, `workspace '${workspace.name}' added (${displayWorkspacePath(workspace.directory)})`);
       return 0;
     },
     workspaceUpdate: async (input: CliWorkspaceUpdateInput) => {
@@ -52,29 +51,25 @@ export function createWorkspaceHandlers(
   };
 }
 
-function toAddInput(input: CliWorkspaceAddInput): RegisterWorkspaceInput {
+function toAddInput(input: CliWorkspaceAddInput): RegisterWorkspaceRequest {
   return {
     directory: input.directory,
-    name: input.nameExplicit ? input.name : undefined,
-    setupHook: input.setupHookExplicit ? toWorkspacePatch(input.setupHook) : undefined,
-    cleanupHook: input.cleanupHookExplicit ? toWorkspacePatch(input.cleanupHook) : undefined,
-    worktreeCopyPatterns: input.copyPatternsExplicit ? input.copyPatterns : undefined,
+    ...(input.nameExplicit && input.name !== undefined ? { name: input.name } : {}),
+    ...(input.setupHookExplicit ? { setupScriptPath: input.setupHook } : {}),
+    ...(input.cleanupHookExplicit ? { cleanupScriptPath: input.cleanupHook } : {}),
+    ...(input.copyPatternsExplicit ? { worktreeCopyPatterns: input.copyPatterns } : {}),
   };
 }
 
-function toUpdateInput(input: CliWorkspaceUpdateInput): UpdateWorkspaceInput {
+function toUpdateInput(input: CliWorkspaceUpdateInput): UpdateWorkspaceRequest {
   return {
-    name: input.nameExplicit ? input.name : undefined,
-    setupHook: input.setupHookExplicit ? toWorkspacePatch(input.setupHook) : undefined,
-    cleanupHook: input.cleanupHookExplicit ? toWorkspacePatch(input.cleanupHook) : undefined,
-    worktreeCopyPatterns: input.copyPatternsExplicit ? input.copyPatterns : undefined,
-    appendCopyPatterns: input.appendCopyPatterns,
-    clearCopyPatterns: input.clearCopyPatterns,
+    ...(input.nameExplicit && input.name !== undefined ? { name: input.name } : {}),
+    ...(input.setupHookExplicit ? { setupScriptPath: input.setupHook } : {}),
+    ...(input.cleanupHookExplicit ? { cleanupScriptPath: input.cleanupHook } : {}),
+    ...(input.copyPatternsExplicit ? { worktreeCopyPatterns: input.copyPatterns } : {}),
+    ...(input.appendCopyPatterns.length > 0 ? { appendWorktreeCopyPatterns: input.appendCopyPatterns } : {}),
+    ...(input.clearCopyPatterns ? { clearWorktreeCopyPatterns: true } : {}),
   };
-}
-
-function toWorkspacePatch(value: string | null | undefined): Patch<string> {
-  return value === null ? clearPatch : value;
 }
 
 function writeInfo(io: CliIo, message: string): void {

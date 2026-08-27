@@ -1,5 +1,5 @@
 import type { MuximodApplication, MuximodAuthPort } from "@muximo/application";
-import type { MuximodEvent } from "@muximo/contract";
+import type { MuximodEvent } from "@muximo/contract/api";
 import {
   type FixtureHandle,
   hasObserved,
@@ -138,6 +138,18 @@ const testAuth: MuximodAuthPort = {
 
 function createApplication(): MuximodApplication {
   return {
+    agentSessions: {
+      run: async () => {
+        throw new Error("not used");
+      },
+      resume: async () => {
+        throw new Error("not used");
+      },
+      cleanup: async () => {
+        throw new Error("not used");
+      },
+      list: async () => ({ allViews: [], views: [] }),
+    },
     terminal: {
       get: async () => ({
         id: "terminal",

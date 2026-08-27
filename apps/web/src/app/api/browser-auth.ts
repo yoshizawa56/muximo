@@ -1,14 +1,14 @@
+import type { PairingClaimRequest } from "@muximo/contract/api";
 import {
   canonicalPublicJwk,
   decodePairingCode,
   encodeJsonBase64Url,
-  type PairingClaimRequest,
   type PairingCodePayload,
   type PublicKeyJwk,
   pairingClaimMessage,
   pairingCodePayloadSchema,
   sessionMessage,
-} from "@muximo/contract";
+} from "@muximo/contract/shared";
 import { createBrowserAuthCoordinator } from "./browser-auth-coordinator.js";
 import {
   createServeConnection,

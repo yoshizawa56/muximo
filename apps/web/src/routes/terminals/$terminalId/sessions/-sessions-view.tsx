@@ -1,4 +1,4 @@
-import type { TmuxSession } from "@muximo/contract";
+import type { TmuxSession } from "@muximo/contract/api";
 import { ConnectionFlowLayout, FlowIntro } from "../../-connection-flow-layout";
 import type { SessionsViewModel } from "./-sessions-viewmodel";
 

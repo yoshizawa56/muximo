@@ -2,13 +2,17 @@ import { WorkspaceId } from "@muximo/domain";
 import { eventIterator, oc } from "@orpc/contract";
 import { z } from "zod";
 import {
+  agentSessionListResponseSchema,
   authChallengeRequestSchema,
   authChallengeResponseSchema,
   authInfoSchema,
   authSessionRequestSchema,
   authSessionResponseSchema,
+  cleanupAgentSessionRequestSchema,
+  cleanupAgentSessionResponseSchema,
   createPaneRequestSchema,
   createSessionRequestSchema,
+  listAgentSessionsRequestSchema,
   managedSessionResponseSchema,
   manageSessionRequestSchema,
   muximodCapabilitiesSchema,
@@ -20,6 +24,10 @@ import {
   paneListResponseSchema,
   paneResponseSchema,
   registerWorkspaceRequestSchema,
+  resumeAgentSessionRequestSchema,
+  resumeAgentSessionResponseSchema,
+  runAgentSessionRequestSchema,
+  runAgentSessionResponseSchema,
   sessionListResponseSchema,
   sessionResponseSchema,
   terminalListResponseSchema,
@@ -78,6 +86,12 @@ export const muximodContract = {
   panes: {
     list: oc.input(paneListInput).output(paneListResponseSchema),
     create: oc.input(createPaneRequestSchema).output(paneResponseSchema),
+  },
+  agentSessions: {
+    run: oc.input(runAgentSessionRequestSchema).output(runAgentSessionResponseSchema),
+    resume: oc.input(resumeAgentSessionRequestSchema).output(resumeAgentSessionResponseSchema),
+    cleanup: oc.input(cleanupAgentSessionRequestSchema).output(cleanupAgentSessionResponseSchema),
+    list: oc.input(listAgentSessionsRequestSchema).output(agentSessionListResponseSchema),
   },
   events: {
     subscribe: oc.input(emptyInput).output(eventIterator(muximodEventSchema)),

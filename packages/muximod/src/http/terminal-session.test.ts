@@ -4,7 +4,7 @@ import {
   maxPasteImageBase64Length,
   serverControlMessageSchema,
   terminalProtocolVersion,
-} from "@muximo/contract";
+} from "@muximo/contract/api";
 import {
   type ImagePasteInput,
   type MuximodSocketData,

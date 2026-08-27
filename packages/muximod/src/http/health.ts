@@ -1,4 +1,5 @@
-import { type MuximodHealth, muximodHealthSchema, protocolVersion } from "@muximo/contract";
+import { type MuximodHealth, muximodHealthSchema } from "@muximo/contract/api";
+import { protocolVersion } from "@muximo/contract/shared";
 
 export type MuximodHealthUnavailable = {
   error: "muximod_unavailable";

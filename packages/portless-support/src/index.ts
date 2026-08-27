@@ -40,6 +40,12 @@ export type PortlessServiceRoute = PortlessServiceRuntime & {
   routePid: number;
 };
 
+export type PortlessProcessHandle = {
+  pid?: number;
+  wait(): Promise<number>;
+  terminate(signal?: "SIGINT" | "SIGTERM"): void;
+};
+
 type Environment = NodeJS.ProcessEnv;
 
 const serviceDefinitions: Record<
@@ -52,7 +58,7 @@ const serviceDefinitions: Record<
     portEnvironmentVariable: "VITE_DEV_PORT",
   },
   muximod: {
-    packagePath: "apps/muximod",
+    packagePath: "apps/muximo-cli",
     defaultPort: 4317,
     portEnvironmentVariable: "MUXIMOD_PORT",
   },
@@ -131,6 +137,31 @@ export async function runPortlessService(
   service: PortlessService,
   options: { repositoryRoot?: string; environment?: Environment; args?: readonly string[] } = {},
 ): Promise<number> {
+  const child = spawnPortlessService(service, options);
+  let forwarding = false;
+  const forwardSignal = (signal: NodeJS.Signals) => {
+    if (forwarding) return;
+    forwarding = true;
+    child.terminate(signal === "SIGINT" ? "SIGINT" : "SIGTERM");
+  };
+  const onSigint = () => forwardSignal("SIGINT");
+  const onSigterm = () => forwardSignal("SIGTERM");
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+
+  try {
+    return await child.wait();
+  } finally {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+  }
+}
+
+/** Starts a Portless child without installing signal handlers in the caller. */
+export function spawnPortlessService(
+  service: PortlessService,
+  options: { repositoryRoot?: string; environment?: Environment; args?: readonly string[] } = {},
+): PortlessProcessHandle {
   const environment = loadDevelopmentEnvironment({
     repositoryRoot: options.repositoryRoot,
     environment: options.environment,
@@ -159,30 +190,30 @@ export async function runPortlessService(
     {
       cwd: join(repositoryRoot, definition.packagePath),
       env: environment,
+      detached: process.platform !== "win32",
       stdio: "inherit",
     },
   );
 
-  let forwarding = false;
-  const forwardSignal = (signal: NodeJS.Signals) => {
-    if (forwarding) return;
-    forwarding = true;
-    child.kill(signal);
+  const waitForExit = new Promise<number>((resolvePromise, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolvePromise(code ?? signalExitCode(signal)));
+  });
+  return {
+    pid: child.pid,
+    wait: () => waitForExit,
+    terminate: (signal = "SIGTERM") => {
+      if (process.platform !== "win32" && child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch (error) {
+          if (!hasErrorCode(error, "ESRCH")) throw error;
+        }
+      }
+      child.kill(signal);
+    },
   };
-  const onSigint = () => forwardSignal("SIGINT");
-  const onSigterm = () => forwardSignal("SIGTERM");
-  process.once("SIGINT", onSigint);
-  process.once("SIGTERM", onSigterm);
-
-  try {
-    return await new Promise<number>((resolvePromise, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code, signal) => resolvePromise(code ?? signalExitCode(signal)));
-    });
-  } finally {
-    process.off("SIGINT", onSigint);
-    process.off("SIGTERM", onSigterm);
-  }
 }
 
 /** Parses the small, portable subset of dotenv syntax needed by dev files. */
@@ -219,14 +250,6 @@ export function configurePortlessService(
   if (service === "web") {
     environment.VITE_DEV_HOST = runtime.host;
     appendEnvironmentValue(environment, "VITE_ALLOWED_HOSTS", runtime.hostname);
-  } else {
-    if (environment.MUXIMOD_PAIRING_BASE_URL === undefined) {
-      environment.MUXIMOD_PAIRING_BASE_URL = runtime.publicUrl;
-    }
-    if (environment.MUXIMOD_ALLOWED_ORIGINS === undefined) {
-      const webUrl = resolvePortlessPeerUrl("muximod", { repositoryRoot, environment });
-      if (webUrl) environment.MUXIMOD_ALLOWED_ORIGINS = webUrl.origin;
-    }
   }
 
   return runtime;
@@ -542,4 +565,8 @@ function parseDotEnvValue(value: string, source: string, lineNumber: number): st
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
 }

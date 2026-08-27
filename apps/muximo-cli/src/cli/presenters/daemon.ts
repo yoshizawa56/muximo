@@ -5,7 +5,7 @@ import type {
   DaemonStatusResult,
   DaemonStopResult,
 } from "@muximo/application";
-import { readDaemonHealthDiagnostics } from "@muximo/infrastructure";
+import { type DaemonLogResult, readDaemonHealthDiagnostics } from "@muximo/infrastructure";
 import type { CliIo } from "../commands/types.js";
 
 export function presentDaemonStart(result: DaemonStartResult, io: CliIo): number {
@@ -53,6 +53,19 @@ export function presentDaemonRestart(result: DaemonRestartResult, io: CliIo): nu
   const prefix =
     result.state === "restarted-by-service-manager" ? "muximod restarted by its service manager" : "muximod restarted";
   io.out.write(`${prefix} at http://${displayDaemonHost(result.host)}:${result.port}\n`);
+  return 0;
+}
+
+export function presentDaemonLog(result: DaemonLogResult, io: CliIo): number {
+  if (result.state === "missing") {
+    io.err.write(`muximo: muximod log file was not found: ${result.logFile}\n`);
+    return 1;
+  }
+  if (result.state === "empty") {
+    io.out.write(`muximod log file is empty: ${result.logFile}\n`);
+    return 0;
+  }
+  io.out.write(`${result.lines.join("\n")}\n`);
   return 0;
 }
 

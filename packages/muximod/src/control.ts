@@ -5,9 +5,9 @@ import type { AuthPairingClaimNotification, MuximodAuthControlPort } from "@muxi
 import {
   decodeMuximodControlRequest,
   encodeMuximodControlResponse,
-  encodePairingCode,
   type MuximodControlResponse,
-} from "@muximo/contract";
+} from "@muximo/contract/control";
+import { encodePairingCode } from "@muximo/contract/shared";
 import type { PaneState } from "@muximo/domain";
 import { validateMuximodControlSocketPath } from "@muximo/infrastructure";
 
@@ -124,6 +124,10 @@ export class MuximodControlServer {
     const request = parsedRequest.value;
 
     try {
+      if (request.type === "create_local_session") {
+        this.send(socket, { type: "local_session_created", session: await this.options.auth.createLocalSession() });
+        return;
+      }
       if (request.type === "create_pairing") {
         const payload = await this.options.auth.createPairing({ muximodBaseUrl: request.muximodBaseUrl });
         this.pairingOwners.set(payload.pairingId, socket);

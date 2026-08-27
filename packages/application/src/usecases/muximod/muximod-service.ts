@@ -1,5 +1,10 @@
 import type { PaneRecord, PaneState } from "@muximo/domain";
-import type { ApplicationClock, MuximodApplication, MuximodTerminalEndpoint } from "../../ports/application.js";
+import type {
+  ApplicationClock,
+  MuximodAgentSessionApplication,
+  MuximodApplication,
+  MuximodTerminalEndpoint,
+} from "../../ports/application.js";
 import type {
   MuximodHostPort,
   MuximodSessionManagementPort,
@@ -24,6 +29,7 @@ import type { RegisterWorkspace } from "../workspaces/register-workspace.js";
 import type { UpdateWorkspace } from "../workspaces/update-workspace.js";
 
 export type MuximodApplicationResources = {
+  agentSessions: MuximodAgentSessionApplication;
   getTerminal: () => Promise<MuximodTerminalEndpoint>;
   host: MuximodHostPort;
   sessionManagement: MuximodSessionManagementPort;
@@ -75,6 +81,7 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
     agentStatus,
   } = resources;
   return {
+    agentSessions: resources.agentSessions,
     terminal: { get: resources.getTerminal },
     workspaces: {
       list: async () =>

@@ -4,7 +4,7 @@ import type {
   MuximodAuthContext,
   MuximodAuthPort,
 } from "@muximo/application";
-import type { MuximodEvent } from "@muximo/contract";
+import type { MuximodEvent } from "@muximo/contract/api";
 import type { MuximodSocket, MuximodSocketFactory } from "@muximo/infrastructure";
 
 export type { MuximodAuthContext, MuximodAuthDevice, MuximodAuthPort } from "@muximo/application";

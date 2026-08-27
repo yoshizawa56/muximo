@@ -10,8 +10,7 @@
     "cap:open": "cap open ios",
     "cap:run": "cap run ios --scheme Local",
     "build-storybook": "node ./node_modules/storybook/dist/bin/dispatcher.js build",
-    "dev": "portless-support web",
-    "dev:server": "bun dev.ts",
+    "dev": "bun dev.ts",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
     "storybook": "node ./node_modules/storybook/dist/bin/dispatcher.js dev --host 0.0.0.0 -p 6006",
     "test": "node ./node_modules/vitest/vitest.mjs run src",
@@ -38,7 +37,6 @@
   },
   "devDependencies": {
     "@capacitor/cli": "8.4.2",
-    "@muximo/portless-support": "workspace:*",
     "@muximo/test-support": "workspace:*",
     "@types/node": "^26.1.2",
     "@orpc/server": "^1.15.0",

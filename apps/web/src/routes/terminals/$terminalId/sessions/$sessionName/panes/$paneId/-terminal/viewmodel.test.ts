@@ -3,7 +3,7 @@ import {
   encodeServerControlFrame,
   type ServerControlMessage,
   terminalProtocolVersion,
-} from "@muximo/contract";
+} from "@muximo/contract/api";
 import {
   type FixtureHandle,
   hasObserved,

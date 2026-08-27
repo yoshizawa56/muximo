@@ -1,4 +1,4 @@
-import type { PaneSummary } from "@muximo/contract";
+import type { PaneSummary } from "@muximo/contract/api";
 import { useEffect, useRef, useState } from "react";
 import type { WaitingAgent } from "./patterns";
 

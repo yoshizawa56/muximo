@@ -2,7 +2,6 @@ import { execFile as execFileCallback } from "node:child_process";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { errorFields, errorMessage, type Logger, type LogLevel } from "../logging/index.js";
-import { buildMuximodDaemonEnvironment, normalizeAllowedOrigins } from "../process/daemon.js";
 import {
   buildServeArgs,
   buildServeHttpUrl,
@@ -16,6 +15,7 @@ const tailscaleCommandTimeoutMs = 15_000;
 
 export type ServeInput = {
   provider: "tailscale";
+  foreground: boolean;
   muximodHost: string;
   muximodPort: number;
   externalPort: number;
@@ -25,10 +25,19 @@ export type ServeInput = {
   allowedOrigins?: readonly string[];
 };
 
-export type ServeCommandOptions = ServeInput & { tailscaleBinary: string; hostname?: string };
+export type ServeCommandOptions = ServeInput & { tailscaleBinary: string; hostname?: string; muximodBaseUrl?: string };
+
+export type ServeProcessHandle = {
+  pid?: number;
+  wait(): Promise<{ code: number; interrupted: boolean; signal?: string | null }>;
+  terminate(signal?: "SIGINT" | "SIGTERM"): void;
+};
 
 export type ServeCommandDependencies = {
-  ensureMuximod: (options: ServeCommandOptions, allowedOrigins: readonly string[]) => Promise<void>;
+  ensureMuximod: (
+    options: ServeCommandOptions,
+    allowedOrigins: readonly string[],
+  ) => Promise<ServeProcessHandle | undefined>;
   runCommand?: CommandRunner;
   logger?: Logger;
 };
@@ -40,9 +49,9 @@ export type TailscaleServeResult = {
   url?: string;
   localUrl: string;
   allowedOrigins: readonly string[];
-  daemonEnvironment: NodeJS.ProcessEnv;
   stdout: string;
   stderr: string;
+  foregroundProcess?: ServeProcessHandle;
 };
 
 type CommandRunner = (
@@ -77,10 +86,17 @@ export async function ensureTailscaleServe(
     hostname = await discoverHostname(options.tailscaleBinary, runCommand, environment, logger);
   }
   const allowedOrigins = resolveServeAllowedOrigins(options, environment, hostname);
-  const daemonEnvironment = buildMuximodDaemonEnvironment({ allowedOrigins }, environment);
+  const localUrl = localMuximodUrl(options.muximodHost, options.muximodPort);
+  const url = hostname
+    ? buildServeHttpUrl(hostname, options.externalPort)
+    : (environment.MUXIMOD_PAIRING_BASE_URL ?? localUrl);
   const muximodStartedAt = Date.now();
+  let foregroundProcess: ServeProcessHandle | undefined;
   try {
-    await dependencies.ensureMuximod({ ...options, allowedOrigins }, allowedOrigins);
+    foregroundProcess = await dependencies.ensureMuximod(
+      { ...options, allowedOrigins, muximodBaseUrl: url },
+      allowedOrigins,
+    );
     logger?.debug("muximod.ensure_finished", { durationMs: Date.now() - muximodStartedAt });
   } catch (error) {
     logger?.debug("muximod.ensure_failed", { durationMs: Date.now() - muximodStartedAt, ...errorFields(error) });
@@ -88,14 +104,18 @@ export async function ensureTailscaleServe(
   }
   const serveArgs = buildServeArgs({ localPort: options.muximodPort, externalPort: options.externalPort });
   const commandStartedAt = Date.now();
-  const result = await runCommand(options.tailscaleBinary, serveArgs, { env: environment });
+  let result: { stdout: string; stderr: string };
+  try {
+    result = await runCommand(options.tailscaleBinary, serveArgs, { env: environment });
+  } catch (error) {
+    foregroundProcess?.terminate("SIGTERM");
+    await foregroundProcess?.wait().catch(() => undefined);
+    throw error;
+  }
   logger?.debug("serve.subprocess_finished", {
     kind: "tailscale",
     durationMs: Date.now() - commandStartedAt,
   });
-  const url = hostname
-    ? buildServeHttpUrl(hostname, options.externalPort)
-    : (options.allowedOrigins?.[0] ?? allowedOrigins[0]);
   logger?.debug("serve.finished", {
     durationMs: Date.now() - startedAt,
     hostnameResolved: Boolean(hostname),
@@ -108,9 +128,9 @@ export async function ensureTailscaleServe(
     url,
     localUrl: localMuximodUrl(options.muximodHost, options.muximodPort),
     allowedOrigins,
-    daemonEnvironment,
     stdout: result.stdout,
     stderr: result.stderr,
+    ...(foregroundProcess ? { foregroundProcess } : {}),
   };
 }
 
@@ -127,6 +147,29 @@ export function resolveServeAllowedOrigins(
     throw new Error("could not determine the browser origin; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_ALLOWED_ORIGINS");
   }
   return normalizeAllowedOrigins([new URL(buildServeHttpUrl(hostname, options.externalPort)).origin]);
+}
+
+export function normalizeAllowedOrigins(origins: readonly string[]): string[] {
+  const normalized = new Set<string>();
+  for (const value of origins) {
+    const origin = value.trim();
+    if (!origin) continue;
+    if (origin === "*") throw new Error("wildcard browser origins are not allowed");
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch (error) {
+      throw new Error(`invalid browser origin: ${origin}`, { cause: error });
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`browser origin must use http or https: ${origin}`);
+    }
+    if (parsed.origin !== origin.replace(/\/$/u, "")) {
+      throw new Error(`browser origin must not include a path: ${origin}`);
+    }
+    normalized.add(parsed.origin);
+  }
+  return [...normalized].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 export function localMuximodUrl(host: string, port: number): string {

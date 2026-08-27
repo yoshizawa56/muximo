@@ -4,7 +4,7 @@ import {
   encodeClientControlFrame,
   type ServerControlMessage,
   terminalProtocolVersion,
-} from "@muximo/contract";
+} from "@muximo/contract/api";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { type RefCallback, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";

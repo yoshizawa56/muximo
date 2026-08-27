@@ -1,4 +1,5 @@
 import {
+  AgentSession,
   agentBackendSchema,
   Pane,
   PaneId,
@@ -92,6 +93,16 @@ export const pairingCodePayloadSchema = z
   .strict();
 export type PairingCodePayload = z.infer<typeof pairingCodePayloadSchema>;
 
+const localAuthSessionResponseSchema = z
+  .object({
+    serverId: z.string().min(16).max(256),
+    deviceId: z.string().min(1).max(256),
+    sessionId: z.string().min(1).max(256),
+    accessToken: base64UrlValueSchema.min(32).max(512),
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
+
 const pairingClaimNotificationSchema = z
   .object({
     pairingId: z.string().min(16).max(256),
@@ -107,6 +118,7 @@ const pairingClaimNotificationSchema = z
 export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
 
 export const muximodControlRequestSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("create_local_session") }).strict(),
   z
     .object({
       type: z.literal("create_pairing"),
@@ -167,6 +179,12 @@ export function encodeMuximodControlRequest(request: MuximodControlRequest): str
 }
 
 export const muximodControlResponseSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("local_session_created"),
+      session: localAuthSessionResponseSchema,
+    })
+    .strict(),
   z
     .object({
       type: z.literal("pairing_created"),
@@ -425,6 +443,161 @@ export const workspaceSelectionSchema = z
   })
   .strict();
 export type WorkspaceSelection = z.infer<typeof workspaceSelectionSchema>;
+
+export const agentSessionWorkspaceScopeSchema = z.enum(["current", "all"]);
+export type AgentSessionWorkspaceScope = z.infer<typeof agentSessionWorkspaceScopeSchema>;
+
+const agentSessionArgumentSchema = z.string().max(4_096);
+
+export const runAgentSessionRequestSchema = z
+  .object({
+    backend: agentBackendSchema,
+    name: AgentSession.schema.shape.name.optional(),
+    useWorktree: z.boolean(),
+    worktreeRoot: z.string().trim().min(1).max(4_096).optional(),
+    setupHook: z.string().trim().min(1).max(4_096).optional(),
+    cleanupHook: z.string().trim().min(1).max(4_096).optional(),
+    setupHookExplicit: z.boolean(),
+    cleanupHookExplicit: z.boolean(),
+    backendArgs: z.array(agentSessionArgumentSchema).max(256),
+  })
+  .strict();
+export type RunAgentSessionRequest = z.infer<typeof runAgentSessionRequestSchema>;
+
+export const resumeAgentSessionRequestSchema = z
+  .object({
+    workspaceScope: agentSessionWorkspaceScopeSchema,
+    reference: z.string().trim().min(1).max(256),
+    backendArgs: z.array(agentSessionArgumentSchema).max(256),
+  })
+  .strict();
+export type ResumeAgentSessionRequest = z.infer<typeof resumeAgentSessionRequestSchema>;
+
+export const cleanupAgentSessionRequestSchema = z
+  .object({
+    workspaceScope: agentSessionWorkspaceScopeSchema,
+    force: z.boolean(),
+    reference: z.string().trim().min(1).max(256),
+  })
+  .strict();
+export type CleanupAgentSessionRequest = z.infer<typeof cleanupAgentSessionRequestSchema>;
+
+export const listAgentSessionsRequestSchema = z
+  .object({
+    workspaceScope: agentSessionWorkspaceScopeSchema,
+    includeUnavailable: z.boolean(),
+  })
+  .strict();
+export type ListAgentSessionsRequest = z.infer<typeof listAgentSessionsRequestSchema>;
+
+export const processResultSchema = z
+  .object({
+    code: z.number().int(),
+    interrupted: z.boolean(),
+    signal: z.string().nullable().optional(),
+  })
+  .strict();
+export type ProcessResult = z.infer<typeof processResultSchema>;
+
+export const cleanupReasonSchema = z.enum([
+  "cleanup_declined",
+  "remote_archive_failed",
+  "remote_restore_failed",
+  "cleanup_hook_failed",
+  "unregistered_worktree",
+  "worktree_removal_failed",
+]);
+export type CleanupReason = z.infer<typeof cleanupReasonSchema>;
+
+export const cleanupResultSchema = z.discriminatedUnion("disposition", [
+  z.object({ disposition: z.literal("removed") }).strict(),
+  z.object({ disposition: z.literal("retained"), reason: cleanupReasonSchema }).strict(),
+  z.object({ disposition: z.literal("failed"), reason: cleanupReasonSchema }).strict(),
+]);
+export type CleanupResult = z.infer<typeof cleanupResultSchema>;
+
+export const runCleanupResultSchema = z.discriminatedUnion("disposition", [
+  z.object({ disposition: z.literal("not_requested"), reason: z.enum(["interrupted", "no_worktree"]) }).strict(),
+  ...cleanupResultSchema.options,
+]);
+export type RunCleanupResult = z.infer<typeof runCleanupResultSchema>;
+
+export const agentSessionRecordSchema = AgentSession.schema;
+export type AgentSessionRecord = z.infer<typeof agentSessionRecordSchema>;
+
+export const agentSessionExecutionHealthSchema = z.enum(["inactive", "active", "long_running", "stale", "unknown"]);
+export type AgentSessionExecutionHealth = z.infer<typeof agentSessionExecutionHealthSchema>;
+
+export const agentSessionResumeStateSchema = z.enum(["available", "unavailable", "unknown"]);
+export type AgentSessionResumeState = z.infer<typeof agentSessionResumeStateSchema>;
+
+export const agentSessionResumeReasonSchema = z
+  .enum([
+    "backend_session_missing",
+    "backend_session_discovery_required",
+    "currently_running",
+    "execution_state_unknown",
+    "not_resumable_state",
+    "worktree_missing",
+    "worktree_state_unknown",
+    "worktree_unregistered",
+  ])
+  .nullable();
+export type AgentSessionResumeReason = z.infer<typeof agentSessionResumeReasonSchema>;
+
+export const agentSessionWorktreeStateSchema = z.enum([
+  "not_applicable",
+  "available",
+  "missing",
+  "unregistered",
+  "unknown",
+]);
+export type AgentSessionWorktreeState = z.infer<typeof agentSessionWorktreeStateSchema>;
+
+export const agentSessionListProjectionSchema = z
+  .object({
+    session: agentSessionRecordSchema,
+    executionHealth: agentSessionExecutionHealthSchema,
+    resume: agentSessionResumeStateSchema,
+    resumeReason: agentSessionResumeReasonSchema,
+    worktreeState: agentSessionWorktreeStateSchema,
+    visibleByDefault: z.boolean(),
+  })
+  .strict();
+export type AgentSessionListProjection = z.infer<typeof agentSessionListProjectionSchema>;
+
+export const agentSessionListResponseSchema = z
+  .object({
+    allViews: z.array(agentSessionListProjectionSchema),
+    views: z.array(agentSessionListProjectionSchema),
+  })
+  .strict();
+export type AgentSessionListResponse = z.infer<typeof agentSessionListResponseSchema>;
+
+export const runAgentSessionResponseSchema = z
+  .object({
+    process: processResultSchema,
+    session: agentSessionRecordSchema,
+    cleanup: runCleanupResultSchema,
+  })
+  .strict();
+export type RunAgentSessionResponse = z.infer<typeof runAgentSessionResponseSchema>;
+
+export const resumeAgentSessionResponseSchema = z
+  .object({
+    process: processResultSchema,
+    session: agentSessionRecordSchema,
+  })
+  .strict();
+export type ResumeAgentSessionResponse = z.infer<typeof resumeAgentSessionResponseSchema>;
+
+export const cleanupAgentSessionResponseSchema = z
+  .object({
+    session: agentSessionRecordSchema,
+    cleanup: cleanupResultSchema,
+  })
+  .strict();
+export type CleanupAgentSessionResponse = z.infer<typeof cleanupAgentSessionResponseSchema>;
 
 const dimensionsSchema = z
   .object({

@@ -8,5 +8,5 @@
     "outDir": "dist"
   },
   "exclude": ["dev.ts"],
-  "files": ["src/index.ts"]
+  "files": ["src/index.ts", "src/process-entrypoint.ts"]
 }

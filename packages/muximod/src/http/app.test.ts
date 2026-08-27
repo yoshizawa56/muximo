@@ -102,6 +102,18 @@ const fixture = (): FixtureHandle<SocketFixture> => {
     },
   };
   const application: MuximodApplication = {
+    agentSessions: {
+      run: async () => {
+        throw new Error("not used");
+      },
+      resume: async () => {
+        throw new Error("not used");
+      },
+      cleanup: async () => {
+        throw new Error("not used");
+      },
+      list: async () => ({ allViews: [], views: [] }),
+    },
     terminal: {
       get: async () => ({
         id: "terminal",

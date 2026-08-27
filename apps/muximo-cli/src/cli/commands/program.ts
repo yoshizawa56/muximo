@@ -8,7 +8,7 @@ import { globalOptionSpecs } from "./global.js";
 import { registerPairCommand } from "./pair.js";
 import { registerRunCommand } from "./run.js";
 import { registerServeCommand } from "./serve.js";
-import { registerSessionCommands } from "./session/index.js";
+import { registerSessionAliases, registerSessionCommands } from "./session/index.js";
 import { registerShellCommand } from "./shell.js";
 import { registerTmuxCommands } from "./tmux.js";
 import type { CliCommandContext, CliHandlers } from "./types.js";
@@ -35,6 +35,7 @@ export function buildCliProgram(handlers: CliHandlers, context: CliCommandContex
   registerTmuxCommands(program, handlers, context);
   registerWorkspaceCommands(program, handlers, context);
   registerSessionCommands(program, handlers, context);
+  registerSessionAliases(program, handlers, context);
   registerDoctorCommand(program, handlers, context);
   registerDaemonCommands(program, handlers, context);
   registerPairCommand(program, handlers, context);

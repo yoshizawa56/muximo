@@ -53,6 +53,7 @@ export type {
   CreateSessionInput,
   ManageSessionInput,
   ManageSessionResult,
+  MuximodAgentSessionApplication,
   MuximodPanePlacement,
   MuximodPaneSummary,
   MuximodSessionSummary,

@@ -1,5 +1,4 @@
-import type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "@muximo/application";
-import { clearPatch, Workspace, WorkspaceId } from "@muximo/domain";
+import type { RegisterWorkspaceRequest, UpdateWorkspaceRequest, WorkspaceDirectory } from "@muximo/contract/api";
 import {
   type Assertion,
   type OperationCase,
@@ -24,11 +23,11 @@ type WorkspaceInput =
   | { kind: "delete"; input: CliWorkspaceDeleteInput };
 
 type WorkspaceFixture = {
-  workspace: Workspace;
+  workspace: WorkspaceDirectory;
   out: string[];
   calls: string[];
-  added?: RegisterWorkspaceInput;
-  updated?: { selector: string; input: UpdateWorkspaceInput };
+  added?: RegisterWorkspaceRequest;
+  updated?: { selector: string; input: UpdateWorkspaceRequest };
   deleted?: string;
   handlers: ReturnType<typeof createWorkspaceHandlers>;
 };
@@ -127,15 +126,15 @@ const table: OperationTable<WorkspaceFixture, "default", WorkspaceInput, Workspa
 };
 
 function createFixture(): WorkspaceFixture {
-  const workspace = Workspace.create({
-    id: WorkspaceId.create("workspace-id"),
-    rootPath: "/workspace",
+  const workspace: WorkspaceDirectory = {
+    id: "workspace-id",
+    directory: "/workspace",
     name: "workspace",
     isGit: true,
+    setupScriptPath: null,
+    cleanupScriptPath: null,
     worktreeCopyPatterns: [".env"],
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
-  });
+  };
   const out: string[] = [];
   const calls: string[] = [];
   const fixture = {
@@ -152,13 +151,17 @@ function createFixture(): WorkspaceFixture {
     list: { execute: async () => [workspace] },
     add: {
       execute: async (input) => {
-        if (input.setupHook === clearPatch) calls.push("add-clear-hook");
+        if (input.setupScriptPath === null) calls.push("add-clear-hook");
         return workspace;
       },
     },
     update: {
       execute: async (selector, input) => {
-        if (selector === "workspace" && input.appendCopyPatterns?.[0] === ".env.local" && input.clearCopyPatterns) {
+        if (
+          selector === "workspace" &&
+          input.appendWorktreeCopyPatterns?.[0] === ".env.local" &&
+          input.clearWorktreeCopyPatterns
+        ) {
           calls.push("update-copy-policy");
         }
         return workspace;

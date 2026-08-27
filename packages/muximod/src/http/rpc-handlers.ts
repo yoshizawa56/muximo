@@ -1,5 +1,8 @@
 import type {
+  AgentSessionListResult,
   AuthPairingClaimRequest as ApplicationAuthPairingClaimRequest,
+  CleanupAgentSessionInput,
+  CleanupAgentSessionResult,
   CreatePaneInput,
   CreateSessionInput,
   ManageSessionInput,
@@ -8,22 +11,36 @@ import type {
   MuximodTerminalEndpoint,
   MuximodWorkspaceDirectory,
   RegisterWorkspaceCommand,
+  ResumeAgentSessionInput,
+  ResumeAgentSessionResult,
+  RunAgentSessionResult,
+  StartAgentSessionInput,
   UpdateWorkspaceCommand,
 } from "@muximo/application";
+import type {
+  CleanupAgentSessionRequest,
+  ListAgentSessionsRequest,
+  ResumeAgentSessionRequest,
+  RunAgentSessionRequest,
+} from "@muximo/contract/api";
 import {
+  agentSessionListResponseSchema,
   authInfoSchema,
   type CreatePaneRequest,
   type CreateSessionRequest,
+  cleanupAgentSessionResponseSchema,
   type ManageSessionRequest,
   muximodCapabilitiesSchema,
   muximodContract,
   type pairingClaimRequestSchema,
   pairingStatusSchema,
   paneSummarySchema,
-  protocolVersion,
   type RegisterWorkspaceRequest,
+  resumeAgentSessionResponseSchema,
+  runAgentSessionResponseSchema,
   type UpdateWorkspaceRequest,
-} from "@muximo/contract";
+} from "@muximo/contract/api";
+import { protocolVersion } from "@muximo/contract/shared";
 import { clearPatch, type Patch } from "@muximo/domain";
 import { implement, ORPCError } from "@orpc/server";
 import type { z } from "zod";
@@ -116,6 +133,22 @@ function toApplicationCreateSession(input: CreateSessionRequest): CreateSessionI
   };
 }
 
+function toApplicationRunAgentSession(input: RunAgentSessionRequest): StartAgentSessionInput {
+  return input;
+}
+
+function toApplicationResumeAgentSession(input: ResumeAgentSessionRequest): ResumeAgentSessionInput {
+  return input;
+}
+
+function toApplicationCleanupAgentSession(input: CleanupAgentSessionRequest): CleanupAgentSessionInput {
+  return input;
+}
+
+function toApplicationListAgentSessions(input: ListAgentSessionsRequest) {
+  return input;
+}
+
 function toApplicationManageSession(input: ManageSessionRequest): ManageSessionInput {
   return { name: input.name };
 }
@@ -201,6 +234,22 @@ function toProtocolPane(value: MuximodPaneSummary) {
     ...(value.windowWidth === undefined ? {} : { windowWidth: value.windowWidth }),
     ...(value.windowHeight === undefined ? {} : { windowHeight: value.windowHeight }),
   });
+}
+
+function toProtocolRunAgentSession(value: RunAgentSessionResult) {
+  return runAgentSessionResponseSchema.parse(value);
+}
+
+function toProtocolResumeAgentSession(value: ResumeAgentSessionResult) {
+  return resumeAgentSessionResponseSchema.parse(value);
+}
+
+function toProtocolCleanupAgentSession(value: CleanupAgentSessionResult) {
+  return cleanupAgentSessionResponseSchema.parse(value);
+}
+
+function toProtocolAgentSessionList(value: AgentSessionListResult) {
+  return agentSessionListResponseSchema.parse(value);
 }
 
 function toApplicationPatch(value: string | null | undefined): Patch<string> {
@@ -342,6 +391,42 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
       manage: os.sessions.manage.handler(({ input, context }) =>
         safeAsyncCall(
           async () => ({ session: await deps.application.sessions.manage(toApplicationManageSession(input)) }),
+          context,
+        ),
+      ),
+    },
+    agentSessions: {
+      run: os.agentSessions.run.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () =>
+            toProtocolRunAgentSession(await deps.application.agentSessions.run(toApplicationRunAgentSession(input))),
+          context,
+        ),
+      ),
+      resume: os.agentSessions.resume.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () =>
+            toProtocolResumeAgentSession(
+              await deps.application.agentSessions.resume(toApplicationResumeAgentSession(input)),
+            ),
+          context,
+        ),
+      ),
+      cleanup: os.agentSessions.cleanup.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () =>
+            toProtocolCleanupAgentSession(
+              await deps.application.agentSessions.cleanup(toApplicationCleanupAgentSession(input)),
+            ),
+          context,
+        ),
+      ),
+      list: os.agentSessions.list.handler(({ input, context }) =>
+        safeAsyncCall(
+          async () =>
+            toProtocolAgentSessionList(
+              await deps.application.agentSessions.list(toApplicationListAgentSessions(input)),
+            ),
           context,
         ),
       ),

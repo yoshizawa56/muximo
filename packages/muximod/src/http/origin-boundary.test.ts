@@ -343,6 +343,18 @@ describe("muximod authenticated origin boundary", () => {
 
 function createApplication(state: { sessionsCalls: number }): MuximodApplication {
   return {
+    agentSessions: {
+      run: async () => {
+        throw new Error("not used");
+      },
+      resume: async () => {
+        throw new Error("not used");
+      },
+      cleanup: async () => {
+        throw new Error("not used");
+      },
+      list: async () => ({ allViews: [], views: [] }),
+    },
     terminal: {
       get: async () => ({
         id: "terminal",

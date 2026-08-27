@@ -1,4 +1,4 @@
-import type { AgentSessionListProjection, AgentSessionListResult } from "@muximo/application";
+import type { AgentSessionListProjection, AgentSessionListResponse } from "@muximo/contract/api";
 
 export type SessionListPresentationOptions = {
   names: boolean;
@@ -13,7 +13,7 @@ export type CliSessionListOutput = {
 
 export function presentCliSessionList(
   input: SessionListPresentationOptions,
-  result: AgentSessionListResult,
+  result: AgentSessionListResponse,
   output: CliSessionListOutput,
 ): number {
   if (input.names) {

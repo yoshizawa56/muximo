@@ -1,4 +1,4 @@
-import type { TerminalEndpoint, TmuxSession } from "@muximo/contract";
+import type { TerminalEndpoint, TmuxSession } from "@muximo/contract/api";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useTerminalResources } from "../../-terminal-resources";
 

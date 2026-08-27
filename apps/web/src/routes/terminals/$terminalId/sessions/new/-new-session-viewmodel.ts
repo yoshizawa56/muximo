@@ -1,4 +1,4 @@
-import type { TerminalEndpoint } from "@muximo/contract";
+import type { TerminalEndpoint } from "@muximo/contract/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useState } from "react";

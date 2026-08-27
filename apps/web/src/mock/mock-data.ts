@@ -1,4 +1,4 @@
-import type { PaneSummary } from "@muximo/contract";
+import type { PaneSummary } from "@muximo/contract/api";
 
 export const mockPanes: PaneSummary[] = [
   {

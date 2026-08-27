@@ -8,12 +8,13 @@ import type {
   PairingControlPort,
   PairingOffer,
 } from "@muximo/application";
+import type { AuthSessionResponse } from "@muximo/contract/api";
 import {
   decodeMuximodControlResponse,
   encodeMuximodControlRequest,
   type MuximodControlRequest,
   type MuximodControlResponse,
-} from "@muximo/contract";
+} from "@muximo/contract/control";
 
 type AgentStatus = Extract<MuximodControlRequest, { type: "observe_agent_session" }>["state"];
 
@@ -59,6 +60,14 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
       muximodBaseUrl: response.payload.muximodBaseUrl,
       expiresAt: response.payload.expiresAt,
     };
+  }
+
+  public async createLocalSession(): Promise<AuthSessionResponse> {
+    const response = await this.request({ type: "create_local_session" });
+    if (response.type !== "local_session_created") {
+      throw unexpectedResponse("local_session_created", response.type);
+    }
+    return response.session;
   }
 
   public async waitForClaim(pairingId: string): Promise<PairingClaim> {

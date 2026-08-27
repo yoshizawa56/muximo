@@ -34,17 +34,20 @@ packages/
   application/
   contract/
   infrastructure/
+  muximod/
   test-support/
 
 apps/
-  muximod/
   muximo-cli/
+  serve/
   web/
 ```
 
-There should not be separate `muximod-*`, `protocol`, or Hono wrapper
-packages merely to split transport technologies. A package is justified by a
-stable architectural boundary, not by the number of files in a directory.
+`packages/muximod` owns the muximod runtime and its lifecycle composition. It
+is not a user-facing CLI and has no `apps/muximod` counterpart. There should
+not be separate `muximod-*`, `protocol`, or Hono wrapper packages merely to
+split transport technologies. A package is justified by a stable
+architectural boundary, not by the number of files in a directory.
 
 The wire-schema package is referred to as `contract` in this document. The
 repository should not use both `api` and `contract` for the same responsibility.
@@ -135,13 +138,13 @@ application/src/
     sessions/
     panes/
     pairing/
-  models/
 ```
 
 The exact domain directory names may follow the actual use-case vocabulary,
 but each use case should have a focused file and its related use cases should
 be grouped by domain. Ports and use cases must not be mixed in one flat
-directory.
+directory. Application-owned boundary data lives with the relevant port or use
+case; a generic `models/` directory is not used.
 
 Repository and gateway ports belong to application because the use cases own
 the required abstractions. Their public methods should generally be
@@ -177,18 +180,21 @@ The ownership split is deliberately explicit:
 
 - `packages/contract` defines the shared schemas, oRPC contract, and protocol
   codecs only.
-- `apps/muximod/src/http` owns the muximod-specific oRPC handler, HTTP
+- `packages/muximod/src/http` owns the muximod-specific oRPC handler, HTTP
   endpoint policy, authentication context, SSE subscription, and WebSocket
   upgrade wiring.
-- `apps/muximod/src/control.ts` owns the muximod-specific private IPC
+- `packages/muximod/src/control.ts` owns the muximod-specific private IPC
   handler, because it interprets the contract and invokes application ports.
-- `packages/infrastructure/src/http` contains only the concrete Bun socket
-  adapter. It does not import `contract`.
+- `packages/contract/api`, `packages/contract/control`, and
+  `packages/contract/shared` expose explicit audience-specific contract
+  surfaces. API consumers do not need to know the private socket protocol.
 
-This means the composition root in `apps/muximod` injects infrastructure
-implementations into the application and then injects that application into
-the transport handler. The handler is not exported from the infrastructure
-package.
+`packages/muximod/src/server.ts` is the runtime composition root. It injects
+infrastructure implementations into the application and then injects that
+application into the HTTP and private control transports. The package exposes
+typed lifecycle operations through `launch.ts`; the separate child process is
+started through its private process bootstrap. The handler is not exported from
+the infrastructure package.
 
 ## Infrastructure
 
@@ -231,8 +237,10 @@ adapters, but no CLI handler is exported by `infrastructure`.
 
 ## Composition roots and CLI
 
-`apps/muximod/src/index.ts` and `apps/muximo-cli/src/index.ts` are composition
-roots. They may:
+`apps/muximo-cli/src/entrypoint.ts`, `apps/muximo-cli/src/cli/compose.ts`, and
+`packages/muximod/src/server.ts` are composition roots for their respective
+boundaries. `apps/serve` is a development-only process supervisor. These
+composition roots may:
 
 - read argv and environment variables;
 - select a command or runtime profile;
@@ -250,13 +258,39 @@ still call application use cases and must not reimplement business behavior.
 If a CLI adapter becomes shared, move it to the infrastructure CLI adapter
 area rather than adding a second use-case implementation.
 
-Some host CLI commands currently open the same SQLite database directly rather
-than going through the running daemon. Pairing and daemon-control commands may
-use the control socket, but workspace and agent-session commands can be direct
-database clients. An in-process mutex in `muximod` therefore cannot provide a
-global serialization guarantee. Cross-process coordination must rely on
-SQLite locking, database transactions, constraints, conditional updates, or a
-future single-writer control path.
+Normal workspace and agent-session CLI commands call the muximod API over
+local HTTP using a short-lived local token minted through the private control
+socket. Pairing and host-only pane control use the private socket directly;
+starting, stopping, and restarting muximod call the package lifecycle locally.
+The CLI may still open local host integrations such as tmux, shell, and doctor
+directly when those operations are intentionally host-local. An in-process
+mutex in `muximod` therefore cannot provide a global serialization guarantee.
+Cross-process coordination must rely on SQLite locking, database transactions,
+constraints, conditional updates, or a future single-writer control path.
+
+## Muximod lifecycle and development topology
+
+`packages/muximod` owns the typed lifecycle API exposed to the CLI:
+`ensure`, `start`, `startForeground`, `status`, `stop`, and `restart`. It also
+owns the child-process bootstrap, PID and restart markers, snapshot bootstrap,
+and cleanup of muximod resources. A private process bootstrap is used for the
+separate runtime process; it is an internal package implementation detail, not
+a hidden or public CLI command.
+
+The CLI resolves all Muximo configuration before calling that lifecycle API.
+Normal invocations use `migrate`. `apps/muximo-cli/dev.ts` detects a linked
+worktree, assigns its deterministic target instance directory, and selects
+`push` with the base instance directory. In push mode, the launcher copies the
+complete SQLite database only when the target database is absent, verifies it,
+and starts against the copied database unchanged. No authentication table is
+scrubbed or selected by a seed policy; the persisted `serverId` and all other
+durable state are retained.
+
+`apps/serve` is a development-only supervisor for Portless, Web, and the CLI
+foreground serve command. It owns child-process cleanup, route readiness, and
+replacement detection. It does not interpret `MUXIMOD_*`, resolve Tailscale
+URLs, or construct muximod configuration. The CLI's serve flow resolves the
+Tailscale URL and passes the final URL and exact allowed origins to muximod.
 
 ## Web structure
 

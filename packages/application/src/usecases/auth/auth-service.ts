@@ -20,6 +20,7 @@ import type {
   MuximodAuthContext,
   WsTicketResponse,
 } from "../../ports/auth-types.js";
+import { AuthStoreError } from "./auth-errors.js";
 import { claimPairing as claimPairingOp } from "./claim-pairing.js";
 import { consumeWebSocketTicket as consumeTicketOp } from "./consume-ticket.js";
 import { createChallenge as createChallengeOp } from "./create-challenge.js";
@@ -47,6 +48,7 @@ export type AuthServiceOptions = {
  */
 export class AuthService implements MuximodAuthPort, AuthControlExtras {
   public readonly serverId: string;
+  private readonly localSessions = new Map<string, MuximodAuthContext>();
 
   public constructor(private readonly options: AuthServiceOptions) {
     this.serverId = options.serverId;
@@ -54,6 +56,29 @@ export class AuthService implements MuximodAuthPort, AuthControlExtras {
 
   public createPairing(overrides: { muximodBaseUrl?: string } = {}): Promise<AuthPairingPayload> {
     return startPairingOp(this.options, overrides);
+  }
+
+  /** Issues a short-lived in-memory token after the caller passed the private control-socket boundary. */
+  public async createLocalSession(): Promise<AuthSessionResponse> {
+    const now = this.options.clock.now();
+    const accessToken = this.options.crypto.randomOpaque(32);
+    const sessionId = this.options.crypto.randomOpaque(24);
+    const expiresAt = new Date(now.getTime() + 15 * 60_000).toISOString();
+    const session: MuximodAuthContext = {
+      sessionId,
+      serverId: this.serverId,
+      deviceId: "local-cli",
+      issuedAt: now.toISOString(),
+      expiresAt,
+    };
+    this.localSessions.set(accessToken, session);
+    return {
+      serverId: this.serverId,
+      deviceId: session.deviceId,
+      sessionId,
+      accessToken,
+      expiresAt,
+    };
   }
 
   public claimPairing(pairingId: string, request: AuthPairingClaimRequest): Promise<AuthPairingClaimResponse> {
@@ -89,11 +114,22 @@ export class AuthService implements MuximodAuthPort, AuthControlExtras {
 
   public async authenticateAccessToken(token: string | undefined): Promise<MuximodAuthContext | undefined> {
     if (!token) return undefined;
+    const localSession = this.localSessions.get(token);
+    if (localSession) {
+      if (localSession.expiresAt <= this.options.clock.now().toISOString()) {
+        this.localSessions.delete(token);
+        return undefined;
+      }
+      return localSession;
+    }
     const session = await this.options.store.findSession(token);
     return session ? contextForSession(this.options.store, session) : undefined;
   }
 
   public issueWebSocketTicket(context: MuximodAuthContext, endpoint: "terminal"): Promise<WsTicketResponse> {
+    if (!context.device) {
+      throw new AuthStoreError("local_session_terminal_forbidden", "local CLI sessions cannot open terminal sockets");
+    }
     return issueTicketOp(this.options, context, endpoint);
   }
 

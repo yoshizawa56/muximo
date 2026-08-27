@@ -1,4 +1,4 @@
-import { type MuximodEvent, muximodEventSchema } from "@muximo/contract";
+import { type MuximodEvent, muximodEventSchema } from "@muximo/contract/api";
 import { EventPublisher } from "@orpc/server";
 
 /**

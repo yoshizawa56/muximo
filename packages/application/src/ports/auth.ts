@@ -54,6 +54,7 @@ export interface AuthPairingClaimSinkPort {
 }
 
 export interface MuximodAuthControlPort {
+  createLocalSession(): Promise<AuthSessionResponse>;
   createPairing(overrides?: { muximodBaseUrl?: string }): Promise<AuthPairingPayload>;
   approvePairing(pairingId: string): Promise<AuthDeviceRecord>;
   rejectPairing(pairingId: string): Promise<void>;

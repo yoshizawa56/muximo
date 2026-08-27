@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { tmuxSessionNameSchema } from "@muximo/contract";
+import { tmuxSessionNameSchema } from "@muximo/contract/api";
 import type { Command } from "commander";
 import { z } from "zod";
 import { defineOptions, registerOptions } from "../options/index.js";

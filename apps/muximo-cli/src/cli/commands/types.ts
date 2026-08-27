@@ -60,7 +60,7 @@ export type CliDoctorInput = {
 };
 
 export type CliDaemonInput = {
-  command: "start" | "status" | "stop" | "restart" | "ensure";
+  command: "start" | "status" | "stop" | "restart" | "ensure" | "log";
   foreground: boolean;
   refreshServers: boolean;
   host: string;
@@ -70,6 +70,7 @@ export type CliDaemonInput = {
   muximodBaseUrl?: string;
   logLevel?: "error" | "warn" | "info" | "debug";
   logFile?: string;
+  lines?: number;
   allowedOrigins?: readonly string[];
 };
 
@@ -82,6 +83,7 @@ export type CliPairInput = {
 
 export type CliServeInput = {
   provider: "tailscale";
+  foreground: boolean;
   muximodHost: string;
   muximodPort: number;
   externalPort: number;

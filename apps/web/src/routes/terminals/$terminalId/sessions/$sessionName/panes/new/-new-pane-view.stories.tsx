@@ -1,4 +1,4 @@
-import type { PanePlacement, PaneSummary } from "@muximo/contract";
+import type { PanePlacement, PaneSummary } from "@muximo/contract/api";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useMemo, useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";

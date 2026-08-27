@@ -1,4 +1,4 @@
-import type { PaneSummary, TerminalEndpoint, TmuxSession } from "@muximo/contract";
+import type { PaneSummary, TerminalEndpoint, TmuxSession } from "@muximo/contract/api";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { muximodErrorMessage } from "../../../../../app/api/muximod-error.js";

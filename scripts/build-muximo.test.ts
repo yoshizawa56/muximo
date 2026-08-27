@@ -52,7 +52,10 @@ const cases = [
         assert.equal(plan.outputPath, join(repositoryRoot, "dist", "muximo"));
         assert.equal(plan.muximodOutputPath, join(repositoryRoot, "dist", "muximod"));
         assert.equal(plan.cliEntrypoint, join(repositoryRoot, "apps", "muximo-cli", "src", "index.ts"));
-        assert.equal(plan.muximodEntrypoint, join(repositoryRoot, "apps", "muximod", "src", "index.ts"));
+        assert.equal(
+          plan.muximodEntrypoint,
+          join(repositoryRoot, "packages", "muximod", "src", "process-entrypoint.ts"),
+        );
         assert.equal(
           plan.syncEmbeddedMigrationsScript,
           join(repositoryRoot, "scripts", "sync-embedded-migrations.mjs"),

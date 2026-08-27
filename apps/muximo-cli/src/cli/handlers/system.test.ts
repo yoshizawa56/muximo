@@ -7,7 +7,7 @@ import type {
   DaemonStopResult,
   StartDaemonInput,
 } from "@muximo/application";
-import type { DoctorReport, TailscaleServeResult } from "@muximo/infrastructure";
+import type { DaemonLogResult, DoctorReport, TailscaleServeResult } from "@muximo/infrastructure";
 import {
   type Assertion,
   type OperationCase,
@@ -55,6 +55,15 @@ const daemonInputs: readonly CliDaemonInput[] = [
   { command: "stop", foreground: false, refreshServers: false, host: "127.0.0.1", port: 4317 },
   { command: "restart", foreground: false, refreshServers: true, host: "127.0.0.1", port: 4317 },
   { command: "ensure", foreground: false, refreshServers: false, host: "127.0.0.1", port: 4317 },
+  {
+    command: "log",
+    foreground: false,
+    refreshServers: false,
+    host: "127.0.0.1",
+    port: 4317,
+    logFile: "/tmp/muximod.log",
+    lines: 20,
+  },
 ];
 
 const cases = [
@@ -81,6 +90,7 @@ const cases = [
       kind: "serve",
       input: {
         provider: "tailscale",
+        foreground: false,
         muximodHost: "127.0.0.1",
         muximodPort: 4317,
         externalPort: 8444,
@@ -184,10 +194,21 @@ function createFixture(): SystemFixture {
         return { state: "started", host: input.host, port: input.port };
       },
     },
+    log: {
+      execute: async (input: { logFile?: string; lines: number }): Promise<DaemonLogResult> => {
+        calls.push("daemon:log");
+        return {
+          state: "available",
+          logFile: input.logFile ?? "/tmp/muximod.log",
+          lines: ['{"service":"muximod","event":"daemon.started"}'],
+        };
+      },
+    },
   };
   const serveResult: TailscaleServeResult = {
     options: {
       provider: "tailscale",
+      foreground: false,
       muximodHost: "127.0.0.1",
       muximodPort: 4317,
       externalPort: 8444,
@@ -199,7 +220,6 @@ function createFixture(): SystemFixture {
     url: "https://tail.example",
     localUrl: "http://127.0.0.1:4317",
     allowedOrigins: ["https://tail.example"],
-    daemonEnvironment: {},
     stdout: "serve stdout\n",
     stderr: "serve stderr\n",
   };

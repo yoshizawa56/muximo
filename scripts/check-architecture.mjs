@@ -31,7 +31,10 @@ const packageRules = new Map([
   ["@muximo/domain", []],
   ["@muximo/infrastructure", ["@muximo/application", "@muximo/domain"]],
   ["@muximo/test-support", []],
-  ["@muximo/muximo-cli", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure"]],
+  [
+    "@muximo/muximo-cli",
+    ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure", "@muximo/muximod"],
+  ],
   ["@muximo/muximod", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure"]],
   ["@muximo/web", ["@muximo/contract"]],
 ]);
@@ -75,7 +78,6 @@ const entityRules = {
 const forbiddenCliDirectories = ["apps/muximo-cli/src/cli/host", "apps/muximo-cli/src/cli/runtime"];
 const forbiddenCliTerms =
   /\b(?:CliRuntime|SessionLifecycleRuntime|RuntimeSessionHostAdapter|CliSessionHostPort|CommandEngine|MuximoCommand)\b/;
-const muximodCliDirectory = "apps/muximod/src/cli";
 const cliProviderLifecycleImport = /(?:from\s+|import\s*\(\s*)["'][^"']*\/agents\/(?:codex|claude|opencode)(?:\/|["'])/;
 const cliProviderLifecycleTerms =
   /\b(?:CodexBackendProvider|ClaudeBackendProvider|OpenCodeBackendProvider|OpenCodeServerManager|manageCodexThread|manageCodexThreadFromEnvironment|ensureCodexRemoteControl|CodexRpcClient|MUXIMO_CODEX_NAME_BIN)\b/;
@@ -89,7 +91,7 @@ const applicationPresentationTerms =
   /\b(?:Cli[A-Z][A-Za-z0-9_]*|SessionOutputPort|CommandEngine|MuximoCommand|Presenter|Presentation|codexProfile|codexRemote|codexSessionBaseline)\b|\b(?:console\.(?:log|warn|error)|process\.(?:stdout|stderr)|Writable)\b/;
 const applicationTerminalTransportTerms =
   /\b(?:MuximodPty(?:Exit|Process|Spawner|SpawnOptions)?|MuximodPreparedViewport|MuximodViewport(?:Event|Lease)|MuximodImage(?:PasteInput|Paster)|MuximodTerminal(?:Pane|ProcessSpec|ViewportPort))\b/;
-const forbiddenInfrastructureDaemonPath = "packages/infrastructure/src/cli/daemon.ts";
+const forbiddenMuximodAppPath = "apps/muximod";
 
 // The application layer has no models/ directory: port-owned data lives in the
 // port file, use-case inputs live in the use case file, and shared business
@@ -113,16 +115,8 @@ for (const relativePath of forbiddenApplicationPaths) {
   }
 }
 
-if (existsSync(join(root, forbiddenInfrastructureDaemonPath))) {
-  errors.push(
-    `${forbiddenInfrastructureDaemonPath}: daemon process infrastructure is shared by apps; move it under packages/infrastructure/src/process`,
-  );
-}
-
-if (existsSync(join(root, muximodCliDirectory))) {
-  errors.push(
-    `${muximodCliDirectory}: muximod has no public CLI; keep parsing, validation, and presentation in apps/muximo-cli`,
-  );
+if (existsSync(join(root, forbiddenMuximodAppPath))) {
+  errors.push(`${forbiddenMuximodAppPath}: muximod belongs in packages/muximod and must not be recreated as an app`);
 }
 
 for (const [packageName, packageInfo] of workspacePackages) {

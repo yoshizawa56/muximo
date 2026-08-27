@@ -1,58 +1,35 @@
-import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 import {
-  CleanupAgentSession,
-  DeleteWorkspace,
-  EnsureDaemon,
-  ListAgentSessions,
-  ListWorkspaces,
-  LocateAgentSession,
-  type ManagedAgentSessionRepository,
+  type AgentSessionRepository,
   manageSession,
   PairDevice,
-  RegisterWorkspace,
-  RestartDaemon,
-  ResumeAgentSession,
-  RunAgentSession,
   RunShell,
-  StartDaemon,
-  StatusDaemon,
-  StopDaemon,
-  UpdateWorkspace,
-  WorkspaceRecordFactory,
+  type WorkspaceRepository,
 } from "@muximo/application";
+import { AgentSession } from "@muximo/domain";
 import {
-  AgentBackendAdapter,
   type AgentDatabase,
-  type AgentPluginRegistry,
-  AgentSessionObservationAdapter,
   createAgentDatabase,
-  createDefaultAgentBackendProviders,
-  createDefaultAgentPluginRegistry,
   createLogger,
   type DatabaseSchemaSynchronizer,
   DrizzleAgentSessionRepository,
-  DrizzleCodexSessionStateRepository,
   DrizzleWorkspaceRepository,
   ensureTailscaleServe,
   GitShellWorktreeAdapter,
   GitWorktreeAdapter,
   type Logger,
   type LogLevel,
-  MuximodDaemonProcess,
-  OscTerminalTitleAdapter,
-  ProcessObservationAdapter,
-  recordAuditEvent,
+  localMuximodUrl,
+  readDaemonLog,
   resolveFromRoot,
   resolveMuximodPaths,
   runDevCommand,
   runDoctor,
-  SessionNamingAdapter,
+  type ServeCommandOptions,
+  type ServeProcessHandle,
   SessionWorktreeLookupAdapter,
   ShellProcessAdapter,
   SqliteTransactionManager,
-  systemDaemonClock,
-  systemDaemonScheduler,
   TmuxAdapter,
   TmuxMuximodHostAdapter,
   TmuxNewSessionService,
@@ -62,8 +39,10 @@ import {
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
 } from "@muximo/infrastructure";
+import { createMuximodLifecycle, ensureMuximodSnapshot, type MuximodLifecycle } from "@muximo/muximod";
 import { confirmCleanup } from "./adapters/cleanup-prompt.js";
 import { BrowserPairingPresenter, PairCommand, TerminalPairingPresenter } from "./adapters/index.js";
+import { connectMuximodApi, type MuximodApiClient } from "./adapters/muximod-api-client.js";
 import { MuximodPairingControlAdapter } from "./adapters/muximod-pairing-control-adapter.js";
 import { resolvePairMuximodBaseUrl } from "./adapters/pair-route.js";
 import { type CliApp, createCliApp } from "./app.js";
@@ -73,6 +52,7 @@ import { createPairHandler } from "./handlers/pair.js";
 import { createSessionHandlers } from "./handlers/session.js";
 import { createSystemHandlers, type ServeResult } from "./handlers/system.js";
 import { createWorkspaceHandlers } from "./handlers/workspace.js";
+import { createMuximodConfigResolver } from "./muximod-config.js";
 
 export type CliCompositionOptions = {
   schemaSynchronizer: DatabaseSchemaSynchronizer;
@@ -86,8 +66,9 @@ export type CliCompositionOptions = {
   databaseFile?: string;
   repositoryRoot?: string;
   tmux?: TmuxAdapter;
-  agentPlugins?: AgentPluginRegistry;
-  daemon?: MuximodDaemonProcess;
+  muximod?: MuximodLifecycle;
+  muximodSchemaMode?: "migrate" | "push";
+  muximodBaseInstanceDir?: string;
 };
 
 export type CliComposition = {
@@ -102,10 +83,6 @@ type DatabaseResources = {
   sessions: DrizzleAgentSessionRepository;
   workspaces: DrizzleWorkspaceRepository;
   catalog: WorkspaceSelectionCatalog;
-  listWorkspaces: ListWorkspaces;
-  registerWorkspace: RegisterWorkspace;
-  updateWorkspace: UpdateWorkspace;
-  deleteWorkspace: DeleteWorkspace;
 };
 
 /** The sole CLI composition root: all concrete resources are wired here. */
@@ -128,6 +105,13 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   let resources: DatabaseResources | undefined;
   const ensureDatabase = (): DatabaseResources => {
     if (resources) return resources;
+    if (options.muximodSchemaMode === "push" && options.muximodBaseInstanceDir && databaseFile !== ":memory:") {
+      ensureMuximodSnapshot({
+        baseInstanceDir: options.muximodBaseInstanceDir,
+        targetInstanceDir: paths.instanceDirectory,
+        targetDatabaseFile: databaseFile,
+      });
+    }
     const database = createAgentDatabase(databaseFile, {
       schemaSynchronizer: options.schemaSynchronizer,
       migrationsFolder: environment.MUXIMOD_MIGRATIONS_DIR ?? environment.MUXIMO_MIGRATIONS_DIR,
@@ -137,47 +121,37 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     const sessions = new DrizzleAgentSessionRepository(database.db);
     const workspaces = new DrizzleWorkspaceRepository(database.db);
     const catalog = new WorkspaceSelectionCatalog(["/"], cwd);
-    const audit = {
-      record: (eventType: string, entityId: string, payload: unknown) =>
-        recordAuditEvent(database.db, { eventType, entityId, payload }),
-    };
-    const factory = new WorkspaceRecordFactory(catalog, { now: () => new Date().toISOString() });
     resources = {
       database,
       transaction,
       sessions,
       workspaces,
       catalog,
-      listWorkspaces: new ListWorkspaces(workspaces),
-      registerWorkspace: new RegisterWorkspace(workspaces, factory, audit, transaction),
-      updateWorkspace: new UpdateWorkspace(workspaces, catalog, factory, audit, transaction),
-      deleteWorkspace: new DeleteWorkspace(workspaces, catalog, audit, transaction),
     };
     return resources;
   };
 
   const repository = (): DatabaseResources => ensureDatabase();
-  const sessionRepository: ManagedAgentSessionRepository = {
+  const sessionRepository: AgentSessionRepository = {
     findById: (id) => repository().sessions.findById(id),
     findByName: (workspaceId, name) => repository().sessions.findByName(workspaceId, name),
     list: (workspaceId) => repository().sessions.list(workspaceId),
     insert: (record) => repository().sessions.insert(record),
     update: (record) => repository().sessions.update(record),
     claimExecution: (input) => repository().sessions.claimExecution(input),
+    setBackendSessionIdIfMissing: (id, backendSessionId) =>
+      repository().sessions.setBackendSessionIdIfMissing(id, backendSessionId),
     delete: (id) => repository().sessions.delete(id),
   };
-  const audit = {
-    record: (eventType: string, entityId: string, payload: unknown) =>
-      recordAuditEvent(repository().database.db, { eventType, entityId, payload }),
+  const workspaceRepository: WorkspaceRepository = {
+    findById: (id) => repository().workspaces.findById(id),
+    list: () => repository().workspaces.list(),
+    insert: (record) => repository().workspaces.insert(record),
+    upsert: (record) => repository().workspaces.upsert(record),
+    delete: (id) => repository().workspaces.delete(id),
   };
-  const sessionLogger = {
-    child: (fields: Record<string, unknown>) => logger.child(fields),
-    debug: (event: string, fields?: Record<string, unknown>) => logger.debug(event, fields),
-  };
-  const clock = { now: () => new Date().toISOString(), id: () => randomUUID() };
-  const workspace = () => new WorkspaceResolverAdapter({ cwd, environment, workspaces: repository().workspaces });
+  const workspace = () => new WorkspaceResolverAdapter({ cwd, environment, workspaces: workspaceRepository });
   const workspaceResolver = workspace();
-  const naming = new SessionNamingAdapter(sessionRepository);
   const worktrees = new GitWorktreeAdapter({
     environment,
     logger,
@@ -197,72 +171,6 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     connect: (socketPath) => MuximodPairingControlAdapter.connect(socketPath),
     logger,
   });
-  const backendOptions = {
-    environment,
-    plugins: options.agentPlugins ?? createDefaultAgentPluginRegistry(),
-    sessions: repository().sessions,
-    audit,
-    logger,
-  };
-  const codexState = new DrizzleCodexSessionStateRepository(repository().database.db);
-  const backend = new AgentBackendAdapter({
-    ...backendOptions,
-    observations: pane,
-    terminalTitle: new OscTerminalTitleAdapter(io.out, environment.MUXIMO_SET_TERMINAL_TITLE !== "0"),
-    providers: createDefaultAgentBackendProviders(
-      backendOptions,
-      codexState,
-      environment.MUXIMO_CODEX_REMOTE ?? "unix://",
-    ),
-  });
-  const observations = new AgentSessionObservationAdapter({
-    environment,
-    resolveWorkspace: () => workspaceResolver.resolveCurrent(),
-  });
-  const locator = new LocateAgentSession({ sessions: sessionRepository, workspace: workspaceResolver });
-  const listSessions = new ListAgentSessions({
-    sessions: sessionRepository,
-    host: observations,
-    clock: { now: Date.now },
-  });
-  const runSession = new RunAgentSession({
-    sessions: sessionRepository,
-    workspace: workspaceResolver,
-    naming,
-    hooks,
-    worktrees,
-    launcher: backend,
-    remote: backend,
-    resources: backend,
-    panes: pane,
-    audit,
-    clock,
-    logger: sessionLogger,
-    confirmCleanup: { confirm: (session, dirty) => confirmCleanup(environment, session, dirty) },
-    processId: process.pid,
-  });
-  const resumeSession = new ResumeAgentSession({
-    sessions: sessionRepository,
-    locator,
-    process: new ProcessObservationAdapter(),
-    launcher: backend,
-    panes: pane,
-    clock,
-    logger: sessionLogger,
-    processId: process.pid,
-  });
-  const cleanupSession = new CleanupAgentSession({
-    sessions: sessionRepository,
-    locator,
-    process: new ProcessObservationAdapter(),
-    worktrees,
-    hooks,
-    remote: backend,
-    resources: backend,
-    audit,
-    confirmCleanup: { confirm: (session, dirty) => confirmCleanup(environment, session, dirty) },
-    clock,
-  });
   const shell = new RunShell({
     cwd,
     paneName: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
@@ -274,20 +182,98 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     panes: pane,
   });
   const tmuxSession = new TmuxNewSessionService({ environment, tmux });
-  const daemonRuntime = options.daemon ?? new MuximodDaemonProcess({ environment });
-  const daemonTiming = {
-    runtime: daemonRuntime,
-    clock: systemDaemonClock,
-    scheduler: systemDaemonScheduler,
-    lifecycleTimeoutMs: 5_000,
+  const muximod =
+    options.muximod ??
+    createMuximodLifecycle({
+      schemaMode: options.muximodSchemaMode ?? "migrate",
+      baseInstanceDir: options.muximodBaseInstanceDir,
+      resolveConfig: createMuximodConfigResolver({
+        environment,
+        workingDirectory: cwd,
+        databaseFile: options.databaseFile,
+      }),
+    });
+  const localDaemon = () => {
+    const host = environment.MUXIMOD_HOST ?? "127.0.0.1";
+    const port = readPort(environment.MUXIMOD_PORT, 4317);
+    return {
+      host,
+      port,
+      baseUrl: localMuximodUrl(host, port),
+      pidFile: paths.pidFile,
+      controlSocket: paths.controlSocket,
+    };
   };
-  const ensureDaemon = new EnsureDaemon(daemonTiming);
-  const startDaemon = new StartDaemon({ ...daemonTiming, ensure: ensureDaemon });
-  const statusDaemon = new StatusDaemon(daemonTiming);
-  const stopDaemon = new StopDaemon(daemonTiming);
-  const restartDaemon = new RestartDaemon({ ...daemonTiming, stop: stopDaemon });
+  let apiPromise: Promise<MuximodApiClient> | undefined;
+  const ensureApi = (): Promise<MuximodApiClient> => {
+    if (!apiPromise) {
+      apiPromise = (async () => {
+        const daemon = localDaemon();
+        await muximod.ensure({
+          host: daemon.host,
+          port: daemon.port,
+          pidFile: daemon.pidFile,
+          controlSocket: daemon.controlSocket,
+          muximodBaseUrl: daemon.baseUrl,
+        });
+        return connectMuximodApi({
+          httpBaseUrl: daemon.baseUrl,
+          controlSocket: daemon.controlSocket,
+          cwd,
+        });
+      })().catch((error) => {
+        apiPromise = undefined;
+        throw error;
+      });
+    }
+    return apiPromise;
+  };
+  const ensureMuximodForServe = async (
+    serveOptions: ServeCommandOptions,
+    allowedOrigins: readonly string[],
+  ): Promise<ServeProcessHandle | undefined> => {
+    const daemonOptions = {
+      host: serveOptions.muximodHost,
+      port: serveOptions.muximodPort,
+      pidFile: serveOptions.pidFile ?? paths.pidFile,
+      controlSocket: paths.controlSocket,
+      muximodBaseUrl: serveOptions.muximodBaseUrl,
+      logLevel: serveOptions.logLevel,
+      logFile: serveOptions.logFile,
+      allowedOrigins,
+    };
+    if (serveOptions.foreground) return muximod.startForeground(daemonOptions);
+    await muximod.ensure(daemonOptions);
+    return undefined;
+  };
+  const runAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["run"]>[0]) => {
+    const api = await ensureApi();
+    const result = await api.agentSessions.run(input);
+    if (
+      result.cleanup.disposition !== "retained" ||
+      result.cleanup.reason !== "cleanup_declined" ||
+      !result.session.useWorktree
+    ) {
+      return result;
+    }
+    if (!(await confirmCleanup(environment, result.session))) return result;
+    const cleanup = await api.agentSessions.cleanup({
+      workspaceScope: "current",
+      force: true,
+      reference: result.session.name,
+    });
+    return { ...result, session: cleanup.session, cleanup: cleanup.cleanup };
+  };
+  const cleanupAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["cleanup"]>[0]) => {
+    const api = await ensureApi();
+    if (input.force) return api.agentSessions.cleanup(input);
+
+    const session = await findAgentSession(api, input.workspaceScope, input.reference);
+    if (!session?.useWorktree) return api.agentSessions.cleanup(input);
+    if (!(await confirmCleanup(environment, session))) return api.agentSessions.cleanup(input);
+    return api.agentSessions.cleanup({ ...input, force: true });
+  };
   const input = options.input ?? process.stdin;
-  const database = repository();
   const pairCommand = new PairCommand({
     io: { out: io.out, input },
     createRuntime: async ({ controlSocket, display }) => {
@@ -317,27 +303,19 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     },
     daemon: {
       defaults: { pidFile: paths.pidFile, controlSocket: paths.controlSocket },
-      start: startDaemon,
-      status: statusDaemon,
-      stop: stopDaemon,
-      restart: restartDaemon,
-      ensure: ensureDaemon,
+      start: { execute: muximod.start },
+      status: { execute: muximod.status },
+      stop: { execute: muximod.stop },
+      restart: { execute: muximod.restart },
+      ensure: { execute: muximod.ensure },
+      log: { execute: async (value) => readDaemonLog(value.logFile, value.lines) },
     },
     serve: {
       execute: async (value): Promise<ServeResult> =>
         ensureTailscaleServe(
           value,
           {
-            ensureMuximod: async (serveOptions, allowedOrigins) => {
-              await ensureDaemon.execute({
-                host: serveOptions.muximodHost,
-                port: serveOptions.muximodPort,
-                pidFile: serveOptions.pidFile ?? paths.pidFile,
-                logLevel: serveOptions.logLevel,
-                logFile: serveOptions.logFile,
-                allowedOrigins,
-              });
-            },
+            ensureMuximod: ensureMuximodForServe,
             logger,
           },
           environment,
@@ -354,14 +332,17 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       return controlSocket;
     },
     resolveMuximodBaseUrl: (value) =>
-      resolvePairMuximodBaseUrl({ withoutServe: value.withoutServe, environment }, { logger }),
+      resolvePairMuximodBaseUrl(
+        { withoutServe: value.withoutServe, environment },
+        { ensureMuximod: ensureMuximodForServe, logger },
+      ),
   });
   const handlers: CliHandlers = {
     ...createSessionHandlers({
-      run: runSession,
-      resume: resumeSession,
-      cleanup: cleanupSession,
-      list: listSessions,
+      run: { execute: runAgentSession },
+      resume: { execute: (input) => ensureApi().then((api) => api.agentSessions.resume(input)) },
+      cleanup: { execute: cleanupAgentSession },
+      list: { execute: (input) => ensureApi().then((api) => api.agentSessions.list(input)) },
       io,
     }),
     ...createInteractiveHandlers({
@@ -373,10 +354,10 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     ...systemHandlers,
     pair: pairHandler,
     ...createWorkspaceHandlers({
-      list: database.listWorkspaces,
-      add: database.registerWorkspace,
-      update: database.updateWorkspace,
-      delete: database.deleteWorkspace,
+      list: { execute: () => ensureApi().then((api) => api.workspaces.list()) },
+      add: { execute: (input) => ensureApi().then((api) => api.workspaces.register(input)) },
+      update: { execute: (selector, input) => ensureApi().then((api) => api.workspaces.update(selector, input)) },
+      delete: { execute: (selector) => ensureApi().then((api) => api.workspaces.delete(selector)) },
       io,
     }),
   };
@@ -401,4 +382,39 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       if (!options.logger) logger.close();
     },
   };
+}
+
+async function findAgentSession(api: MuximodApiClient, workspaceScope: "current" | "all", reference: string) {
+  const result = await api.agentSessions.list({ workspaceScope, includeUnavailable: true });
+  const separatorIndex = reference.indexOf("/");
+  const workspaceSelector = separatorIndex >= 0 ? reference.slice(0, separatorIndex) : undefined;
+  const requestedName = separatorIndex >= 0 ? reference.slice(separatorIndex + 1) : reference;
+  if (requestedName.includes("/")) return undefined;
+
+  const normalizedName = normalizeSessionName(requestedName);
+  const matches = result.allViews.filter((view) => {
+    const session = view.session;
+    const workspaceMatches =
+      workspaceSelector === undefined ||
+      session.workspaceId === workspaceSelector ||
+      session.workspaceName === workspaceSelector;
+    return workspaceMatches && (session.name === requestedName || session.name === normalizedName);
+  });
+  return matches.length === 1 ? matches[0]?.session : undefined;
+}
+
+function normalizeSessionName(value: string): string {
+  try {
+    return AgentSession.normalizeName(value);
+  } catch {
+    return value;
+  }
+}
+
+function readPort(value: string | undefined, fallback: number): number {
+  const port = Number(value ?? fallback);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("muximod port must be between 1 and 65535");
+  }
+  return port;
 }

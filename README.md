@@ -78,9 +78,12 @@ The standalone command manages the long-running `muximod` process:
 ```sh
 muximo daemon start
 muximo daemon status
+muximo daemon log
 muximo daemon restart
 muximo daemon stop
 ```
+
+`muximo daemon log` prints the most recent 100 lines from the configured daemon log. Use `--lines N` to change the limit and `--log-file PATH` or `MUXIMO_LOG_FILE` to select a file.
 
 Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` should remain bound to loopback and be exposed through a trusted HTTPS route such as Tailscale Serve.
 
@@ -119,6 +122,8 @@ muximo session resume review
 muximo session list --json
 muximo session cleanup review
 ```
+
+The top-level `muximo list`, `muximo ls`, `muximo resume`, and `muximo cleanup` commands are aliases for the corresponding `session` commands.
 
 Manage workspaces and tmux sessions:
 

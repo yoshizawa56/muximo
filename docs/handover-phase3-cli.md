@@ -18,8 +18,8 @@ provider registration, adapters, resource ownership, and disposal are in
 - `packages/application/src/ports/agent-sessions.ts`, `daemon.ts`, and `shell.ts`:
   focused asynchronous capability ports with provider-neutral business vocabulary.
 - `packages/infrastructure/src/cli/`: concrete filesystem, Git, tmux, hook, serve, dev,
-  shell, workspace, and diagnostic adapters. The shared daemon process adapter lives in
-  `packages/infrastructure/src/process/daemon.ts` because both app entrypoints use it.
+  shell, workspace, and diagnostic adapters. Muximod process lifecycle, snapshot
+  bootstrap, and resource cleanup live in `packages/muximod`.
 
 The old host/runtime directories, engine/lifecycle façade classes, broad session host
 port, manual argv dispatch, and app-to-app muximod dependency are absent. Provider
@@ -32,12 +32,22 @@ and cleanup paths. Resume claims pass the application-owned `updatedAt` value th
 Daemon lifecycle timing is supplied through required application clock and scheduler ports.
 Daemon results contain typed state and process outcomes; CLI presenters map them to text and
 exit status. Serve adapters return structured URLs and subprocess observations, while the
-CLI presenter owns the user-facing serve sentence. `apps/muximod` is a private server
-entrypoint without a public CLI; daemon parsing remains in `apps/muximo-cli`.
+CLI presenter owns the user-facing serve sentence. `apps/muximod` does not exist.
+`packages/muximod` contains the private runtime bootstrap without a public CLI;
+daemon parsing remains in `apps/muximo-cli`.
 
 Serve and dev composition computes deterministic exact browser origins, passes them to
-daemon options and `MUXIMOD_ALLOWED_ORIGINS`, and rejects `*`. Local CLI calls without
-an Origin remain supported separately by muximod.
+daemon options, and rejects `*`. Local CLI calls without an Origin remain supported
+separately by muximod. The CLI uses the muximod API over local HTTP for workspace and
+agent-session operations, minting a short-lived local API token through the private
+control socket. `apps/muximo-cli/dev.ts` selects `push` and the base instance directory
+for linked worktrees; the normal CLI composition owns the resulting lifecycle.
+
+`apps/serve` is only a development supervisor. It starts Portless-managed Web and CLI
+foreground processes, monitors route and listener ownership, and cleans up processes it
+started. It does not parse `MUXIMOD_*`, resolve Tailscale URLs, or construct muximod
+configuration. Tailscale URL resolution and injection of `muximodBaseUrl` remain CLI
+responsibilities.
 
 ## Verification contract
 

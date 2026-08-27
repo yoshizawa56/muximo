@@ -109,13 +109,37 @@ const daemonOptions = {
   logFile: z.string().min(1).optional(),
 };
 
-const daemonSchema = z.object({
-  command: z.enum(["start", "status", "stop", "restart", "ensure"]),
+const daemonCommonSchema = {
   foreground: z.boolean().default(false),
   refreshServers: z.boolean().default(false),
   ...daemonOptions,
   allowedOrigins: z.array(z.string().url()).optional(),
+};
+
+const daemonSchema = z.object({
+  command: z.enum(["start", "status", "stop", "restart", "ensure"]),
+  ...daemonCommonSchema,
 });
+
+export const daemonLogOptionSpecs = defineOptions({
+  key: "lines",
+  flags: ["-n, --lines <count>"],
+  description: "Number of recent daemon log lines to print.",
+  exposure: "cli",
+  defaultValue: 100,
+  completion: { kind: "integer" },
+});
+
+const daemonLogSchema = z.object({
+  command: z.literal("log"),
+  lines: z.coerce.number().int().min(1).max(10_000).default(100),
+  ...daemonCommonSchema,
+});
+
+const daemonLogCommandOptionSpecs = [
+  ...daemonOptionSpecs.filter((spec) => spec.key === "logFile"),
+  ...daemonLogOptionSpecs,
+];
 
 export function registerDaemonCommands(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
   const daemon = parent.command("daemon").description("Manage the muximod daemon");
@@ -136,5 +160,19 @@ export function registerDaemonCommands(parent: Command, handlers: CliHandlers, c
       );
     });
   }
+  const log = daemon.command("log").description("Show recent muximod log lines");
+  registerOptions(log, daemonLogCommandOptionSpecs);
+  log.action(async (options) => {
+    const resolved = resolveCommandOptions(options, daemonLogCommandOptionSpecs, context);
+    context.report(
+      await invokeCliHandler({
+        schema: daemonLogSchema,
+        rawInput: { ...resolved, command: "log" },
+        commandPath: ["daemon", "log"],
+        context,
+        handler: handlers.daemon,
+      }),
+    );
+  });
   return daemon;
 }

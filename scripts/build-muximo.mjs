@@ -27,7 +27,7 @@ export function createMuximoBuildPlan({
     muximodOutputPath,
     target,
     cliEntrypoint: join(root, "apps", "muximo-cli", "src", "index.ts"),
-    muximodEntrypoint: join(root, "apps", "muximod", "src", "index.ts"),
+    muximodEntrypoint: join(root, "packages", "muximod", "src", "process-entrypoint.ts"),
     syncEmbeddedMigrationsScript: join(root, "scripts", "sync-embedded-migrations.mjs"),
     embeddedMigrationsDirectory: infrastructureMigrationsDirectory,
     embeddedMigrationsJournal: join(infrastructureMigrationsDirectory, "meta", "_journal.json"),

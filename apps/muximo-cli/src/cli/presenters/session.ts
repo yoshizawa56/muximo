@@ -1,7 +1,11 @@
-import type { CleanupAgentSessionResult, ResumeAgentSessionResult, RunAgentSessionResult } from "@muximo/application";
+import type {
+  CleanupAgentSessionResponse,
+  ResumeAgentSessionResponse,
+  RunAgentSessionResponse,
+} from "@muximo/contract/api";
 import type { CliIo } from "../commands/types.js";
 
-export function presentRunAgentSession(result: RunAgentSessionResult, io: CliIo): number {
+export function presentRunAgentSession(result: RunAgentSessionResponse, io: CliIo): number {
   if (result.cleanup.disposition === "not_requested") {
     io.out.write(
       result.cleanup.reason === "interrupted"
@@ -18,14 +22,14 @@ export function presentRunAgentSession(result: RunAgentSessionResult, io: CliIo)
   return result.process.code === 0 && cleanupNeedsFailureStatus(result) ? 1 : result.process.code;
 }
 
-export function presentResumeAgentSession(result: ResumeAgentSessionResult, io: CliIo): number {
+export function presentResumeAgentSession(result: ResumeAgentSessionResponse, io: CliIo): number {
   if (result.session.status === "interrupted") {
     io.out.write(`muximo: session '${result.session.name}' kept for resume after interruption\n`);
   }
   return result.process.code;
 }
 
-export function presentCleanupAgentSession(result: CleanupAgentSessionResult, io: CliIo): number {
+export function presentCleanupAgentSession(result: CleanupAgentSessionResponse, io: CliIo): number {
   if (result.cleanup.disposition === "removed") {
     io.out.write(`muximo: session '${result.session.name}' cleaned up\n`);
     return 0;
@@ -38,7 +42,7 @@ export function presentCleanupAgentSession(result: CleanupAgentSessionResult, io
   return 1;
 }
 
-function cleanupRetainedMessage(result: RunAgentSessionResult): string {
+function cleanupRetainedMessage(result: RunAgentSessionResponse): string {
   if (result.cleanup.disposition !== "retained") {
     return `session '${result.session.name}' retained because cleanup did not complete`;
   }
@@ -48,11 +52,11 @@ function cleanupRetainedMessage(result: RunAgentSessionResult): string {
   return `session '${result.session.name}' retained because cleanup did not complete`;
 }
 
-function cleanupFailedMessage(result: RunAgentSessionResult): string {
+function cleanupFailedMessage(result: RunAgentSessionResponse): string {
   return `${cleanupFailureMessage(result)} (cleanup failed; resources were retained)`;
 }
 
-function cleanupFailureMessage(result: RunAgentSessionResult | CleanupAgentSessionResult): string {
+function cleanupFailureMessage(result: RunAgentSessionResponse | CleanupAgentSessionResponse): string {
   if (result.cleanup.disposition !== "retained" && result.cleanup.disposition !== "failed") {
     return `session '${result.session.name}' retained because cleanup did not complete`;
   }
@@ -72,6 +76,6 @@ function cleanupFailureMessage(result: RunAgentSessionResult | CleanupAgentSessi
   return `session '${name}' retained because cleanup did not complete: worktree removal failed`;
 }
 
-function cleanupNeedsFailureStatus(result: RunAgentSessionResult): boolean {
+function cleanupNeedsFailureStatus(result: RunAgentSessionResponse): boolean {
   return result.cleanup.disposition === "retained" || result.cleanup.disposition === "failed";
 }
