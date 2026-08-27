@@ -247,6 +247,9 @@ class RealTmuxFixture {
     }
     rmSync(this.directory, { recursive: true, force: true });
   }
+  private require(args: string[]): void {
+    this.adapter.require(args);
+  }
   public readSessionStatus(target: string): string {
     return this.adapter.require(["display-message", "-p", "-t", target, "#{status}"]).trim();
   }
@@ -258,9 +261,6 @@ class RealTmuxFixture {
       .require(["show-environment", "-t", target, name])
       .trim()
       .slice(name.length + 1);
-  }
-  private require(args: string[]): void {
-    this.adapter.require(args);
   }
 }
 

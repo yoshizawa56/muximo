@@ -272,6 +272,72 @@ const groupedSessionConfigurationTable: OperationTable<
   observe: () => ({}),
 };
 
+type OrphanCleanupResult = string[];
+type OrphanCleanupContext = { killed: string[] };
+type OrphanCleanupFixture = { adapter: OrphanCleanupTmuxAdapter };
+type OrphanCleanupKey = "orphaned" | "attached";
+const orphanCleanupCases = [
+  {
+    name: "removes unattached marked mobile sessions and ignores other sessions",
+    fixture: "orphaned",
+    input: {},
+    assert: [
+      returns<OrphanCleanupContext, OrphanCleanupResult>(["=muximo-mobile-1"]),
+      hasObserved<OrphanCleanupContext, OrphanCleanupResult>("killed", ["=muximo-mobile-1"]),
+    ],
+  },
+  {
+    name: "keeps a marked mobile session while a client is attached",
+    fixture: "attached",
+    input: {},
+    assert: [
+      returns<OrphanCleanupContext, OrphanCleanupResult>([]),
+      hasObserved<OrphanCleanupContext, OrphanCleanupResult>("killed", []),
+    ],
+  },
+] satisfies readonly OperationCase<OrphanCleanupKey, {}, OrphanCleanupResult, OrphanCleanupContext>[];
+const orphanCleanupTable: OperationTable<
+  OrphanCleanupFixture,
+  OrphanCleanupKey,
+  {},
+  OrphanCleanupResult,
+  OrphanCleanupContext
+> = {
+  defaultFixture: () => ({
+    fixture: {
+      adapter: new OrphanCleanupTmuxAdapter(
+        ["muximo-mobile-1\u001f1", "muximo-mobile-2\u001f1", "muximo-mobile-ignored\u001f0", "muximod\u001f1"].join(
+          "\n",
+        ),
+        "muximo-mobile-2\n",
+      ),
+    },
+  }),
+  fixtures: {
+    orphaned: () => ({
+      fixture: {
+        adapter: new OrphanCleanupTmuxAdapter(
+          ["muximo-mobile-1\u001f1", "muximo-mobile-2\u001f1", "muximo-mobile-ignored\u001f0", "muximod\u001f1"].join(
+            "\n",
+          ),
+          "muximo-mobile-2\n",
+        ),
+      },
+    }),
+    attached: () => ({
+      fixture: {
+        adapter: new OrphanCleanupTmuxAdapter("muximo-mobile-2\u001f1\n", "muximo-mobile-2\n"),
+      },
+    }),
+  },
+  cases: orphanCleanupCases,
+  execute: (fixture) => {
+    fixture.adapter.cleanupOrphanedGroupedSessions();
+    return [...fixture.adapter.killed];
+  },
+  observe: (fixture) => ({ killed: [...fixture.adapter.killed] }),
+};
+
 const sessionEnvironmentCases = [
   {
     name: "uses the session environment for managed wrappers",
@@ -639,6 +705,7 @@ describe("tmux adapter", () => {
   runOperationTable(register, sessionOptionTable);
   runOperationTable(register, groupedSessionTable);
   runOperationTable(register, groupedSessionConfigurationTable);
+  runOperationTable(register, orphanCleanupTable);
   runOperationTable(register, sessionEnvironmentTable);
   runOperationTable(register, resolveTable);
   runOperationTable(register, attachTable);
@@ -795,5 +862,23 @@ class GroupedSessionConfigurationTmuxAdapter extends TmuxAdapter {
     }
     this.writes.push(args);
     return "";
+  }
+}
+
+class OrphanCleanupTmuxAdapter extends TmuxAdapter {
+  public readonly killed: string[] = [];
+  public constructor(
+    private readonly sessions: string,
+    private readonly clients: string,
+  ) {
+    super("/private/tmp/muximo-test.sock");
+  }
+  public override command(args: string[]) {
+    if (args[0] === "list-sessions") return { status: 0, stdout: this.sessions, stderr: "" };
+    if (args[0] === "list-clients") return { status: 0, stdout: this.clients, stderr: "" };
+    return { status: 0, stdout: "", stderr: "" };
+  }
+  public override killSession(target: string): void {
+    this.killed.push(target);
   }
 }

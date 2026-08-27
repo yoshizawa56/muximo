@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type {
   CleanupResult,
@@ -52,14 +52,27 @@ export class GitWorktreeAdapter implements WorktreePort {
     if (gitStatusCode(workspace.rootPath, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]) === 0) {
       throw new Error(`muximo branch already exists; choose another name or remove it manually: ${branch}`);
     }
-    if (existsSync(worktreePath)) throw new Error(`worktree path already exists: ${worktreePath}`);
+    const worktreePathWasAbsent = !existsSync(worktreePath);
+    if (!worktreePathWasAbsent) throw new Error(`worktree path already exists: ${worktreePath}`);
     this.options.logger.info("worktree.create_started", { worktreePath, branch, baseCommit });
-    gitRequired(
-      workspace.rootPath,
-      ["worktree", "add", "-b", branch, "--", worktreePath, baseCommit],
-      "git worktree creation failed",
-      this.options.environment,
-    );
+    try {
+      gitRequired(
+        workspace.rootPath,
+        ["worktree", "add", "-b", branch, "--", worktreePath, baseCommit],
+        "git worktree creation failed",
+        this.options.environment,
+      );
+    } catch (error) {
+      this.cleanupFailedCreation(
+        workspace.rootPath,
+        worktreeRoot,
+        worktreePath,
+        worktreePathWasAbsent,
+        branch,
+        baseCommit,
+      );
+      throw error;
+    }
     return { worktreeRoot, worktreePath, branch, baseCommit };
   }
 
@@ -219,6 +232,86 @@ export class GitWorktreeAdapter implements WorktreePort {
     return gitOutputRaw(workspaceRoot, ["worktree", "list", "--porcelain"], this.options.environment)
       .split("\n")
       .some((line) => line === `worktree ${worktreePath}`);
+  }
+
+  private cleanupFailedCreation(
+    workspaceRoot: string,
+    worktreeRoot: string,
+    worktreePath: string,
+    worktreePathWasAbsent: boolean,
+    branch: string,
+    baseCommit: string,
+  ): void {
+    try {
+      let canRemoveBranch = !existsSync(worktreePath);
+      if (existsSync(worktreePath) && this.isRegisteredAtInternal(workspaceRoot, worktreePath)) {
+        gitRequired(
+          workspaceRoot,
+          ["worktree", "remove", "--force", "--", worktreePath],
+          "git worktree removal failed",
+          this.options.environment,
+        );
+        canRemoveBranch = !existsSync(worktreePath);
+      } else if (worktreePathWasAbsent) {
+        canRemoveBranch = this.removeUnregisteredPartialWorktree(workspaceRoot, worktreeRoot, worktreePath);
+      }
+      if (canRemoveBranch) {
+        const head = gitOutputOrEmpty(workspaceRoot, ["rev-parse", "--verify", branch], this.options.environment);
+        if (head && head === baseCommit)
+          gitStatusCode(workspaceRoot, ["branch", "-d", branch], this.options.environment);
+      }
+    } catch (cleanupError) {
+      this.options.logger.warn("worktree.create_cleanup_failed", {
+        worktreePath,
+        ...errorFields(cleanupError),
+      });
+    }
+  }
+
+  private removeUnregisteredPartialWorktree(
+    workspaceRoot: string,
+    worktreeRoot: string,
+    worktreePath: string,
+  ): boolean {
+    if (!existsSync(worktreePath)) return true;
+
+    const resolvedRoot = realpathSafe(worktreeRoot);
+    const resolvedPath = realpathSafe(worktreePath);
+    if (!isPathWithin(resolvedRoot, resolvedPath) || resolvedRoot === resolvedPath) return false;
+
+    let worktreeStat: ReturnType<typeof lstatSync>;
+    let gitFileStat: ReturnType<typeof lstatSync>;
+    try {
+      worktreeStat = lstatSync(worktreePath);
+      gitFileStat = lstatSync(join(worktreePath, ".git"));
+    } catch {
+      return false;
+    }
+    if (!worktreeStat.isDirectory() || !gitFileStat.isFile()) return false;
+
+    let gitdir: string | undefined;
+    try {
+      gitdir = readFileSync(join(worktreePath, ".git"), "utf8")
+        .split(/\r?\n/u)
+        .map((line) => line.match(/^gitdir:\s*(.+)$/u)?.[1]?.trim())
+        .find((value): value is string => Boolean(value));
+    } catch {
+      return false;
+    }
+    if (!gitdir) return false;
+
+    const commonDirectory = gitOutputOrEmpty(
+      workspaceRoot,
+      ["rev-parse", "--git-common-dir"],
+      this.options.environment,
+    );
+    const worktreeAdministrativeRoot = realpathSafe(resolve(workspaceRoot, commonDirectory || ".git", "worktrees"));
+    const resolvedGitdir = realpathSafe(resolve(worktreePath, gitdir));
+    if (!isPathWithin(worktreeAdministrativeRoot, resolvedGitdir)) return false;
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    unlinkEmptyDirectory(worktreeRoot);
+    return !existsSync(worktreePath);
   }
 }
 

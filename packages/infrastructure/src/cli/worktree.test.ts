@@ -15,6 +15,7 @@ import { join, resolve } from "node:path";
 import type { CleanupResult } from "@muximo/application";
 import { AgentSession, AgentSessionId, type AgentSessionRecord, Workspace, WorkspaceId } from "@muximo/domain";
 import {
+  hasError,
   hasObserved,
   type OperationCase,
   type OperationTable,
@@ -38,6 +39,7 @@ type WorktreeFixture = {
   workspace: ReturnType<typeof Workspace.create>;
   session?: AgentSessionRecord;
   created?: Awaited<ReturnType<GitWorktreeAdapter["create"]>>;
+  failedWorktreePath?: string;
   cleanup?: CleanupResult;
   shellPathExists?: boolean;
   copyResult?: boolean;
@@ -58,7 +60,7 @@ type LifecycleResult = {
   diagnosticEvents: readonly string[];
 };
 
-type LifecycleFixtureKey = "default" | "unregistered";
+type LifecycleFixtureKey = "default" | "unregistered" | "partial";
 
 const lifecycleCases = [
   {
@@ -119,6 +121,16 @@ const lifecycleCases = [
       },
     ],
   },
+  {
+    name: "removes an unregistered partial path when worktree creation fails",
+    fixture: "partial",
+    steps: [{ kind: "create", name: "partial" }],
+    assert: [
+      hasError<LifecycleResult, LifecycleResult>({ message: "git worktree creation failed" }),
+      hasObserved<LifecycleResult, LifecycleResult>("shellPathExists", false),
+      hasObserved<LifecycleResult, LifecycleResult>("deletionCommands", []),
+    ],
+  },
 ] satisfies readonly ScenarioCase<LifecycleFixtureKey, LifecycleStep, LifecycleResult, LifecycleResult>[];
 
 const lifecycleTable: ScenarioTable<
@@ -132,6 +144,7 @@ const lifecycleTable: ScenarioTable<
   fixtures: {
     default: createWorktreeFixture,
     unregistered: createUnregisteredFixture,
+    partial: createPartialCreationFixture,
   },
   cases: lifecycleCases,
   execute: async (fixture, steps) => {
@@ -164,11 +177,9 @@ const lifecycleTable: ScenarioTable<
         });
       }
     }
-    fixture.shellPathExists = fixture.session?.worktreePath
-      ? existsSync(fixture.session.worktreePath)
-      : fixture.created?.worktreePath
-        ? existsSync(fixture.created.worktreePath)
-        : undefined;
+    const observedWorktreePath =
+      fixture.session?.worktreePath ?? fixture.created?.worktreePath ?? fixture.failedWorktreePath;
+    fixture.shellPathExists = observedWorktreePath ? existsSync(observedWorktreePath) : undefined;
     return {
       cleanup: fixture.cleanup,
       shellPathExists: fixture.shellPathExists,
@@ -176,12 +187,17 @@ const lifecycleTable: ScenarioTable<
       diagnosticEvents: fixture.diagnostics.map((record) => record.event),
     };
   },
-  observe: (fixture) => ({
-    cleanup: fixture.cleanup,
-    shellPathExists: fixture.shellPathExists,
-    deletionCommands: gitCommands(fixture).filter((command) => command.includes("worktree remove")),
-    diagnosticEvents: fixture.diagnostics.map((record) => record.event),
-  }),
+  observe: (fixture) => {
+    const observedWorktreePath =
+      fixture.session?.worktreePath ?? fixture.created?.worktreePath ?? fixture.failedWorktreePath;
+    fixture.shellPathExists = observedWorktreePath ? existsSync(observedWorktreePath) : undefined;
+    return {
+      cleanup: fixture.cleanup,
+      shellPathExists: fixture.shellPathExists,
+      deletionCommands: gitCommands(fixture).filter((command) => command.includes("worktree remove")),
+      diagnosticEvents: fixture.diagnostics.map((record) => record.event),
+    };
+  },
 };
 
 type CopyInput = {
@@ -276,6 +292,13 @@ function createUnregisteredFixture(registerCleanup?: (cleanup: () => void) => vo
   return { fixture };
 }
 
+function createPartialCreationFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  const fixture = createGitFixture({ failWorktreeAdd: true });
+  fixture.failedWorktreePath = join(fixture.worktreeRoot, "partial");
+  registerFixtureCleanup(fixture, registerCleanup);
+  return { fixture };
+}
+
 function createCopyFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
   const fixture = createGitFixture();
   arrangeRawWorktree(fixture, "copy");
@@ -297,7 +320,7 @@ function createSymlinkFixture(registerCleanup?: (cleanup: () => void) => void): 
   return { fixture };
 }
 
-function createGitFixture(): WorktreeFixture {
+function createGitFixture(options: { failWorktreeAdd?: boolean } = {}): WorktreeFixture {
   const root = mkdtempSync(join(tmpdir(), "muximo-worktree-adapter-"));
   const workspacePath = join(root, "workspace");
   const worktreePath = join(root, "worktrees");
@@ -311,9 +334,19 @@ function createGitFixture(): WorktreeFixture {
   writeFileSync(join(workspaceRoot, "README.md"), "fixture\n");
   const realGit = findExecutable("git");
   const wrappedGit = join(binRoot, "git");
-  writeFileSync(wrappedGit, `#!/bin/sh\nprintf '%s\\n' "$*" >>"$MUXIMO_GIT_LOG"\nexec ${shellQuote(realGit)} "$@"\n`, {
-    mode: 0o700,
-  });
+  writeFileSync(
+    wrappedGit,
+    `#!/bin/sh
+printf '%s\\n' "$*" >>"$MUXIMO_GIT_LOG"
+if [ "$MUXIMO_GIT_FAIL_WORKTREE_ADD" = "1" ] && [ "$3" = "worktree" ] && [ "$4" = "add" ]; then
+  mkdir -p "$8" "$2/.git/worktrees/partial"
+  printf 'gitdir: %s\\n' "$2/.git/worktrees/partial" >"$8/.git"
+  exit 1
+fi
+exec ${shellQuote(realGit)} "$@"
+`,
+    { mode: 0o700 },
+  );
   chmodSync(wrappedGit, 0o700);
   execFileSync(realGit, ["init", "-q", workspaceRoot]);
   execFileSync(realGit, ["-C", workspaceRoot, "config", "user.email", "adapter@example.invalid"]);
@@ -334,6 +367,7 @@ function createGitFixture(): WorktreeFixture {
     MUXIMO_GIT_LOG: gitLog,
     MUXIMO_WORKTREE_ROOT: worktreeRoot,
     MUXIMO_WORKTREE_ID: "adapter-test",
+    ...(options.failWorktreeAdd ? { MUXIMO_GIT_FAIL_WORKTREE_ADD: "1" } : {}),
   };
   const workspace = Workspace.create({
     id: WorkspaceId.create("workspace-id"),

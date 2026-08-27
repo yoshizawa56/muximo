@@ -317,7 +317,7 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
     ensureSessionCalls: fixture.adapter.ensureSessionCalls.map(({ target }) => target),
     desktopStatus: fixture.adapter.desktopStatus,
     statusHidden: fixture.adapter.sessionOptions.some(
-      ([sessionName, name, value]) => sessionName !== "=muximod" && name === "status" && value === "off",
+      ([sessionName, name, value]) => sessionName !== "=muximod:" && name === "status" && value === "off",
     ),
     groupedSessionSources: fixture.adapter.groupedSessions.map(([source]) => source),
     killedSessionCount: fixture.adapter.killedSessions.length,
@@ -413,7 +413,7 @@ class FakeTmuxAdapter extends TmuxAdapter {
   }
   public override setSessionOption(sessionName: string, name: string, value: string): void {
     this.sessionOptions.push([sessionName, name, value]);
-    if (sessionName === "=muximod" && name === "status") this.desktopStatus = value === "off" ? "off" : "on";
+    if (sessionName === "=muximod:" && name === "status") this.desktopStatus = value === "off" ? "off" : "on";
   }
   public override killSession(target: string): void {
     this.killedSessions.push(target);
