@@ -239,12 +239,6 @@ export class TmuxAdapter {
       mobilePaneTarget,
       stableMobileViewportMetadataKey,
       "1",
-      ";",
-      "set-hook",
-      "-t",
-      mobileSessionTarget,
-      "client-attached",
-      `set-option -t ${mobilePaneTarget} destroy-unattached on`,
     ];
     let mayHaveCreated = false;
     try {
