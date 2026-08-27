@@ -15,6 +15,7 @@ type AgentRuntime = {
 const stableAgentSessionMetadataKey = "@muximod.agent_session_id";
 const stableAgentExecutionMetadataKey = "@muximod.agent_execution_id";
 const stableMobileViewportMetadataKey = "@muximod.mobile_viewport";
+const mobileViewportSessionPrefix = "muximo-mobile-";
 const tmuxFormatSeparator = "\u001f";
 
 type TmuxSessionOption = {
@@ -238,6 +239,12 @@ export class TmuxAdapter {
       mobilePaneTarget,
       stableMobileViewportMetadataKey,
       "1",
+      ";",
+      "set-hook",
+      "-t",
+      mobileSessionTarget,
+      "client-attached",
+      `set-option -t ${mobilePaneTarget} destroy-unattached on`,
     ];
     let mayHaveCreated = false;
     try {
@@ -259,6 +266,45 @@ export class TmuxAdapter {
         }
       }
       throw error;
+    }
+  }
+
+  /** Removes marked temporary viewport sessions left behind by a crashed daemon. */
+  public cleanupOrphanedGroupedSessions(): void {
+    const sessions = this.command([
+      "list-sessions",
+      "-F",
+      ["#{session_name}", `#{${stableMobileViewportMetadataKey}}`].join(tmuxFormatSeparator),
+    ]);
+    if (sessions.status !== 0) return;
+
+    const clients = this.command(["list-clients", "-F", "#{client_session}"]);
+    if (clients.status !== 0) return;
+    const attachedSessions = new Set(
+      clients.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+
+    for (const line of sessions.stdout
+      .split("\n")
+      .map((value) => value.trimEnd())
+      .filter(Boolean)) {
+      const [sessionName, mobileViewport] = splitTmuxFormatLine(line, tmuxFormatSeparator);
+      if (
+        !sessionName?.startsWith(mobileViewportSessionPrefix) ||
+        mobileViewport !== "1" ||
+        attachedSessions.has(sessionName)
+      ) {
+        continue;
+      }
+      try {
+        this.killSession(exactSessionTarget(sessionName));
+      } catch {
+        // Cleanup is best effort; a concurrent client or daemon may already
+        // have removed or claimed the temporary session.
+      }
     }
   }
 

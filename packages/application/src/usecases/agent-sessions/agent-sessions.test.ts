@@ -38,6 +38,7 @@ type LifecycleFixture = {
   processResult: ProcessResult;
   processError?: Error;
   prepareError?: Error;
+  hasChangesError?: Error;
   useWorktree: boolean;
   cleanupDisposition: CleanupDisposition;
   restoreSucceeded: boolean;
@@ -119,6 +120,7 @@ function createFixture(
     processResult?: ProcessResult;
     processError?: Error;
     prepareError?: Error;
+    hasChangesError?: Error;
     useWorktree?: boolean;
     cleanupDisposition?: CleanupDisposition;
     restoreSucceeded?: boolean;
@@ -135,6 +137,7 @@ function createFixture(
     processResult: options.processResult ?? { code: 0, interrupted: false },
     processError: options.processError,
     prepareError: options.prepareError,
+    hasChangesError: options.hasChangesError,
     useWorktree: options.useWorktree ?? false,
     cleanupDisposition: options.cleanupDisposition ?? "removed",
     restoreSucceeded: options.restoreSucceeded ?? true,
@@ -245,7 +248,10 @@ function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
           : {},
       copyFiles: async () => true,
       isRegistered: async () => true,
-      hasChanges: async () => fixture.dirty,
+      hasChanges: async () => {
+        if (fixture.hasChangesError) throw fixture.hasChangesError;
+        return fixture.dirty;
+      },
       remove: async () => {
         fixture.worktreeRemoveCount += 1;
         return cleanupResult(fixture.cleanupDisposition);
@@ -359,7 +365,7 @@ const runInput = {
   backendArgs: [] as readonly string[],
 };
 
-type RunKey = "success" | "failed" | "startup-failed" | "prepare-failed";
+type RunKey = "success" | "failed" | "startup-failed" | "prepare-failed" | "post-execution-failed";
 type RunStep = { operation: "run" };
 const runCases = [
   {
@@ -416,6 +422,18 @@ const runCases = [
       hasObserved<RunContext, RunAgentSessionResult>("disposeCount", 0),
     ],
   },
+  {
+    name: "retains a completed session when post-execution finalization fails",
+    fixture: "post-execution-failed",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasError<RunContext, RunAgentSessionResult>({ message: "post-execution observation failed" }),
+      hasObserved<RunContext, RunAgentSessionResult>("status", "exited"),
+      hasObserved<RunContext, RunAgentSessionResult>("worktreeRemoveCount", 0),
+      hasObserved<RunContext, RunAgentSessionResult>("cleanupHookCount", 0),
+      hasObserved<RunContext, RunAgentSessionResult>("disposeCount", 1),
+    ],
+  },
 ] satisfies readonly ScenarioCase<RunKey, RunStep, RunAgentSessionResult, RunContext>[];
 
 const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSessionResult, RunContext> = {
@@ -433,6 +451,12 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
       fixture: createFixture({
         useWorktree: true,
         prepareError: new Error("agent launch preparation failed"),
+      }),
+    }),
+    "post-execution-failed": () => ({
+      fixture: createFixture({
+        useWorktree: true,
+        hasChangesError: new Error("post-execution observation failed"),
       }),
     }),
   },

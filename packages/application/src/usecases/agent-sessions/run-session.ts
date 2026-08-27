@@ -74,6 +74,7 @@ export class RunAgentSession {
     let inserted = false;
     let launchPlan: LaunchPlan | undefined;
     let launchPlanStarted = false;
+    let executionCompleted = false;
     try {
       const worktree = input.useWorktree ? await this.deps.worktrees.create(workspace, name, input.worktreeRoot) : {};
       const now = this.deps.clock.now();
@@ -137,13 +138,15 @@ export class RunAgentSession {
 
       launchPlanStarted = true;
       const execution = await this.executePlan(session, preparation.plan);
+      executionCompleted = true;
       launchPlan = undefined;
       session = await this.persistIdentityUpdate(session, execution.sessionUpdate);
       const result = await this.finalize(session, execution.process);
       logger.debug("session.finished", { status: result.session.status, cleanup: result.cleanup.disposition });
       return result;
     } catch (error) {
-      if (session && inserted) await this.cleanupFailedStartup(session, launchPlan, launchPlanStarted);
+      if (session && inserted && !executionCompleted)
+        await this.cleanupFailedStartup(session, launchPlan, launchPlanStarted);
       logger.debug("session.failed", { message: error instanceof Error ? error.message : String(error) });
       throw error;
     }
