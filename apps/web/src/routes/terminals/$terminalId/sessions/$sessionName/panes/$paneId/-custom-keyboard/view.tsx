@@ -359,9 +359,11 @@ function CustomKeyboardDirectionalFlickButtonView({
       style={{ touchAction: "none" }}
       type="button"
       onPointerDown={(event) => {
+        onKeepNativeKeyboardOpen();
         event.preventDefault();
       }}
       onMouseDown={(event) => {
+        onKeepNativeKeyboardOpen();
         event.preventDefault();
       }}
       onFocus={onKeepNativeKeyboardOpen}

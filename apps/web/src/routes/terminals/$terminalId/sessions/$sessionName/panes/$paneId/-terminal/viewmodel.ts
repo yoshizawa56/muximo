@@ -64,6 +64,7 @@ export type PaneViewModel = {
   target: string;
   status: PaneConnectionStatus;
   errorMessage: string | null;
+  actionErrorMessage: string | null;
   viewportOwner: PaneViewportOwner;
   viewportReason: string | null;
   pasteState: PanePasteState;
@@ -79,7 +80,7 @@ export type PaneViewModel = {
   nativeKeyboardVisible: boolean;
   pasteImage: (file: File) => void;
   enterCopyMode: () => void;
-  pasteFromClipboard: () => Promise<boolean>;
+  pasteFromClipboard: () => Promise<void>;
   pasteFromTmuxBuffer: () => void;
 };
 
@@ -90,6 +91,23 @@ export function nativeKeyboardToggleAction(
   helperInputFocused: boolean,
 ): NativeKeyboardToggleAction {
   return nativeKeyboardVisible || helperInputFocused ? "hide" : "show";
+}
+
+export type TerminalControlErrorDisposition = "action" | "connection";
+
+const terminalActionErrorCodes: ReadonlySet<string> = new Set([
+  "not_attached",
+  "mobile_claim_failed",
+  "copy_mode_failed",
+  "paste_tmux_buffer_failed",
+  "resize_failed",
+  "paste_image_too_large",
+  "paste_image_unavailable",
+  "paste_image_failed",
+]);
+
+export function terminalControlErrorDisposition(code: string, retryable: boolean): TerminalControlErrorDisposition {
+  return !retryable && terminalActionErrorCodes.has(code) ? "action" : "connection";
 }
 
 function identityInputTransform(data: string): string {
@@ -113,6 +131,7 @@ export function usePaneViewModel({
   }, []);
   const [status, setStatus] = useState<PaneConnectionStatus>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
   const [viewportOwner, setViewportOwner] = useState<PaneViewportOwner>("mobile");
   const [viewportReason, setViewportReason] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -232,41 +251,63 @@ export function usePaneViewModel({
     retryTimerRef.current = null;
   }, []);
 
+  const clearActionError = useCallback(() => {
+    setActionErrorMessage(null);
+  }, []);
+
+  const reportActionError = useCallback((message: string) => {
+    setActionErrorMessage(message);
+  }, []);
+
   const reconnect = useCallback(() => {
     retryCountRef.current = 0;
     terminalClosedRef.current = false;
     resetNativeKeyboardRef.current?.();
     clearRetryTimer();
+    clearActionError();
     setStatus("connecting");
     setErrorMessage(null);
     connectRef.current?.();
-  }, [clearRetryTimer]);
+  }, [clearActionError, clearRetryTimer]);
 
   const claim = useCallback(() => {
     sendControl(socketRef.current, { type: "claim", version: terminalProtocolVersion });
   }, []);
 
   const enterCopyMode = useCallback(() => {
-    if (sendControl(socketRef.current, { type: "enter_copy_mode", version: terminalProtocolVersion })) focus();
-  }, [focus]);
+    clearActionError();
+    if (sendControl(socketRef.current, { type: "enter_copy_mode", version: terminalProtocolVersion })) {
+      focus();
+      return;
+    }
+    reportActionError("Terminal is not connected");
+  }, [clearActionError, focus, reportActionError]);
 
   const pasteFromTmuxBuffer = useCallback(() => {
-    sendControl(socketRef.current, { type: "paste_tmux_buffer", version: terminalProtocolVersion });
-  }, []);
+    clearActionError();
+    if (sendControl(socketRef.current, { type: "paste_tmux_buffer", version: terminalProtocolVersion })) return;
+    reportActionError("Terminal is not connected");
+  }, [clearActionError, reportActionError]);
 
-  const pasteFromClipboard = useCallback(async (): Promise<boolean> => {
-    if (typeof navigator === "undefined" || !navigator.clipboard?.readText) return false;
+  const pasteFromClipboard = useCallback(async (): Promise<void> => {
+    clearActionError();
+    if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+      reportActionError("Clipboard paste is unavailable in this browser");
+      return;
+    }
     try {
       const data = await navigator.clipboard.readText();
-      if (!data) return true;
+      if (!data) return;
       const terminal = terminalRef.current;
-      if (!terminal || terminalClosedRef.current) return false;
+      if (!terminal || terminalClosedRef.current) {
+        reportActionError("Terminal is not connected");
+        return;
+      }
       terminal.paste(data);
-      return true;
     } catch {
-      return false;
+      reportActionError("Clipboard access was denied or failed");
     }
-  }, []);
+  }, [clearActionError, reportActionError]);
 
   const detach = useCallback(() => {
     terminalClosedRef.current = true;
@@ -517,6 +558,7 @@ export function usePaneViewModel({
         socket = await openMuximodTerminal(connection);
       } catch {
         if (!disposed && !terminalClosedRef.current) {
+          clearActionError();
           setStatus("error");
           setErrorMessage("muximod authentication failed");
           scheduleReconnect();
@@ -556,6 +598,7 @@ export function usePaneViewModel({
               terminalClosedRef.current = false;
               setStatus("connected");
               setErrorMessage(null);
+              clearActionError();
               const nextResume = resumeStateFromReady(message, target);
               resumeRef.current = nextResume;
               terminalResumeStore.write(resumeKey, nextResume);
@@ -568,6 +611,7 @@ export function usePaneViewModel({
               resumeRef.current = null;
               setStatus("closed");
               setErrorMessage(message.reason === "detached" ? "Terminal detached" : "Terminal session closed");
+              clearActionError();
             },
             onError: ({ code, message, retryable }) => {
               if (code === "resume_not_found" && resumeAttempt && !fallbackAttachSent) {
@@ -580,6 +624,12 @@ export function usePaneViewModel({
                 return;
               }
 
+              if (terminalControlErrorDisposition(code, retryable) === "action") {
+                reportActionError(message);
+                return;
+              }
+
+              clearActionError();
               setStatus("error");
               setErrorMessage(message);
               resetNativeKeyboard();
@@ -603,6 +653,7 @@ export function usePaneViewModel({
         if (!isCurrentSocket() || terminalClosedRef.current) return;
         socketInputQueueRef.current.detach();
         resetNativeKeyboard();
+        clearActionError();
         setStatus("error");
         setErrorMessage("WebSocket connection failed");
         scheduleReconnect();
@@ -612,6 +663,7 @@ export function usePaneViewModel({
         if (!isCurrentSocket()) return;
         socketInputQueueRef.current.detach();
         resetNativeKeyboard();
+        clearActionError();
         socketRef.current = null;
         if (terminalClosedRef.current) return;
         setStatus("connecting");
@@ -785,12 +837,13 @@ export function usePaneViewModel({
       }
       terminal.dispose();
     };
-  }, [claim, clearRetryTimer, connection, focus, target, terminalContainer]);
+  }, [claim, clearActionError, clearRetryTimer, connection, focus, reportActionError, target, terminalContainer]);
 
   return {
     target,
     status,
     errorMessage,
+    actionErrorMessage,
     viewportOwner,
     viewportReason,
     pasteState,

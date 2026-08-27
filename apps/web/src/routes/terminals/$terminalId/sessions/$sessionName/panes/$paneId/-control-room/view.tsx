@@ -279,6 +279,17 @@ export function ControlRoomView({
               </button>
             </div>
           ) : null}
+          {viewModel.actionErrorMessage ? (
+            <div
+              className="flex min-h-[54px] items-center gap-4 rounded-[11px] border border-[#735c2c] bg-[#241c0d] px-[13px] py-2.5 max-[620px]:items-start"
+              role="alert"
+            >
+              <span className="flex min-w-0 flex-col gap-[3px]">
+                <strong className="text-[0.7rem]">Terminal action failed</strong>
+                <small className="text-[0.65rem] text-muted">{viewModel.actionErrorMessage}</small>
+              </span>
+            </div>
+          ) : null}
           {viewModel.viewportOwner === "desktop" && viewModel.status === "connected" ? (
             <div
               className="flex min-h-[54px] items-center justify-between gap-4 rounded-[11px] border border-[#735c2c] bg-[#241c0d] px-[13px] py-2.5 max-[620px]:items-start"

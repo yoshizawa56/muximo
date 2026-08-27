@@ -26,6 +26,7 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     target: "%0",
     status: "connected",
     errorMessage: null,
+    actionErrorMessage: null,
     viewportOwner: "mobile",
     viewportReason: "manual claim",
     pasteState: "idle",
@@ -41,7 +42,7 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     nativeKeyboardVisible: false,
     pasteImage: fn(),
     enterCopyMode: fn(),
-    pasteFromClipboard: fn(async () => true),
+    pasteFromClipboard: fn(async () => undefined),
     pasteFromTmuxBuffer: fn(),
   };
   const keyboard: CustomKeyboardViewModel = {
