@@ -29,6 +29,8 @@ type ViewportStep =
   | { type: "prepare"; cols?: number; rows?: number }
   | { type: "attach"; cols: number; rows: number }
   | { type: "claim" }
+  | { type: "copy-mode" }
+  | { type: "paste-buffer" }
   | { type: "resize"; cols: number; rows: number }
   | { type: "desktop-activity" }
   | { type: "desktop-size"; width: number; height: number }
@@ -57,7 +59,13 @@ type ViewportContext = {
   events: readonly ViewportEvent[];
   refreshes: readonly string[];
   resizes: readonly [number, number][];
+  copyModeTargets: readonly string[];
+  pasteBufferTargets: readonly string[];
   ensureSessionCalls: readonly string[];
+  desktopStatus: "on" | "off";
+  statusHidden: boolean;
+  groupedSessionSources: readonly string[];
+  killedSessionCount: number;
 };
 
 const viewportFixture = (): FixtureHandle<ViewportFixture> => {
@@ -96,6 +104,9 @@ const cases = [
       hasObserved<ViewportContext, undefined>("height", 24),
       hasObserved<ViewportContext, undefined>("zoomed", true),
       hasObserved<ViewportContext, undefined>("mouse", "on"),
+      hasObserved<ViewportContext, undefined>("desktopStatus", "on"),
+      hasObserved<ViewportContext, undefined>("statusHidden", true),
+      hasObserved<ViewportContext, undefined>("groupedSessionSources", ["muximod"]),
     ],
   },
   {
@@ -125,6 +136,8 @@ const cases = [
       ]),
       hasObserved<ViewportContext, undefined>("zoomed", false),
       hasObserved<ViewportContext, undefined>("mouse", "off"),
+      hasObserved<ViewportContext, undefined>("desktopStatus", "on"),
+      hasObserved<ViewportContext, undefined>("killedSessionCount", 1),
     ],
   },
   {
@@ -202,6 +215,15 @@ const cases = [
     ],
   },
   {
+    name: "runs copy mode and host-side buffer paste against the selected pane",
+    steps: [prepare, attach, { type: "copy-mode" }, { type: "paste-buffer" }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("copyModeTargets", ["%0"]),
+      hasObserved<ViewportContext, undefined>("pasteBufferTargets", ["%0"]),
+      hasObserved<ViewportContext, undefined>("refreshes", ["/dev/mobile"]),
+    ],
+  },
+  {
     name: "does not re-resize or redraw when resized to the current size",
     steps: [prepare, attach, { type: "resize", cols: 80, rows: 24 }, { type: "resize", cols: 80, rows: 24 }],
     assert: [
@@ -258,6 +280,8 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
           onEvent: (event) => fixture.events.push(event),
         });
       if (step.type === "claim") await fixture.lease?.claimMobile();
+      if (step.type === "copy-mode") await fixture.lease?.enterCopyMode();
+      if (step.type === "paste-buffer") await fixture.lease?.pasteTmuxBuffer();
       if (step.type === "resize") await fixture.lease?.resize(step.cols, step.rows);
       if (step.type === "desktop-activity") fixture.adapter.desktop.activity += 1;
       if (step.type === "desktop-size") {
@@ -288,7 +312,15 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
     events: [...fixture.events],
     refreshes: [...fixture.adapter.refreshes],
     resizes: [...fixture.adapter.resizeCalls],
+    copyModeTargets: [...fixture.adapter.copyModeTargets],
+    pasteBufferTargets: [...fixture.adapter.pasteBufferTargets],
     ensureSessionCalls: fixture.adapter.ensureSessionCalls.map(({ target }) => target),
+    desktopStatus: fixture.adapter.desktopStatus,
+    statusHidden: fixture.adapter.sessionOptions.some(
+      ([sessionName, name, value]) => sessionName !== "=muximod:" && name === "status" && value === "off",
+    ),
+    groupedSessionSources: fixture.adapter.groupedSessions.map(([source]) => source),
+    killedSessionCount: fixture.adapter.killedSessions.length,
   }),
 };
 
@@ -299,6 +331,10 @@ describe("tmux viewport manager", () => {
 class FakeTmuxAdapter extends TmuxAdapter {
   public missingTarget = false;
   public readonly ensureSessionCalls: Array<{ target: string; cwd: string }> = [];
+  public readonly groupedSessions: Array<[string, string]> = [];
+  public readonly sessionOptions: Array<[string, string, string]> = [];
+  public readonly killedSessions: string[] = [];
+  public desktopStatus: "on" | "off" = "on";
   public readonly state = {
     width: 120,
     height: 40,
@@ -310,6 +346,8 @@ class FakeTmuxAdapter extends TmuxAdapter {
   };
   public readonly refreshes: string[] = [];
   public readonly resizeCalls: Array<[number, number]> = [];
+  public readonly copyModeTargets: string[] = [];
+  public readonly pasteBufferTargets: string[] = [];
   public readonly desktop: TmuxClient = {
     name: "/dev/desktop",
     pid: 100,
@@ -345,6 +383,9 @@ class FakeTmuxAdapter extends TmuxAdapter {
     this.ensureSessionCalls.push({ target, cwd });
     return false;
   }
+  public override createGroupedSession(groupSession: string, sessionName: string): void {
+    this.groupedSessions.push([groupSession, sessionName]);
+  }
   public override snapshotWindow(pane: TmuxPaneRef): TmuxWindowSnapshot {
     return {
       ...pane,
@@ -370,6 +411,13 @@ class FakeTmuxAdapter extends TmuxAdapter {
   public override setWindowSize(_windowId: string, value: TmuxWindowSize): void {
     this.state.windowSize = value;
   }
+  public override setSessionOption(sessionName: string, name: string, value: string): void {
+    this.sessionOptions.push([sessionName, name, value]);
+    if (sessionName === "=muximod:" && name === "status") this.desktopStatus = value === "off" ? "off" : "on";
+  }
+  public override killSession(target: string): void {
+    this.killedSessions.push(target);
+  }
   public override setWindowMouse(_windowId: string, value: TmuxWindowMouse): void {
     this.state.mouse = value;
   }
@@ -392,6 +440,12 @@ class FakeTmuxAdapter extends TmuxAdapter {
   }
   public override refreshClient(clientName: string): void {
     this.refreshes.push(clientName);
+  }
+  public override enterCopyMode(paneId: string): void {
+    this.copyModeTargets.push(paneId);
+  }
+  public override pasteCurrentBuffer(paneId: string): void {
+    this.pasteBufferTargets.push(paneId);
   }
   public override zoomPane(targetPane: string): void {
     this.state.zoomed = !this.state.zoomed;

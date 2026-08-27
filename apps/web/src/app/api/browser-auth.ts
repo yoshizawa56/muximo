@@ -42,6 +42,11 @@ export type BrowserPairingResult = {
   deviceName: string;
 };
 
+export type BrowserPairingPreview = {
+  muximodBaseUrl: string;
+  serverId: string;
+};
+
 export function parsePairingQrPayload(value: string): PairingCodePayload {
   let payload: PairingCodePayload;
   try {
@@ -55,18 +60,37 @@ export function parsePairingQrPayload(value: string): PairingCodePayload {
   return payload;
 }
 
-export async function pairBrowserFromQr(
+/** Reads public muximod identity before the user approves sending the pairing claim. */
+export async function inspectPairingQr(
   value: string,
-  options: {
-    deviceName: string;
-    onProgress?: (progress: BrowserPairingProgress) => void;
-  },
-): Promise<BrowserPairingResult> {
+  options: { expectedServerId?: string } = {},
+): Promise<BrowserPairingPreview> {
   const payload = parsePairingQrPayload(value);
   const connection = createServeConnection(payload.muximodBaseUrl);
   const rpcEndpoint = `${connection.httpBaseUrl.replace(/\/+$/, "")}/rpc`;
   const client: MuximodRpcClient = muximodRpc(connection);
   const info = await withMuximodRequest(rpcEndpoint, "requesting server information", () => client.auth.info({}));
+  if (options.expectedServerId !== undefined && info.serverId !== options.expectedServerId)
+    throw new Error("muximod server identity changed; scan the QR code again");
+  return {
+    muximodBaseUrl: connection.httpBaseUrl,
+    serverId: info.serverId,
+  };
+}
+
+export async function pairBrowserFromQr(
+  value: string,
+  options: {
+    deviceName: string;
+    expectedServerId: string;
+    onProgress?: (progress: BrowserPairingProgress) => void;
+  },
+): Promise<BrowserPairingResult> {
+  const preview = await inspectPairingQr(value, { expectedServerId: options.expectedServerId });
+  const payload = parsePairingQrPayload(value);
+  const connection = createServeConnection(payload.muximodBaseUrl);
+  const rpcEndpoint = `${connection.httpBaseUrl.replace(/\/+$/, "")}/rpc`;
+  const client: MuximodRpcClient = muximodRpc(connection);
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const publicKey = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
   const parsedPublicKey = publicKeyJwk(publicKey);
@@ -74,7 +98,7 @@ export async function pairBrowserFromQr(
   const clientNonce = randomNonce();
   const pairingSecretHash = await sha256Hex(payload.pairingSecret);
   const claimMessage = pairingClaimMessage({
-    serverId: info.serverId,
+    serverId: preview.serverId,
     pairingId: payload.pairingId,
     pairingSecretHash,
     keyFingerprint: fingerprint,
@@ -95,14 +119,14 @@ export async function pairBrowserFromQr(
   const claim = await withMuximodRequest(rpcEndpoint, "claiming the QR pairing", () =>
     client.auth.claimPairing({ pairingId: payload.pairingId, request: claimRequest }),
   );
-  if (claim.serverId !== info.serverId || claim.pairingId !== payload.pairingId)
+  if (claim.serverId !== preview.serverId || claim.pairingId !== payload.pairingId)
     throw new Error("muximod returned an unexpected pairing identity");
   options.onProgress?.({ phase: "awaiting_approval", fingerprint: claim.keyFingerprint });
 
   const status = await waitForPairingApproval(client, rpcEndpoint, payload.pairingId, claim.claimToken);
   if (status.status !== "approved" || !status.deviceId) throw new Error(`Pairing was ${status.status}`);
   await saveBrowserDevice({
-    serverId: info.serverId,
+    serverId: preview.serverId,
     deviceId: status.deviceId,
     publicKey: parsedPublicKey,
     privateKey: keyPair.privateKey,
@@ -110,7 +134,7 @@ export async function pairBrowserFromQr(
   options.onProgress?.({ phase: "approved" });
   return {
     payload,
-    serverId: info.serverId,
+    serverId: preview.serverId,
     deviceId: status.deviceId,
     deviceName: options.deviceName.trim() || defaultDeviceName(),
   };

@@ -52,12 +52,16 @@ export type ViewportLease = {
   readonly sessionName: string;
   claimMobile(cols?: number, rows?: number): Promise<void>;
   resize(cols?: number, rows?: number): Promise<void>;
+  enterCopyMode(): Promise<void>;
+  pasteTmuxBuffer(): Promise<void>;
   release(): Promise<void>;
 };
 
 export type PreparedViewport = {
   readonly target: string;
   readonly pane: TmuxPaneRef;
+  /** Fully qualified pane target in the temporary mobile session group. */
+  readonly attachTarget: string;
   readonly snapshot: TmuxWindowSnapshot;
   attach(options: AttachViewportOptions): Promise<ViewportLease>;
   release(): Promise<void>;

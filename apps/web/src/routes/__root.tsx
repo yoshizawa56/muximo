@@ -1,8 +1,22 @@
-import { createRootRoute, type ErrorComponentProps, Outlet } from "@tanstack/react-router";
+import { createRootRoute, type ErrorComponentProps, Outlet, retainSearchParams } from "@tanstack/react-router";
+import { z } from "zod";
 import { AppErrorView } from "../app/app-error-view";
+import { AppViewport } from "../app/components/app-layout";
 import { useMobileViewportHeight } from "../app/mobile-viewport";
 
+const rootSearchSchema = z.object({
+  connection: z.preprocess((value) => {
+    if (typeof value !== "string") return value;
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }, z.string().min(1).optional()),
+});
+
 export const Route = createRootRoute({
+  validateSearch: rootSearchSchema,
+  search: {
+    middlewares: [retainSearchParams(["connection"])],
+  },
   component: RootRoute,
   errorComponent: RootError,
   notFoundComponent: RootNotFound,
@@ -10,7 +24,11 @@ export const Route = createRootRoute({
 
 function RootRoute() {
   useMobileViewportHeight();
-  return <Outlet />;
+  return (
+    <AppViewport>
+      <Outlet />
+    </AppViewport>
+  );
 }
 
 function RootError({ error, reset }: ErrorComponentProps) {

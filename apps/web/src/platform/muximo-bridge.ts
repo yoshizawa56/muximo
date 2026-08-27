@@ -1,5 +1,6 @@
 import { App } from "@capacitor/app";
 import { Capacitor, type PluginListenerHandle } from "@capacitor/core";
+import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import webPackage from "../../package.json";
 
 export type MuximoPlatform = "web" | "ios" | "android";
@@ -26,6 +27,7 @@ export type MuximoBridge = {
   };
   getAppInfo(): Promise<MuximoAppInfo>;
   getAppState(): MuximoAppState;
+  keyPressHaptic(): void;
   onAppStateChange(listener: (state: MuximoAppState) => void): () => void;
 };
 
@@ -51,6 +53,10 @@ export function createMuximoBridge(): MuximoBridge {
     capabilities,
     getAppInfo: () => readAppInfo(),
     getAppState: () => currentAppState(),
+    keyPressHaptic: () => {
+      if (!Capacitor.isNativePlatform()) return;
+      void Haptics.impact({ style: ImpactStyle.Light }).catch(() => undefined);
+    },
     onAppStateChange: (listener) => subscribeToAppState(listener),
   };
 }

@@ -1,4 +1,4 @@
-import { muximodContract } from "@muximo/contract";
+import { muximodContract, protocolVersion } from "@muximo/contract";
 import {
   type FixtureHandle,
   hasError,
@@ -270,14 +270,14 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
   const os = implement(muximodContract).$context<Record<never, never>>();
   return new RPCHandler(
     os.router({
-      health: os.health.handler(() => ({ ok: true, service: "muximod", protocolVersion: 1 })),
+      health: os.health.handler(() => ({ ok: true, service: "muximod", protocolVersion })),
       capabilities: os.capabilities.handler(() => ({
-        protocolVersion: 1,
+        protocolVersion,
         features: { tmuxSessions: true, terminalWebSocket: true, paneState: true, resourceInvalidationEvents: true },
       })),
       auth: {
         info: os.auth.info.handler(() => ({
-          protocolVersion: 1,
+          protocolVersion,
           serverId: "server-test-00000000",
           serverTime: "2026-08-15T00:00:00.000Z",
         })),

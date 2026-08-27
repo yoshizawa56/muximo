@@ -8,6 +8,7 @@ export type AppIconName =
   | "paperclip"
   | "refresh"
   | "settings"
+  | "sliders"
   | "split-bottom"
   | "split-right"
   | "terminal"
@@ -85,6 +86,15 @@ export function AppIcon({ name, size = 16 }: { name: AppIconName; size?: number 
         <svg {...iconProps}>
           <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" />
           <path d="M19.4 15a1.8 1.8 0 0 0 .2 2l.1.1-1.7 1.7-.1-.1a1.8 1.8 0 0 0-2-.2 1.8 1.8 0 0 0-1 1.6v.1h-2.4v-.1a1.8 1.8 0 0 0-1-1.6 1.8 1.8 0 0 0-2 .2l-.1.1-1.7-1.7.1-.1a1.8 1.8 0 0 0 .2-2 1.8 1.8 0 0 0-1.6-1H6.3v-2.4h.1a1.8 1.8 0 0 0 1.6-1 1.8 1.8 0 0 0-.2-2l-.1-.1 1.7-1.7.1.1a1.8 1.8 0 0 0 2 .2 1.8 1.8 0 0 0 1-1.6v-.1h2.4v.1a1.8 1.8 0 0 0 1 1.6 1.8 1.8 0 0 0 2-.2l.1-.1 1.7 1.7-.1.1a1.8 1.8 0 0 0-.2 2 1.8 1.8 0 0 0 1.6 1h.1V13h-.1a1.8 1.8 0 0 0-1.6 2Z" />
+        </svg>
+      );
+    case "sliders":
+      return (
+        <svg {...iconProps}>
+          <path d="M4 6h16M4 12h16M4 18h16" />
+          <circle cx="9" cy="6" r="1.7" fill="currentColor" stroke="none" />
+          <circle cx="15" cy="12" r="1.7" fill="currentColor" stroke="none" />
+          <circle cx="10" cy="18" r="1.7" fill="currentColor" stroke="none" />
         </svg>
       );
     case "split-bottom":

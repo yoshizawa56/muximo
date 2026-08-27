@@ -7,7 +7,12 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { createTerminalInputBatcher, createTerminalOutputScheduler, type TerminalData } from "./-terminal-scheduler";
+import {
+  createTerminalInputBatcher,
+  createTerminalInputQueue,
+  createTerminalOutputScheduler,
+  type TerminalData,
+} from "./scheduler";
 
 type ScheduledCallback = { id: number; callback: () => void; delayMs?: number };
 
@@ -176,10 +181,63 @@ const inputTable: ScenarioTable<InputFixture, "default", InputStep, undefined, I
   }),
 };
 
+type QueueFixture = {
+  inputs: string[];
+  queue: ReturnType<typeof createTerminalInputQueue>;
+};
+
+type QueueStep = { type: "write"; data: string } | { type: "attach" } | { type: "detach"; clearPending?: boolean };
+
+type QueueContext = { inputs: readonly string[] };
+
+const queueCases = [
+  {
+    name: "holds first keyboard input until the terminal transport is attached",
+    steps: [{ type: "write", data: "first-input" }, { type: "attach" }],
+    assert: [hasObserved<QueueContext, undefined>("inputs", ["first-input"])],
+  },
+  {
+    name: "keeps input queued while the transport is temporarily detached",
+    steps: [{ type: "attach" }, { type: "detach" }, { type: "write", data: "reconnect-input" }, { type: "attach" }],
+    assert: [hasObserved<QueueContext, undefined>("inputs", ["reconnect-input"])],
+  },
+  {
+    name: "clears input when the terminal is permanently detached",
+    steps: [{ type: "write", data: "stale-input" }, { type: "detach", clearPending: true }, { type: "attach" }],
+    assert: [hasObserved<QueueContext, undefined>("inputs", [])],
+  },
+] satisfies readonly ScenarioCase<"default", QueueStep, undefined, QueueContext>[];
+
+const queueTable: ScenarioTable<QueueFixture, "default", QueueStep, undefined, QueueContext> = {
+  defaultFixture: () => {
+    const inputs: string[] = [];
+    const queue = createTerminalInputQueue();
+    return { fixture: { inputs, queue } };
+  },
+  cases: queueCases,
+  execute: (fixture, steps) => {
+    for (const step of steps) {
+      switch (step.type) {
+        case "write":
+          fixture.queue.write(step.data);
+          break;
+        case "attach":
+          fixture.queue.attach((data) => fixture.inputs.push(data));
+          break;
+        case "detach":
+          fixture.queue.detach(step.clearPending);
+          break;
+      }
+    }
+  },
+  observe: (fixture) => ({ inputs: [...fixture.inputs] }),
+};
+
 describe("terminal scheduling", () => {
   const register = it as unknown as TestRegistrar;
   runScenarioTable(register, outputTable);
   runScenarioTable(register, inputTable);
+  runScenarioTable(register, queueTable);
 });
 
 function createOutputFixture(): FixtureHandle<OutputFixture> {

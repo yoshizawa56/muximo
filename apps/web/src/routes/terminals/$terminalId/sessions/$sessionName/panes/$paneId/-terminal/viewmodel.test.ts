@@ -23,12 +23,14 @@ import {
   createTerminalAttachMessage,
   createTerminalResumeStore,
   handleControlMessage,
+  nativeKeyboardToggleAction,
   type PaneResumeState,
   type PaneViewportOwner,
   resumeStateFromReady,
   type TerminalResumeStore,
+  terminalControlErrorDisposition,
   terminalSessionCleanupMode,
-} from "./-terminal-viewmodel";
+} from "./viewmodel";
 
 type EmptyContext = {};
 type AttachResult = Extract<ClientControlMessage, { type: "attach" }>;
@@ -191,6 +193,87 @@ const cleanupTable: OperationTable<undefined, "default", CleanupInput, CleanupRe
   observe: () => ({}),
 };
 
+type NativeKeyboardToggleInput = {
+  nativeKeyboardVisible: boolean;
+  helperInputFocused: boolean;
+};
+type NativeKeyboardToggleResult = "show" | "hide";
+
+const nativeKeyboardToggleCases = [
+  {
+    name: "hides when the native keyboard state is visible",
+    input: { nativeKeyboardVisible: true, helperInputFocused: false },
+    assert: [returns<EmptyContext, NativeKeyboardToggleResult>("hide")],
+  },
+  {
+    name: "hides when the helper input is still focused despite stale visibility state",
+    input: { nativeKeyboardVisible: false, helperInputFocused: true },
+    assert: [returns<EmptyContext, NativeKeyboardToggleResult>("hide")],
+  },
+  {
+    name: "shows when the helper input is not focused and the state is hidden",
+    input: { nativeKeyboardVisible: false, helperInputFocused: false },
+    assert: [returns<EmptyContext, NativeKeyboardToggleResult>("show")],
+  },
+] satisfies readonly OperationCase<"default", NativeKeyboardToggleInput, NativeKeyboardToggleResult, EmptyContext>[];
+
+const nativeKeyboardToggleTable: OperationTable<
+  undefined,
+  "default",
+  NativeKeyboardToggleInput,
+  NativeKeyboardToggleResult,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: nativeKeyboardToggleCases,
+  execute: (_fixture, input) => nativeKeyboardToggleAction(input.nativeKeyboardVisible, input.helperInputFocused),
+  observe: () => ({}),
+};
+
+type TerminalControlErrorInput = { code: string; retryable: boolean };
+type TerminalControlErrorResult = "action" | "connection";
+
+const terminalControlErrorCases = [
+  {
+    name: "keeps a tmux buffer failure on the connected terminal",
+    input: { code: "paste_tmux_buffer_failed", retryable: false },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("action")],
+  },
+  {
+    name: "keeps an image paste failure on the connected terminal",
+    input: { code: "paste_image_failed", retryable: false },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("action")],
+  },
+  {
+    name: "treats a retryable attach failure as a connection failure",
+    input: { code: "attach_failed", retryable: true },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("connection")],
+  },
+  {
+    name: "treats a resume target mismatch as a connection failure",
+    input: { code: "resume_target_mismatch", retryable: false },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("connection")],
+  },
+  {
+    name: "treats an unknown non-retryable error as a connection failure",
+    input: { code: "unknown_error", retryable: false },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("connection")],
+  },
+] satisfies readonly OperationCase<"default", TerminalControlErrorInput, TerminalControlErrorResult, EmptyContext>[];
+
+const terminalControlErrorTable: OperationTable<
+  undefined,
+  "default",
+  TerminalControlErrorInput,
+  TerminalControlErrorResult,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: terminalControlErrorCases,
+  execute: (_fixture, input) => terminalControlErrorDisposition(input.code, input.retryable),
+  observe: () => ({}),
+};
+
 type ControlFixture = {
   events: string[];
   resumed: boolean | null;
@@ -316,6 +399,8 @@ describe("terminal pane handshake helpers", () => {
   runOperationTable(register, pasteImageTable);
   runOperationTable(register, resumeTable);
   runOperationTable(register, cleanupTable);
+  runOperationTable(register, nativeKeyboardToggleTable);
+  runOperationTable(register, terminalControlErrorTable);
   runOperationTable(register, controlTable);
   runScenarioTable(register, resumeStoreTable);
 });

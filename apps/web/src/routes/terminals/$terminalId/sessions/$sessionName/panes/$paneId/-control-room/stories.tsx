@@ -1,10 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { storyPanes } from "../../../../../-story-fixtures";
-import { ControlRoomView } from "./-control-room-view";
-import type { ControlRoomViewModel } from "./-control-room-viewmodel";
-import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
-import type { PaneViewModel } from "./-terminal-viewmodel";
+import { storyPanes } from "../../../../../../-story-fixtures";
+import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "../-custom-keyboard/viewmodel";
+import { defaultCustomKeyboardButtons } from "../-custom-keyboard/viewmodel";
+import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
+import type { PaneViewModel } from "../-terminal/viewmodel";
+import { ControlRoomView } from "./view";
+import type { ControlRoomViewModel } from "./viewmodel";
 
 function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlRoomViewModel {
   const close = fn();
@@ -24,6 +26,7 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     target: "%0",
     status: "connected",
     errorMessage: null,
+    actionErrorMessage: null,
     viewportOwner: "mobile",
     viewportReason: "manual claim",
     pasteState: "idle",
@@ -31,10 +34,54 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     reconnect: fn(),
     claim: fn(),
     detach: fn(),
+    sendInput: fn(),
+    focus: fn(),
+    blur: fn(),
+    keepNativeKeyboardOpen: fn(),
+    toggleNativeKeyboard: fn(),
+    nativeKeyboardVisible: false,
     pasteImage: fn(),
+    enterCopyMode: fn(),
+    pasteFromClipboard: fn(async () => undefined),
+    pasteFromTmuxBuffer: fn(),
+  };
+  const keyboard: CustomKeyboardViewModel = {
+    buttons: defaultCustomKeyboardButtons,
+    activeModifiers: [],
+    nativeKeyboardVisible: false,
+    repeatStartDelayMs: 420,
+    repeatIntervalMs: 180,
+    onButtonPress: fn(),
+    onDirectionalFlick: fn(),
+    onNativeAction: fn(),
+    onTerminalAction: fn(),
+    onNativeFileSelected: fn(),
+    onKeepNativeKeyboardOpen: fn(),
+    onToggleNativeKeyboard: fn(),
+    onOpenSettings: fn(),
+  };
+  const keyboardSettings: CustomKeyboardSettingsViewModel = {
+    buttons: defaultCustomKeyboardButtons,
+    availableButtons: [],
+    shortcutButtons: [],
+    selectedButtonIds: [],
+    repeatStartDelayMs: 420,
+    repeatIntervalMs: 180,
+    onDrop: fn(),
+    onRemoveButton: fn(),
+    onRegisterShortcut: fn(),
+    onUpdateShortcut: fn(),
+    onDeleteShortcut: fn(),
+    onRepeatStartDelayChange: fn(),
+    onRepeatIntervalChange: fn(),
+    onClose: fn(),
+    onSave: fn(),
   };
   return {
     terminal,
+    keyboard,
+    keyboardSettings,
+    keyboardSettingsOpen: false,
     paneBoard,
     onSessionSelect: fn(),
     onNewPane: fn(),

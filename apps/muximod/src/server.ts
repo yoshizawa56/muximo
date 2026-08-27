@@ -292,6 +292,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
           fetch: app.fetch,
           websocket: app.websocket,
         });
+        tmux.cleanupOrphanedGroupedSessions();
         tmuxStateMonitor.start();
         viewportManager.configureHooks(`http://127.0.0.1:${httpServer.port}/internal/tmux-hook`, hookToken);
         await controlServer.start();

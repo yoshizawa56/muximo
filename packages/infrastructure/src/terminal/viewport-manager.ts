@@ -28,6 +28,8 @@ type LeaseRecord = {
   id: string;
   target: string;
   pane: TmuxPaneRef;
+  mobileSessionName: string;
+  mobileAttachTarget: string;
   snapshot: TmuxWindowSnapshot;
   owner: ViewportOwner;
   ptyPid?: number;
@@ -46,9 +48,11 @@ type TmuxHookEvent = "client-attached" | "client-active" | "client-resized" | "c
 /**
  * Coordinates the one shared tmux window viewport used by the mobile client.
  *
- * The terminal itself remains a normal tmux client. This class only owns the
- * temporary window-size/zoom changes and restores them when the mobile client
- * leaves or desktop activity takes ownership back.
+ * The mobile client attaches through a temporary grouped session so session
+ * options such as the status line stay isolated from the desktop session. The
+ * terminal itself remains a normal tmux client. This class owns the temporary
+ * window-size/zoom changes and restores them when the mobile client leaves or
+ * desktop activity takes ownership back.
  */
 export class TmuxViewportManager {
   private readonly adapter: TmuxAdapter;
@@ -104,10 +108,15 @@ export class TmuxViewportManager {
     }
 
     const snapshot = this.adapter.snapshotWindow(pane);
+    const id = createLeaseId();
+    const mobileSessionName = `muximo-mobile-${id}`;
+    this.adapter.createGroupedSession(pane.sessionName, mobileSessionName);
     const record: LeaseRecord = {
-      id: createLeaseId(),
+      id,
       target,
       pane,
+      mobileSessionName,
+      mobileAttachTarget: `=${mobileSessionName}:${pane.windowId}.${pane.paneId}`,
       snapshot,
       owner: "mobile",
       mobileCols: cols,
@@ -122,6 +131,9 @@ export class TmuxViewportManager {
     // until after the client appears allows the old split layout to reach the
     // terminal emulator and leaves a redraw race for the later zoom command.
     try {
+      // `status` is a session option. The grouped session shares the source
+      // session's windows but keeps this option private to the mobile client.
+      this.adapter.setSessionOption(`=${mobileSessionName}:`, "status", "off");
       this.primeMobileViewport(record, cols, rows);
     } catch (error) {
       this.releaseRecord(record);
@@ -133,6 +145,7 @@ export class TmuxViewportManager {
     return {
       target,
       pane,
+      attachTarget: record.mobileAttachTarget,
       snapshot,
       attach: (options) => this.attach(record, options),
       release: async () => this.releaseRecord(record),
@@ -274,6 +287,16 @@ export class TmuxViewportManager {
     if (record.released) throw new Error("Viewport preparation was released while attaching");
     record.mobileClient = client;
 
+    // Set this only after the client exists; an unattached grouped session can
+    // otherwise be collected before the PTY has a chance to attach. This also
+    // cleans up after a crashed muximod process; normal release still kills it
+    // explicitly.
+    try {
+      this.adapter.setSessionOption(`=${record.mobileSessionName}:`, "destroy-unattached", "on");
+    } catch {
+      // Explicit release remains the primary cleanup path if tmux rejects it.
+    }
+
     this.protectDesktopClients(record);
     // The client has just received its first draw from tmux. Force one
     // authoritative redraw so xterm cannot retain cells from the pre-zoom
@@ -293,6 +316,12 @@ export class TmuxViewportManager {
       },
       resize: async (cols, rows) => {
         this.resizeMobile(record, cols ?? record.mobileCols, rows ?? record.mobileRows);
+      },
+      enterCopyMode: async () => {
+        this.enterCopyMode(record);
+      },
+      pasteTmuxBuffer: async () => {
+        this.pasteTmuxBuffer(record);
       },
       release: async () => this.releaseRecord(record),
     };
@@ -396,6 +425,18 @@ export class TmuxViewportManager {
     this.reconcileMobileViewport(record, cols, rows);
   }
 
+  private enterCopyMode(record: LeaseRecord): void {
+    if (record.released) return;
+    this.claimMobile(record);
+    this.adapter.enterCopyMode(record.pane.paneId);
+  }
+
+  private pasteTmuxBuffer(record: LeaseRecord): void {
+    if (record.released) return;
+    this.claimMobile(record);
+    this.adapter.pasteCurrentBuffer(record.pane.paneId);
+  }
+
   private claimDesktop(record: LeaseRecord, client: TmuxClient, reason: ViewportReason): void {
     if (record.released || !record.mobileClient || record.mobileClient.name === client.name) return;
     if (!isValidClientSize(client)) return;
@@ -477,6 +518,12 @@ export class TmuxViewportManager {
       } catch {
         // The desktop client may have detached already.
       }
+    }
+
+    try {
+      this.adapter.killSession(`=${record.mobileSessionName}`);
+    } catch {
+      // destroy-unattached or a concurrent tmux shutdown may have removed it.
     }
 
     this.leases.delete(record.pane.windowId);

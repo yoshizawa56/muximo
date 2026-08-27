@@ -6,6 +6,7 @@ import { createConnection, createServer } from "node:net";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { protocolVersion } from "../packages/contract/src/protocol.ts";
 import {
   buildServeArgs,
   buildServeHttpUrl,
@@ -524,10 +525,10 @@ export async function checkMuximodHealth(config, request = probeHttp) {
     if (response.statusCode !== 200) return failedHealth(`muximod /health returned ${responseSummary(response)}`);
 
     const body = jsonBody(response.body);
-    if (body?.ok !== true || body?.service !== "muximod" || body?.protocolVersion !== 1) {
+    if (body?.ok !== true || body?.service !== "muximod" || body?.protocolVersion !== protocolVersion) {
       return failedHealth(`muximod /health returned an unexpected payload: ${responseSummary(response)}`);
     }
-    return readyHealth("HTTP /health is responding with protocol version 1", body);
+    return readyHealth(`HTTP /health is responding with protocol version ${protocolVersion}`, body);
   } catch (error) {
     return failedHealth(`muximod health probe failed: ${errorMessage(error)}`, error);
   }
