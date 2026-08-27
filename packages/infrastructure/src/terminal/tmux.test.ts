@@ -445,6 +445,30 @@ const attachTable: OperationTable<RecordingFixture, "default", AttachInput, stri
   observe: () => ({}),
 };
 
+type TmuxAction = "copy-mode" | "paste-buffer";
+const tmuxActionCases = [
+  {
+    name: "enters copy mode in the requested pane",
+    input: "copy-mode",
+    assert: [returns<EmptyContext, string[]>(["copy-mode", "-t", "%1"])],
+  },
+  {
+    name: "pastes the current tmux buffer into the requested pane",
+    input: "paste-buffer",
+    assert: [returns<EmptyContext, string[]>(["paste-buffer", "-t", "%1"])],
+  },
+] satisfies readonly OperationCase<"default", TmuxAction, string[], EmptyContext>[];
+const tmuxActionTable: OperationTable<RecordingFixture, "default", TmuxAction, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: tmuxActionCases,
+  execute: (fixture, input) => {
+    if (input === "copy-mode") fixture.adapter.enterCopyMode("%1");
+    else fixture.adapter.pasteCurrentBuffer("%1");
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
+
 const refreshCases = [
   {
     name: "fully redraws a client after viewport reconciliation",
@@ -697,6 +721,7 @@ describe("tmux adapter", () => {
   runOperationTable(register, sessionEnvironmentTable);
   runOperationTable(register, resolveTable);
   runOperationTable(register, attachTable);
+  runOperationTable(register, tmuxActionTable);
   runOperationTable(register, refreshTable);
   runOperationTable(register, clientViewTable);
   runOperationTable(register, listTable);

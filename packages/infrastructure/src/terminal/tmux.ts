@@ -476,6 +476,14 @@ export class TmuxAdapter {
     this.require(["paste-buffer", "-b", name, "-t", targetPaneId]);
   }
 
+  public enterCopyMode(paneId: string): void {
+    this.require(["copy-mode", "-t", paneId]);
+  }
+
+  public pasteCurrentBuffer(targetPaneId: string): void {
+    this.require(["paste-buffer", "-t", targetPaneId]);
+  }
+
   /** Removes a named buffer; missing buffers are treated as already removed. */
   public deleteBuffer(name: string): void {
     this.command(["delete-buffer", "-b", name]);

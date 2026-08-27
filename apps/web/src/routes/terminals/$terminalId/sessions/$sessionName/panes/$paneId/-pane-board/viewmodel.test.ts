@@ -7,7 +7,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { paneStateLabel } from "../../-pane-state";
+import { paneStateLabel } from "../../../-pane-state";
 
 type Input = { state: "waiting_input" | "waiting_approval" | "running" | "failed" };
 type Context = {};

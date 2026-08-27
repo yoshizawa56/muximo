@@ -1,11 +1,7 @@
 import { noFixture, type OperationCase, type OperationTable, returns, runOperationTable } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import {
-  encodeCustomKeyboardNativeInput,
-  encodeCustomKeyboardSequence,
-  isCustomKeyboardModifierKey,
-} from "./-custom-keyboard-input";
-import type { CustomKeyboardModifier, CustomKeyboardSequence } from "./-custom-keyboard-viewmodel";
+import { encodeCustomKeyboardNativeInput, encodeCustomKeyboardSequence, isCustomKeyboardModifierKey } from "./input";
+import type { CustomKeyboardModifier, CustomKeyboardSequence } from "./viewmodel";
 
 type EmptyContext = {};
 type Input = {

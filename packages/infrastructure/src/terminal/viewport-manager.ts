@@ -317,6 +317,12 @@ export class TmuxViewportManager {
       resize: async (cols, rows) => {
         this.resizeMobile(record, cols ?? record.mobileCols, rows ?? record.mobileRows);
       },
+      enterCopyMode: async () => {
+        this.enterCopyMode(record);
+      },
+      pasteTmuxBuffer: async () => {
+        this.pasteTmuxBuffer(record);
+      },
       release: async () => this.releaseRecord(record),
     };
   }
@@ -417,6 +423,18 @@ export class TmuxViewportManager {
     }
     if (cols === record.mobileCols && rows === record.mobileRows) return;
     this.reconcileMobileViewport(record, cols, rows);
+  }
+
+  private enterCopyMode(record: LeaseRecord): void {
+    if (record.released) return;
+    this.claimMobile(record);
+    this.adapter.enterCopyMode(record.pane.paneId);
+  }
+
+  private pasteTmuxBuffer(record: LeaseRecord): void {
+    if (record.released) return;
+    this.claimMobile(record);
+    this.adapter.pasteCurrentBuffer(record.pane.paneId);
   }
 
   private claimDesktop(record: LeaseRecord, client: TmuxClient, reason: ViewportReason): void {

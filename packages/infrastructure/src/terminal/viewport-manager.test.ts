@@ -29,6 +29,8 @@ type ViewportStep =
   | { type: "prepare"; cols?: number; rows?: number }
   | { type: "attach"; cols: number; rows: number }
   | { type: "claim" }
+  | { type: "copy-mode" }
+  | { type: "paste-buffer" }
   | { type: "resize"; cols: number; rows: number }
   | { type: "desktop-activity" }
   | { type: "desktop-size"; width: number; height: number }
@@ -57,6 +59,8 @@ type ViewportContext = {
   events: readonly ViewportEvent[];
   refreshes: readonly string[];
   resizes: readonly [number, number][];
+  copyModeTargets: readonly string[];
+  pasteBufferTargets: readonly string[];
   ensureSessionCalls: readonly string[];
   desktopStatus: "on" | "off";
   statusHidden: boolean;
@@ -211,6 +215,15 @@ const cases = [
     ],
   },
   {
+    name: "runs copy mode and host-side buffer paste against the selected pane",
+    steps: [prepare, attach, { type: "copy-mode" }, { type: "paste-buffer" }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("copyModeTargets", ["%0"]),
+      hasObserved<ViewportContext, undefined>("pasteBufferTargets", ["%0"]),
+      hasObserved<ViewportContext, undefined>("refreshes", ["/dev/mobile"]),
+    ],
+  },
+  {
     name: "does not re-resize or redraw when resized to the current size",
     steps: [prepare, attach, { type: "resize", cols: 80, rows: 24 }, { type: "resize", cols: 80, rows: 24 }],
     assert: [
@@ -267,6 +280,8 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
           onEvent: (event) => fixture.events.push(event),
         });
       if (step.type === "claim") await fixture.lease?.claimMobile();
+      if (step.type === "copy-mode") await fixture.lease?.enterCopyMode();
+      if (step.type === "paste-buffer") await fixture.lease?.pasteTmuxBuffer();
       if (step.type === "resize") await fixture.lease?.resize(step.cols, step.rows);
       if (step.type === "desktop-activity") fixture.adapter.desktop.activity += 1;
       if (step.type === "desktop-size") {
@@ -297,6 +312,8 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
     events: [...fixture.events],
     refreshes: [...fixture.adapter.refreshes],
     resizes: [...fixture.adapter.resizeCalls],
+    copyModeTargets: [...fixture.adapter.copyModeTargets],
+    pasteBufferTargets: [...fixture.adapter.pasteBufferTargets],
     ensureSessionCalls: fixture.adapter.ensureSessionCalls.map(({ target }) => target),
     desktopStatus: fixture.adapter.desktopStatus,
     statusHidden: fixture.adapter.sessionOptions.some(
@@ -329,6 +346,8 @@ class FakeTmuxAdapter extends TmuxAdapter {
   };
   public readonly refreshes: string[] = [];
   public readonly resizeCalls: Array<[number, number]> = [];
+  public readonly copyModeTargets: string[] = [];
+  public readonly pasteBufferTargets: string[] = [];
   public readonly desktop: TmuxClient = {
     name: "/dev/desktop",
     pid: 100,
@@ -421,6 +440,12 @@ class FakeTmuxAdapter extends TmuxAdapter {
   }
   public override refreshClient(clientName: string): void {
     this.refreshes.push(clientName);
+  }
+  public override enterCopyMode(paneId: string): void {
+    this.copyModeTargets.push(paneId);
+  }
+  public override pasteCurrentBuffer(paneId: string): void {
+    this.pasteBufferTargets.push(paneId);
   }
   public override zoomPane(targetPane: string): void {
     this.state.zoomed = !this.state.zoomed;

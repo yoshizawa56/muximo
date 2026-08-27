@@ -29,6 +29,8 @@ type SessionStep =
   | { type: "detach"; socket: "first" | "second" }
   | { type: "emit-output"; value: string }
   | { type: "send-input"; value: string }
+  | { type: "enter-copy-mode" }
+  | { type: "paste-tmux-buffer" }
   | { type: "paste-image"; image?: string }
   | { type: "advance"; milliseconds: number };
 type SessionContext = {
@@ -47,6 +49,8 @@ type SessionContext = {
   attachTargets: readonly string[];
   pasteCalls: number;
   pasteTargets: readonly string[];
+  copyModeCalls: number;
+  pasteTmuxBufferCalls: number;
   events: readonly string[];
 };
 type SessionFixtureKey = "pasteFailure";
@@ -187,6 +191,33 @@ const cases = [
     ],
   },
   {
+    name: "enters tmux copy mode without moving selection data to the client",
+    steps: [{ type: "connect", socket: "first" }, { type: "enter-copy-mode" }],
+    assert: [
+      hasObserved<SessionContext, undefined>("copyModeCalls", 1),
+      hasObserved<SessionContext, undefined>("pasteTmuxBufferCalls", 0),
+      hasObserved<SessionContext, undefined>("firstErrors", []),
+    ],
+  },
+  {
+    name: "pastes the host-side tmux buffer into the attached pane",
+    steps: [{ type: "connect", socket: "first" }, { type: "paste-tmux-buffer" }],
+    assert: [
+      hasObserved<SessionContext, undefined>("copyModeCalls", 0),
+      hasObserved<SessionContext, undefined>("pasteTmuxBufferCalls", 1),
+      hasObserved<SessionContext, undefined>("firstErrors", []),
+    ],
+  },
+  {
+    name: "rejects tmux actions before the pane is attached",
+    steps: [{ type: "raw-connect", socket: "first" }, { type: "enter-copy-mode" }, { type: "paste-tmux-buffer" }],
+    assert: [
+      hasObserved<SessionContext, undefined>("copyModeCalls", 0),
+      hasObserved<SessionContext, undefined>("pasteTmuxBufferCalls", 0),
+      hasObserved<SessionContext, undefined>("firstErrors", ["not_attached", "not_attached"]),
+    ],
+  },
+  {
     name: "rejects an image paste before the pane is attached",
     steps: [{ type: "raw-connect", socket: "first" }, { type: "paste-image" }],
     assert: [
@@ -254,6 +285,14 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
         fixture.sockets.second?.receive(Buffer.from(step.value), true);
         await flush();
       }
+      if (step.type === "enter-copy-mode") {
+        fixture.sockets.first?.receive(JSON.stringify({ type: "enter_copy_mode", version: terminalProtocolVersion }));
+        await flush();
+      }
+      if (step.type === "paste-tmux-buffer") {
+        fixture.sockets.first?.receive(JSON.stringify({ type: "paste_tmux_buffer", version: terminalProtocolVersion }));
+        await flush();
+      }
       if (step.type === "paste-image") {
         fixture.sockets.first?.receive(
           JSON.stringify({
@@ -301,6 +340,8 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
     attachTargets: fixture.manager.buildAttachProcess.mock.calls.map(([target]) => target),
     pasteCalls: fixture.paster.mock.calls.length,
     pasteTargets: fixture.paster.mock.calls.map((call) => call[0].paneId),
+    copyModeCalls: fixture.lease.enterCopyMode.mock.calls.length,
+    pasteTmuxBufferCalls: fixture.lease.pasteTmuxBuffer.mock.calls.length,
     leaseClaimCalls: fixture.lease.claimMobile.mock.calls.length,
     events: [...fixture.events],
   }),
@@ -321,6 +362,8 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
     sessionName: "muximod",
     claimMobile: vi.fn(async () => undefined),
     resize: vi.fn(async () => undefined),
+    enterCopyMode: vi.fn(async () => undefined),
+    pasteTmuxBuffer: vi.fn(async () => undefined),
     release: vi.fn(async () => undefined),
   };
   const prepared = {

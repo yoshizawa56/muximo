@@ -15,6 +15,11 @@ export function TerminalsView({ viewModel }: { viewModel: TerminalsViewModel }) 
           <div className="mb-2.5 flex items-center justify-between gap-3 font-mono text-[0.56rem] font-bold tracking-[0.12em] text-[#638e6b]">
             <span>AVAILABLE TERMINALS</span>
             <span className="inline-flex items-center gap-2.5">
+              {viewModel.connectionName ? (
+                <small className="max-w-36 overflow-hidden text-[0.52rem] font-normal tracking-normal text-[#a7e8ae] text-ellipsis whitespace-nowrap">
+                  {viewModel.connectionName}
+                </small>
+              ) : null}
               <small className="text-[0.52rem] font-normal tracking-normal text-[#416a49]">
                 {viewModel.terminals.filter((terminal) => terminal.state === "online").length} online
               </small>

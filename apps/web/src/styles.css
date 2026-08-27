@@ -87,9 +87,7 @@
   input,
   textarea,
   select,
-  [contenteditable="true"],
-  .xterm,
-  .xterm * {
+  [contenteditable="true"] {
     -webkit-touch-callout: default;
     -webkit-user-select: text;
     user-select: text;
@@ -112,6 +110,20 @@
 }
 
 @layer components {
+  .terminal-container .xterm,
+  .terminal-container .xterm * {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .terminal-shell-container .xterm,
+  .terminal-shell-container .xterm * {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
   .app-viewport {
     position: relative;
     width: 100%;
