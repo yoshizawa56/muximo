@@ -6,6 +6,7 @@ import type { TerminalsViewModel } from "./-terminals-viewmodel";
 
 function buildViewModel(overrides: Partial<TerminalsViewModel> = {}): TerminalsViewModel {
   return {
+    connectionName: "feature-login",
     terminals: storyTerminals,
     status: "ready",
     errorMessage: null,
