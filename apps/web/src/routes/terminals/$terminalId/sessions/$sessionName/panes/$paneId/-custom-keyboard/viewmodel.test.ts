@@ -5,7 +5,7 @@ import {
   customKeyboardAbcRows,
   customKeyboardNumberRows,
   customKeyboardPunctuationRow,
-} from "./-custom-keyboard-layout";
+} from "./layout";
 import {
   applyCustomKeyboardDrop,
   type CustomKeyboardButton,
@@ -13,13 +13,14 @@ import {
   type CustomKeyboardDropTarget,
   type CustomKeyboardModifier,
   customKeyboardButtonLibrary,
+  customKeyboardTerminalActionOptions,
   defaultCustomKeyboardButtons,
   insertButtonIdBeforeTarget,
   isCustomKeyboardShortcutDraftValid,
   parseCustomKeyboardState,
   selectedButtonsFromIds,
   toggleCustomKeyboardModifier,
-} from "./-custom-keyboard-viewmodel";
+} from "./viewmodel";
 
 type EmptyContext = {};
 
@@ -255,6 +256,7 @@ const deriveTable: OperationTable<undefined, "default", DeriveInput, string[], E
 type DefaultButtonInput = {
   buttonId: string;
   interaction?: CustomKeyboardButton["interaction"];
+  terminalAction?: CustomKeyboardButton["terminalAction"];
 };
 
 const defaultButtonCases = [
@@ -268,6 +270,21 @@ const defaultButtonCases = [
     input: { buttonId: "directional-flick", interaction: "directional-flick" },
     assert: [returns<EmptyContext, boolean>(true)],
   },
+  {
+    name: "includes the copy mode action in the default custom keyboard",
+    input: { buttonId: "copy-mode", terminalAction: "enter-copy-mode" },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "includes clipboard paste in the default custom keyboard",
+    input: { buttonId: "paste-clipboard", terminalAction: "paste-from-clipboard" },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "includes tmux buffer paste in the default custom keyboard",
+    input: { buttonId: "paste-tmux-buffer", terminalAction: "paste-from-tmux-buffer" },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
 ] satisfies readonly OperationCase<"default", DefaultButtonInput, boolean, EmptyContext>[];
 
 const defaultButtonTable: OperationTable<undefined, "default", DefaultButtonInput, boolean, EmptyContext> = {
@@ -276,8 +293,44 @@ const defaultButtonTable: OperationTable<undefined, "default", DefaultButtonInpu
   execute: (_fixture, input) =>
     defaultCustomKeyboardButtons.some(
       (button) =>
-        button.id === input.buttonId && (input.interaction === undefined || button.interaction === input.interaction),
+        button.id === input.buttonId &&
+        (input.interaction === undefined || button.interaction === input.interaction) &&
+        (input.terminalAction === undefined || button.terminalAction === input.terminalAction),
     ),
+  observe: () => ({}),
+};
+
+type TerminalActionOptionObservation = {
+  ids: readonly string[];
+  actions: readonly string[];
+};
+
+const terminalActionOptionCases = [
+  {
+    name: "exposes all terminal actions to the custom keyboard library",
+    input: {},
+    assert: [
+      returns<EmptyContext, TerminalActionOptionObservation>({
+        ids: ["copy-mode", "paste-clipboard", "paste-tmux-buffer"],
+        actions: ["enter-copy-mode", "paste-from-clipboard", "paste-from-tmux-buffer"],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", {}, TerminalActionOptionObservation, EmptyContext>[];
+
+const terminalActionOptionTable: OperationTable<
+  undefined,
+  "default",
+  {},
+  TerminalActionOptionObservation,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: terminalActionOptionCases,
+  execute: () => ({
+    ids: customKeyboardTerminalActionOptions.map((option) => option.id),
+    actions: customKeyboardTerminalActionOptions.map((option) => option.action),
+  }),
   observe: () => ({}),
 };
 
@@ -331,6 +384,7 @@ const shiftLibraryTable: OperationTable<undefined, "default", {}, ShiftLibraryOb
 type ParsedStateObservation = {
   selectedButtonIds: readonly string[];
   hasInvalidButton: boolean;
+  hasInvalidTerminalAction: boolean;
   hasEscapeButton: boolean;
   shiftCategory: string | undefined;
 };
@@ -356,6 +410,7 @@ const parsedStateCases = [
       returns<EmptyContext, ParsedStateObservation>({
         selectedButtonIds: ["escape"],
         hasInvalidButton: false,
+        hasInvalidTerminalAction: false,
         hasEscapeButton: true,
         shiftCategory: "abc",
       }),
@@ -384,6 +439,34 @@ const parsedStateCases = [
       returns<EmptyContext, ParsedStateObservation>({
         selectedButtonIds: ["shift"],
         hasInvalidButton: false,
+        hasInvalidTerminalAction: false,
+        hasEscapeButton: true,
+        shiftCategory: "abc",
+      }),
+    ],
+  },
+  {
+    name: "drops a persisted button with an unknown terminal action",
+    input: {
+      raw: JSON.stringify({
+        selectedButtonIds: ["broken-terminal-action", "escape"],
+        libraryButtons: [
+          {
+            id: "broken-terminal-action",
+            kind: "key",
+            category: "special",
+            accessibleLabel: "Broken terminal action",
+            sequence: [],
+            terminalAction: "unsupported-action",
+          },
+        ],
+      }),
+    },
+    assert: [
+      returns<EmptyContext, ParsedStateObservation>({
+        selectedButtonIds: ["escape"],
+        hasInvalidButton: false,
+        hasInvalidTerminalAction: false,
         hasEscapeButton: true,
         shiftCategory: "abc",
       }),
@@ -405,6 +488,7 @@ const parsedStateTable: OperationTable<
     return {
       selectedButtonIds: state.selectedButtonIds,
       hasInvalidButton: state.libraryButtons.some((button) => button.id === "broken-shortcut"),
+      hasInvalidTerminalAction: state.libraryButtons.some((button) => button.id === "broken-terminal-action"),
       hasEscapeButton: state.libraryButtons.some((button) => button.id === "escape"),
       shiftCategory: state.libraryButtons.find((button) => button.id === "shift")?.category,
     };
@@ -419,6 +503,7 @@ describe("custom keyboard selection state", () => {
   runOperationTable(it, deriveTable);
   runOperationTable(it, dropTable);
   runOperationTable(it, defaultButtonTable);
+  runOperationTable(it, terminalActionOptionTable);
   runOperationTable(it, shortcutDraftTable);
   runOperationTable(it, shiftLibraryTable);
   runOperationTable(it, parsedStateTable);

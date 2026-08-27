@@ -1,8 +1,4 @@
-import type {
-  CustomKeyboardModifier,
-  CustomKeyboardSequence,
-  CustomKeyboardSequenceToken,
-} from "./-custom-keyboard-viewmodel";
+import type { CustomKeyboardModifier, CustomKeyboardSequence, CustomKeyboardSequenceToken } from "./viewmodel";
 
 export function isCustomKeyboardModifierKey(key: string): boolean {
   return key === "Control" || key === "Alt" || key === "Shift" || key === "Meta";

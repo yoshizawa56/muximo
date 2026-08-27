@@ -28,8 +28,9 @@ import {
   type PaneViewportOwner,
   resumeStateFromReady,
   type TerminalResumeStore,
+  terminalControlErrorDisposition,
   terminalSessionCleanupMode,
-} from "./-terminal-viewmodel";
+} from "./viewmodel";
 
 type EmptyContext = {};
 type AttachResult = Extract<ClientControlMessage, { type: "attach" }>;
@@ -229,6 +230,50 @@ const nativeKeyboardToggleTable: OperationTable<
   observe: () => ({}),
 };
 
+type TerminalControlErrorInput = { code: string; retryable: boolean };
+type TerminalControlErrorResult = "action" | "connection";
+
+const terminalControlErrorCases = [
+  {
+    name: "keeps a tmux buffer failure on the connected terminal",
+    input: { code: "paste_tmux_buffer_failed", retryable: false },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("action")],
+  },
+  {
+    name: "keeps an image paste failure on the connected terminal",
+    input: { code: "paste_image_failed", retryable: false },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("action")],
+  },
+  {
+    name: "treats a retryable attach failure as a connection failure",
+    input: { code: "attach_failed", retryable: true },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("connection")],
+  },
+  {
+    name: "treats a resume target mismatch as a connection failure",
+    input: { code: "resume_target_mismatch", retryable: false },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("connection")],
+  },
+  {
+    name: "treats an unknown non-retryable error as a connection failure",
+    input: { code: "unknown_error", retryable: false },
+    assert: [returns<EmptyContext, TerminalControlErrorResult>("connection")],
+  },
+] satisfies readonly OperationCase<"default", TerminalControlErrorInput, TerminalControlErrorResult, EmptyContext>[];
+
+const terminalControlErrorTable: OperationTable<
+  undefined,
+  "default",
+  TerminalControlErrorInput,
+  TerminalControlErrorResult,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: terminalControlErrorCases,
+  execute: (_fixture, input) => terminalControlErrorDisposition(input.code, input.retryable),
+  observe: () => ({}),
+};
+
 type ControlFixture = {
   events: string[];
   resumed: boolean | null;
@@ -355,6 +400,7 @@ describe("terminal pane handshake helpers", () => {
   runOperationTable(register, resumeTable);
   runOperationTable(register, cleanupTable);
   runOperationTable(register, nativeKeyboardToggleTable);
+  runOperationTable(register, terminalControlErrorTable);
   runOperationTable(register, controlTable);
   runScenarioTable(register, resumeStoreTable);
 });

@@ -13,6 +13,7 @@ import {
   type ScenarioCase,
   type ScenarioTable,
 } from "@muximo/test-support";
+import { protocolVersion } from "../packages/contract/src/protocol.ts";
 import {
   checkMuximodHealth,
   checkWebHealth,
@@ -485,11 +486,11 @@ function createFakeRuntime(overrides = {}) {
     httpRequests.push(parsed.pathname);
     const name = parsed.port === String(config.muximodPort) ? "muximod" : "web";
     if (parsed.pathname === "/health" && healthy("muximod"))
-      return { statusCode: 200, body: JSON.stringify({ ok: true, service: "muximod", protocolVersion: 1 }) };
+      return { statusCode: 200, body: JSON.stringify({ ok: true, service: "muximod", protocolVersion }) };
     if (name === "web" && parsed.pathname === "/" && healthy("web"))
       return { statusCode: 200, body: "<!doctype html><html><body>dev</body></html>" };
     if (name === "web" && parsed.pathname === "/api/capabilities" && healthy("web") && healthy("muximod"))
-      return { statusCode: 200, body: JSON.stringify({ protocolVersion: 1, features: { terminalWebSocket: true } }) };
+      return { statusCode: 200, body: JSON.stringify({ protocolVersion, features: { terminalWebSocket: true } }) };
     return { statusCode: 503, body: "service unavailable" };
   };
   const probeWebSocket = async (url) => {

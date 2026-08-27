@@ -1,5 +1,5 @@
 import type { CreatePaneInput, CreateSessionInput, ManageSessionInput, MuximodApplication } from "@muximo/application";
-import { type AuthInfo, muximodHealthSchema } from "@muximo/contract";
+import { type AuthInfo, muximodHealthSchema, protocolVersion } from "@muximo/contract";
 import { Pane, PaneId } from "@muximo/domain";
 import {
   type Assertion,
@@ -152,7 +152,7 @@ const httpCases = [
     name: "returns a typed health response without CORS headers",
     input: { operation: "health" },
     assert: [
-      responseMatches(200, { service: "muximod", protocolVersion: 1 }, muximodHealthSchema),
+      responseMatches(200, { service: "muximod", protocolVersion }, muximodHealthSchema),
       {
         name: "does not add a cross-origin header to health probes",
         check: (_context, result) => {
@@ -280,7 +280,7 @@ const rpcCases = [
         check: (_context, result) => {
           if (!result.ok) throw result.error;
           const value = result.value as AuthInfo;
-          expect(value.protocolVersion).toBe(1);
+          expect(value.protocolVersion).toBe(protocolVersion);
           expect(value.serverId).toBe(authContext.serverId);
         },
       },

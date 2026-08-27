@@ -9,7 +9,7 @@ import {
 } from "@muximo/domain";
 import { z } from "zod";
 
-export const protocolVersion = 1 as const;
+export const protocolVersion = 2 as const;
 export const terminalProtocolVersion = protocolVersion;
 
 /** Largest image (in bytes) the mobile client may paste into a pane. */
@@ -481,6 +481,18 @@ export const clientControlMessageSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("claim"),
+      ...terminalFrameVersionSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("enter_copy_mode"),
+      ...terminalFrameVersionSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("paste_tmux_buffer"),
       ...terminalFrameVersionSchema.shape,
     })
     .strict(),

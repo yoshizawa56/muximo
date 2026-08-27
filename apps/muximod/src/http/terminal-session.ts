@@ -235,6 +235,28 @@ export class TerminalSession {
           this.sendError("mobile_claim_failed", error);
         }
         return;
+      case "enter_copy_mode":
+        if (!this.isAttached() || !this.lease) {
+          this.sendError("not_attached", "Attach before entering tmux copy mode");
+          return;
+        }
+        try {
+          await this.lease.enterCopyMode();
+        } catch (error) {
+          this.sendError("copy_mode_failed", error);
+        }
+        return;
+      case "paste_tmux_buffer":
+        if (!this.isAttached() || !this.lease) {
+          this.sendError("not_attached", "Attach before pasting the tmux buffer");
+          return;
+        }
+        try {
+          await this.lease.pasteTmuxBuffer();
+        } catch (error) {
+          this.sendError("paste_tmux_buffer_failed", error);
+        }
+        return;
       case "paste_image":
         await this.handlePasteImage(message);
         return;
