@@ -21,16 +21,15 @@ import { describe, it } from "vitest";
 import {
   createPasteImageMessage,
   createTerminalAttachMessage,
-  createTerminalResumeStore,
   handleControlMessage,
   nativeKeyboardToggleAction,
   type PaneResumeState,
   type PaneViewportOwner,
   resumeStateFromReady,
-  type TerminalResumeStore,
   terminalControlErrorDisposition,
   terminalSessionCleanupMode,
-} from "./viewmodel";
+} from "./policy";
+import { createTerminalResumeStore, type TerminalResumeStore } from "./viewmodel";
 
 type EmptyContext = {};
 type AttachResult = Extract<ClientControlMessage, { type: "attach" }>;

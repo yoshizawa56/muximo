@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AppIcon } from "../../../../../../../../app/components/app-icon";
 import { AppSafeAreaOverlay } from "../../../../../../../../app/components/app-layout";
 import { MuximoLogo } from "../../../../../../../../app/components/muximo-logo";
@@ -23,6 +24,8 @@ export function ControlRoomView({
   const paneBoard: PaneBoardViewModel = controlRoomViewModel.paneBoard;
   const onSessionSelect = controlRoomViewModel.onSessionSelect;
   const onNewPane = controlRoomViewModel.onNewPane;
+  const [paneBoardOpen, setPaneBoardOpen] = useState(false);
+  const [keyboardSettingsOpen, setKeyboardSettingsOpen] = useState(false);
   const { notices, open: dismissNotice } = useWaitingNotices(paneBoard.panes);
   const selectedPane = paneBoard.panes.find((pane) => pane.hostPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
@@ -81,11 +84,11 @@ export function ControlRoomView({
           <button
             className={windowMapButtonClass}
             type="button"
-            onClick={paneBoard.toggle}
-            aria-expanded={paneBoard.isOpen}
+            onClick={() => setPaneBoardOpen((current) => !current)}
+            aria-expanded={paneBoardOpen}
             aria-controls="tmux-window-map"
-            aria-label={paneBoard.isOpen ? "Close tmux window map" : "Open tmux window map"}
-            title={paneBoard.isOpen ? "Close window map" : "Open window map"}
+            aria-label={paneBoardOpen ? "Close tmux window map" : "Open tmux window map"}
+            title={paneBoardOpen ? "Close window map" : "Open window map"}
           >
             <AppIcon name="layout" size={15} />
             {waitingCount > 0 ? (
@@ -214,7 +217,7 @@ export function ControlRoomView({
             </div>
           </div>
 
-          <CustomKeyboardView viewModel={keyboard}>
+          <CustomKeyboardView viewModel={keyboard} onOpenSettings={() => setKeyboardSettingsOpen(true)}>
             <section
               className="relative flex min-h-[450px] flex-1 flex-col overflow-hidden rounded-[15px] border border-[#1d4c29] bg-terminal shadow-[var(--shadow-app),0_0_0_7px_rgb(57_214_91_/_5%),0_0_70px_rgb(21_116_42_/_12%)] max-[920px]:min-h-0 max-[920px]:rounded-none max-[920px]:border-0 max-[920px]:shadow-none max-[620px]:rounded-[9px]"
               aria-label={`${viewModel.target} terminal`}
@@ -314,16 +317,22 @@ export function ControlRoomView({
           <div className="h-full max-[920px]:pointer-events-none">
             <PaneBoardView
               viewModel={paneBoard}
+              isOpen={paneBoardOpen}
+              onClose={() => setPaneBoardOpen(false)}
               alwaysOpen
-              showLayout={paneBoard.isOpen}
+              showLayout={paneBoardOpen}
               layoutVariant={layoutVariant}
             />
           </div>
         </aside>
       </div>
-      {controlRoomViewModel.keyboardSettingsOpen ? (
+      {keyboardSettingsOpen ? (
         <AppSafeAreaOverlay className="z-50">
-          <CustomKeyboardSettingsView viewModel={keyboardSettings} />
+          <CustomKeyboardSettingsView
+            viewModel={keyboardSettings}
+            onClose={() => setKeyboardSettingsOpen(false)}
+            onSave={() => setKeyboardSettingsOpen(false)}
+          />
         </AppSafeAreaOverlay>
       ) : null}
     </main>

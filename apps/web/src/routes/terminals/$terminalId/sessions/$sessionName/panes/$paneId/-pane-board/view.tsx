@@ -5,11 +5,15 @@ import type { PaneBoardViewModel } from "./viewmodel";
 
 export function PaneBoardView({
   viewModel,
+  isOpen = false,
+  onClose,
   alwaysOpen = false,
   showLayout = false,
   layoutVariant = "ghost",
 }: {
   viewModel: PaneBoardViewModel;
+  isOpen?: boolean;
+  onClose?: () => void;
   alwaysOpen?: boolean;
   showLayout?: boolean;
   layoutVariant?: PaneLayoutOverlayVariant;
@@ -27,7 +31,7 @@ export function PaneBoardView({
     <div className="relative min-h-0">
       <aside
         className={`flex min-h-[480px] flex-col rounded-[15px] border border-line bg-[rgb(248_248_244_/_82%)] p-[18px] text-[#303631] shadow-[0_18px_42px_rgb(39_46_38_/_6%)] max-[1180px]:p-3.5 max-[920px]:min-h-0 ${mobileBoardClass} ${showLayout ? "relative min-h-0 overflow-hidden border-transparent bg-transparent p-0 shadow-none" : ""}`}
-        data-open={viewModel.isOpen}
+        data-open={isOpen}
         aria-label="tmux panes"
       >
         {showLayout ? (
@@ -35,8 +39,11 @@ export function PaneBoardView({
             id="tmux-window-map"
             panes={viewModel.panes}
             selectedTarget={viewModel.selectedTarget}
-            onSelect={viewModel.select}
-            onClose={viewModel.close}
+            onSelect={(pane) => {
+              viewModel.select(pane);
+              onClose?.();
+            }}
+            onClose={onClose}
             variant={layoutVariant}
           />
         ) : null}
@@ -66,7 +73,7 @@ export function PaneBoardView({
                 <button
                   className="hidden grid size-[27px] place-items-center rounded-lg border border-line bg-transparent text-[0.8rem] text-muted transition-colors hover:border-line-strong hover:bg-paper hover:text-ink max-[920px]:grid"
                   type="button"
-                  onClick={viewModel.close}
+                  onClick={onClose}
                   aria-label="Close pane list"
                 >
                   <AppIcon name="close" size={15} />

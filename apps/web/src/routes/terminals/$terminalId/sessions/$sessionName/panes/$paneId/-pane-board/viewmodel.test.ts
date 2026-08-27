@@ -7,7 +7,10 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
+import { storyPanes } from "../../../../../../-story-fixtures";
 import { paneStateLabel } from "../../../-pane-state";
+import type { PaneSummary } from "./viewmodel";
+import { selectedTargetFromPaneId } from "./viewmodel";
 
 type Input = { state: "waiting_input" | "waiting_approval" | "running" | "failed" };
 type Context = {};
@@ -34,6 +37,32 @@ const table: OperationTable<undefined, "default", Input, string, Context> = {
   observe: () => ({}),
 };
 
+type SelectionInput = {
+  panes: readonly PaneSummary[];
+  selectedPaneId?: string;
+};
+
+const selectionCases = [
+  {
+    name: "resolves the volatile host target from the stable route pane id",
+    input: { panes: storyPanes, selectedPaneId: "pane-build" },
+    assert: [returns<Context, string>("%1")],
+  },
+  {
+    name: "returns an empty target while the route pane is unavailable",
+    input: { panes: storyPanes, selectedPaneId: "missing-pane" },
+    assert: [returns<Context, string>("")],
+  },
+] satisfies readonly OperationCase<"default", SelectionInput, string, Context>[];
+
+const selectionTable: OperationTable<undefined, "default", SelectionInput, string, Context> = {
+  defaultFixture: noFixture(),
+  cases: selectionCases,
+  execute: (_fixture, input) => selectedTargetFromPaneId(input.panes, input.selectedPaneId),
+  observe: () => ({}),
+};
+
 describe("pane board view model helpers", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
+  runOperationTable(it as unknown as TestRegistrar, selectionTable);
 });

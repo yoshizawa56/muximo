@@ -1,26 +1,33 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { CustomKeyboardSettingsView, CustomKeyboardView } from "../-custom-keyboard/view";
 import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "../-custom-keyboard/viewmodel";
 
 export type ShellViewModel = {
   keyboard: CustomKeyboardViewModel;
   keyboardSettings: CustomKeyboardSettingsViewModel;
-  settingsOpen: boolean;
 };
 
 export function ShellView({
   viewModel,
   terminalSurface,
   nativeKeyboard,
+  initialSettingsOpen = false,
 }: {
   viewModel: ShellViewModel;
   terminalSurface: ReactNode;
   nativeKeyboard: ReactNode;
+  initialSettingsOpen?: boolean;
 }) {
-  if (viewModel.settingsOpen) {
+  const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
+
+  if (settingsOpen) {
     return (
       <div className="h-[var(--app-viewport-height)] min-h-0 overflow-hidden bg-[#061008]">
-        <CustomKeyboardSettingsView viewModel={viewModel.keyboardSettings} />
+        <CustomKeyboardSettingsView
+          viewModel={viewModel.keyboardSettings}
+          onClose={() => setSettingsOpen(false)}
+          onSave={() => setSettingsOpen(false)}
+        />
       </div>
     );
   }
@@ -34,7 +41,11 @@ export function ShellView({
             Shell / mobile terminal
           </span>
         </header>
-        <CustomKeyboardView viewModel={viewModel.keyboard} nativeKeyboard={nativeKeyboard}>
+        <CustomKeyboardView
+          viewModel={viewModel.keyboard}
+          nativeKeyboard={nativeKeyboard}
+          onOpenSettings={() => setSettingsOpen(true)}
+        >
           {terminalSurface}
         </CustomKeyboardView>
       </div>

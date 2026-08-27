@@ -8,21 +8,20 @@ import type { PaneViewModel } from "../-terminal/viewmodel";
 import { ControlRoomView } from "./view";
 import type { ControlRoomViewModel } from "./viewmodel";
 
-function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlRoomViewModel {
-  const close = fn();
-  const paneBoard: PaneBoardViewModel = {
-    isOpen: true,
+function createPaneBoard(overrides: Partial<PaneBoardViewModel> = {}): PaneBoardViewModel {
+  return {
     selectedTarget: "%0",
     panes: storyPanes,
     status: "ready",
     errorMessage: null,
-    open: fn(),
-    close,
-    toggle: fn(),
     select: fn(),
     refresh: fn(),
+    ...overrides,
   };
-  const terminal: PaneViewModel = {
+}
+
+function createTerminal(overrides: Partial<PaneViewModel> = {}): PaneViewModel {
+  return {
     target: "%0",
     status: "connected",
     errorMessage: null,
@@ -44,8 +43,12 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     enterCopyMode: fn(),
     pasteFromClipboard: fn(async () => undefined),
     pasteFromTmuxBuffer: fn(),
+    ...overrides,
   };
-  const keyboard: CustomKeyboardViewModel = {
+}
+
+function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): CustomKeyboardViewModel {
+  return {
     buttons: defaultCustomKeyboardButtons,
     activeModifiers: [],
     nativeKeyboardVisible: false,
@@ -58,9 +61,12 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     onNativeFileSelected: fn(),
     onKeepNativeKeyboardOpen: fn(),
     onToggleNativeKeyboard: fn(),
-    onOpenSettings: fn(),
+    ...overrides,
   };
-  const keyboardSettings: CustomKeyboardSettingsViewModel = {
+}
+
+function createKeyboardSettings(): CustomKeyboardSettingsViewModel {
+  return {
     buttons: defaultCustomKeyboardButtons,
     availableButtons: [],
     shortcutButtons: [],
@@ -74,20 +80,63 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     onDeleteShortcut: fn(),
     onRepeatStartDelayChange: fn(),
     onRepeatIntervalChange: fn(),
-    onClose: fn(),
-    onSave: fn(),
   };
+}
+
+function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlRoomViewModel {
   return {
-    terminal,
-    keyboard,
-    keyboardSettings,
-    keyboardSettingsOpen: false,
-    paneBoard,
+    terminal: createTerminal(),
+    keyboard: createKeyboard(),
+    keyboardSettings: createKeyboardSettings(),
+    paneBoard: createPaneBoard(),
     onSessionSelect: fn(),
     onNewPane: fn(),
     ...overrides,
   };
 }
+
+const controlRoomScenarios = {
+  connectedIdle: () =>
+    buildViewModel({
+      terminal: createTerminal({ target: "%1" }),
+      paneBoard: createPaneBoard({
+        selectedTarget: "%1",
+        panes: storyPanes.filter((pane) => pane.state === "running"),
+      }),
+    }),
+  waitingPanes: () => buildViewModel(),
+  connectingTerminal: () =>
+    buildViewModel({ terminal: createTerminal({ status: "connecting", viewportReason: null }) }),
+  closedTerminal: () => buildViewModel({ terminal: createTerminal({ status: "closed", viewportReason: null }) }),
+  shellPane: () =>
+    buildViewModel({
+      terminal: createTerminal({ target: "%2" }),
+      paneBoard: createPaneBoard({
+        selectedTarget: "%2",
+        panes: storyPanes.filter((pane) => pane.hostPaneId === "%2"),
+      }),
+    }),
+  desktopOwnsViewport: () =>
+    buildViewModel({
+      terminal: createTerminal({ viewportOwner: "desktop", viewportReason: "desktop activity detected" }),
+    }),
+  connectionError: () =>
+    buildViewModel({
+      terminal: createTerminal({ status: "error", errorMessage: "Terminal WebSocket closed unexpectedly" }),
+    }),
+  terminalActionError: () =>
+    buildViewModel({ terminal: createTerminal({ actionErrorMessage: "tmux copy mode is unavailable" }) }),
+  pastingImage: () => buildViewModel({ terminal: createTerminal({ pasteState: "pasting" }) }),
+  imagePasted: () => buildViewModel({ terminal: createTerminal({ pasteState: "pasted" }) }),
+  imagePasteFailed: () => buildViewModel({ terminal: createTerminal({ pasteState: "failed" }) }),
+  standardKeyboardOpen: () => buildViewModel({ keyboard: createKeyboard({ nativeKeyboardVisible: true }) }),
+  loadingPanes: () => buildViewModel({ paneBoard: createPaneBoard({ panes: [], status: "loading" }) }),
+  paneListError: () =>
+    buildViewModel({
+      paneBoard: createPaneBoard({ panes: [], status: "error", errorMessage: "Unable to load panes" }),
+    }),
+  emptyPaneList: () => buildViewModel({ paneBoard: createPaneBoard({ panes: [] }) }),
+} satisfies Record<string, () => ControlRoomViewModel>;
 
 const meta = {
   title: "Pages/Control room",
@@ -99,35 +148,86 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const ConnectedWithWindowMap: Story = {
-  args: { viewModel: buildViewModel() },
-  play: async ({ canvasElement, args }) => {
+  args: { viewModel: controlRoomScenarios.waitingPanes() },
+  play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /open tmux window map/i }));
     await userEvent.click(canvas.getByRole("tab", { name: /muximo 1/ }));
     await userEvent.click(canvas.getByRole("button", { name: /close window map/i }));
-    await expect(args.viewModel.paneBoard.close).toHaveBeenCalledOnce();
+    await expect(canvas.getByRole("button", { name: /open tmux window map/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   },
+};
+
+export const ConnectedIdle: Story = {
+  args: { viewModel: controlRoomScenarios.connectedIdle() },
+};
+
+export const WaitingPanes: Story = {
+  args: { viewModel: controlRoomScenarios.waitingPanes() },
+};
+
+export const ConnectingTerminal: Story = {
+  args: { viewModel: controlRoomScenarios.connectingTerminal() },
+};
+
+export const ClosedTerminal: Story = {
+  args: { viewModel: controlRoomScenarios.closedTerminal() },
+};
+
+export const ShellPane: Story = {
+  args: { viewModel: controlRoomScenarios.shellPane() },
 };
 
 export const DesktopOwnsViewport: Story = {
-  args: {
-    viewModel: buildViewModel({
-      terminal: {
-        ...buildViewModel().terminal,
-        viewportOwner: "desktop",
-        viewportReason: "desktop activity detected",
-      },
-    }),
-  },
+  args: { viewModel: controlRoomScenarios.desktopOwnsViewport() },
 };
 
 export const ConnectionError: Story = {
-  args: {
-    viewModel: buildViewModel({
-      terminal: {
-        ...buildViewModel().terminal,
-        status: "error",
-        errorMessage: "Terminal WebSocket closed unexpectedly",
-      },
-    }),
+  args: { viewModel: controlRoomScenarios.connectionError() },
+};
+
+export const TerminalActionError: Story = {
+  args: { viewModel: controlRoomScenarios.terminalActionError() },
+};
+
+export const PastingImage: Story = {
+  args: { viewModel: controlRoomScenarios.pastingImage() },
+};
+
+export const ImagePasted: Story = {
+  args: { viewModel: controlRoomScenarios.imagePasted() },
+};
+
+export const ImagePasteFailed: Story = {
+  args: { viewModel: controlRoomScenarios.imagePasteFailed() },
+};
+
+export const StandardKeyboardOpen: Story = {
+  args: { viewModel: controlRoomScenarios.standardKeyboardOpen() },
+};
+
+export const LoadingPanes: Story = {
+  args: { viewModel: controlRoomScenarios.loadingPanes() },
+};
+
+export const PaneListError: Story = {
+  args: { viewModel: controlRoomScenarios.paneListError() },
+};
+
+export const EmptyPaneList: Story = {
+  args: { viewModel: controlRoomScenarios.emptyPaneList() },
+};
+
+export const KeyboardSettings: Story = {
+  args: { viewModel: controlRoomScenarios.connectedIdle() },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Save" }));
+    await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
   },
 };

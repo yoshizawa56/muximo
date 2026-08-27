@@ -1,4 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useRef, useState } from "react";
 import { muximoBridge } from "../../../../../../../../platform/muximo-bridge";
@@ -24,7 +23,6 @@ export type ControlRoomViewModel = {
   terminal: PaneViewModel;
   keyboard: CustomKeyboardViewModel;
   keyboardSettings: CustomKeyboardSettingsViewModel;
-  keyboardSettingsOpen: boolean;
   paneBoard: PaneBoardViewModel;
   onSessionSelect: () => void;
   onNewPane: () => void;
@@ -38,16 +36,20 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
   const resources = useTerminalResources({ terminalId, sessionName });
   const connection = resources.connection;
   const scopedSessionName = resources.selectedSession?.name ?? sessionName;
-  const panesQuery = useQuery(
-    resources.utils.panes.list.queryOptions({
-      input: scopedSessionName ? { session: scopedSessionName } : {},
-      enabled: Boolean(connection) && Boolean(sessionName),
-      staleTime: 1_000,
-    }),
-  );
-  const panes = panesQuery.data?.panes ?? [];
-  const selectedPane = panes.find((pane) => pane.id === paneId) ?? null;
-  const selectedTarget = selectedPane?.hostPaneId ?? "";
+  const paneBoard = usePaneBoardViewModel({
+    selectedPaneId: paneId,
+    sessionName: scopedSessionName,
+    connection,
+    utils: resources.utils,
+    onSelect: (nextPaneId) => {
+      void navigate({
+        to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId",
+        params: { terminalId, sessionName, paneId: nextPaneId },
+      });
+    },
+  });
+  const selectedPane = paneBoard.panes.find((pane) => pane.id === paneId) ?? null;
+  const selectedTarget = paneBoard.selectedTarget;
   const [activeKeyboardModifiers, setActiveKeyboardModifiers] = useState<CustomKeyboardModifier[]>([]);
   const activeKeyboardModifiersRef = useRef<CustomKeyboardModifier[]>([]);
   const onNativeKeyboardInput = useCallback((data: string) => {
@@ -103,27 +105,10 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
     onKeepNativeKeyboardOpen: terminal.keepNativeKeyboardOpen,
     onNativeKeyboardToggle: terminal.toggleNativeKeyboard,
   });
-  const paneBoard = usePaneBoardViewModel({
-    selectedTarget,
-    sessionName,
-    connection,
-    utils: resources.utils,
-    alwaysOpen: true,
-    onSelect: (target) => {
-      const pane = panes.find((candidate) => candidate.hostPaneId === target);
-      if (pane)
-        void navigate({
-          to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId",
-          params: { terminalId, sessionName, paneId: pane.id },
-        });
-    },
-  });
-
   return {
     terminal,
     keyboard: keyboardController.keyboard,
     keyboardSettings: keyboardController.settings,
-    keyboardSettingsOpen: keyboardController.settingsOpen,
     paneBoard,
     onSessionSelect: () => {
       void navigate({ to: "/terminals/$terminalId/sessions", params: { terminalId } });
