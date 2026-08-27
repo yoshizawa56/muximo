@@ -72,18 +72,22 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
     if (stopped) return;
     stopped = true;
     processAdapter.removePidRecord(paths.pidFile, process.pid);
-    if (processAdapter.hasRestartMarker(paths.pidFile)) {
-      server.stop();
+    const restarting = processAdapter.hasRestartMarker(paths.pidFile);
+    // Release listeners before asynchronous provider cleanup. This keeps a
+    // Ctrl-C from leaving the control socket occupied while shutdown drains.
+    server.stop();
+    if (restarting) {
       logger.close();
       return;
     }
     void disposeOwnedOpenCodeServers({
       logger,
       registryFile: defaultOpenCodeRegistryFile(environment),
-    }).finally(() => {
-      server.stop();
-      logger.close();
-    });
+    })
+      .finally(() => {
+        logger.close();
+      })
+      .catch(() => undefined);
   };
 
   process.once("SIGINT", shutdown);

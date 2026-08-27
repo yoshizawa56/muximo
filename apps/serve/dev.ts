@@ -40,6 +40,7 @@ const turbo = spawn(
   ["node_modules/turbo/bin/turbo", "run", "dev", "--filter=@muximo/web", "--filter=@muximo/muximod"],
   {
     cwd: repositoryRoot,
+    detached: process.platform !== "win32",
     env: childEnvironment,
     stdio: "inherit",
   },
@@ -50,6 +51,14 @@ let shuttingDown = false;
 const stopTurbo = (signal: NodeJS.Signals) => {
   if (shuttingDown) return;
   shuttingDown = true;
+  if (process.platform !== "win32" && turbo.pid !== undefined) {
+    try {
+      process.kill(-turbo.pid, signal);
+      return;
+    } catch (error) {
+      if (!isErrorCode(error, "ESRCH")) throw error;
+    }
+  }
   turbo.kill(signal);
 };
 const onSigint = () => stopTurbo("SIGINT");
@@ -149,4 +158,8 @@ function signalExitCode(signal: NodeJS.Signals | null): number {
   if (signal === "SIGINT") return 130;
   if (signal === "SIGTERM") return 143;
   return 1;
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
 }

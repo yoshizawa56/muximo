@@ -7,24 +7,34 @@ type ScannerControls = { stop: () => void };
 export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) => void; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const onScanRef = useRef(onScan);
+  onScanRef.current = onScan;
 
   useEffect(() => {
     const reader = new BrowserQRCodeReader();
-    let active = true;
+    let disposed = false;
+    let resultHandled = false;
+    let stream: MediaStream | undefined;
     let controls: ScannerControls | undefined;
     const video = videoRef.current;
 
-    const stopVideo = () => {
-      controls?.stop();
-      controls = undefined;
-
-      const stream = video?.srcObject;
-      if (stream && "getTracks" in stream && typeof stream.getTracks === "function") {
-        stream.getTracks().forEach((track) => {
-          track.stop();
-        });
+    const stopStream = (candidate: MediaStream | undefined) => {
+      if (!candidate) return;
+      if (video?.srcObject === candidate) {
+        video.pause();
+        video.srcObject = null;
       }
-      if (video) video.srcObject = null;
+      candidate.getTracks().forEach((track) => {
+        track.stop();
+      });
+      if (stream === candidate) stream = undefined;
+    };
+
+    const stopVideo = () => {
+      const currentControls = controls;
+      controls = undefined;
+      currentControls?.stop();
+      stopStream(stream);
     };
 
     const setCameraError = (cause: unknown) => {
@@ -65,27 +75,47 @@ export function QrPairingScanner({ onScan, onClose }: { onScan: (value: string) 
         return;
       }
       try {
-        controls = await reader.decodeFromConstraints(
-          { audio: false, video: { facingMode: { ideal: "environment" } } },
+        const acquiredStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: "environment" } },
+        });
+        if (disposed) {
+          stopStream(acquiredStream);
+          return;
+        }
+
+        stream = acquiredStream;
+        video.srcObject = acquiredStream;
+        await video.play();
+        if (disposed) {
+          stopStream(acquiredStream);
+          return;
+        }
+
+        controls = reader.scan(
           video,
           (result, _decodeError, scannerControls) => {
-            if (!active || !result) return;
-            active = false;
+            if (disposed || resultHandled || !result) return;
+            resultHandled = true;
             scannerControls.stop();
-            onScan(result.getText());
+            onScanRef.current(result.getText());
+          },
+          (cause) => {
+            stopStream(acquiredStream);
+            if (!disposed && !resultHandled && cause) setCameraError(cause);
           },
         );
-        if (!active) stopVideo();
       } catch (cause) {
-        if (active) setCameraError(cause);
+        stopStream(stream);
+        if (!disposed) setCameraError(cause);
       }
     };
     void start();
     return () => {
-      active = false;
+      disposed = true;
       stopVideo();
     };
-  }, [onScan]);
+  }, []);
 
   return (
     <section className="mb-4 grid gap-3" aria-label="QR code scanner">

@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
-import { createServer, type Server, type Socket } from "node:net";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import type { AuthPairingClaimNotification, MuximodAuthControlPort } from "@muximo/application";
 import {
@@ -38,11 +38,12 @@ export class MuximodControlServer {
 
   public constructor(private readonly options: MuximodControlServerOptions) {}
 
-  public start(): Promise<void> {
+  public async start(): Promise<void> {
     ensureSocketPathIsSafe(this.options.socketPath);
     mkdirSync(dirname(this.options.socketPath), { recursive: true, mode: 0o700 });
+    await removeStaleSocket(this.options.socketPath);
     this.server = createServer((socket) => this.handleConnection(socket));
-    return new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const server = this.server;
       if (!server) throw new Error("control server was not initialized");
       const onError = (error: Error) => {
@@ -73,7 +74,13 @@ export class MuximodControlServer {
     this.clients.clear();
     this.server?.close();
     this.server = undefined;
-    if (this.started && existsSync(this.options.socketPath)) unlinkSync(this.options.socketPath);
+    if (this.started && existsSync(this.options.socketPath)) {
+      try {
+        if (lstatSync(this.options.socketPath).isSocket()) unlinkSync(this.options.socketPath);
+      } catch (error) {
+        if (!isErrorCode(error, "ENOENT")) throw error;
+      }
+    }
     this.started = false;
   }
 
@@ -232,6 +239,55 @@ function ensureSocketPathIsSafe(path: string): void {
   if (!path || path === "/" || path.endsWith("/")) throw new Error(`invalid muximod control socket path: ${path}`);
   if (existsSync(path) && !lstatSync(path).isSocket())
     throw new Error(`muximod control socket path is not a socket: ${path}`);
+}
+
+async function removeStaleSocket(path: string): Promise<void> {
+  if (!existsSync(path)) return;
+
+  if (await controlSocketIsActive(path)) {
+    const error = new Error(`muximod control socket is already in use: ${path}`) as NodeJS.ErrnoException;
+    error.code = "EADDRINUSE";
+    throw error;
+  }
+
+  try {
+    if (lstatSync(path).isSocket()) unlinkSync(path);
+  } catch (error) {
+    if (!isErrorCode(error, "ENOENT")) throw error;
+  }
+}
+
+function controlSocketIsActive(path: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(path);
+    let settled = false;
+    const finish = (active: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(active);
+    };
+
+    socket.once("connect", () => finish(true));
+    socket.once("error", (error) => {
+      if (isStaleSocketError(error)) {
+        finish(false);
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    });
+  });
+}
+
+function isStaleSocketError(error: unknown): boolean {
+  return isErrorCode(error, "ECONNREFUSED") || isErrorCode(error, "ENOENT");
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
 }
 
 function errorCode(error: unknown): string {
