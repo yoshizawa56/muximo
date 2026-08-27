@@ -58,6 +58,10 @@ type ViewportContext = {
   refreshes: readonly string[];
   resizes: readonly [number, number][];
   ensureSessionCalls: readonly string[];
+  desktopStatus: "on" | "off";
+  statusHidden: boolean;
+  groupedSessionSources: readonly string[];
+  killedSessionCount: number;
 };
 
 const viewportFixture = (): FixtureHandle<ViewportFixture> => {
@@ -96,6 +100,9 @@ const cases = [
       hasObserved<ViewportContext, undefined>("height", 24),
       hasObserved<ViewportContext, undefined>("zoomed", true),
       hasObserved<ViewportContext, undefined>("mouse", "on"),
+      hasObserved<ViewportContext, undefined>("desktopStatus", "on"),
+      hasObserved<ViewportContext, undefined>("statusHidden", true),
+      hasObserved<ViewportContext, undefined>("groupedSessionSources", ["muximod"]),
     ],
   },
   {
@@ -125,6 +132,8 @@ const cases = [
       ]),
       hasObserved<ViewportContext, undefined>("zoomed", false),
       hasObserved<ViewportContext, undefined>("mouse", "off"),
+      hasObserved<ViewportContext, undefined>("desktopStatus", "on"),
+      hasObserved<ViewportContext, undefined>("killedSessionCount", 1),
     ],
   },
   {
@@ -289,6 +298,12 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
     refreshes: [...fixture.adapter.refreshes],
     resizes: [...fixture.adapter.resizeCalls],
     ensureSessionCalls: fixture.adapter.ensureSessionCalls.map(({ target }) => target),
+    desktopStatus: fixture.adapter.desktopStatus,
+    statusHidden: fixture.adapter.sessionOptions.some(
+      ([sessionName, name, value]) => sessionName !== "=muximod" && name === "status" && value === "off",
+    ),
+    groupedSessionSources: fixture.adapter.groupedSessions.map(([source]) => source),
+    killedSessionCount: fixture.adapter.killedSessions.length,
   }),
 };
 
@@ -299,6 +314,10 @@ describe("tmux viewport manager", () => {
 class FakeTmuxAdapter extends TmuxAdapter {
   public missingTarget = false;
   public readonly ensureSessionCalls: Array<{ target: string; cwd: string }> = [];
+  public readonly groupedSessions: Array<[string, string]> = [];
+  public readonly sessionOptions: Array<[string, string, string]> = [];
+  public readonly killedSessions: string[] = [];
+  public desktopStatus: "on" | "off" = "on";
   public readonly state = {
     width: 120,
     height: 40,
@@ -345,6 +364,9 @@ class FakeTmuxAdapter extends TmuxAdapter {
     this.ensureSessionCalls.push({ target, cwd });
     return false;
   }
+  public override createGroupedSession(groupSession: string, sessionName: string): void {
+    this.groupedSessions.push([groupSession, sessionName]);
+  }
   public override snapshotWindow(pane: TmuxPaneRef): TmuxWindowSnapshot {
     return {
       ...pane,
@@ -369,6 +391,13 @@ class FakeTmuxAdapter extends TmuxAdapter {
   }
   public override setWindowSize(_windowId: string, value: TmuxWindowSize): void {
     this.state.windowSize = value;
+  }
+  public override setSessionOption(sessionName: string, name: string, value: string): void {
+    this.sessionOptions.push([sessionName, name, value]);
+    if (sessionName === "=muximod" && name === "status") this.desktopStatus = value === "off" ? "off" : "on";
+  }
+  public override killSession(target: string): void {
+    this.killedSessions.push(target);
   }
   public override setWindowMouse(_windowId: string, value: TmuxWindowMouse): void {
     this.state.mouse = value;

@@ -58,6 +58,8 @@ export type ViewportLease = {
 export type PreparedViewport = {
   readonly target: string;
   readonly pane: TmuxPaneRef;
+  /** Fully qualified pane target in the temporary mobile session group. */
+  readonly attachTarget: string;
   readonly snapshot: TmuxWindowSnapshot;
   attach(options: AttachViewportOptions): Promise<ViewportLease>;
   release(): Promise<void>;
