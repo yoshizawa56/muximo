@@ -1,10 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   hasError,
   type OperationCase,
   type OperationTable,
+  returns,
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
@@ -15,6 +17,7 @@ type GitFixture = { root: string };
 type GitInput = { operation: "status" | "unmanaged-files" };
 type GitResult = string | string[];
 type EmptyContext = {};
+type GitFixtureKey = "default" | "nested";
 
 const cases = [
   {
@@ -27,12 +30,32 @@ const cases = [
     input: { operation: "unmanaged-files" },
     assert: [hasError<EmptyContext, GitResult>({ message: /git -C/ })],
   },
-] satisfies readonly OperationCase<"default", GitInput, GitResult, EmptyContext>[];
+  {
+    name: "summarizes nested untracked files without expanding every file into status output",
+    fixture: "nested",
+    input: { operation: "status" },
+    assert: [returns<EmptyContext, GitResult>("?? nested/\n")],
+  },
+] satisfies readonly OperationCase<GitFixtureKey, GitInput, GitResult, EmptyContext>[];
 
-const table: OperationTable<GitFixture, "default", GitInput, GitResult, EmptyContext> = {
+const table: OperationTable<GitFixture, GitFixtureKey, GitInput, GitResult, EmptyContext> = {
   defaultFixture: () => {
     const root = mkdtempSync(join(tmpdir(), "muximo-git-probe-"));
     return { fixture: { root }, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  },
+  fixtures: {
+    default: () => {
+      const root = mkdtempSync(join(tmpdir(), "muximo-git-probe-"));
+      return { fixture: { root }, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+    },
+    nested: () => {
+      const root = mkdtempSync(join(tmpdir(), "muximo-git-probe-"));
+      execFileSync("git", ["-C", root, "init", "-q"]);
+      mkdirSync(join(root, "nested"));
+      writeFileSync(join(root, "nested", "one.txt"), "one\n");
+      writeFileSync(join(root, "nested", "two.txt"), "two\n");
+      return { fixture: { root }, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+    },
   },
   cases,
   execute: (fixture, input) =>

@@ -10,6 +10,7 @@ import { shouldCheckAgentSessionWorktree } from "@muximo/application";
 import type { AgentSessionRecord } from "@muximo/domain";
 import { isProcessAlive } from "../process/process.js";
 import { realpathSafe } from "./filesystem.js";
+import { gitOutputMaxBuffer } from "./git.js";
 
 export type SessionObservationOptions = {
   environment: NodeJS.ProcessEnv;
@@ -51,6 +52,7 @@ export class AgentSessionObservationAdapter implements SessionObservationPort {
         encoding: "utf8",
         env: this.options.environment,
         stdio: ["ignore", "pipe", "ignore"],
+        maxBuffer: gitOutputMaxBuffer,
       });
       const paths = new Set(
         output

@@ -163,6 +163,115 @@ const sessionOptionTable: OperationTable<RecordingFixture, "default", {}, string
   observe: () => ({}),
 };
 
+type GroupedSessionInput = { groupSession: string; sessionName: string };
+const groupedSessionCases = [
+  {
+    name: "creates a detached session grouped with the exact source session",
+    input: { groupSession: "work", sessionName: "muximo-mobile-1" },
+    assert: [
+      returns<EmptyContext, string[]>([
+        "new-session",
+        "-d",
+        "-s",
+        "muximo-mobile-1",
+        "-t",
+        "=work",
+        ";",
+        "set-option",
+        "-t",
+        "=muximo-mobile-1:",
+        "destroy-unattached",
+        "off",
+        ";",
+        "set-option",
+        "-t",
+        "=muximo-mobile-1:",
+        "@muximod.mobile_viewport",
+        "1",
+      ]),
+    ],
+  },
+] satisfies readonly OperationCase<"default", GroupedSessionInput, string[], EmptyContext>[];
+const groupedSessionTable: OperationTable<RecordingFixture, "default", GroupedSessionInput, string[], EmptyContext> = {
+  defaultFixture: recordingFixture,
+  cases: groupedSessionCases,
+  execute: (fixture, input) => {
+    fixture.adapter.createGroupedSession(input.groupSession, input.sessionName);
+    return fixture.adapter.lastArgs;
+  },
+  observe: () => ({}),
+};
+
+type GroupedSessionConfiguration = {
+  reads: string[][];
+  writes: string[][];
+};
+type GroupedSessionConfigurationFixture = { adapter: GroupedSessionConfigurationTmuxAdapter };
+const groupedSessionConfigurationCases = [
+  {
+    name: "copies source session options and environment while preserving mobile overrides",
+    input: { groupSession: "work", sessionName: "muximo-mobile-1" },
+    assert: [
+      returns<EmptyContext, GroupedSessionConfiguration>({
+        reads: [
+          ["show-options", "-t", "=work:"],
+          ["show-options", "-v", "-t", "=work:", "default-command"],
+          ["show-options", "-v", "-t", "=work:", "destroy-unattached"],
+          ["show-options", "-v", "-t", "=work:", "status"],
+          ["show-options", "-v", "-t", "=work:", "@muximod.managed"],
+          ["show-options", "-v", "-t", "=work:", "status-format[0]"],
+          ["show-environment", "-t", "=work"],
+          ["show-environment", "-h", "-t", "=work"],
+        ],
+        writes: [
+          [
+            "new-session",
+            "-d",
+            "-s",
+            "muximo-mobile-1",
+            "-t",
+            "=work",
+            ";",
+            "set-option",
+            "-t",
+            "=muximo-mobile-1:",
+            "destroy-unattached",
+            "off",
+            ";",
+            "set-option",
+            "-t",
+            "=muximo-mobile-1:",
+            "@muximod.mobile_viewport",
+            "1",
+          ],
+          ["set-environment", "-t", "=muximo-mobile-1", "MUXIMOD_MANAGED_SESSION_ID", "managed-1"],
+          ["set-environment", "-r", "-t", "=muximo-mobile-1", "REMOVE_ME"],
+          ["set-environment", "-h", "-t", "=muximo-mobile-1", "HIDDEN_VALUE", "secret"],
+          ["set-option", "-t", "=muximo-mobile-1:", "default-command", "muximo shell"],
+          ["set-option", "-t", "=muximo-mobile-1:", "status", "on"],
+          ["set-option", "-t", "=muximo-mobile-1:", "@muximod.managed", "1"],
+          ["set-option", "-t", "=muximo-mobile-1:", "status-format[0]", "custom"],
+        ],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", GroupedSessionInput, GroupedSessionConfiguration, EmptyContext>[];
+const groupedSessionConfigurationTable: OperationTable<
+  GroupedSessionConfigurationFixture,
+  "default",
+  GroupedSessionInput,
+  GroupedSessionConfiguration,
+  EmptyContext
+> = {
+  defaultFixture: () => ({ fixture: { adapter: new GroupedSessionConfigurationTmuxAdapter() } }),
+  cases: groupedSessionConfigurationCases,
+  execute: (fixture, input) => {
+    fixture.adapter.createGroupedSession(input.groupSession, input.sessionName);
+    return { reads: fixture.adapter.reads, writes: fixture.adapter.writes };
+  },
+  observe: () => ({}),
+};
+
 const sessionEnvironmentCases = [
   {
     name: "uses the session environment for managed wrappers",
@@ -218,10 +327,11 @@ const resolveTable: OperationTable<undefined, "default", ResolveInput, string, E
 };
 
 type RedrawInput = {};
+type AttachInput = { target: string };
 const attachCases = [
   {
     name: "attaches to the resolved pane target",
-    input: {},
+    input: { target: "%1" },
     assert: [
       returns<EmptyContext, string[]>([
         "-S",
@@ -234,11 +344,26 @@ const attachCases = [
       ]),
     ],
   },
-] satisfies readonly OperationCase<"default", RedrawInput, string[], EmptyContext>[];
-const attachTable: OperationTable<RecordingFixture, "default", RedrawInput, string[], EmptyContext> = {
+  {
+    name: "attaches to a pane through the isolated mobile session",
+    input: { target: "=muximo-mobile-1:@0.%1" },
+    assert: [
+      returns<EmptyContext, string[]>([
+        "-S",
+        "/private/tmp/muximo-test.sock",
+        "attach-session",
+        "-f",
+        "active-pane",
+        "-t",
+        "=muximo-mobile-1:@0.%1",
+      ]),
+    ],
+  },
+] satisfies readonly OperationCase<"default", AttachInput, string[], EmptyContext>[];
+const attachTable: OperationTable<RecordingFixture, "default", AttachInput, string[], EmptyContext> = {
   defaultFixture: recordingFixture,
   cases: attachCases,
-  execute: (fixture) => fixture.adapter.attachArgs("%1"),
+  execute: (fixture, input) => fixture.adapter.attachArgs(input.target),
   observe: () => ({}),
 };
 
@@ -307,15 +432,28 @@ const hasPaneListing: Assertion<ListContext, ListResult> = {
     expect(result.value.args[3]).toContain("#{pane_index}");
   },
 };
+const hidesMobileViewportPanes: Assertion<ListContext, ListResult> = {
+  name: "hides panes exposed only through the temporary mobile session",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value.panes).toHaveLength(1);
+    expect(result.value.panes[0]?.sessionName).toBe("muximod");
+  },
+};
 type ListKey = "control" | "octal";
 const listCases = [
   {
     name: "keeps the pane index separate from the server-wide pane id",
     fixture: "control",
     input: {},
-    assert: [hasPaneListing],
+    assert: [hasPaneListing, hidesMobileViewportPanes],
   },
-  { name: "parses tmux's octal-escaped format separator", fixture: "octal", input: {}, assert: [hasPaneListing] },
+  {
+    name: "parses tmux's octal-escaped format separator",
+    fixture: "octal",
+    input: {},
+    assert: [hasPaneListing, hidesMobileViewportPanes],
+  },
 ] satisfies readonly OperationCase<ListKey, {}, ListResult, ListContext>[];
 const listTable: OperationTable<{ adapter: ListingTmuxAdapter }, ListKey, {}, ListResult, ListContext> = {
   defaultFixture: () => ({ fixture: { adapter: new ListingTmuxAdapter("\u001f") } }),
@@ -363,6 +501,7 @@ const snapshotFixtures: Readonly<Record<SnapshotKey, () => FixtureHandle<Snapsho
           "1234",
           "2026-08-14T12:00:00Z",
           "/private/tmp/muximo-test.sock",
+          "",
         ].join("\u001f"),
         stderr: "",
       }),
@@ -474,6 +613,8 @@ describe("tmux adapter", () => {
   runOperationTable(register, switchTable);
   runOperationTable(register, createSessionTable);
   runOperationTable(register, sessionOptionTable);
+  runOperationTable(register, groupedSessionTable);
+  runOperationTable(register, groupedSessionConfigurationTable);
   runOperationTable(register, sessionEnvironmentTable);
   runOperationTable(register, resolveTable);
   runOperationTable(register, attachTable);
@@ -492,10 +633,12 @@ class RecordingTmuxAdapter extends TmuxAdapter {
   }
   public override require(args: string[]): string {
     this.lastArgs = args;
+    if (args[0] === "show-options" || args[0] === "show-environment") return "";
     return "/tmp/project\n";
   }
   public override command(args: string[]) {
     this.lastArgs = args;
+    if (args[0] === "has-session") return { status: 1, stdout: "", stderr: "" };
     return { status: 0, stdout: "", stderr: "" };
   }
 }
@@ -523,38 +666,46 @@ class ListingTmuxAdapter extends TmuxAdapter {
     this.lastArgs = args;
     return {
       status: 0,
-      stdout: `${[
-        "%32",
-        "@5",
-        "muximod",
-        "code",
-        "2",
-        "4",
-        "/tmp",
-        "zsh",
-        "zsh",
-        "1",
-        "0",
-        "0",
-        "80",
-        "24",
-        "120",
-        "40",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "1234",
-        "2026-08-14T12:00:00Z",
-        "/private/tmp/muximo-test.sock",
-      ].join(this.separator)}\n`,
+      stdout: [
+        listingPaneRow("muximod", "", this.separator),
+        listingPaneRow("muximo-mobile-1", "1", this.separator),
+      ].join("\n"),
       stderr: "",
     };
   }
+}
+
+function listingPaneRow(sessionName: string, mobileViewport: string, separator: string): string {
+  return [
+    "%32",
+    "@5",
+    sessionName,
+    "code",
+    "2",
+    "4",
+    "/tmp",
+    "zsh",
+    "zsh",
+    "1",
+    "0",
+    "0",
+    "80",
+    "24",
+    "120",
+    "40",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "1234",
+    "2026-08-14T12:00:00Z",
+    "/private/tmp/muximo-test.sock",
+    mobileViewport,
+  ].join(separator);
 }
 
 class SnapshotTmuxAdapter extends TmuxAdapter {
@@ -577,6 +728,47 @@ class MetadataTmuxAdapter extends TmuxAdapter {
   }
   public override require(args: string[]): string {
     this.required.push(args);
+    return "";
+  }
+}
+
+class GroupedSessionConfigurationTmuxAdapter extends TmuxAdapter {
+  public reads: string[][] = [];
+  public writes: string[][] = [];
+  public constructor() {
+    super("/private/tmp/muximo-test.sock");
+  }
+  public override command(args: string[]) {
+    if (args[0] === "has-session") return { status: 1, stdout: "", stderr: "" };
+    return { status: 0, stdout: "", stderr: "" };
+  }
+  public override require(args: string[]): string {
+    if (args[0] === "show-options") {
+      this.reads.push(args);
+      if (args.includes("-v")) {
+        const name = args.at(-1);
+        const values: Record<string, string> = {
+          "default-command": "muximo shell",
+          "destroy-unattached": "on",
+          status: "on",
+          "@muximod.managed": "1",
+          "status-format[0]": "custom",
+        };
+        return `${values[name ?? ""] ?? ""}\n`;
+      }
+      return [
+        'default-command "muximo shell"',
+        "destroy-unattached on",
+        "status on",
+        "@muximod.managed 1",
+        'status-format[0] "custom"',
+      ].join("\n");
+    }
+    if (args[0] === "show-environment") {
+      this.reads.push(args);
+      return args.includes("-h") ? "HIDDEN_VALUE=secret\n" : "MUXIMOD_MANAGED_SESSION_ID=managed-1\n-REMOVE_ME\n";
+    }
+    this.writes.push(args);
     return "";
   }
 }

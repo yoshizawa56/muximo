@@ -54,12 +54,17 @@ export class GitWorktreeAdapter implements WorktreePort {
     }
     if (existsSync(worktreePath)) throw new Error(`worktree path already exists: ${worktreePath}`);
     this.options.logger.info("worktree.create_started", { worktreePath, branch, baseCommit });
-    gitRequired(
-      workspace.rootPath,
-      ["worktree", "add", "-b", branch, "--", worktreePath, baseCommit],
-      "git worktree creation failed",
-      this.options.environment,
-    );
+    try {
+      gitRequired(
+        workspace.rootPath,
+        ["worktree", "add", "-b", branch, "--", worktreePath, baseCommit],
+        "git worktree creation failed",
+        this.options.environment,
+      );
+    } catch (error) {
+      this.cleanupFailedCreation(workspace.rootPath, worktreePath, branch, baseCommit);
+      throw error;
+    }
     return { worktreeRoot, worktreePath, branch, baseCommit };
   }
 
@@ -219,6 +224,26 @@ export class GitWorktreeAdapter implements WorktreePort {
     return gitOutputRaw(workspaceRoot, ["worktree", "list", "--porcelain"], this.options.environment)
       .split("\n")
       .some((line) => line === `worktree ${worktreePath}`);
+  }
+
+  private cleanupFailedCreation(workspaceRoot: string, worktreePath: string, branch: string, baseCommit: string): void {
+    try {
+      if (existsSync(worktreePath) && this.isRegisteredAtInternal(workspaceRoot, worktreePath)) {
+        gitRequired(
+          workspaceRoot,
+          ["worktree", "remove", "--force", "--", worktreePath],
+          "git worktree removal failed",
+          this.options.environment,
+        );
+      }
+      const head = gitOutputOrEmpty(workspaceRoot, ["rev-parse", "--verify", branch], this.options.environment);
+      if (head && head === baseCommit) gitStatusCode(workspaceRoot, ["branch", "-d", branch], this.options.environment);
+    } catch (cleanupError) {
+      this.options.logger.warn("worktree.create_cleanup_failed", {
+        worktreePath,
+        ...errorFields(cleanupError),
+      });
+    }
   }
 }
 

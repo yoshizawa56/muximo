@@ -37,6 +37,8 @@ type LifecycleFixture = {
   workspace: WorkspaceRecord;
   processResult: ProcessResult;
   processError?: Error;
+  prepareError?: Error;
+  useWorktree: boolean;
   cleanupDisposition: CleanupDisposition;
   restoreSucceeded: boolean;
   confirmCleanup: boolean;
@@ -46,6 +48,8 @@ type LifecycleFixture = {
   disposeCount: number;
   adoptCount: number;
   releaseCount: number;
+  worktreeRemoveCount: number;
+  cleanupHookCount: number;
   archiveCount: number;
   restoreCount: number;
   deleted: boolean;
@@ -61,6 +65,8 @@ type RunContext = {
   disposeCount: number;
   adoptCount: number;
   releaseCount: number;
+  worktreeRemoveCount: number;
+  cleanupHookCount: number;
   providerUpdates: readonly SessionIdentityUpdate[];
 };
 
@@ -112,6 +118,8 @@ function createFixture(
     session?: AgentSessionRecord;
     processResult?: ProcessResult;
     processError?: Error;
+    prepareError?: Error;
+    useWorktree?: boolean;
     cleanupDisposition?: CleanupDisposition;
     restoreSucceeded?: boolean;
     confirmCleanup?: boolean;
@@ -126,6 +134,8 @@ function createFixture(
     workspace,
     processResult: options.processResult ?? { code: 0, interrupted: false },
     processError: options.processError,
+    prepareError: options.prepareError,
+    useWorktree: options.useWorktree ?? false,
     cleanupDisposition: options.cleanupDisposition ?? "removed",
     restoreSucceeded: options.restoreSucceeded ?? true,
     confirmCleanup: options.confirmCleanup ?? true,
@@ -135,6 +145,8 @@ function createFixture(
     disposeCount: 0,
     adoptCount: 0,
     releaseCount: 0,
+    worktreeRemoveCount: 0,
+    cleanupHookCount: 0,
     archiveCount: 0,
     restoreCount: 0,
     deleted: false,
@@ -190,20 +202,23 @@ function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
   const sessions = repository(fixture);
   const backend = {
     captureBaseline: async () => ({ success: true }),
-    prepareLaunch: async () => ({
-      plan: {
-        run: async () => {
-          fixture.runCount += 1;
-          if (fixture.processError) throw fixture.processError;
-          const sessionUpdate = { backendSessionId: "backend-session" } satisfies SessionIdentityUpdate;
-          fixture.providerUpdates.push(sessionUpdate);
-          return { process: fixture.processResult, sessionUpdate };
+    prepareLaunch: async () => {
+      if (fixture.prepareError) throw fixture.prepareError;
+      return {
+        plan: {
+          run: async () => {
+            fixture.runCount += 1;
+            if (fixture.processError) throw fixture.processError;
+            const sessionUpdate = { backendSessionId: "backend-session" } satisfies SessionIdentityUpdate;
+            fixture.providerUpdates.push(sessionUpdate);
+            return { process: fixture.processResult, sessionUpdate };
+          },
+          dispose: async () => {
+            fixture.disposeCount += 1;
+          },
         },
-        dispose: async () => {
-          fixture.disposeCount += 1;
-        },
-      },
-    }),
+      };
+    },
   };
   return new RunAgentSession({
     sessions,
@@ -212,15 +227,29 @@ function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
     hooks: {
       resolveHook: async (value) => value,
       resolveStoredHook: async () => undefined,
-      run: async () => ({ success: true }),
+      run: async (_session, kind) => {
+        if (kind === "cleanup") fixture.cleanupHookCount += 1;
+        return { success: true };
+      },
       removeOutputs: async () => undefined,
     },
     worktrees: {
-      create: async () => ({}),
+      create: async () =>
+        fixture.useWorktree
+          ? {
+              worktreeRoot: "/worktrees",
+              worktreePath: "/worktrees/session",
+              branch: "muximo/session",
+              baseCommit: "base-commit",
+            }
+          : {},
       copyFiles: async () => true,
       isRegistered: async () => true,
       hasChanges: async () => fixture.dirty,
-      remove: async () => cleanupResult(fixture.cleanupDisposition),
+      remove: async () => {
+        fixture.worktreeRemoveCount += 1;
+        return cleanupResult(fixture.cleanupDisposition);
+      },
     },
     launcher: backend,
     remote: { archive: async () => true, restore: async () => fixture.restoreSucceeded },
@@ -330,7 +359,7 @@ const runInput = {
   backendArgs: [] as readonly string[],
 };
 
-type RunKey = "success" | "failed";
+type RunKey = "success" | "failed" | "startup-failed" | "prepare-failed";
 type RunStep = { operation: "run" };
 const runCases = [
   {
@@ -357,10 +386,34 @@ const runCases = [
     steps: [{ operation: "run" }],
     assert: [
       hasError<RunContext, RunAgentSessionResult>({ message: "backend process failed" }),
-      hasObserved<RunContext, RunAgentSessionResult>("status", "exited"),
+      hasObserved<RunContext, RunAgentSessionResult>("status", undefined),
       hasObserved<RunContext, RunAgentSessionResult>("runCount", 1),
       hasObserved<RunContext, RunAgentSessionResult>("disposeCount", 1),
       hasObserved<RunContext, RunAgentSessionResult>("releaseCount", 1),
+    ],
+  },
+  {
+    name: "removes a worktree and mapping when the agent process fails during startup",
+    fixture: "startup-failed",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasError<RunContext, RunAgentSessionResult>({ message: "backend process failed" }),
+      hasObserved<RunContext, RunAgentSessionResult>("status", undefined),
+      hasObserved<RunContext, RunAgentSessionResult>("worktreeRemoveCount", 1),
+      hasObserved<RunContext, RunAgentSessionResult>("cleanupHookCount", 1),
+      hasObserved<RunContext, RunAgentSessionResult>("disposeCount", 1),
+    ],
+  },
+  {
+    name: "removes a worktree and mapping when launch preparation fails",
+    fixture: "prepare-failed",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasError<RunContext, RunAgentSessionResult>({ message: "agent launch preparation failed" }),
+      hasObserved<RunContext, RunAgentSessionResult>("status", undefined),
+      hasObserved<RunContext, RunAgentSessionResult>("worktreeRemoveCount", 1),
+      hasObserved<RunContext, RunAgentSessionResult>("cleanupHookCount", 1),
+      hasObserved<RunContext, RunAgentSessionResult>("disposeCount", 0),
     ],
   },
 ] satisfies readonly ScenarioCase<RunKey, RunStep, RunAgentSessionResult, RunContext>[];
@@ -370,11 +423,23 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
   fixtures: {
     success: () => ({ fixture: createFixture({ processResult: { code: 0, interrupted: false } }) }),
     failed: () => ({ fixture: createFixture({ processError: new Error("backend process failed") }) }),
+    "startup-failed": () => ({
+      fixture: createFixture({
+        useWorktree: true,
+        processError: new Error("backend process failed"),
+      }),
+    }),
+    "prepare-failed": () => ({
+      fixture: createFixture({
+        useWorktree: true,
+        prepareError: new Error("agent launch preparation failed"),
+      }),
+    }),
   },
   cases: runCases,
   execute: async (fixture, steps) => {
     if (steps[0]?.operation !== "run") throw new Error("run scenario has no run step");
-    return createRunUseCase(fixture).execute(runInput);
+    return createRunUseCase(fixture).execute({ ...runInput, useWorktree: fixture.useWorktree });
   },
   observe: (fixture, result) => {
     const session = [...fixture.sessions.values()][0];
@@ -386,6 +451,8 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
       disposeCount: fixture.disposeCount,
       adoptCount: fixture.adoptCount,
       releaseCount: fixture.releaseCount,
+      worktreeRemoveCount: fixture.worktreeRemoveCount,
+      cleanupHookCount: fixture.cleanupHookCount,
       providerUpdates: fixture.providerUpdates,
     };
   },

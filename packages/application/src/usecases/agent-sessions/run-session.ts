@@ -70,48 +70,53 @@ export class RunAgentSession {
       : input.useWorktree
         ? await this.deps.hooks.resolveStoredHook(workspace.cleanupScriptPath)
         : undefined;
-    const worktree = input.useWorktree ? await this.deps.worktrees.create(workspace, name, input.worktreeRoot) : {};
-    const now = this.deps.clock.now();
-    let session = AgentSession.create({
-      id: AgentSessionId.create(this.deps.clock.id()),
-      name,
-      backend: input.backend,
-      status: "starting",
-      workspaceId: workspace.id,
-      workspaceRoot: workspace.rootPath,
-      workspaceName: workspace.name,
-      ...worktree,
-      useWorktree: input.useWorktree,
-      ...(setupHook === undefined ? {} : { setupHook }),
-      ...(cleanupHook === undefined ? {} : { cleanupHook }),
-      setupRan: false,
-      resuming: false,
-      executionId: this.deps.clock.id(),
-      executionPid: this.deps.processId,
-      executionStartedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await this.deps.sessions.insert(session);
-    await this.deps.audit.record("agent_session.created", session.id, {
-      name: session.name,
-      backend: session.backend,
-      workspace: session.workspaceRoot,
-    });
-
+    let session: AgentSessionRecord | undefined;
+    let inserted = false;
+    let launchPlan: LaunchPlan | undefined;
+    let launchPlanStarted = false;
     try {
+      const worktree = input.useWorktree ? await this.deps.worktrees.create(workspace, name, input.worktreeRoot) : {};
+      const now = this.deps.clock.now();
+      session = AgentSession.create({
+        id: AgentSessionId.create(this.deps.clock.id()),
+        name,
+        backend: input.backend,
+        status: "starting",
+        workspaceId: workspace.id,
+        workspaceRoot: workspace.rootPath,
+        workspaceName: workspace.name,
+        ...worktree,
+        useWorktree: input.useWorktree,
+        ...(setupHook === undefined ? {} : { setupHook }),
+        ...(cleanupHook === undefined ? {} : { cleanupHook }),
+        setupRan: false,
+        resuming: false,
+        executionId: this.deps.clock.id(),
+        executionPid: this.deps.processId,
+        executionStartedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await this.deps.sessions.insert(session);
+      inserted = true;
+      await this.deps.audit.record("agent_session.created", session.id, {
+        name: session.name,
+        backend: session.backend,
+        workspace: session.workspaceRoot,
+      });
+
       session = await this.persist(session, { status: "setup" });
       if (!(await this.deps.worktrees.copyFiles(session, workspace.worktreeCopyPatterns))) {
         await this.markSetupFailed(session);
-        throw new Error(`worktree file copy failed; mapping retained as '${name}'`);
+        throw new Error("worktree file copy failed");
       }
 
       const setup = await this.deps.hooks.run(session, "setup");
       session = await this.persistHookUpdate(session, setup.sessionUpdate);
       if (!setup.success) {
         await this.markSetupFailed(session);
-        throw new Error(`setup hook failed; mapping retained as '${name}'`);
+        throw new Error("setup hook failed");
       }
 
       session = await this.persist(session, {
@@ -122,19 +127,23 @@ export class RunAgentSession {
       const baseline = await this.deps.launcher.captureBaseline(session);
       if (!baseline.success) {
         await this.markSetupFailed(session);
-        throw new Error("backend rollout baseline capture failed; mapping retained");
+        throw new Error("backend rollout baseline capture failed");
       }
 
       session = await this.persist(session, { status: "running", backendSessionId: clearPatch });
       const preparation = await this.deps.launcher.prepareLaunch(session, input.backendArgs, false);
+      launchPlan = preparation.plan;
       session = await this.persistIdentityUpdate(session, preparation.sessionUpdate);
 
+      launchPlanStarted = true;
       const execution = await this.executePlan(session, preparation.plan);
+      launchPlan = undefined;
       session = await this.persistIdentityUpdate(session, execution.sessionUpdate);
       const result = await this.finalize(session, execution.process);
       logger.debug("session.finished", { status: result.session.status, cleanup: result.cleanup.disposition });
       return result;
     } catch (error) {
+      if (session && inserted) await this.cleanupFailedStartup(session, launchPlan, launchPlanStarted);
       logger.debug("session.failed", { message: error instanceof Error ? error.message : String(error) });
       throw error;
     }
@@ -210,18 +219,20 @@ export class RunAgentSession {
   private async removeResources(
     session: AgentSessionRecord,
     force: boolean,
+    archiveRemote = true,
   ): Promise<import("../../ports/agent-sessions.js").CleanupResult> {
-    const archived = await this.deps.remote.archive(session);
-    if (!archived) return { disposition: "failed", reason: "remote_archive_failed" };
+    if (archiveRemote && !(await this.deps.remote.archive(session))) {
+      return { disposition: "failed", reason: "remote_archive_failed" };
+    }
     const hook = await this.deps.hooks.run(session, "cleanup");
     session = await this.persistHookUpdate(session, hook.sessionUpdate);
     if (!hook.success) {
-      const restored = await this.deps.remote.restore(session);
+      const restored = !archiveRemote || (await this.deps.remote.restore(session));
       return { disposition: "failed", reason: restored ? "cleanup_hook_failed" : "remote_restore_failed" };
     }
     const worktree = await this.deps.worktrees.remove(session, force);
     if (worktree.disposition !== "removed") {
-      const restored = await this.deps.remote.restore(session);
+      const restored = !archiveRemote || (await this.deps.remote.restore(session));
       return restored ? worktree : { disposition: "failed", reason: "remote_restore_failed" };
     }
     await this.deps.sessions.delete(session.id);
@@ -230,6 +241,36 @@ export class RunAgentSession {
     const remaining = await this.deps.sessions.list(session.workspaceId);
     await this.deps.resources.releaseIfUnused(session, remaining);
     return worktree;
+  }
+
+  private async cleanupFailedStartup(
+    session: AgentSessionRecord,
+    plan: LaunchPlan | undefined,
+    planStarted: boolean,
+  ): Promise<void> {
+    if (plan && !planStarted) {
+      try {
+        await plan.dispose();
+      } catch (error) {
+        this.deps.logger.debug("session.startup_plan_cleanup_failed", { message: errorMessage(error) });
+      }
+    }
+
+    try {
+      const failed = await this.persist(session, {
+        status: "exited",
+        lastExitStatus: 1,
+        executionId: clearPatch,
+        executionPid: clearPatch,
+        executionStartedAt: clearPatch,
+      });
+      const cleanup = await this.removeResources(failed, true, Boolean(failed.backendSessionId));
+      if (cleanup.disposition !== "removed") {
+        this.deps.logger.debug("session.startup_cleanup_failed", { reason: cleanup.reason });
+      }
+    } catch (error) {
+      this.deps.logger.debug("session.startup_cleanup_failed", { message: errorMessage(error) });
+    }
   }
 
   private async persist(session: AgentSessionRecord, input: Parameters<typeof AgentSession.update>[1]) {
@@ -255,4 +296,8 @@ export class RunAgentSession {
   private async markSetupFailed(session: AgentSessionRecord): Promise<void> {
     await this.persist(session, { status: "setup_failed" });
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

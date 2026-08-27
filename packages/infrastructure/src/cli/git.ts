@@ -1,9 +1,16 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { realpathSafe } from "./filesystem.js";
 
+export const gitOutputMaxBuffer = 64 * 1024 * 1024;
+
 export function gitWorkspaceRoot(cwd: string): string | undefined {
   try {
-    return realpathSafe(execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim());
+    return realpathSafe(
+      execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+        encoding: "utf8",
+        maxBuffer: gitOutputMaxBuffer,
+      }).trim(),
+    );
   } catch {
     return undefined;
   }
@@ -15,6 +22,7 @@ export function gitRequired(cwd: string, args: string[], message: string, enviro
       encoding: "utf8",
       env: environment,
       stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: gitOutputMaxBuffer,
     }).trim();
   } catch {
     throw new Error(message);
@@ -26,6 +34,7 @@ export function gitOutputRaw(cwd: string, args: string[], environment?: NodeJS.P
     encoding: "utf8",
     env: environment,
     stdio: ["ignore", "pipe", "ignore"],
+    maxBuffer: gitOutputMaxBuffer,
   });
 }
 
@@ -56,5 +65,5 @@ export function listUnmanagedFiles(cwd: string, environment?: NodeJS.ProcessEnv)
 }
 
 export function gitStatus(cwd: string, environment?: NodeJS.ProcessEnv): string {
-  return gitOutputRaw(cwd, ["status", "--porcelain", "--untracked-files=all"], environment);
+  return gitOutputRaw(cwd, ["status", "--porcelain", "--untracked-files=normal"], environment);
 }
