@@ -7,7 +7,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { TERMINAL_FONT_FAMILY, TERMINAL_SYMBOL_FONT_FAMILY } from "./-terminal-font";
+import { TERMINAL_FONT_FAMILY, TERMINAL_SYMBOL_FONT_FAMILY } from "./font";
 
 type Context = {};
 type Result = { family: string; startsWithSymbols: boolean };

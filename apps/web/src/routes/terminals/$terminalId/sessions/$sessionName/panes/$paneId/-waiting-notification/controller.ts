@@ -1,6 +1,6 @@
 import type { PaneSummary } from "@muximo/contract";
 import { useEffect, useRef, useState } from "react";
-import type { WaitingAgent } from "./-waiting-notification-patterns";
+import type { WaitingAgent } from "./patterns";
 
 export type WaitingNoticeState = "waiting_input" | "waiting_approval";
 

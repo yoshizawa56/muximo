@@ -15,8 +15,8 @@ import {
   type CustomKeyboardDirectionalFlickPreview,
   classifyCustomKeyboardFlick,
   installCustomKeyboardDirectionalFlickInput,
-} from "./-custom-keyboard-flick";
-import type { CustomKeyboardFlickDirection } from "./-custom-keyboard-viewmodel";
+} from "./flick";
+import type { CustomKeyboardFlickDirection } from "./viewmodel";
 
 type EmptyContext = {};
 type FlickMetrics = { dx: number; dy: number };

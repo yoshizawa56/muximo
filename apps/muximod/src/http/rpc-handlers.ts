@@ -20,6 +20,7 @@ import {
   type pairingClaimRequestSchema,
   pairingStatusSchema,
   paneSummarySchema,
+  protocolVersion,
   type RegisterWorkspaceRequest,
   type UpdateWorkspaceRequest,
 } from "@muximo/contract";
@@ -225,7 +226,7 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
     capabilities: os.capabilities.handler(({ context }) => {
       requireAuth(context);
       return muximodCapabilitiesSchema.parse({
-        protocolVersion: 1,
+        protocolVersion,
         features: {
           tmuxSessions: true,
           terminalWebSocket: true,
@@ -237,7 +238,7 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
     auth: {
       info: os.auth.info.handler(() =>
         authInfoSchema.parse({
-          protocolVersion: 1,
+          protocolVersion,
           serverId: deps.auth.serverId,
           serverTime: new Date().toISOString(),
         }),

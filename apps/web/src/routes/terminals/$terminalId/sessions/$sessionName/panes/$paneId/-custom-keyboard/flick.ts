@@ -1,4 +1,4 @@
-import type { CustomKeyboardFlickDirection } from "./-custom-keyboard-viewmodel";
+import type { CustomKeyboardFlickDirection } from "./viewmodel";
 
 export type CustomKeyboardDirectionalFlickPreview = {
   direction: CustomKeyboardFlickDirection;

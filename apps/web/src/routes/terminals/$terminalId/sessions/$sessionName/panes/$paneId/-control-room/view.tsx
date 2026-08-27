@@ -1,15 +1,14 @@
-import { AppIcon } from "../../../../../../../app/components/app-icon";
-import { AppSafeAreaOverlay } from "../../../../../../../app/components/app-layout";
-import { MuximoLogo } from "../../../../../../../app/components/muximo-logo";
-import type { PaneLayoutOverlayVariant } from "../../-pane-layout-overlay-view";
-import type { ControlRoomViewModel } from "./-control-room-viewmodel";
-import { CustomKeyboardSettingsView, CustomKeyboardView } from "./-custom-keyboard-view";
-import { PaneBoardView } from "./-pane-board-view";
-import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
-import type { PaneViewModel } from "./-terminal-viewmodel";
-import { toToastAgent, useWaitingNotices } from "./-waiting-notification-controller";
-import { ToastPattern } from "./-waiting-notification-patterns";
-import { useWindowMapGesture } from "./-window-map-gesture";
+import { AppIcon } from "../../../../../../../../app/components/app-icon";
+import { AppSafeAreaOverlay } from "../../../../../../../../app/components/app-layout";
+import { MuximoLogo } from "../../../../../../../../app/components/muximo-logo";
+import type { PaneLayoutOverlayVariant } from "../../../-pane-layout-overlay-view";
+import { CustomKeyboardSettingsView, CustomKeyboardView } from "../-custom-keyboard/view";
+import { PaneBoardView } from "../-pane-board/view";
+import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
+import type { PaneViewModel } from "../-terminal/viewmodel";
+import { toToastAgent, useWaitingNotices } from "../-waiting-notification/controller";
+import { ToastPattern } from "../-waiting-notification/patterns";
+import type { ControlRoomViewModel } from "./viewmodel";
 
 export function ControlRoomView({
   viewModel: controlRoomViewModel,
@@ -24,7 +23,6 @@ export function ControlRoomView({
   const paneBoard: PaneBoardViewModel = controlRoomViewModel.paneBoard;
   const onSessionSelect = controlRoomViewModel.onSessionSelect;
   const onNewPane = controlRoomViewModel.onNewPane;
-  const windowMapSurfaceRef = useWindowMapGesture(paneBoard.open);
   const { notices, open: dismissNotice } = useWaitingNotices(paneBoard.panes);
   const selectedPane = paneBoard.panes.find((pane) => pane.hostPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
@@ -55,10 +53,7 @@ export function ControlRoomView({
   const windowMapRunningClass = `bg-[#0b1c0f] text-lime ${windowMapCountClass}`;
 
   return (
-    <main
-      ref={windowMapSurfaceRef}
-      className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-hidden text-ink [touch-action:pan-x_pan-y]"
-    >
+    <main className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-hidden text-ink">
       <header className="flex min-h-[52px] shrink-0 items-center gap-2 border-b border-line bg-[rgb(6_13_8_/_92%)] px-[10px] backdrop-blur-[18px] max-[920px]:min-h-[calc(50px+var(--safe-area-top))] max-[920px]:pl-[max(8px,var(--safe-area-left))] max-[920px]:pr-[max(8px,var(--safe-area-right))] max-[920px]:pt-[var(--safe-area-top)]">
         <MuximoLogo size={23} />
         {onSessionSelect ? (
@@ -227,7 +222,7 @@ export function ControlRoomView({
               <div className="flex min-h-0 w-full flex-1 flex-col px-6 pb-[18px] pt-[23px] max-[920px]:pl-[max(12px,var(--safe-area-left))] max-[920px]:pr-[max(12px,var(--safe-area-right))] max-[920px]:pb-1 max-[920px]:pt-3">
                 <div
                   ref={viewModel.terminalContainerRef}
-                  className="terminal-container min-h-0 w-full flex-1 touch-none [-webkit-touch-callout:none]"
+                  className={`terminal-container min-h-0 w-full flex-1 touch-none [-webkit-touch-callout:none] ${shellMode ? "terminal-shell-container" : ""}`}
                 />
               </div>
               {viewModel.pasteState !== "idle" ? (

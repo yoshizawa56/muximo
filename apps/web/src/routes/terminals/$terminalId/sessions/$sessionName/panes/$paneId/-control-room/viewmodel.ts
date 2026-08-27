@@ -1,19 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useRef, useState } from "react";
-import { muximoBridge } from "../../../../../../../platform/muximo-bridge";
-import { useTerminalResources } from "../../../../../-terminal-resources";
-import { encodeCustomKeyboardNativeInput, encodeCustomKeyboardSequence } from "./-custom-keyboard-input";
+import { muximoBridge } from "../../../../../../../../platform/muximo-bridge";
+import { useTerminalResources } from "../../../../../../-terminal-resources";
+import { encodeCustomKeyboardNativeInput, encodeCustomKeyboardSequence } from "../-custom-keyboard/input";
+import {
+  type CustomKeyboardTerminalAction,
+  type CustomKeyboardTerminalActionHandlers,
+  routeCustomKeyboardTerminalAction,
+} from "../-custom-keyboard/terminal-actions";
 import type {
   CustomKeyboardModifier,
   CustomKeyboardSettingsViewModel,
   CustomKeyboardViewModel,
-} from "./-custom-keyboard-viewmodel";
-import { useCustomKeyboardViewModel } from "./-custom-keyboard-viewmodel";
-import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
-import { usePaneBoardViewModel } from "./-pane-board-viewmodel";
-import type { PaneViewModel } from "./-terminal-viewmodel";
-import { usePaneViewModel } from "./-terminal-viewmodel";
+} from "../-custom-keyboard/viewmodel";
+import { useCustomKeyboardViewModel } from "../-custom-keyboard/viewmodel";
+import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
+import { usePaneBoardViewModel } from "../-pane-board/viewmodel";
+import type { PaneViewModel } from "../-terminal/viewmodel";
+import { usePaneViewModel } from "../-terminal/viewmodel";
 
 export type ControlRoomViewModel = {
   terminal: PaneViewModel;
@@ -61,6 +66,7 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
     target: selectedTarget,
     connection,
     transformInput: onNativeKeyboardInput,
+    suppressNativeTouch: selectedPane?.kind === "shell",
   });
   const onKeyboardSequence = useCallback(
     (
@@ -71,11 +77,25 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
     },
     [terminal.sendInput],
   );
+  const onKeyboardTerminalAction = useCallback(
+    (action: CustomKeyboardTerminalAction) => {
+      const handlers: CustomKeyboardTerminalActionHandlers = {
+        "enter-copy-mode": terminal.enterCopyMode,
+        "paste-from-clipboard": () => {
+          void terminal.pasteFromClipboard();
+        },
+        "paste-from-tmux-buffer": terminal.pasteFromTmuxBuffer,
+      };
+      routeCustomKeyboardTerminalAction(action, handlers);
+    },
+    [terminal.enterCopyMode, terminal.pasteFromClipboard, terminal.pasteFromTmuxBuffer],
+  );
   const keyboardController = useCustomKeyboardViewModel({
     nativeKeyboardVisible: terminal.nativeKeyboardVisible,
     activeModifiers: activeKeyboardModifiers,
     onActiveModifiersChange: onActiveKeyboardModifiersChange,
     onSequence: onKeyboardSequence,
+    onTerminalAction: onKeyboardTerminalAction,
     onKeyEffect: muximoBridge.keyPressHaptic,
     onNativeFileSelected: (_action, file) => {
       terminal.pasteImage(file);

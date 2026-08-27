@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { type CustomKeyboardStorage, createCustomKeyboardStorage } from "./-custom-keyboard-storage";
+import { type CustomKeyboardStorage, createCustomKeyboardStorage } from "./storage";
+import type { CustomKeyboardTerminalAction } from "./terminal-actions";
+import { isCustomKeyboardTerminalAction } from "./terminal-actions";
 
-export { CUSTOM_KEYBOARD_STORAGE_KEY } from "./-custom-keyboard-storage";
+export { CUSTOM_KEYBOARD_STORAGE_KEY } from "./storage";
+export type { CustomKeyboardTerminalAction } from "./terminal-actions";
 
 export type CustomKeyboardModifier = "ctrl" | "alt" | "shift";
 
@@ -94,6 +97,7 @@ export type CustomKeyboardButton = {
   modifier?: CustomKeyboardModifier;
   interaction?: "directional-flick";
   nativeAction?: CustomKeyboardNativeAction;
+  terminalAction?: CustomKeyboardTerminalAction;
 };
 
 export type CustomKeyboardDragCollection = "keyboard" | "library" | "shortcut-library";
@@ -133,6 +137,7 @@ export type CustomKeyboardViewModel = {
   onButtonPress: (button: CustomKeyboardButton) => void;
   onDirectionalFlick: (direction: CustomKeyboardFlickDirection) => void;
   onNativeAction: (action: CustomKeyboardNativeAction) => void;
+  onTerminalAction: (action: CustomKeyboardTerminalAction) => void;
   onNativeFileSelected: (action: CustomKeyboardNativeFileAction, file: File) => void;
   onKeepNativeKeyboardOpen: () => void;
   onToggleNativeKeyboard: () => void;
@@ -164,6 +169,7 @@ export type CustomKeyboardControllerOptions = {
   onSequence: (sequence: CustomKeyboardSequence, activeModifiers: readonly CustomKeyboardModifier[]) => void;
   onKeyEffect?: () => void;
   onNativeAction?: (action: CustomKeyboardNativeAction) => void;
+  onTerminalAction: (action: CustomKeyboardTerminalAction) => void;
   onNativeFileSelected?: (action: CustomKeyboardNativeFileAction, file: File) => void;
   onKeepNativeKeyboardOpen?: () => void;
   onNativeKeyboardToggle: () => void;
@@ -282,6 +288,38 @@ export const customKeyboardSpecialModifierOptions: readonly CustomKeyboardSpecia
   { id: "shift", modifier: "shift", icon: "control", label: "Shift", accessibleLabel: "Shift modifier" },
 ];
 
+export type CustomKeyboardTerminalActionDefinition = {
+  id: string;
+  action: CustomKeyboardTerminalAction;
+  icon: CustomKeyboardIcon;
+  label: string;
+  accessibleLabel: string;
+};
+
+export const customKeyboardTerminalActionOptions: readonly CustomKeyboardTerminalActionDefinition[] = [
+  {
+    id: "copy-mode",
+    action: "enter-copy-mode",
+    icon: "copy",
+    label: "COPY",
+    accessibleLabel: "Enter tmux copy mode",
+  },
+  {
+    id: "paste-clipboard",
+    action: "paste-from-clipboard",
+    icon: "paste",
+    label: "PASTE",
+    accessibleLabel: "Paste from clipboard",
+  },
+  {
+    id: "paste-tmux-buffer",
+    action: "paste-from-tmux-buffer",
+    icon: "clipboard",
+    label: "TMUX",
+    accessibleLabel: "Paste from tmux buffer",
+  },
+];
+
 function specialKeyButton(id: string): CustomKeyboardButton {
   const definition = customKeyboardSpecialKeyOptions.find((candidate) => candidate.id === id);
   if (!definition) throw new Error(`Unknown special key: ${id}`);
@@ -311,6 +349,21 @@ function specialModifierButton(id: string): CustomKeyboardButton {
   };
 }
 
+function terminalActionButton(id: string): CustomKeyboardButton {
+  const definition = customKeyboardTerminalActionOptions.find((candidate) => candidate.id === id);
+  if (!definition) throw new Error(`Unknown terminal action: ${id}`);
+  return {
+    id: definition.id,
+    kind: "key",
+    category: "special",
+    icon: definition.icon,
+    label: definition.label,
+    accessibleLabel: definition.accessibleLabel,
+    sequence: [],
+    terminalAction: definition.action,
+  };
+}
+
 export const defaultCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
   specialKeyButton("escape"),
   specialKeyButton("tab"),
@@ -327,6 +380,9 @@ export const defaultCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
   },
   specialModifierButton("ctrl"),
   specialModifierButton("alt"),
+  terminalActionButton("copy-mode"),
+  terminalActionButton("paste-clipboard"),
+  terminalActionButton("paste-tmux-buffer"),
   {
     id: "slash",
     kind: "key",
@@ -514,6 +570,7 @@ export const customKeyboardButtonLibrary: readonly CustomKeyboardButton[] = uniq
   ...customKeyboardSpecialModifierOptions
     .filter((definition) => definition.id !== "shift")
     .map((definition) => specialModifierButton(definition.id)),
+  ...customKeyboardTerminalActionOptions.map((definition) => terminalActionButton(definition.id)),
   ...nativeCustomKeyboardButtons,
   ...builtInShortcutButtons,
 ]);
@@ -634,6 +691,14 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     [onToggleNativeKeyboard, options.onNativeAction, updateActiveModifiers],
   );
 
+  const onTerminalAction = useCallback(
+    (action: CustomKeyboardTerminalAction) => {
+      updateActiveModifiers([]);
+      options.onTerminalAction(action);
+    },
+    [options.onTerminalAction, updateActiveModifiers],
+  );
+
   const onDrop = useCallback((source: CustomKeyboardDragSource, target: CustomKeyboardDropTarget) => {
     setState((current) => {
       const sourceButton = current.libraryButtons.find((button) => button.id === source.buttonId);
@@ -719,6 +784,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     onButtonPress,
     onDirectionalFlick,
     onNativeAction,
+    onTerminalAction,
     onNativeFileSelected: (action, file) => options.onNativeFileSelected?.(action, file),
     onKeepNativeKeyboardOpen,
     onToggleNativeKeyboard,
@@ -956,6 +1022,7 @@ function validButtonArray(value: unknown): CustomKeyboardButton[] | null {
         candidate.category === "shortcuts") &&
       typeof candidate.accessibleLabel === "string" &&
       (candidate.interaction === undefined || candidate.interaction === "directional-flick") &&
+      (candidate.terminalAction === undefined || isCustomKeyboardTerminalAction(candidate.terminalAction)) &&
       sequence !== null
     );
   });

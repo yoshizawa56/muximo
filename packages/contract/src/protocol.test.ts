@@ -87,6 +87,16 @@ const clientCases = [
     assert: [isValid({ type: "claim", version: terminalProtocolVersion })],
   },
   {
+    name: "accepts a request to enter tmux copy mode",
+    input: { type: "enter_copy_mode", version: terminalProtocolVersion },
+    assert: [isValid({ type: "enter_copy_mode", version: terminalProtocolVersion })],
+  },
+  {
+    name: "accepts a request to paste the tmux buffer",
+    input: { type: "paste_tmux_buffer", version: terminalProtocolVersion },
+    assert: [isValid({ type: "paste_tmux_buffer", version: terminalProtocolVersion })],
+  },
+  {
     name: "rejects an invalid terminal size",
     input: { type: "resize", version: terminalProtocolVersion, cols: 0, rows: 24 },
     assert: [isInvalid(["cols"])],
@@ -267,7 +277,7 @@ const healthCases = [
   },
   {
     name: "rejects a health response for an unsupported protocol version",
-    input: { ok: true, service: "muximod", protocolVersion: 2 },
+    input: { ok: true, service: "muximod", protocolVersion: 99 },
     assert: [isInvalid(["protocolVersion"])],
   },
   {
@@ -294,7 +304,7 @@ const capabilitiesCases = [
   {
     name: "rejects capabilities for an unsupported protocol version",
     input: {
-      protocolVersion: 2,
+      protocolVersion: 99,
       features: {
         tmuxSessions: true,
         terminalWebSocket: true,
@@ -717,6 +727,17 @@ const frameCases = [
         ok: false,
         code: "unsupported_version",
         message: "Unsupported terminal protocol version: 99",
+      }),
+    ],
+  },
+  {
+    name: "classifies a stale copy-mode message by protocol version",
+    input: { data: JSON.stringify({ type: "enter_copy_mode", version: 1 }) },
+    assert: [
+      returns<EmptyContext, FrameResult>({
+        ok: false,
+        code: "unsupported_version",
+        message: "Unsupported terminal protocol version: 1",
       }),
     ],
   },

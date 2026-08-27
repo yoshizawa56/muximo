@@ -1,10 +1,10 @@
 import type { PaneSummary as ProtocolPaneSummary } from "@muximo/contract";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
-import { muximodErrorMessage } from "../../../../../../../app/api/muximod-error.js";
-import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
-import type { MuximodQueryUtils } from "../../../../../../../app/api/orpc-utils";
-import { isMockMode } from "../../../../../../../mock/mock-data";
+import type { MuximodConnection } from "../../../../../../../../app/api/muximod-client.js";
+import { muximodErrorMessage } from "../../../../../../../../app/api/muximod-error.js";
+import type { MuximodQueryUtils } from "../../../../../../../../app/api/orpc-utils";
+import { isMockMode } from "../../../../../../../../mock/mock-data";
 
 export type PaneSummary = ProtocolPaneSummary;
 

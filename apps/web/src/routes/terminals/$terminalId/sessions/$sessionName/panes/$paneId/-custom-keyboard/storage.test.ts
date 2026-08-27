@@ -9,11 +9,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import {
-  CUSTOM_KEYBOARD_STORAGE_KEY,
-  type CustomKeyboardStorage,
-  createCustomKeyboardStorage,
-} from "./-custom-keyboard-storage";
+import { CUSTOM_KEYBOARD_STORAGE_KEY, type CustomKeyboardStorage, createCustomKeyboardStorage } from "./storage";
 
 type LegacyStorage = {
   values: Map<string, string>;

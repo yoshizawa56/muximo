@@ -10,18 +10,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { AppIcon } from "../../../../../../../app/components/app-icon";
-import {
-  type CustomKeyboardDirectionalFlickPreview,
-  installCustomKeyboardDirectionalFlickInput,
-} from "./-custom-keyboard-flick";
-import { isCustomKeyboardModifierKey } from "./-custom-keyboard-input";
+import { AppIcon } from "../../../../../../../../app/components/app-icon";
+import { type CustomKeyboardDirectionalFlickPreview, installCustomKeyboardDirectionalFlickInput } from "./flick";
+import { isCustomKeyboardModifierKey } from "./input";
 import {
   customKeyboardAbcLetterRow,
   customKeyboardAbcRows,
   customKeyboardNumberRows,
   customKeyboardPunctuationRow,
-} from "./-custom-keyboard-layout";
+} from "./layout";
 import {
   type CustomKeyboardButton,
   type CustomKeyboardButtonCategory,
@@ -42,7 +39,7 @@ import {
   customKeyboardSpecialKeyOptions,
   customKeyboardSpecialModifierOptions,
   isCustomKeyboardShortcutDraftValid,
-} from "./-custom-keyboard-viewmodel";
+} from "./viewmodel";
 
 type ShortcutDropIndicator = {
   index: number;
@@ -91,15 +88,21 @@ export function CustomKeyboardView({
   const onButtonPress = useCallback(
     (button: CustomKeyboardButton) => {
       const nativeAction = button.nativeAction;
-      if (!nativeAction) {
-        viewModel.onButtonPress(button);
+      if (nativeAction) {
+        viewModel.onNativeAction(nativeAction);
+        if (nativeAction === "pick-photo" || nativeAction === "capture-photo") {
+          openNativeFilePicker(nativeAction);
+        }
         return;
       }
 
-      viewModel.onNativeAction(nativeAction);
-      if (nativeAction === "pick-photo" || nativeAction === "capture-photo") {
-        openNativeFilePicker(nativeAction);
+      const terminalAction = button.terminalAction;
+      if (terminalAction) {
+        viewModel.onTerminalAction(terminalAction);
+        return;
       }
+
+      viewModel.onButtonPress(button);
     },
     [openNativeFilePicker, viewModel],
   );
@@ -357,11 +360,9 @@ function CustomKeyboardDirectionalFlickButtonView({
       type="button"
       onPointerDown={(event) => {
         event.preventDefault();
-        onKeepNativeKeyboardOpen();
       }}
       onMouseDown={(event) => {
         event.preventDefault();
-        onKeepNativeKeyboardOpen();
       }}
       onFocus={onKeepNativeKeyboardOpen}
       aria-label={button.accessibleLabel}

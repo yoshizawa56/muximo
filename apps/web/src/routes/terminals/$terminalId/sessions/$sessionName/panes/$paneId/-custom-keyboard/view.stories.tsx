@@ -1,7 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { type ComponentProps, useCallback, useState } from "react";
 import { expect, userEvent, within } from "storybook/test";
-import { DirectionalFlickIcon } from "./-custom-keyboard-view";
+import type { ShellViewModel } from "../-shell/view";
+import { ShellView } from "../-shell/view";
+import { DirectionalFlickIcon } from "./view";
 import {
   applyCustomKeyboardDrop,
   type CustomKeyboardButton,
@@ -13,15 +15,14 @@ import {
   type CustomKeyboardSequence,
   type CustomKeyboardSettingsViewModel,
   type CustomKeyboardShortcutDraft,
+  type CustomKeyboardTerminalAction,
   type CustomKeyboardViewModel,
   customKeyboardIconOptions,
   customKeyboardSpecialKeyOptions,
   customKeyboardSpecialModifierOptions,
   defaultCustomKeyboardButtons,
   selectedButtonsFromIds,
-} from "./-custom-keyboard-viewmodel";
-import type { ShellViewModel } from "./-shell-view";
-import { ShellView } from "./-shell-view";
+} from "./viewmodel";
 
 const alphabetButtonLibrary: readonly CustomKeyboardButton[] = [..."qwertyuiopasdfghjklzxcvbnm"].map((key) => ({
   id: `letter-${key}`,
@@ -123,9 +124,12 @@ const specialModifierButtons: readonly CustomKeyboardButton[] = customKeyboardSp
   }),
 );
 
+const terminalActionButtons = defaultCustomKeyboardButtons.filter((button) => button.terminalAction);
+
 const specialButtonLibrary: readonly CustomKeyboardButton[] = [
   ...specialKeyButtons,
   ...specialModifierButtons.filter((button) => button.modifier !== "shift"),
+  ...terminalActionButtons,
   {
     id: "camera",
     kind: "key",
@@ -274,6 +278,16 @@ function InteractiveShellStory({
     setLastAction(messageByAction[action]);
   }, []);
 
+  const onTerminalAction = useCallback((action: CustomKeyboardTerminalAction) => {
+    const messageByAction: Record<CustomKeyboardTerminalAction, string> = {
+      "enter-copy-mode": "tmux copy mode requested",
+      "paste-from-clipboard": "Clipboard paste requested",
+      "paste-from-tmux-buffer": "tmux buffer paste requested",
+    };
+    setActiveModifiers([]);
+    setLastAction(messageByAction[action]);
+  }, []);
+
   const onNativeFileSelected = useCallback((action: CustomKeyboardNativeFileAction, file: File) => {
     const actionLabel = action === "capture-photo" ? "Camera photo selected" : "Photo selected";
     setLastAction(`${actionLabel}: ${file.name} · ${formatFileSize(file.size)}`);
@@ -359,6 +373,7 @@ function InteractiveShellStory({
     onButtonPress,
     onDirectionalFlick,
     onNativeAction,
+    onTerminalAction,
     onNativeFileSelected,
     onKeepNativeKeyboardOpen: () => undefined,
     onToggleNativeKeyboard,
@@ -416,6 +431,7 @@ const storyArgs = {
       onButtonPress: () => undefined,
       onDirectionalFlick: () => undefined,
       onNativeAction: () => undefined,
+      onTerminalAction: () => undefined,
       onNativeFileSelected: () => undefined,
       onKeepNativeKeyboardOpen: () => undefined,
       onToggleNativeKeyboard: () => undefined,

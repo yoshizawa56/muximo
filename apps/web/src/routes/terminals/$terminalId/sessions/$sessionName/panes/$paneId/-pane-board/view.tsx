@@ -1,7 +1,7 @@
-import { AppIcon } from "../../../../../../../app/components/app-icon";
-import { PaneLayoutOverlay, type PaneLayoutOverlayVariant } from "../../-pane-layout-overlay-view";
-import { paneStateLabel } from "../../-pane-state";
-import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
+import { AppIcon } from "../../../../../../../../app/components/app-icon";
+import { PaneLayoutOverlay, type PaneLayoutOverlayVariant } from "../../../-pane-layout-overlay-view";
+import { paneStateLabel } from "../../../-pane-state";
+import type { PaneBoardViewModel } from "./viewmodel";
 
 export function PaneBoardView({
   viewModel,

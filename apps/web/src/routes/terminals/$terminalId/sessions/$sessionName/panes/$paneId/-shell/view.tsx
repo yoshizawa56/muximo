@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { CustomKeyboardSettingsView, CustomKeyboardView } from "./-custom-keyboard-view";
-import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "./-custom-keyboard-viewmodel";
+import { CustomKeyboardSettingsView, CustomKeyboardView } from "../-custom-keyboard/view";
+import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "../-custom-keyboard/viewmodel";
 
 export type ShellViewModel = {
   keyboard: CustomKeyboardViewModel;

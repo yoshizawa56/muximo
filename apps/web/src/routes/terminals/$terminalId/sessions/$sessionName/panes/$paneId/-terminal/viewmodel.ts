@@ -8,16 +8,18 @@ import {
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { type RefCallback, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { openMuximodTerminal } from "../../../../../../../app/api/muximod-client";
-import type { MuximodConnection } from "../../../../../../../app/api/muximod-client.js";
-import { isMockMode, mockTerminalOutputForTarget } from "../../../../../../../mock/mock-data";
-import { muximoBridge } from "../../../../../../../platform/muximo-bridge";
-import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./-terminal-font";
+import { openMuximodTerminal } from "../../../../../../../../app/api/muximod-client";
+import type { MuximodConnection } from "../../../../../../../../app/api/muximod-client.js";
+import { isMockMode, mockTerminalOutputForTarget } from "../../../../../../../../mock/mock-data";
+import { muximoBridge } from "../../../../../../../../platform/muximo-bridge";
+import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./font";
 import {
+  createTerminalInputBatcher,
   createTerminalInputQueue,
   createTerminalOutputScheduler,
   type TerminalInputQueue,
-} from "./-terminal-scheduler";
+} from "./scheduler";
+import { installTerminalTouchInput, terminalMouseWheelInput } from "./touch";
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PaneViewportOwner = "mobile" | "desktop";
@@ -76,6 +78,9 @@ export type PaneViewModel = {
   toggleNativeKeyboard: () => void;
   nativeKeyboardVisible: boolean;
   pasteImage: (file: File) => void;
+  enterCopyMode: () => void;
+  pasteFromClipboard: () => Promise<boolean>;
+  pasteFromTmuxBuffer: () => void;
 };
 
 export type NativeKeyboardToggleAction = "show" | "hide";
@@ -95,10 +100,12 @@ export function usePaneViewModel({
   target,
   connection,
   transformInput,
+  suppressNativeTouch = false,
 }: {
   target: string;
   connection?: MuximodConnection;
   transformInput?: (data: string) => string;
+  suppressNativeTouch?: boolean;
 }): PaneViewModel {
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const terminalContainerRef = useCallback<RefCallback<HTMLDivElement>>((node) => {
@@ -114,6 +121,7 @@ export function usePaneViewModel({
   const socketInputQueueRef = useRef<TerminalInputQueue>(createTerminalInputQueue());
   const inputTransformRef = useRef(transformInput ?? identityInputTransform);
   const nativeKeyboardFocusPendingRef = useRef(false);
+  const suppressNativeTouchRef = useRef(suppressNativeTouch);
   const connectRef = useRef<(() => void) | null>(null);
   const detachRef = useRef<(() => void) | null>(null);
   const retryCountRef = useRef(0);
@@ -129,7 +137,11 @@ export function usePaneViewModel({
   const nativeKeyboardPreserveTimerRef = useRef<number | null>(null);
   const nativeKeyboardResettingRef = useRef(false);
   const keyboardViewportHeightRef = useRef<number | null>(null);
+  const resetNativeKeyboardRef = useRef<(() => void) | null>(null);
   const pasteResetTimerRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    suppressNativeTouchRef.current = suppressNativeTouch;
+  }, [suppressNativeTouch]);
 
   const sendInput = useCallback((data: string) => {
     terminalInputQueueRef.current.write(data);
@@ -177,17 +189,10 @@ export function usePaneViewModel({
       nativeKeyboardPreserveTimerRef.current = null;
     }, 500);
 
-    const restoreFocus = () => {
-      if (!nativeKeyboardPreserveRef.current) return;
-      const currentTerminal = terminalRef.current;
-      const currentHelperInput = currentTerminal?.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
-      if (!currentTerminal || currentTerminal !== terminal || !currentHelperInput || terminalClosedRef.current) return;
-      currentHelperInput.inputMode = "text";
-      currentTerminal.focus();
-    };
-
-    restoreFocus();
-    window.requestAnimationFrame(restoreFocus);
+    // The pointer handler prevents the button from taking focus. If the
+    // platform still blurs the helper textarea, handleKeyboardBlur restores it
+    // after the event. Refocusing during pointerdown can cancel a flick or
+    // make WebKit restart the keyboard gesture.
   }, []);
 
   const toggleNativeKeyboard = useCallback(() => {
@@ -230,6 +235,7 @@ export function usePaneViewModel({
   const reconnect = useCallback(() => {
     retryCountRef.current = 0;
     terminalClosedRef.current = false;
+    resetNativeKeyboardRef.current?.();
     clearRetryTimer();
     setStatus("connecting");
     setErrorMessage(null);
@@ -238,6 +244,28 @@ export function usePaneViewModel({
 
   const claim = useCallback(() => {
     sendControl(socketRef.current, { type: "claim", version: terminalProtocolVersion });
+  }, []);
+
+  const enterCopyMode = useCallback(() => {
+    if (sendControl(socketRef.current, { type: "enter_copy_mode", version: terminalProtocolVersion })) focus();
+  }, [focus]);
+
+  const pasteFromTmuxBuffer = useCallback(() => {
+    sendControl(socketRef.current, { type: "paste_tmux_buffer", version: terminalProtocolVersion });
+  }, []);
+
+  const pasteFromClipboard = useCallback(async (): Promise<boolean> => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.readText) return false;
+    try {
+      const data = await navigator.clipboard.readText();
+      if (!data) return true;
+      const terminal = terminalRef.current;
+      if (!terminal || terminalClosedRef.current) return false;
+      terminal.paste(data);
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
   const detach = useCallback(() => {
@@ -387,6 +415,7 @@ export function usePaneViewModel({
       setNativeKeyboardVisibility(false);
       nativeKeyboardResettingRef.current = false;
     };
+    resetNativeKeyboardRef.current = resetNativeKeyboard;
     resetNativeKeyboard();
     helperInput?.addEventListener("focus", handleKeyboardFocus);
     helperInput?.addEventListener("blur", handleKeyboardBlur);
@@ -533,6 +562,7 @@ export function usePaneViewModel({
             },
             onClosed: (message) => {
               socketInputQueueRef.current.detach(true);
+              resetNativeKeyboard();
               terminalClosedRef.current = true;
               terminalResumeStore.clear(resumeKey);
               resumeRef.current = null;
@@ -540,11 +570,11 @@ export function usePaneViewModel({
               setErrorMessage(message.reason === "detached" ? "Terminal detached" : "Terminal session closed");
             },
             onError: ({ code, message, retryable }) => {
-              socketInputQueueRef.current.detach();
               if (code === "resume_not_found" && resumeAttempt && !fallbackAttachSent) {
                 fallbackAttachSent = true;
                 resumeRef.current = null;
                 terminalResumeStore.clear(resumeKey);
+                socketInputQueueRef.current.detach();
                 setStatus("connecting");
                 sendAttach(socket);
                 return;
@@ -552,7 +582,11 @@ export function usePaneViewModel({
 
               setStatus("error");
               setErrorMessage(message);
-              if (retryable) scheduleReconnect();
+              resetNativeKeyboard();
+              if (retryable) {
+                socketInputQueueRef.current.detach();
+                scheduleReconnect();
+              }
             },
             onViewport: (owner, reason) => {
               setViewportOwner(owner);
@@ -568,6 +602,7 @@ export function usePaneViewModel({
       socket.addEventListener("error", () => {
         if (!isCurrentSocket() || terminalClosedRef.current) return;
         socketInputQueueRef.current.detach();
+        resetNativeKeyboard();
         setStatus("error");
         setErrorMessage("WebSocket connection failed");
         scheduleReconnect();
@@ -576,6 +611,7 @@ export function usePaneViewModel({
       socket.addEventListener("close", () => {
         if (!isCurrentSocket()) return;
         socketInputQueueRef.current.detach();
+        resetNativeKeyboard();
         socketRef.current = null;
         if (terminalClosedRef.current) return;
         setStatus("connecting");
@@ -601,10 +637,44 @@ export function usePaneViewModel({
       setStatus("closed");
     };
 
+    let scrollRemainder = 0;
     const sendTerminalInput = (data: string) => {
       if (isMockMode()) return;
       socketInputQueueRef.current.write(data);
     };
+    const scrollInputBatcher = createTerminalInputBatcher(sendTerminalInput);
+    const sendInteractiveTerminalInput = (data: string) => {
+      scrollInputBatcher.flush();
+      sendTerminalInput(data);
+    };
+    const scrollTerminal = (deltaY: number, clientX: number, clientY: number) => {
+      terminalOutputScheduler.markScroll();
+      const screen = terminal.element?.querySelector<HTMLElement>(".xterm-screen") ?? terminal.element ?? container;
+      const rect = screen.getBoundingClientRect();
+      const cellWidth = terminal.cols > 0 && rect.width > 0 ? rect.width / terminal.cols : 0;
+      const cellHeight = terminal.rows > 0 && rect.height > 0 ? rect.height / terminal.rows : 0;
+      if (!cellWidth || !cellHeight) return;
+
+      scrollRemainder += -deltaY / cellHeight;
+      const lineDelta = scrollRemainder > 0 ? Math.floor(scrollRemainder) : Math.ceil(scrollRemainder);
+      if (!lineDelta) return;
+      scrollRemainder -= lineDelta;
+      const column = Math.min(terminal.cols, Math.max(1, Math.floor((clientX - rect.left) / cellWidth) + 1));
+      const row = Math.min(terminal.rows, Math.max(1, Math.floor((clientY - rect.top) / cellHeight) + 1));
+      const direction = lineDelta > 0 ? "down" : "up";
+      const wheelInput = Array.from({ length: Math.abs(lineDelta) }, () =>
+        terminalMouseWheelInput(direction, column, row),
+      ).join("");
+      scrollInputBatcher.enqueue(wheelInput);
+    };
+    const touchOptions = {
+      suppressNativeTouch: suppressNativeTouchRef.current,
+      onGestureStart: () => {
+        scrollRemainder = 0;
+      },
+      onScroll: scrollTerminal,
+    };
+
     terminalInputQueueRef.current.attach(sendTerminalInput);
 
     if (isMockMode()) {
@@ -616,6 +686,7 @@ export function usePaneViewModel({
       resizeObserver.observe(container);
       window.addEventListener("resize", sendResize);
       sendResize();
+      const touchCleanup = installTerminalTouchInput(container, touchOptions);
       const inputDisposable = terminal.onData(() => {
         // The mock is intentionally read-only.
       });
@@ -625,6 +696,7 @@ export function usePaneViewModel({
         connectRef.current = null;
         detachRef.current = null;
         resetNativeKeyboard();
+        if (resetNativeKeyboardRef.current === resetNativeKeyboard) resetNativeKeyboardRef.current = null;
         clearRetryTimer();
         resizeObserver.disconnect();
         window.removeEventListener("resize", sendResize);
@@ -633,6 +705,8 @@ export function usePaneViewModel({
         helperInput?.removeEventListener("focus", handleKeyboardFocus);
         helperInput?.removeEventListener("blur", handleKeyboardBlur);
         if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+        touchCleanup();
+        scrollInputBatcher.dispose();
         terminalOutputScheduler.dispose();
         inputDisposable.dispose();
         terminalInputQueueRef.current.detach(true);
@@ -648,12 +722,14 @@ export function usePaneViewModel({
     window.addEventListener("resize", sendResize);
 
     const inputDisposable = terminal.onData((data) => {
-      sendTerminalInput(inputTransformRef.current(data));
+      sendInteractiveTerminalInput(inputTransformRef.current(data));
     });
     const binaryInputDisposable = terminal.onBinary((data) => {
+      scrollInputBatcher.flush();
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) socket.send(binaryStringToBytes(data));
     });
+    const touchCleanup = installTerminalTouchInput(container, touchOptions);
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       sendControl(socketRef.current, { type: "resize", version: terminalProtocolVersion, cols, rows });
     });
@@ -671,6 +747,7 @@ export function usePaneViewModel({
       connectRef.current = null;
       detachRef.current = null;
       resetNativeKeyboard();
+      if (resetNativeKeyboardRef.current === resetNativeKeyboard) resetNativeKeyboardRef.current = null;
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       clearRetryTimer();
       document.removeEventListener("visibilitychange", claimWhenVisible);
@@ -683,6 +760,8 @@ export function usePaneViewModel({
       helperInput?.removeEventListener("blur", handleKeyboardBlur);
       inputDisposable.dispose();
       binaryInputDisposable.dispose();
+      touchCleanup();
+      scrollInputBatcher.dispose();
       terminalOutputScheduler.dispose();
       resizeDisposable.dispose();
       const cleanupMode = terminalSessionCleanupMode(target, currentTargetRef.current);
@@ -726,6 +805,9 @@ export function usePaneViewModel({
     toggleNativeKeyboard,
     nativeKeyboardVisible,
     pasteImage,
+    enterCopyMode,
+    pasteFromClipboard,
+    pasteFromTmuxBuffer,
   };
 }
 
@@ -829,9 +911,14 @@ export function handleControlMessage(
   if (message.type === "viewport") handlers.onViewport(message.owner, message.reason);
 }
 
-function sendControl(socket: WebSocket | null, message: ClientControlMessage): void {
-  if (socket?.readyState !== WebSocket.OPEN) return;
-  socket.send(encodeClientControlFrame(message));
+function sendControl(socket: WebSocket | null, message: ClientControlMessage): boolean {
+  if (socket?.readyState !== WebSocket.OPEN) return false;
+  try {
+    socket.send(encodeClientControlFrame(message));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function binaryStringToBytes(data: string): ArrayBuffer {

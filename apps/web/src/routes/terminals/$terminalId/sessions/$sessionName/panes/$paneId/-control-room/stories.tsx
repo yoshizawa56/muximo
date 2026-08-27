@@ -1,12 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { storyPanes } from "../../../../../-story-fixtures";
-import { ControlRoomView } from "./-control-room-view";
-import type { ControlRoomViewModel } from "./-control-room-viewmodel";
-import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "./-custom-keyboard-viewmodel";
-import { defaultCustomKeyboardButtons } from "./-custom-keyboard-viewmodel";
-import type { PaneBoardViewModel } from "./-pane-board-viewmodel";
-import type { PaneViewModel } from "./-terminal-viewmodel";
+import { storyPanes } from "../../../../../../-story-fixtures";
+import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "../-custom-keyboard/viewmodel";
+import { defaultCustomKeyboardButtons } from "../-custom-keyboard/viewmodel";
+import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
+import type { PaneViewModel } from "../-terminal/viewmodel";
+import { ControlRoomView } from "./view";
+import type { ControlRoomViewModel } from "./viewmodel";
 
 function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlRoomViewModel {
   const close = fn();
@@ -40,6 +40,9 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     toggleNativeKeyboard: fn(),
     nativeKeyboardVisible: false,
     pasteImage: fn(),
+    enterCopyMode: fn(),
+    pasteFromClipboard: fn(async () => true),
+    pasteFromTmuxBuffer: fn(),
   };
   const keyboard: CustomKeyboardViewModel = {
     buttons: defaultCustomKeyboardButtons,
@@ -50,6 +53,7 @@ function buildViewModel(overrides: Partial<ControlRoomViewModel> = {}): ControlR
     onButtonPress: fn(),
     onDirectionalFlick: fn(),
     onNativeAction: fn(),
+    onTerminalAction: fn(),
     onNativeFileSelected: fn(),
     onKeepNativeKeyboardOpen: fn(),
     onToggleNativeKeyboard: fn(),

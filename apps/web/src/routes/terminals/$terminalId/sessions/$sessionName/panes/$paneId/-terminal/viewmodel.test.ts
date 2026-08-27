@@ -29,7 +29,7 @@ import {
   resumeStateFromReady,
   type TerminalResumeStore,
   terminalSessionCleanupMode,
-} from "./-terminal-viewmodel";
+} from "./viewmodel";
 
 type EmptyContext = {};
 type AttachResult = Extract<ClientControlMessage, { type: "attach" }>;

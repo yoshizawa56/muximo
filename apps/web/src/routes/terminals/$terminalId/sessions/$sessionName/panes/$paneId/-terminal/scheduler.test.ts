@@ -12,7 +12,7 @@ import {
   createTerminalInputQueue,
   createTerminalOutputScheduler,
   type TerminalData,
-} from "./-terminal-scheduler";
+} from "./scheduler";
 
 type ScheduledCallback = { id: number; callback: () => void; delayMs?: number };
 

@@ -52,6 +52,8 @@ export type ViewportLease = {
   readonly sessionName: string;
   claimMobile(cols?: number, rows?: number): Promise<void>;
   resize(cols?: number, rows?: number): Promise<void>;
+  enterCopyMode(): Promise<void>;
+  pasteTmuxBuffer(): Promise<void>;
   release(): Promise<void>;
 };
 
