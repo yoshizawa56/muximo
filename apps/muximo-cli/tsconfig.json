@@ -6,5 +6,5 @@
     "outDir": "dist",
     "types": ["node", "bun-types"]
   },
-  "include": ["src"]
+  "include": ["src", "dev.ts"]
 }

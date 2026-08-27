@@ -18,6 +18,7 @@ import {
   createAgentDatabase,
   createImagePaster,
   createLogger,
+  type DatabaseSchemaSynchronizer,
   DrizzleAgentSessionRepository,
   DrizzlePaneRepository,
   DrizzleWorkspaceRepository,
@@ -56,6 +57,7 @@ import type { MuximodOriginPolicy } from "./http/types.js";
 export type MuximodOptions = {
   host: string;
   port: number;
+  schemaSynchronizer: DatabaseSchemaSynchronizer;
   databaseFile?: string;
   allowedRoots?: string[];
   controlSocket?: string;
@@ -111,6 +113,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   const databaseFile = paths.databaseFile;
   const database = createAgentDatabase(databaseFile, {
+    schemaSynchronizer: options.schemaSynchronizer,
     instanceDirectory: databaseFile === ":memory:" ? undefined : paths.instanceDirectory,
   });
   const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);

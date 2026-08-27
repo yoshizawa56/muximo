@@ -1,9 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 import { isMockMode } from "../../mock/mock-data";
-import { createMuximodEventCoordinator } from "./muximod-event-coordinator.js";
 import type { MuximodConnection } from "./muximod-client.js";
 import { openMuximodEvents } from "./muximod-client.js";
+import { createMuximodEventCoordinator } from "./muximod-event-coordinator.js";
 import { muximodQueryUtils } from "./orpc-utils.js";
 
 const coordinatorCache = new WeakMap<MuximodConnection, ReturnType<typeof createMuximodEventCoordinator>>();

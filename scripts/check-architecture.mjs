@@ -17,6 +17,7 @@ for (const workspaceRoot of workspaceRoots) {
         directory,
         relativeDirectory: relative(root, directory).split(sep).join("/"),
         dependencies: new Set(Object.keys(packageJson.dependencies ?? {})),
+        devDependencies: new Set(Object.keys(packageJson.devDependencies ?? {})),
       });
     } catch {
       // Directories without a package.json are not workspace packages.
@@ -180,7 +181,11 @@ function inspectSource(path, relativePath) {
     inspectAppBoundary(specifier, path, relativePath, line);
     if (sourcePackage && dependency && dependency !== sourcePackage) {
       const packageInfo = workspacePackages.get(sourcePackage);
-      if (packageInfo && !packageInfo.dependencies.has(dependency)) {
+      const availableDependencies =
+        packageInfo && isDevelopmentEntryPoint(relativePath)
+          ? new Set([...packageInfo.dependencies, ...packageInfo.devDependencies])
+          : packageInfo?.dependencies;
+      if (packageInfo && !availableDependencies?.has(dependency)) {
         errors.push(
           `${relativePath}:${line}: ${dependency} is imported but is not a production dependency of ${sourcePackage}`,
         );
@@ -192,6 +197,10 @@ function inspectSource(path, relativePath) {
   inspectEntityUsage(source, relativePath);
   inspectCliBoundary(source, relativePath);
   inspectApplicationBoundary(source, relativePath);
+}
+
+function isDevelopmentEntryPoint(relativePath) {
+  return /^(?:apps|packages)\/[^/]+\/dev\.ts$/.test(relativePath);
 }
 
 function inspectAppBoundary(specifier, sourcePath, relativePath, line) {

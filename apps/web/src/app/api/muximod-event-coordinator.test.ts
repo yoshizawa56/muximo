@@ -1,7 +1,7 @@
 import type { MuximodEvent } from "@muximo/contract";
 import {
-  hasObserved,
   type FixtureHandle,
+  hasObserved,
   type OperationCase,
   type OperationTable,
   returns,

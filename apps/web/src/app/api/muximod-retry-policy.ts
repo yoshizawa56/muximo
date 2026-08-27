@@ -13,8 +13,7 @@ const rateLimitReconnectDelayMs = 60_000;
 export function shouldRetryMuximodQuery(failureCount: number, error: unknown): boolean {
   if (isMuximodApiError(error)) {
     if (error.status === 401) return failureCount < authenticationRetryLimit;
-    if (error.status === 408 || error.status === 425 || error.status >= 500)
-      return failureCount < transientRetryLimit;
+    if (error.status === 408 || error.status === 425 || error.status >= 500) return failureCount < transientRetryLimit;
     return false;
   }
 

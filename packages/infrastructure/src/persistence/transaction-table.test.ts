@@ -11,14 +11,16 @@ import {
 } from "@muximo/test-support";
 import { afterAll, describe, it } from "vitest";
 import { createSqliteRollbackScope } from "./__tests__/sqlite-table-scope.js";
-import { createAgentDatabase, DrizzleWorkspaceRepository } from "./index.js";
+import { createAgentDatabase, createMigrationSchemaSynchronizer, DrizzleWorkspaceRepository } from "./index.js";
 
 type Input = { id: string };
 type Fixture = { repository: DrizzleWorkspaceRepository };
 type Context = { count: number; names: readonly string[] };
 
 const root = mkdtempSync(join(tmpdir(), "muximo-transaction-table-"));
-const database = createAgentDatabase(join(root, "muximod.sqlite"));
+const database = createAgentDatabase(join(root, "muximod.sqlite"), {
+  schemaSynchronizer: createMigrationSchemaSynchronizer(),
+});
 const scope = createSqliteRollbackScope(database);
 const repository = new DrizzleWorkspaceRepository(database.db);
 

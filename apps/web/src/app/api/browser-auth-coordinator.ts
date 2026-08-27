@@ -27,25 +27,25 @@ export function createBrowserAuthCoordinator(loadSession: BrowserAuthSessionLoad
 
   const getAccessToken = (): Promise<string> => {
     if (isFresh(cachedSession)) return Promise.resolve(cachedSession.accessToken);
-    if (!pendingSession) {
-      const generation = invalidationGeneration;
-      const request = Promise.resolve()
-        .then(loadSession)
-        .then((session) => {
-          if (generation === invalidationGeneration) cachedSession = session;
-          return session;
-        });
-      pendingSession = request;
-      request.then(
-        () => {
-          if (pendingSession === request) pendingSession = undefined;
-        },
-        () => {
-          if (pendingSession === request) pendingSession = undefined;
-        },
-      );
-    }
-    return pendingSession!.then((session) => session.accessToken);
+    if (pendingSession) return pendingSession.then((session) => session.accessToken);
+
+    const generation = invalidationGeneration;
+    const request = Promise.resolve()
+      .then(loadSession)
+      .then((session) => {
+        if (generation === invalidationGeneration) cachedSession = session;
+        return session;
+      });
+    pendingSession = request;
+    request.then(
+      () => {
+        if (pendingSession === request) pendingSession = undefined;
+      },
+      () => {
+        if (pendingSession === request) pendingSession = undefined;
+      },
+    );
+    return request.then((session) => session.accessToken);
   };
 
   return {

@@ -10,9 +10,9 @@ import { describe, it } from "vitest";
 import {
   classifyMuximodError,
   MuximodApiError,
+  type MuximodErrorCategory,
   muximodErrorDetails,
   muximodErrorMessage,
-  type MuximodErrorCategory,
 } from "./muximod-error.js";
 
 type Input = { error: unknown };
@@ -33,7 +33,9 @@ const cases = [
   },
   {
     name: "presents challenge rate limiting without exposing protocol details",
-    input: { error: new MuximodApiError("too many authentication challenges requested", 429, "challenge_rate_limited", null) },
+    input: {
+      error: new MuximodApiError("too many authentication challenges requested", 429, "challenge_rate_limited", null),
+    },
     assert: [
       returns<Context, Result>({
         category: "rate_limited",

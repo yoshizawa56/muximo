@@ -11,9 +11,9 @@
     }
   },
   "scripts": {
-    "build": "bunx --bun tsc -p tsconfig.build.json",
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.build.json",
     "test": "bun test src",
-    "typecheck": "bunx --bun tsc -p tsconfig.json"
+    "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

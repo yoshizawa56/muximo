@@ -1,14 +1,14 @@
 import {
-  hasObserved,
   type FixtureHandle,
-  returns,
-  runOperationTable,
+  hasObserved,
   type OperationCase,
   type OperationTable,
+  returns,
+  runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { createBrowserAuthCoordinator, type BrowserAuthSession } from "./browser-auth-coordinator";
+import { type BrowserAuthSession, createBrowserAuthCoordinator } from "./browser-auth-coordinator";
 
 type AuthFixture = {
   coordinator: ReturnType<typeof createBrowserAuthCoordinator>;
@@ -83,9 +83,11 @@ const table: OperationTable<AuthFixture, "default", AuthInput, AuthResult, AuthC
     const initialTokens = await Promise.all(
       Array.from({ length: input.initialCallCount }, () => fixture.coordinator.getAccessToken()),
     );
-    const afterInvalidationToken = input.invalidateAfterInitial
-      ? (fixture.coordinator.invalidateAccessToken(), await fixture.coordinator.getAccessToken())
-      : null;
+    let afterInvalidationToken: string | null = null;
+    if (input.invalidateAfterInitial) {
+      fixture.coordinator.invalidateAccessToken();
+      afterInvalidationToken = await fixture.coordinator.getAccessToken();
+    }
     return { initialTokens, afterInvalidationToken };
   },
   observe: (fixture) => ({ loadCalls: fixture.loadCalls }),

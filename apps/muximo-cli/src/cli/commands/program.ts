@@ -39,7 +39,7 @@ export function buildCliProgram(handlers: CliHandlers, context: CliCommandContex
   registerDaemonCommands(program, handlers, context);
   registerPairCommand(program, handlers, context);
   registerServeCommand(program, handlers, context);
-  registerDevCommand(program, handlers, context);
+  if (context.includeDevelopmentCommands) registerDevCommand(program, handlers, context);
   registerCompletionCommand(program, context);
 
   return program;

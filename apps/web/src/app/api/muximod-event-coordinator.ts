@@ -1,12 +1,9 @@
-import { consumeEventIterator } from "@orpc/client";
 import type { MuximodEvent } from "@muximo/contract";
+import { consumeEventIterator } from "@orpc/client";
 import type { QueryClient } from "@tanstack/react-query";
 import { invalidateOnMuximodEvent, invalidateOnReconnect } from "./invalidation.js";
+import { muximodEventReconnectDelay, shouldReconnectMuximodEvents } from "./muximod-retry-policy.js";
 import type { MuximodQueryUtils } from "./orpc-utils.js";
-import {
-  muximodEventReconnectDelay,
-  shouldReconnectMuximodEvents,
-} from "./muximod-retry-policy.js";
 
 export type MuximodEventSubscriber = {
   queryClient: QueryClient;

@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import type { AgentDrizzleDatabase } from "./database-types.js";
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
 import { resolveMuximodPaths } from "./paths.js";
+import type { DatabaseSchemaSynchronizer } from "./schema-sync.js";
 import { configureSqliteConnection, defaultSqliteBusyTimeoutMs } from "./sqlite.js";
 
 export type {
@@ -40,6 +40,17 @@ export {
   recordAuditEvent,
 } from "./repositories/sqlite/index.js";
 export { agentSessions, auditEvents, codexSessionStates, panes, workspaces } from "./schema.js";
+export {
+  createMigrationSchemaSynchronizer,
+  createPushSchemaSynchronizer,
+  type DatabaseSchemaSynchronizer,
+  type DatabaseSchemaSynchronizerInput,
+  MigrationSchemaSynchronizer,
+  type PushCommandOptions,
+  type PushCommandRunner,
+  PushSchemaSynchronizer,
+  type PushSchemaSynchronizerOptions,
+} from "./schema-sync.js";
 export type { SqliteRetryOptions } from "./transaction.js";
 export { isRetryableSqliteBusy, runSqliteTransaction, SqliteTransactionManager } from "./transaction.js";
 
@@ -52,6 +63,7 @@ export type AgentDatabase = {
 };
 
 export type AgentDatabaseOptions = {
+  schemaSynchronizer: DatabaseSchemaSynchronizer;
   migrationsFolder?: string;
   instanceDirectory?: string;
   busyTimeoutMs?: number;
@@ -61,10 +73,7 @@ export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): 
   return resolveMuximodPaths(env).databaseFile;
 }
 
-export function createAgentDatabase(
-  file: string | undefined = undefined,
-  options: AgentDatabaseOptions = {},
-): AgentDatabase {
+export function createAgentDatabase(file: string | undefined, options: AgentDatabaseOptions): AgentDatabase {
   const databaseFile = file ?? defaultCreateDatabaseFile(process.env);
   const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
   const configuredInstanceDirectory =
@@ -84,12 +93,20 @@ export function createAgentDatabase(
   const migrationsFolder = options.migrationsFolder ?? findAgentMigrationsFolder() ?? materializeEmbeddedMigrations();
   const db = drizzle({ client: sqlite });
   try {
-    migrate(db, { migrationsFolder });
+    options.schemaSynchronizer.synchronize({
+      databaseFile: databasePath,
+      db,
+      sqlite,
+      migrationsFolder,
+    });
   } catch (error) {
     sqlite.close();
-    throw new Error(`database migration failed: ${error instanceof Error ? error.message : String(error)}`, {
-      cause: error,
-    });
+    throw new Error(
+      `database schema synchronization failed: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
   ensureAuthSchema(sqlite);
   secureDatabaseFiles(databasePath);

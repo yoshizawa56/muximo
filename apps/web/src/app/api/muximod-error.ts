@@ -19,13 +19,7 @@ export class MuximodApiError extends Error {
   }
 }
 
-export type MuximodErrorCategory =
-  | "authentication"
-  | "rate_limited"
-  | "client"
-  | "server"
-  | "network"
-  | "unknown";
+export type MuximodErrorCategory = "authentication" | "rate_limited" | "client" | "server" | "network" | "unknown";
 
 export function isMuximodApiError(value: unknown): value is MuximodApiErrorLike {
   if (!isRecord(value)) return false;
@@ -57,7 +51,8 @@ export function muximodErrorMessage(error: unknown, fallback = "Unknown error"):
   if (isMuximodApiError(error)) {
     const category = classifyMuximodError(error);
     if (category === "authentication") return "Muximod authentication expired. Please retry.";
-    if (category === "rate_limited") return "Muximod is temporarily rate limiting requests. Please wait a moment and try again.";
+    if (category === "rate_limited")
+      return "Muximod is temporarily rate limiting requests. Please wait a moment and try again.";
     return readMessage(error.message) ?? fallback;
   }
 

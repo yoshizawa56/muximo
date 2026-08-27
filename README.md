@@ -124,12 +124,17 @@ Manage workspaces and tmux sessions:
 
 ```sh
 muximo workspace list
-muximo workspace add ~/work/project --name project
+muximo workspace add ~/work/project --name project --copy-pattern .env
 muximo workspace update project --setup-hook ~/.config/muximo/setup
 muximo workspace delete project
 muximo tmux new-session -s project -c ~/work/project
 muximo doctor --verbose
 ```
+
+For a workspace that is already registered, enable the same worktree-local
+environment copy with `muximo workspace update project --add-copy-pattern .env`.
+Muximo copies the ignored `.env` from the workspace root when it creates a
+managed worktree; development entrypoints only read the copied file.
 
 The Web UI can also create shell or agent panes, choose a new tmux window or split, and select a workspace or managed worktree. Use `muximo --help` for commands and options not shown here.
 

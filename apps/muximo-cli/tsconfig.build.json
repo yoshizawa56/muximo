@@ -7,5 +7,6 @@
     "rootDir": "src",
     "outDir": "dist"
   },
+  "exclude": ["dev.ts"],
   "files": ["src/index.ts"]
 }

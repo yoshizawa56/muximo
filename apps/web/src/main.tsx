@@ -3,8 +3,8 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@xterm/xterm/css/xterm.css";
-import { AppErrorBoundary } from "./app/app-error-boundary";
 import { muximodRetryDelay, shouldRetryMuximodQuery } from "./app/api/muximod-retry-policy.js";
+import { AppErrorBoundary } from "./app/app-error-boundary";
 import "./styles.css";
 import { router } from "./router";
 

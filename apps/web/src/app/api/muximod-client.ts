@@ -2,7 +2,7 @@ import type { MuximodEvent, muximodContract } from "@muximo/contract";
 import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
-import { MuximodApiError, isMuximodApiError } from "./muximod-error.js";
+import { isMuximodApiError, MuximodApiError } from "./muximod-error.js";
 
 export { MuximodApiError } from "./muximod-error.js";
 
@@ -140,8 +140,7 @@ function normalizeRpcErrors<T>(value: T, connection: MuximodConnection): T {
 
 function normalizeRpcError(error: unknown, connection: MuximodConnection): unknown {
   const normalized = toMuximodApiError(error);
-  if (isMuximodApiError(normalized) && normalized.status === 401)
-    connection.auth?.invalidateAccessToken?.();
+  if (isMuximodApiError(normalized) && normalized.status === 401) connection.auth?.invalidateAccessToken?.();
   return normalized;
 }
 

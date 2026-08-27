@@ -11,12 +11,13 @@
     }
   },
   "scripts": {
-    "build": "bunx --bun tsc -p tsconfig.build.json",
-    "db:check": "bunx --bun drizzle-kit check --config drizzle.config.ts",
-    "db:generate": "bunx --bun drizzle-kit generate --config drizzle.config.ts && bun ../../scripts/sync-embedded-migrations.mjs",
-    "db:migrate": "bunx --bun drizzle-kit migrate --config drizzle.config.ts",
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.build.json",
+    "db:check": "node node_modules/drizzle-kit/bin.cjs check --config drizzle.config.ts",
+    "db:generate": "node node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts && bun ../../scripts/sync-embedded-migrations.mjs",
+    "db:migrate": "node node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts",
+    "db:push": "node node_modules/drizzle-kit/bin.cjs push --config drizzle.dev.config.ts --force",
     "test": "bun test src",
-    "typecheck": "bunx --bun tsc -p tsconfig.json"
+    "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json"
   },
   "dependencies": {
     "@muximo/application": "workspace:*",

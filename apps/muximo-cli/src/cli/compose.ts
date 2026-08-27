@@ -30,6 +30,7 @@ import {
   createDefaultAgentBackendProviders,
   createDefaultAgentPluginRegistry,
   createLogger,
+  type DatabaseSchemaSynchronizer,
   DrizzleAgentSessionRepository,
   DrizzleCodexSessionStateRepository,
   DrizzleWorkspaceRepository,
@@ -74,6 +75,8 @@ import { createSystemHandlers, type ServeResult } from "./handlers/system.js";
 import { createWorkspaceHandlers } from "./handlers/workspace.js";
 
 export type CliCompositionOptions = {
+  schemaSynchronizer: DatabaseSchemaSynchronizer;
+  includeDevelopmentCommands: boolean;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   io?: CliIo;
@@ -106,7 +109,7 @@ type DatabaseResources = {
 };
 
 /** The sole CLI composition root: all concrete resources are wired here. */
-export function createCliComposition(options: CliCompositionOptions = {}): CliComposition {
+export function createCliComposition(options: CliCompositionOptions): CliComposition {
   const io = options.io ?? { out: process.stdout, err: process.stderr };
   const environment = { ...process.env, ...options.env };
   const cwd = options.cwd ?? process.cwd();
@@ -126,7 +129,8 @@ export function createCliComposition(options: CliCompositionOptions = {}): CliCo
   const ensureDatabase = (): DatabaseResources => {
     if (resources) return resources;
     const database = createAgentDatabase(databaseFile, {
-      migrationsFolder: environment.MUXIMOD_MIGRATIONS_DIR,
+      schemaSynchronizer: options.schemaSynchronizer,
+      migrationsFolder: environment.MUXIMOD_MIGRATIONS_DIR ?? environment.MUXIMO_MIGRATIONS_DIR,
       instanceDirectory,
     });
     const transaction = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
@@ -380,6 +384,7 @@ export function createCliComposition(options: CliCompositionOptions = {}): CliCo
     io,
     cwd,
     environment,
+    includeDevelopmentCommands: options.includeDevelopmentCommands,
     handlers,
     lifecycle: {
       started: (commandPath) => logger.debug("command.started", { command: commandPath.join(" ") }),

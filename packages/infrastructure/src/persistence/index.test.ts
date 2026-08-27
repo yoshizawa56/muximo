@@ -27,6 +27,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   createAgentDatabase,
+  createMigrationSchemaSynchronizer,
   DrizzleAgentSessionRepository,
   DrizzlePaneRepository,
   DrizzleWorkspaceRepository,
@@ -34,6 +35,8 @@ import {
   recordAuditEvent,
 } from "./index.js";
 import { auditEvents } from "./schema.js";
+
+const migrationSchemaSynchronizer = createMigrationSchemaSynchronizer();
 
 const pane: PaneRecord = Pane.create({
   id: PaneId.create("pane-1"),
@@ -144,7 +147,7 @@ type DatabaseContext = {
 };
 
 const normalFixture = (): FixtureHandle<DatabaseFixture> => {
-  const database = createAgentDatabase(":memory:");
+  const database = createAgentDatabase(":memory:", { schemaSynchronizer: migrationSchemaSynchronizer });
   return { fixture: { database, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
@@ -163,14 +166,16 @@ const restartFixture = async (registerCleanup?: CleanupRegistrar): Promise<Fixtu
   rmSync(join(migrationsFolder, "meta", "0006_snapshot.json"));
 
   const file = join(root, "muximod.sqlite");
-  const beforeRestart = createAgentDatabase(file, { migrationsFolder });
+  const beforeRestart = createAgentDatabase(file, {
+    migrationsFolder,
+    schemaSynchronizer: migrationSchemaSynchronizer,
+  });
   try {
     await new DrizzlePaneRepository(beforeRestart.db).upsert(pane);
   } finally {
     beforeRestart.close();
   }
-
-  const database = createAgentDatabase(file);
+  const database = createAgentDatabase(file, { schemaSynchronizer: migrationSchemaSynchronizer });
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
@@ -191,7 +196,10 @@ const legacyPaneMigrationFixture = async (
   rmSync(join(migrationsFolder, "meta", "0006_snapshot.json"));
 
   const file = join(root, "muximod.sqlite");
-  const beforeMigration = createAgentDatabase(file, { migrationsFolder });
+  const beforeMigration = createAgentDatabase(file, {
+    migrationsFolder,
+    schemaSynchronizer: migrationSchemaSynchronizer,
+  });
   try {
     const panes = new DrizzlePaneRepository(beforeMigration.db);
     await panes.upsert({ ...pane, id: PaneId.create("pane-legacy-migrated"), hostServerId: "legacy" });
@@ -204,7 +212,7 @@ const legacyPaneMigrationFixture = async (
     beforeMigration.close();
   }
 
-  const database = createAgentDatabase(file);
+  const database = createAgentDatabase(file, { schemaSynchronizer: migrationSchemaSynchronizer });
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
@@ -230,7 +238,10 @@ const pendingMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHan
     join(migrationsFolder, "0001_migration_probe.sql"),
     "CREATE TABLE migration_probe (id integer PRIMARY KEY);\n",
   );
-  const database = createAgentDatabase(":memory:", { migrationsFolder });
+  const database = createAgentDatabase(":memory:", {
+    migrationsFolder,
+    schemaSynchronizer: migrationSchemaSynchronizer,
+  });
   return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
 };
 
@@ -279,7 +290,7 @@ const authMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHandle
       "2026-08-24T00:00:00.000Z",
     );
   sqlite.close();
-  const database = createAgentDatabase(file);
+  const database = createAgentDatabase(file, { schemaSynchronizer: migrationSchemaSynchronizer });
   registerCleanup?.(() => {
     database.close();
     rmSync(root, { recursive: true, force: true });
