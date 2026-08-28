@@ -163,7 +163,7 @@ const table: OperationTable<SnapshotFixture, "default", SnapshotInput, void, Sna
         JSON.stringify({
           pid: Number.MAX_SAFE_INTEGER,
           acquiredAt: "2026-08-28T00:00:00.000Z",
-          token: "crashed-process-token",
+          token: "stale-lock",
         }),
         { mode: 0o600 },
       );
@@ -184,7 +184,7 @@ const table: OperationTable<SnapshotFixture, "default", SnapshotInput, void, Sna
       mkdirSync(fixture.targetInstanceDir, { recursive: true, mode: 0o700 });
       writeFileSync(
         lockFile,
-        JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString(), token: "expired-process-token" }),
+        JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString(), token: "expired-lock" }),
         { mode: 0o600 },
       );
       const expiredAt = new Date(Date.now() - 20_000);
