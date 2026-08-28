@@ -7,5 +7,6 @@ export const Route = createFileRoute("/terminals/$terminalId/sessions/$sessionNa
 });
 
 function ControlRoomRoute() {
-  return <ControlRoomView viewModel={useControlRoomViewModel()} />;
+  const { paneId } = Route.useParams();
+  return <ControlRoomView paneId={paneId} viewModel={useControlRoomViewModel()} />;
 }

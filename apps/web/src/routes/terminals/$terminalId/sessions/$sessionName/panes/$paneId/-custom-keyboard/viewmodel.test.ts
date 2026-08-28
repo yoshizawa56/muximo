@@ -8,6 +8,12 @@ import {
 } from "./layout";
 import {
   applyCustomKeyboardDrop,
+  insertButtonIdBeforeTarget,
+  isCustomKeyboardShortcutDraftValid,
+  selectedButtonsFromIds,
+  toggleCustomKeyboardModifier,
+} from "./policy";
+import {
   type CustomKeyboardButton,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
@@ -15,11 +21,7 @@ import {
   customKeyboardButtonLibrary,
   customKeyboardTerminalActionOptions,
   defaultCustomKeyboardButtons,
-  insertButtonIdBeforeTarget,
-  isCustomKeyboardShortcutDraftValid,
   parseCustomKeyboardState,
-  selectedButtonsFromIds,
-  toggleCustomKeyboardModifier,
 } from "./viewmodel";
 
 type EmptyContext = {};

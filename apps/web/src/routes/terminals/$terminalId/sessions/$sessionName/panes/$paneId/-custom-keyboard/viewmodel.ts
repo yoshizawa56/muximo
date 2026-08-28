@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  applyCustomKeyboardDrop,
+  isCustomKeyboardShortcutDraftValid,
+  selectedButtonsFromIds,
+  toggleCustomKeyboardModifier,
+} from "./policy";
 import { type CustomKeyboardStorage, createCustomKeyboardStorage } from "./storage";
 import type { CustomKeyboardTerminalAction } from "./terminal-actions";
 import { isCustomKeyboardTerminalAction } from "./terminal-actions";
@@ -122,10 +128,6 @@ export type CustomKeyboardShortcutDraft = {
   sequence: CustomKeyboardSequence;
 };
 
-export function isCustomKeyboardShortcutDraftValid(draft: Pick<CustomKeyboardShortcutDraft, "sequence">): boolean {
-  return draft.sequence.length > 0;
-}
-
 export type CustomKeyboardFlickDirection = "up" | "down" | "left" | "right";
 
 export type CustomKeyboardViewModel = {
@@ -141,7 +143,6 @@ export type CustomKeyboardViewModel = {
   onNativeFileSelected: (action: CustomKeyboardNativeFileAction, file: File) => void;
   onKeepNativeKeyboardOpen: () => void;
   onToggleNativeKeyboard: () => void;
-  onOpenSettings: () => void;
 };
 
 export type CustomKeyboardSettingsViewModel = {
@@ -158,8 +159,6 @@ export type CustomKeyboardSettingsViewModel = {
   onDeleteShortcut: (buttonId: string) => void;
   onRepeatStartDelayChange: (startDelayMs: number) => void;
   onRepeatIntervalChange: (intervalMs: number) => void;
-  onClose: () => void;
-  onSave: () => void;
 };
 
 export type CustomKeyboardControllerOptions = {
@@ -178,7 +177,6 @@ export type CustomKeyboardControllerOptions = {
 export type CustomKeyboardController = {
   keyboard: CustomKeyboardViewModel;
   settings: CustomKeyboardSettingsViewModel;
-  settingsOpen: boolean;
 };
 
 export const customKeyboardIconOptions: readonly {
@@ -588,9 +586,7 @@ type StoredCustomKeyboardState = Partial<PersistedCustomKeyboardState> & {
   shortcutButtons?: unknown;
 };
 
-export type CustomKeyboardState = PersistedCustomKeyboardState & {
-  settingsOpen: boolean;
-};
+export type CustomKeyboardState = PersistedCustomKeyboardState;
 
 export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOptions): CustomKeyboardController {
   const [state, setState] = useState<CustomKeyboardState>(() => createDefaultCustomKeyboardState());
@@ -788,7 +784,6 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     onNativeFileSelected: (action, file) => options.onNativeFileSelected?.(action, file),
     onKeepNativeKeyboardOpen,
     onToggleNativeKeyboard,
-    onOpenSettings: () => setState((current) => ({ ...current, settingsOpen: true })),
   };
 
   const settings: CustomKeyboardSettingsViewModel = {
@@ -805,14 +800,11 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     onDeleteShortcut,
     onRepeatStartDelayChange: (repeatStartDelayMs) => setState((current) => ({ ...current, repeatStartDelayMs })),
     onRepeatIntervalChange: (repeatIntervalMs) => setState((current) => ({ ...current, repeatIntervalMs })),
-    onClose: () => setState((current) => ({ ...current, settingsOpen: false })),
-    onSave: () => setState((current) => ({ ...current, settingsOpen: false })),
   };
 
   return {
     keyboard,
     settings,
-    settingsOpen: state.settingsOpen,
   };
 }
 
@@ -845,96 +837,6 @@ function uniqueButtons(buttons: readonly CustomKeyboardButton[]): CustomKeyboard
   return [...new Map(buttons.map((button) => [button.id, button] as const)).values()];
 }
 
-export function selectedButtonsFromIds(
-  selectedButtonIds: readonly string[],
-  libraryButtons: readonly CustomKeyboardButton[],
-): CustomKeyboardButton[] {
-  const buttonsById = new Map(libraryButtons.map((button) => [button.id, button] as const));
-  return selectedButtonIds.flatMap((buttonId) => {
-    const button = buttonsById.get(buttonId);
-    return button ? [button] : [];
-  });
-}
-
-export function toggleCustomKeyboardModifier(
-  activeModifiers: readonly CustomKeyboardModifier[],
-  modifier: CustomKeyboardModifier,
-): CustomKeyboardModifier[] {
-  return activeModifiers.includes(modifier)
-    ? activeModifiers.filter((currentModifier) => currentModifier !== modifier)
-    : [...activeModifiers, modifier];
-}
-
-export function insertButtonIdBeforeTarget(
-  buttonIds: readonly string[],
-  sourceId: string,
-  targetId: string | null,
-): string[] {
-  const sourceIndex = buttonIds.indexOf(sourceId);
-  const targetIndex = targetId === null ? -1 : buttonIds.indexOf(targetId);
-
-  if (sourceIndex >= 0) {
-    if (targetId === null || targetIndex < 0 || sourceIndex === targetIndex) return [...buttonIds];
-    const next = [...buttonIds];
-    next.splice(sourceIndex, 1);
-    const nextTargetIndex = next.indexOf(targetId);
-    next.splice(nextTargetIndex, 0, sourceId);
-    return next;
-  }
-
-  const next = [...buttonIds];
-  next.splice(targetIndex < 0 ? next.length : targetIndex, 0, sourceId);
-  return next;
-}
-
-export type CustomKeyboardDropState = {
-  selectedButtonIds: readonly string[];
-  shortcutButtonIds: readonly string[];
-};
-
-export function applyCustomKeyboardDrop(
-  state: CustomKeyboardDropState,
-  source: CustomKeyboardDragSource,
-  target: CustomKeyboardDropTarget,
-): CustomKeyboardDropState {
-  if (target.type === "shortcut-library") {
-    if (source.collection !== "shortcut-library") return copyDropState(state);
-    return {
-      selectedButtonIds: [...state.selectedButtonIds],
-      shortcutButtonIds: moveButtonId(state.shortcutButtonIds, source.buttonId, target.targetIndex),
-    };
-  }
-
-  if (source.collection === "shortcut-library") return copyDropState(state);
-
-  if (source.collection === "keyboard" && !state.selectedButtonIds.includes(source.buttonId)) {
-    return copyDropState(state);
-  }
-
-  return {
-    selectedButtonIds: insertButtonIdBeforeTarget(state.selectedButtonIds, source.buttonId, target.targetButtonId),
-    shortcutButtonIds: [...state.shortcutButtonIds],
-  };
-}
-
-function copyDropState(state: CustomKeyboardDropState): CustomKeyboardDropState {
-  return {
-    selectedButtonIds: [...state.selectedButtonIds],
-    shortcutButtonIds: [...state.shortcutButtonIds],
-  };
-}
-
-function moveButtonId(buttonIds: readonly string[], buttonId: string, targetIndex: number): string[] {
-  const next = [...buttonIds];
-  const sourceIndex = next.indexOf(buttonId);
-  if (sourceIndex < 0) return next;
-  const [sourceButtonId] = next.splice(sourceIndex, 1);
-  if (!sourceButtonId) return next;
-  const insertionIndex = Math.max(0, Math.min(next.length, targetIndex > sourceIndex ? targetIndex - 1 : targetIndex));
-  next.splice(insertionIndex, 0, sourceButtonId);
-  return next;
-}
-
 function uniqueIds(ids: readonly string[]): string[] {
   return [...new Set(ids)];
 }
@@ -955,7 +857,6 @@ function createDefaultCustomKeyboardState(): CustomKeyboardState {
       .map((button) => button.id),
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
-    settingsOpen: false,
   };
 }
 
@@ -995,7 +896,6 @@ export function parseCustomKeyboardState(raw: string | null): CustomKeyboardStat
       shortcutButtonIds,
       repeatStartDelayMs: validNumber(parsed.repeatStartDelayMs, 200, 1200, 420),
       repeatIntervalMs: validNumber(parsed.repeatIntervalMs, 80, 600, 180),
-      settingsOpen: false,
     };
   } catch {
     return fallback;
