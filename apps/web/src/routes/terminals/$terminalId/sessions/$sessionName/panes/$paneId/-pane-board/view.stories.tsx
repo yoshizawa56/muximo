@@ -19,11 +19,13 @@ function buildViewModel(overrides: Partial<PaneBoardViewModel> = {}): PaneBoardV
 
 function InteractivePaneBoardStory({
   initialOpen = false,
+  showLayout = false,
   panes = storyPanes,
   status = "ready",
   errorMessage = null,
 }: {
   initialOpen?: boolean;
+  showLayout?: boolean;
   panes?: PaneSummary[];
   status?: PaneBoardViewModel["status"];
   errorMessage?: string | null;
@@ -36,8 +38,8 @@ function InteractivePaneBoardStory({
       viewModel={viewModel}
       isOpen={isOpen}
       onClose={() => setIsOpen(false)}
-      alwaysOpen
-      showLayout={isOpen}
+      layoutMode="deck"
+      showLayout={showLayout && isOpen}
     />
   );
 }
@@ -76,11 +78,37 @@ export const PaneListError: Story = {
 
 export const WindowMapInteraction: Story = {
   args: { viewModel: buildViewModel() },
-  render: () => <InteractivePaneBoardStory initialOpen />,
+  render: () => <InteractivePaneBoardStory initialOpen showLayout />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("tab", { name: /muximo 1/i }));
     await userEvent.click(canvas.getByRole("button", { name: "Close window map" }));
     await expect(canvas.getByLabelText("tmux panes")).toHaveAttribute("data-open", "false");
+  },
+};
+
+export const MobilePaneSelectionClosesBoard: Story = {
+  args: { viewModel: buildViewModel() },
+  render: () => <InteractivePaneBoardStory initialOpen />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByLabelText("tmux panes")).toHaveAttribute("data-open", "true");
+    await userEvent.click(canvas.getByRole("button", { name: /review the viewport lease/i }));
+    await expect(canvas.getByLabelText("tmux panes")).toHaveAttribute("data-open", "false");
+  },
+};
+
+export const WindowMapError: Story = {
+  args: {
+    viewModel: buildViewModel({ panes: [], status: "error", errorMessage: "Unable to load panes" }),
+    isOpen: true,
+    layoutMode: "deck",
+    showLayout: true,
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("alert")).toHaveTextContent("Unable to load panes");
+    await userEvent.click(canvas.getByRole("button", { name: "Try again" }));
+    await expect(args.viewModel.refresh).toHaveBeenCalledTimes(1);
   },
 };

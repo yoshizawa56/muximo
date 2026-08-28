@@ -136,6 +136,11 @@ const controlRoomScenarios = {
       paneBoard: createPaneBoard({ panes: [], status: "error", errorMessage: "Unable to load panes" }),
     }),
   emptyPaneList: () => buildViewModel({ paneBoard: createPaneBoard({ panes: [] }) }),
+  missingSelectedPane: () =>
+    buildViewModel({
+      terminal: createTerminal({ target: "" }),
+      paneBoard: createPaneBoard({ panes: [], selectedTarget: "" }),
+    }),
 } satisfies Record<string, () => ControlRoomViewModel>;
 
 const meta = {
@@ -221,6 +226,21 @@ export const EmptyPaneList: Story = {
   args: { viewModel: controlRoomScenarios.emptyPaneList() },
 };
 
+export const MissingSelectedPane: Story = {
+  args: { viewModel: controlRoomScenarios.missingSelectedPane() },
+};
+
+export const WindowMapError: Story = {
+  args: { viewModel: controlRoomScenarios.paneListError() },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /open tmux window map/i }));
+    await expect(canvas.getByRole("alert")).toHaveTextContent("Unable to load panes");
+    await userEvent.click(canvas.getByRole("button", { name: "Try again" }));
+    await expect(args.viewModel.paneBoard.refresh).toHaveBeenCalledTimes(1);
+  },
+};
+
 export const KeyboardSettings: Story = {
   args: { viewModel: controlRoomScenarios.connectedIdle() },
   play: async ({ canvasElement }) => {
@@ -229,5 +249,17 @@ export const KeyboardSettings: Story = {
     await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Save" }));
     await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
+  },
+};
+
+export const KeyboardSettingsClose: Story = {
+  args: { viewModel: controlRoomScenarios.connectedIdle() },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Close custom keyboard settings" }));
+    await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "Open custom keyboard settings" })).toBeVisible();
   },
 };

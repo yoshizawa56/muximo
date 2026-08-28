@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import type { MuximodConnection } from "../../../../../../../../app/api/muximod-client.js";
 import { muximodErrorMessage } from "../../../../../../../../app/api/muximod-error.js";
 import type { MuximodQueryUtils } from "../../../../../../../../app/api/orpc-utils";
-import { isMockMode } from "../../../../../../../../mock/mock-data";
+import { paneBoardQueryPolicy } from "./policy";
 
 export type PaneSummary = ProtocolPaneSummary;
 
@@ -21,28 +21,37 @@ export type PaneBoardViewModel = {
   refresh: () => void;
 };
 
+export type PaneBoardViewModelOptions = {
+  onSelect: (paneId: string) => void;
+  selectedPaneId?: string;
+  sessionName?: string;
+  connection?: MuximodConnection;
+  utils: MuximodQueryUtils;
+  pollWhenHidden?: boolean;
+  pollIntervalMs?: number;
+};
+
 export function usePaneBoardViewModel({
   onSelect,
   selectedPaneId,
   sessionName,
   connection,
   utils,
-}: {
-  onSelect: (paneId: string) => void;
-  selectedPaneId?: string;
-  sessionName?: string;
-  connection?: MuximodConnection;
-  utils: MuximodQueryUtils;
-}): PaneBoardViewModel {
+  pollWhenHidden = false,
+  pollIntervalMs,
+}: PaneBoardViewModelOptions): PaneBoardViewModel {
+  const queryPolicy = paneBoardQueryPolicy({
+    hasConnection: Boolean(connection),
+    hasSession: Boolean(sessionName),
+    pollWhenHidden,
+    pollIntervalMs,
+  });
   const query = useQuery(
     utils.panes.list.queryOptions({
       input: sessionName ? { session: sessionName } : {},
-      enabled: Boolean(connection) && Boolean(sessionName),
+      enabled: queryPolicy.enabled,
       staleTime: 1_000,
-      // The control room uses panes for the selected target and waiting-agent
-      // indicators even when the window map is hidden. Mock mode has no event
-      // socket and polls more frequently.
-      refetchInterval: isMockMode() ? 3_000 : 10_000,
+      refetchInterval: queryPolicy.refetchInterval,
     }),
   );
 

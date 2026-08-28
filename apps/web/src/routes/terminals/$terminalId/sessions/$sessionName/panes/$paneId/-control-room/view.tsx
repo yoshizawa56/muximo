@@ -319,7 +319,7 @@ export function ControlRoomView({
               viewModel={paneBoard}
               isOpen={paneBoardOpen}
               onClose={() => setPaneBoardOpen(false)}
-              alwaysOpen
+              layoutMode="deck"
               showLayout={paneBoardOpen}
               layoutVariant={layoutVariant}
             />

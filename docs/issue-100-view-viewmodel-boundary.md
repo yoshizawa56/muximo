@@ -74,8 +74,8 @@ in the implementation notes below.
   — make the story harness stateful where `play` interactions need changing
   ViewModel output; cover editor, drag, draft, and keyboard interactions.
 - [x] `apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/-shell/view.tsx`
-  — review this composition/story host and either align it with the boundary
-  or remove its responsibility if the page View becomes the single host.
+  — removed the story-only shell host; the story now composes the two Views
+  directly and owns only its presentation-local settings visibility.
 
 ### Directly related presentation and resource modules
 
@@ -120,6 +120,7 @@ only when a contract or extraction is actually required.
 - [x] `apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/-custom-keyboard/terminal-actions.ts`
 - [x] `apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/-custom-keyboard/terminal-actions.test.ts`
 - [x] `apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/-custom-keyboard/policy.ts`
+- [x] `apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/-pane-board/policy.ts`
 - [x] `apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/-terminal/policy.ts`
 - [x] `apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/-terminal/font.ts`
 - [x] `apps/web/src/routes/terminals/$terminalId/sessions/$sessionName/panes/$paneId/-terminal/font.test.ts`
@@ -147,8 +148,8 @@ only when a contract or extraction is actually required.
   connection, pane, viewport, paste, shell, and keyboard states; pure and
   transport-only branches remain in focused tests.
 - [x] Every user-visible, deterministic View-local state transition has a
-  Storybook `play` path. Platform-dependent pointer coordinates and transient
-  drag geometry remain covered by the existing drag policy and input tests.
+  Storybook `play` path, including pane-list close, settings close/save,
+  window-map error, and a real custom-keyboard drag/drop path.
 - [x] Pure policy and transform tests remain table-driven and focused.
 - [x] Terminal, storage, browser bridge, and query behavior retain focused
   tests at their external boundaries.
@@ -197,7 +198,7 @@ only when a contract or extraction is actually required.
   target for terminal transport.
 - Moved custom-keyboard settings visibility and close/save transitions out of
   the custom-keyboard and control-room ViewModels into `ControlRoomView` and
-  `ShellView`.
+  the Storybook-only shell harness.
 - Extracted React- and I/O-independent custom-keyboard policies into
   `-custom-keyboard/policy.ts`, while keeping persisted-state parsing and
   storage effects in the ViewModel boundary.
@@ -209,9 +210,47 @@ only when a contract or extraction is actually required.
   pane states, plus a dedicated pane-board story.
 - Added `play` coverage for pane-map, keyboard-settings, modifier, flick-repeat,
   shift, shortcut-editor, and standard-keyboard local state transitions.
+- Repaired mobile pane selection so list selection closes the presentation-local
+  board state, renamed the layout-only `alwaysOpen` prop to `layoutMode`, and
+  added a dedicated mobile selection story.
+- Made pane polling opt-in through `pollWhenHidden` with an injected interval.
+  The control room explicitly enables it because it derives selected-target and
+  waiting-agent state while the window map is hidden; other pane-board
+  consumers remain lazy by default. `isMockMode` is now resolved at the
+  control-room composition boundary rather than inside the pane-board
+  ViewModel.
+- Remounted `ControlRoomView` by route `paneId` so presentation-local map and
+  settings visibility cannot survive a route identity change.
+- Added named window-map error and missing-selected-pane scenarios, plus play
+  coverage for both settings exit paths and pane-list close. The story harness
+  now updates keyboard library, selection, and shortcut state in one functional
+  state transition so drag/drop cannot observe stale sibling state.
 - Reviewed the terminal View boundary and intentionally kept the current
   terminal surface together because its DOM host and transport lifecycle are
   coupled; no standalone terminal View/story module was added.
+
+### Review follow-up decisions
+
+- `PaneBoardView` now calls `onClose` after list selection as well as after
+  window-map selection. This makes the mobile overlay behavior identical for
+  both selection surfaces.
+- `layoutMode="deck"` describes the responsive desktop-sidebar/mobile-overlay
+  presentation. It has no effect on query lifecycle; the old `alwaysOpen` name
+  and its misleading contract were removed under the alpha compatibility
+  policy.
+- `PaneBoardViewModel` defaults to one-shot query behavior (`pollWhenHidden`
+  is false). Only the control-room composition opts into background polling,
+  with `pollIntervalMs` supplied by the composition root.
+- Overlay errors render an explicit alert and retry action instead of an empty
+  window map. `WindowMapError` covers that branch both at the pane-board and
+  control-room levels.
+- `ShellView` and `ShellViewModel` were removed because they represented a
+  story/page host rather than a reusable semantic boundary. The Storybook
+  harness now owns the local settings modal state and renders
+  `CustomKeyboardView` / `CustomKeyboardSettingsView` directly.
+- The internal `PaneBoardViewModel.isOpen` shape and `ShellView` host contract
+  are intentionally breaking changes. All in-repository callers and stories
+  were migrated in this change; no legacy alias is retained.
 
 ### Verification after the first boundary pass
 
@@ -222,6 +261,19 @@ only when a contract or extraction is actually required.
   `docs/logo-exploration.html`.
 - `git diff --check` passed.
 - `bun run check:architecture` passed.
+- `STORYBOOK_DISABLE_TELEMETRY=1 bun run build-storybook` passed. Storybook
+  reported the existing absence of `src/**/*.mdx` files and a chunk-size
+  warning; neither prevented the build.
+
+### Verification after review fixes
+
+- `apps/web` tests passed: 24 files and 204 tests.
+- `apps/web` typecheck passed.
+- `bun run test:table` passed for 101 files.
+- `bun run check:architecture` passed.
+- `bun run lint` passed with the same two pre-existing warnings in
+  `docs/logo-exploration.html` (`!important` styles at lines 416 and 417).
+- `git diff --check` passed.
 - `STORYBOOK_DISABLE_TELEMETRY=1 bun run build-storybook` passed. Storybook
   reported the existing absence of `src/**/*.mdx` files and a chunk-size
   warning; neither prevented the build.

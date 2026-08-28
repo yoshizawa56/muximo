@@ -7,25 +7,26 @@ export function PaneBoardView({
   viewModel,
   isOpen = false,
   onClose,
-  alwaysOpen = false,
+  layoutMode = "overlay",
   showLayout = false,
   layoutVariant = "ghost",
 }: {
   viewModel: PaneBoardViewModel;
   isOpen?: boolean;
   onClose?: () => void;
-  alwaysOpen?: boolean;
+  layoutMode?: "deck" | "overlay";
   showLayout?: boolean;
   layoutVariant?: PaneLayoutOverlayVariant;
 }) {
   const waitingCount = viewModel.panes.filter(
     (pane) => pane.state === "waiting_input" || pane.state === "waiting_approval",
   ).length;
-  const mobileBoardClass = alwaysOpen
-    ? showLayout
-      ? "max-[920px]:fixed max-[920px]:inset-0 max-[920px]:z-[21] max-[920px]:flex max-[920px]:min-h-0 max-[920px]:border-0 max-[920px]:bg-transparent max-[920px]:p-0 max-[920px]:shadow-none max-[920px]:pointer-events-auto"
-      : "max-[920px]:fixed max-[920px]:inset-[64px_12px_12px] max-[920px]:z-10 max-[920px]:hidden max-[920px]:bg-paper max-[920px]:shadow-[0_24px_70px_rgb(30_36_31_/_24%)] data-[open=true]:max-[920px]:flex"
-    : "";
+  const mobileBoardClass =
+    layoutMode === "deck"
+      ? showLayout
+        ? "max-[920px]:fixed max-[920px]:inset-0 max-[920px]:z-[21] max-[920px]:flex max-[920px]:min-h-0 max-[920px]:border-0 max-[920px]:bg-transparent max-[920px]:p-0 max-[920px]:shadow-none max-[920px]:pointer-events-auto"
+        : "max-[920px]:fixed max-[920px]:inset-[64px_12px_12px] max-[920px]:z-10 max-[920px]:hidden max-[920px]:bg-paper max-[920px]:shadow-[0_24px_70px_rgb(30_36_31_/_24%)] data-[open=true]:max-[920px]:flex"
+      : "";
 
   return (
     <div className="relative min-h-0">
@@ -34,7 +35,7 @@ export function PaneBoardView({
         data-open={isOpen}
         aria-label="tmux panes"
       >
-        {showLayout ? (
+        {showLayout && viewModel.status !== "error" ? (
           <PaneLayoutOverlay
             id="tmux-window-map"
             panes={viewModel.panes}
@@ -46,6 +47,25 @@ export function PaneBoardView({
             onClose={onClose}
             variant={layoutVariant}
           />
+        ) : null}
+        {viewModel.status === "error" ? (
+          <div
+            className={
+              showLayout
+                ? "absolute inset-0 z-10 flex flex-col items-start justify-center gap-3 bg-[rgb(248_248_244_/_96%)] p-5 text-[0.7rem] text-[#a45d51]"
+                : "mb-3 text-[0.7rem] text-[#a45d51]"
+            }
+            role="alert"
+          >
+            <p>{viewModel.errorMessage}</p>
+            <button
+              className="rounded-[7px] bg-[#d8edf8] px-2.5 py-[7px] text-[0.65rem] font-bold text-[#3f6b84]"
+              type="button"
+              onClick={viewModel.refresh}
+            >
+              Try again
+            </button>
+          </div>
         ) : null}
         {!showLayout ? (
           <>
@@ -82,18 +102,6 @@ export function PaneBoardView({
             </div>
             <div className="my-[17px] mb-[13px] h-px bg-line" />
             {viewModel.status === "loading" ? <p className="mb-3 text-[0.7rem] text-muted">Reading tmux…</p> : null}
-            {viewModel.status === "error" ? (
-              <div className="mb-3 text-[0.7rem] text-[#a45d51]">
-                <p>{viewModel.errorMessage}</p>
-                <button
-                  className="rounded-[7px] bg-[#d8edf8] px-2.5 py-[7px] text-[0.65rem] font-bold text-[#3f6b84]"
-                  type="button"
-                  onClick={viewModel.refresh}
-                >
-                  Try again
-                </button>
-              </div>
-            ) : null}
             {viewModel.status === "ready" && viewModel.panes.length === 0 ? (
               <p className="mb-3 text-[0.7rem] text-muted">No tmux panes found.</p>
             ) : null}
@@ -119,7 +127,10 @@ export function PaneBoardView({
                     className={`flex w-full min-w-0 items-center gap-[9px] rounded-[10px] border p-2 text-left transition-colors hover:border-line hover:bg-white/70 ${selected ? "border-[#c8dfb3] bg-[#edf7e4]" : "border-transparent"}`}
                     type="button"
                     key={pane.id}
-                    onClick={() => viewModel.select(pane)}
+                    onClick={() => {
+                      viewModel.select(pane);
+                      onClose?.();
+                    }}
                   >
                     <span
                       className={`grid size-7 shrink-0 place-items-center rounded-lg font-mono text-[0.7rem] font-extrabold ${avatarClass}`}

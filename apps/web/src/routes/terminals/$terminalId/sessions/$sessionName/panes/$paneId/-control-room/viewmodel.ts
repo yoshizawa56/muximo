@@ -1,5 +1,6 @@
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useRef, useState } from "react";
+import { isMockMode } from "../../../../../../../../mock/mock-data";
 import { muximoBridge } from "../../../../../../../../platform/muximo-bridge";
 import { useTerminalResources } from "../../../../../../-terminal-resources";
 import { encodeCustomKeyboardNativeInput, encodeCustomKeyboardSequence } from "../-custom-keyboard/input";
@@ -41,6 +42,8 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
     sessionName: scopedSessionName,
     connection,
     utils: resources.utils,
+    pollWhenHidden: true,
+    pollIntervalMs: isMockMode() ? 3_000 : 10_000,
     onSelect: (nextPaneId) => {
       void navigate({
         to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId",
