@@ -6,7 +6,6 @@ import type {
 } from "@muximo/application";
 import type { AgentSessionRecord, PaneState } from "@muximo/domain";
 import { errorFields, type Logger } from "../logging/index.js";
-import { resolveMuximodPaths } from "../persistence/index.js";
 import type { TmuxAdapter } from "../terminal/tmux.js";
 
 export type PaneControlClient = {
@@ -26,7 +25,7 @@ export type PaneControlFactory = (socketPath: string) => Promise<PaneControlClie
 
 export type PaneAdapterOptions = {
   environment: NodeJS.ProcessEnv;
-  databaseFile: string;
+  controlSocket: string;
   tmux: TmuxAdapter;
   connect: PaneControlFactory;
   logger: Logger;
@@ -41,9 +40,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
     if (!pane || !session.executionId) return;
     const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
     try {
-      const control = await this.options.connect(
-        defaultControlSocket(this.options.environment, this.options.databaseFile),
-      );
+      const control = await this.options.connect(this.options.controlSocket);
       try {
         await control.adoptAgentSession(input);
       } finally {
@@ -63,9 +60,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
     if (!pane || !session.executionId) return;
     const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
     try {
-      const control = await this.options.connect(
-        defaultControlSocket(this.options.environment, this.options.databaseFile),
-      );
+      const control = await this.options.connect(this.options.controlSocket);
       try {
         await control.releaseAgentSession(input);
       } finally {
@@ -91,9 +86,7 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
     const pane = currentTmuxPane(this.options.environment);
     if (!pane || !session.executionId) return;
     try {
-      const control = await this.options.connect(
-        defaultControlSocket(this.options.environment, this.options.databaseFile),
-      );
+      const control = await this.options.connect(this.options.controlSocket);
       try {
         await control.observeAgentSession({
           agentSessionId: session.id,
@@ -153,10 +146,6 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
 function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
   const pane = environment.TMUX && environment.TMUX_PANE ? environment.TMUX_PANE.trim() : "";
   return /^%[0-9]+$/.test(pane) ? pane : undefined;
-}
-
-function defaultControlSocket(environment: NodeJS.ProcessEnv, databaseFile: string): string {
-  return resolveMuximodPaths(environment, { databaseFile }).controlSocket;
 }
 
 function setFallbackMetadata(

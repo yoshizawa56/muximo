@@ -56,6 +56,7 @@ const eventFixture = (): FixtureHandle<EventFixture> => {
   const app = createMuximodApp({
     auth: testAuth,
     application: createApplication(),
+    configurationFingerprint: "0".repeat(64),
     originPolicy: createOriginPolicy({ allowedOrigins: ["http://muximod.local"], allowNoOrigin: true }),
     hookToken: "hook",
     socketFactory: createTestMuximodSocketFactory(),

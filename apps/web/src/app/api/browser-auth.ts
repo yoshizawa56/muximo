@@ -48,16 +48,11 @@ export type BrowserPairingPreview = {
 };
 
 export function parsePairingQrPayload(value: string): PairingCodePayload {
-  let payload: PairingCodePayload;
   try {
-    payload = pairingCodePayloadSchema.parse(decodePairingCode(value));
+    return pairingCodePayloadSchema.parse(decodePairingCode(value));
   } catch {
     throw new Error("QR code does not contain a valid muximo pairing code");
   }
-  if (new URL(payload.muximodBaseUrl).protocol !== "http:" && new URL(payload.muximodBaseUrl).protocol !== "https:") {
-    throw new Error("Pairing endpoint must use http or https");
-  }
-  return payload;
 }
 
 /** Reads public muximod identity before the user approves sending the pairing claim. */

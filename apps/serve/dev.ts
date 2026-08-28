@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 import {
-  loadDevelopmentEnvironment,
   type PortlessProcessHandle,
   type PortlessService,
   type PortlessServiceRoute,
@@ -11,10 +10,7 @@ import {
 } from "@muximo/portless-support";
 
 const repositoryRoot = resolveRepositoryRoot();
-const environment = loadDevelopmentEnvironment({
-  repositoryRoot,
-  environment: { ...process.env },
-});
+const environment = { ...process.env };
 const routeAbort = new AbortController();
 const children: ManagedChild[] = [];
 
@@ -28,7 +24,11 @@ const stop = (signal: "SIGINT" | "SIGTERM", requestedExitCode?: number) => {
   routeAbort.abort();
   stopPromise = Promise.all(
     children.map(async ({ handle }) => {
-      handle.terminate(signal);
+      try {
+        handle.terminate(signal);
+      } catch {
+        // Continue cleaning up every child when one termination signal fails.
+      }
       await handle.wait().catch(() => undefined);
     }),
   ).then(() => undefined);

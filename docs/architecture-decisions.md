@@ -98,13 +98,13 @@ policies. It must not import HTTP, WebSocket, CLI, Bun, Node.js, SQLite,
 Drizzle, tmux, PTY, agent providers, filesystem APIs, or UI code.
 
 Entities are Zod-backed namespace values. Each entity exposes `schema`,
-`validate`, `create`, and `update` as appropriate. `create` normalizes and
-validates input, `update` validates the current entity and the resulting
-entity, and every persistence reconstitution path validates the database row
-before returning it. Domain business methods validate their entity input when
-they accept an existing entity. No application or adapter code may construct
-an entity-shaped object and bypass these boundaries. An entity that crosses a
-domain boundary is therefore always structurally valid and invariant-safe.
+`create`, `restore`, `update`, and predicates as appropriate. `create`
+normalizes and validates new input, `restore` reconstitutes persisted data,
+`update` validates the current entity and the resulting entity, and every
+persistence reconstitution path restores the database row before returning it.
+No application or adapter code may construct an entity-shaped object and
+bypass these boundaries. An entity that crosses a domain boundary is
+therefore always structurally valid and invariant-safe.
 
 Domain optional properties use `undefined`; `null` is a transport or database
 representation only. Transport PATCH schemas use omitted/`undefined` for
@@ -194,7 +194,11 @@ infrastructure implementations into the application and then injects that
 application into the HTTP and private control transports. The package exposes
 typed lifecycle operations through `launch.ts`; the separate child process is
 started through its private process bootstrap. The handler is not exported from
-the infrastructure package.
+the CLI-facing infrastructure package surface. Daemon composition imports the
+explicit `@muximo/infrastructure/runtime` surface; CLI composition imports only
+`@muximo/infrastructure/cli-client` and `@muximo/muximod/client`. The package
+root exports are intentionally absent so the two audiences cannot silently
+share the same broad import surface.
 
 ## Infrastructure
 
@@ -261,12 +265,18 @@ area rather than adding a second use-case implementation.
 Normal workspace and agent-session CLI commands call the muximod API over
 local HTTP using a short-lived local token minted through the private control
 socket. Pairing and host-only pane control use the private socket directly;
-starting, stopping, and restarting muximod call the package lifecycle locally.
-The CLI may still open local host integrations such as tmux, shell, and doctor
-directly when those operations are intentionally host-local. An in-process
-mutex in `muximod` therefore cannot provide a global serialization guarantee.
-Cross-process coordination must rely on SQLite locking, database transactions,
-constraints, conditional updates, or a future single-writer control path.
+starting, stopping, and restarting muximod call the typed package lifecycle
+locally. The CLI may still run host integrations such as tmux, Git, shell, and
+doctor directly, but those integrations may use only command input, local host
+state, or data returned by a daemon contract. They must never open the daemon
+database, read daemon-owned log/state files, or construct a second repository
+view. If a client needs another daemon value, the contract is extended and the
+daemon remains the only implementation of the read or write.
+
+The daemon is the single writer and source of truth for durable and
+runtime-managed state. An in-process mutex in `muximod` therefore cannot
+provide a global serialization guarantee by itself; the daemon's database
+transactions and private control contract provide the cross-process boundary.
 
 ## Muximod lifecycle and development topology
 
@@ -365,9 +375,9 @@ global application lock.
 The `TransactionManager` mutex is a process-local safety mechanism for
 transactions sharing one connection or one transaction resource. It is not a
 cross-process lock and must not be treated as the source of global data
-consistency. Direct CLI writers use separate connections and may still contend
-with the daemon; SQLite's writer lock preserves database-level atomicity, but
-the application must handle busy errors and stale-write policy explicitly.
+consistency. The daemon is the only database writer, so SQLite's writer lock
+and transaction policy stay behind the daemon boundary; clients must use its
+contracts instead of opening competing connections.
 
 SQLite still provides atomic commit for the statements inside one transaction.
 The issue is not that SQLite cannot preserve atomicity; the issue is safely
@@ -388,10 +398,10 @@ an optimization to introduce if event-loop delay measurements show that
 synchronous SQLite calls are material in production.
 
 Busy handling is an infrastructure concern and must be transparent to
-application use cases and CLI commands:
+application use cases and daemon clients:
 
-- configure a busy timeout for every SQLite connection in the shared database
-  factory, including daemon and direct CLI connections;
+- configure a busy timeout for every SQLite connection in the daemon database
+  factory;
 - acquire a write transaction up front, preferably with `BEGIN IMMEDIATE`, so
   lock failure happens before business mutations when possible;
 - when a retryable busy error still occurs, rollback and retry the complete
@@ -404,9 +414,9 @@ application use cases and CLI commands:
   the outer adapter report it normally.
 
 The process-local transaction mutex remains useful for same-process connection
-ownership, but it cannot coordinate direct CLI processes. SQLite's connection
-level busy handling and whole-transaction retry policy are the cross-process
-fallback.
+ownership. CLI processes do not open SQLite connections; they observe and
+mutate state through daemon contracts, so the daemon owns all database lock and
+retry behavior.
 
 ## Database tests
 

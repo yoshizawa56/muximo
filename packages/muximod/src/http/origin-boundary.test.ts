@@ -103,6 +103,7 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
   const app = createMuximodApp({
     auth,
     application,
+    configurationFingerprint: "0".repeat(64),
     originPolicy,
     hookToken: "hook",
     socketFactory: createTestMuximodSocketFactory(),

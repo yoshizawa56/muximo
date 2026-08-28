@@ -1,9 +1,10 @@
 # Phase 3 CLI architecture handover
 
 Phase 3 is complete. The CLI boundary is `createCliApp(deps)` in
-`apps/muximo-cli/src/cli/app.ts`; all concrete construction, database initialization,
-provider registration, adapters, resource ownership, and disposal are in
-`apps/muximo-cli/src/cli/compose.ts`.
+`apps/muximo-cli/src/cli/app.ts`; CLI construction wires client contracts and host-only
+adapters in `apps/muximo-cli/src/cli/compose.ts`. Database initialization, provider
+registration, daemon-owned resource ownership, and daemon disposal remain inside
+`packages/muximod`.
 
 ## Responsibility map
 
@@ -18,8 +19,9 @@ provider registration, adapters, resource ownership, and disposal are in
 - `packages/application/src/ports/agent-sessions.ts`, `daemon.ts`, and `shell.ts`:
   focused asynchronous capability ports with provider-neutral business vocabulary.
 - `packages/infrastructure/src/cli/`: concrete filesystem, Git, tmux, hook, serve, dev,
-  shell, workspace, and diagnostic adapters. Muximod process lifecycle, snapshot
-  bootstrap, and resource cleanup live in `packages/muximod`.
+  shell, workspace, and diagnostic adapters. It must not read daemon-owned logs or state.
+  Muximod process lifecycle, database composition, snapshot bootstrap, and resource
+  cleanup live in `packages/muximod`.
 
 The old host/runtime directories, engine/lifecycle façade classes, broad session host
 port, manual argv dispatch, and app-to-app muximod dependency are absent. Provider
@@ -40,8 +42,11 @@ Serve and dev composition computes deterministic exact browser origins, passes t
 daemon options, and rejects `*`. Local CLI calls without an Origin remain supported
 separately by muximod. The CLI uses the muximod API over local HTTP for workspace and
 agent-session operations, minting a short-lived local API token through the private
-control socket. `apps/muximo-cli/dev.ts` selects `push` and the base instance directory
-for linked worktrees; the normal CLI composition owns the resulting lifecycle.
+control socket. Pairing, pane control, and daemon diagnostics use the typed private
+control contract. The CLI never opens the daemon database or reads daemon-owned files.
+`apps/muximo-cli/dev.ts` selects `push` and the base instance directory for linked
+worktrees; `packages/muximod` performs the complete snapshot bootstrap and the normal
+CLI composition only invokes its typed lifecycle API.
 
 `apps/serve` is only a development supervisor. It starts Portless-managed Web and CLI
 foreground processes, monitors route and listener ownership, and cleans up processes it

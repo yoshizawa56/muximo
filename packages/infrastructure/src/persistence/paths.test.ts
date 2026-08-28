@@ -1,5 +1,4 @@
 import {
-  hasError,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -8,13 +7,12 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { resolveMuximodPaths, validateMuximodControlSocketPath } from "./paths.js";
+import { resolveMuximodPaths } from "./paths.js";
 
 type Context = {};
 type ResolveInput = { environment: NodeJS.ProcessEnv; overrides?: Parameters<typeof resolveMuximodPaths>[1] };
 type ResolvedPaths = ReturnType<typeof resolveMuximodPaths>;
 
-const longInstanceDirectory = `/tmp/${"a".repeat(120)}`;
 const resolveCases = [
   {
     name: "uses the default instance layout when no profile is configured",
@@ -127,27 +125,7 @@ const resolveTable: OperationTable<undefined, "default", ResolveInput, ResolvedP
   observe: () => ({}),
 };
 
-type ValidateInput = { path: string };
-const validateCases = [
-  {
-    name: "rejects control socket paths that cannot fit the Unix socket address",
-    input: { path: resolveMuximodPaths({ MUXIMOD_INSTANCE_DIR: longInstanceDirectory }).controlSocket },
-    assert: [hasError<Context, undefined>({ message: /control socket path is too long/ })],
-  },
-] satisfies readonly OperationCase<"default", ValidateInput, undefined, Context>[];
-
-const validateTable: OperationTable<undefined, "default", ValidateInput, undefined, Context> = {
-  defaultFixture: noFixture(),
-  cases: validateCases,
-  execute: (_fixture, input) => {
-    validateMuximodControlSocketPath(input.path);
-    return undefined;
-  },
-  observe: () => ({}),
-};
-
 describe("muximod instance paths", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, resolveTable);
-  runOperationTable(register, validateTable);
 });

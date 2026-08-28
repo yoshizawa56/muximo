@@ -1,5 +1,5 @@
 import type { ManageSessionResult, RunShellInput, RunShellResult } from "@muximo/application";
-import type { TmuxNewSessionResult } from "@muximo/infrastructure";
+import type { TmuxNewSessionResult } from "@muximo/infrastructure/cli-client";
 import type {
   CliHandlers,
   CliIo,

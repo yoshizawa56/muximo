@@ -12,8 +12,8 @@ import {
   type UpgradeServer,
 } from "./ws-terminal.js";
 
-export type { MuximodSocket, MuximodSocketData } from "@muximo/infrastructure";
-export { muximodSocketReadyState } from "@muximo/infrastructure";
+export type { MuximodSocket, MuximodSocketData } from "@muximo/infrastructure/runtime";
+export { muximodSocketReadyState } from "@muximo/infrastructure/runtime";
 export { MuximodHttpError } from "./middleware.js";
 export type { MuximodRpcContext } from "./rpc-handlers.js";
 export type {
@@ -84,7 +84,7 @@ async function handleRequest(
 
   if (url.pathname === "/health") {
     if (request.method === "OPTIONS") return corsResponse(undefined, request, deps.originPolicy, 204);
-    const health = presentMuximodHealth(deps.isReady?.() ?? true);
+    const health = presentMuximodHealth(deps.configurationFingerprint, deps.isReady?.() ?? true);
     return jsonResponse(health.body, health.status);
   }
 

@@ -80,7 +80,9 @@ control socket, process bootstrap, and lifecycle composition now live in
 `packages/muximod`:
 
 ```
-packages/muximod/src/index.ts              public package exports
+packages/muximod/src/index.ts              internal aggregate exports
+packages/muximod/src/client.ts             CLI-facing lifecycle/path exports
+packages/muximod/src/runtime.ts            daemon runtime exports
 packages/muximod/src/launch.ts             typed lifecycle and snapshot bootstrap
 packages/muximod/src/process-entrypoint.ts private child-process bootstrap
 packages/muximod/src/process-files.ts     PID and restart marker ownership
@@ -102,13 +104,15 @@ The API and private control-socket surfaces have separate contract exports:
 control remain on the private Unix socket. Only the minimal pairing values are
 shared between those surfaces.
 
-## Phase 3 — DONE — CLI decomposition
+## Phase 3 — DONE — CLI decomposition and daemon-client boundary
 
 The CLI now has one explicit boundary, `createCliApp(deps)`, and one concrete
 composition root, `apps/muximo-cli/src/cli/compose.ts`. Commander owns the complete
 command tree, while each command module validates Commander values with Zod and calls
 one typed handler. The entrypoint owns only argv, environment, streams, invocation,
-error reporting, and exit status.
+error reporting, and exit status. The CLI is a pure daemon client for daemon-owned
+state: it does not open SQLite, construct repositories, synchronize schemas, copy
+snapshots, or read daemon log/state files.
 
 Application lifecycle policy is split into `RunAgentSession`, `ResumeAgentSession`,
 `ListAgentSessions`, `CleanupAgentSession`, and `LocateAgentSession`. Their focused ports
@@ -118,23 +122,28 @@ receive an application-generated `ClaimExecutionInput.updatedAt`.
 
 Concrete CLI capabilities live under `packages/infrastructure/src/cli/`: backend
 launch/discovery, worktrees, hooks, panes, workspace, observations, shell, tmux sessions,
-serve, dev, and diagnostics. Muximod lifecycle and timing adapters live under
-`packages/muximod`; they are selected by the CLI composition root with either
-`migrate` or `push` schema mode. Pairing UI and control-socket clients remain
-CLI-local adapters. Browser origins are normalized and passed exactly to daemon
-options; wildcard origins are rejected.
+serve, dev, and diagnostics. Muximod lifecycle, persistence, snapshot/bootstrap, and
+timing adapters live under `packages/muximod`; they are selected by the CLI composition
+root with either `migrate` or `push` schema mode. Pairing UI and control-socket clients
+remain CLI-local adapters. Normal workspace and agent-session operations use the typed
+API over local HTTP after minting a short-lived local token through the private control
+socket. Browser origins are normalized and passed exactly to daemon options; wildcard
+origins are rejected.
 
 The former host/runtime directories, engine/lifecycle façade classes, broad session host
 port, manual parser paths, and direct CLI implementations of daemon-backed workspace and
-agent-session workflows are removed. The CLI calls the muximod API over local HTTP for
-workspace and agent-session operations, obtaining a short-lived local API token through
-the private control socket. Provider implementation metadata is persisted through
-infrastructure-owned state rather than domain record mutation. Application results are
-typed business outcomes; CLI presenters own messages and process status mapping.
+agent-session workflows are removed. Provider implementation metadata is persisted
+through infrastructure-owned state rather than domain record mutation. Application
+results are typed business outcomes; CLI presenters own messages and process status
+mapping. If a client needs another daemon value or operation, the API or private control
+contract is extended and the implementation remains in muximod; a local persistence
+shortcut is not permitted.
 
 `apps/muximo-cli/dev.ts` is the development overlay. It detects a linked worktree,
 selects `push`, supplies the base instance directory, and invokes the normal CLI
-entrypoint. `apps/serve` supervises Portless, Web, and the CLI foreground serve command;
+entrypoint. `packages/muximod` copies the complete base database only when the target
+database is absent, then starts the target instance unchanged; no seed or scrub policy
+is applied. `apps/serve` supervises Portless, Web, and the CLI foreground serve command;
 it does not parse Muximo environment variables or construct muximod configuration.
 
 ## Verification per phase

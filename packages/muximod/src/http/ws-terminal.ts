@@ -1,4 +1,4 @@
-import type { MuximodSocketAdapter } from "@muximo/infrastructure";
+import type { MuximodSocketAdapter } from "@muximo/infrastructure/runtime";
 import type { WebSocketHandler } from "bun";
 import { corsResponse } from "./middleware.js";
 import type { MuximodHttpDependencies } from "./types.js";

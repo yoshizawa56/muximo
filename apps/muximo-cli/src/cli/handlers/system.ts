@@ -8,7 +8,8 @@ import type {
   StartDaemonInput,
 } from "@muximo/application";
 import { DaemonHealthError } from "@muximo/application";
-import type { DaemonLogResult, DoctorReport, TailscaleServeResult } from "@muximo/infrastructure";
+import type { MuximodControlLogResult } from "@muximo/contract/control";
+import type { DoctorReport, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
 import type {
   CliDaemonInput,
   CliDevInput,
@@ -47,7 +48,7 @@ export type SystemHandlerDependencies = {
     stop: AsyncService<DaemonOptions, DaemonStopResult>;
     restart: AsyncService<DaemonOptions, DaemonRestartResult>;
     ensure: AsyncService<DaemonOptions, DaemonEnsureResult>;
-    log: AsyncService<{ logFile?: string; lines: number }, DaemonLogResult>;
+    log: AsyncService<{ lines: number }, MuximodControlLogResult>;
   };
   serve: { execute(input: CliServeInput): Promise<ServeResult> };
   dev: StatusService<CliDevInput>;
@@ -81,7 +82,7 @@ export function createSystemHandlers(
             );
           case "log":
             return presentDaemonLog(
-              await dependencies.daemon.log.execute({ logFile: options.logFile, lines: input.lines ?? 100 }),
+              await dependencies.daemon.log.execute({ lines: input.lines ?? 100 }),
               dependencies.io,
             );
         }
@@ -92,9 +93,13 @@ export function createSystemHandlers(
     },
     serve: async (input) => {
       const result = await dependencies.serve.execute(input);
-      const status = presentServeResult(result, dependencies.io);
-      if (!result.foregroundProcess) return status;
-      return (await result.foregroundProcess.wait()).code;
+      try {
+        const status = presentServeResult(result, dependencies.io);
+        if (!result.foregroundProcess) return status;
+        return (await result.foregroundProcess.wait()).code;
+      } finally {
+        await result.cleanup?.();
+      }
     },
     dev: (input) => Promise.resolve(dependencies.dev.execute(input)),
   };

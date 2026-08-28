@@ -285,7 +285,13 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
   const os = implement(muximodContract).$context<Record<never, never>>();
   return new RPCHandler(
     os.router({
-      health: os.health.handler(() => ({ ok: true, service: "muximod", protocolVersion })),
+      health: os.health.handler(() => ({
+        ok: true,
+        service: "muximod",
+        protocolVersion,
+        pid: process.pid,
+        configurationFingerprint: "0".repeat(64),
+      })),
       capabilities: os.capabilities.handler(() => ({
         protocolVersion,
         features: { tmuxSessions: true, terminalWebSocket: true, paneState: true, resourceInvalidationEvents: true },

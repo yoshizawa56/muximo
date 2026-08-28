@@ -199,6 +199,8 @@ export function defaultLogFile(environment: NodeJS.ProcessEnv = process.env): st
   );
 }
 
+export * from "./daemon-log.js";
+
 export function errorFields(error: unknown): LogContext {
   let normalized: LogValue = "[UNAVAILABLE]";
   try {

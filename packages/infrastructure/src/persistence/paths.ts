@@ -16,8 +16,6 @@ export type MuximodPathOverrides = {
   controlSocket?: string;
 };
 
-export const muximodControlSocketMaxBytes = 103;
-
 /**
  * Resolve the filesystem paths owned by one muximod instance.
  *
@@ -54,15 +52,6 @@ export function resolveMuximodPaths(
 
 export function defaultMuximodInstanceDirectory(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.HOME ?? homedir(), ".local", "state", "muximo");
-}
-
-export function validateMuximodControlSocketPath(path: string): void {
-  const bytes = Buffer.byteLength(path);
-  if (bytes > muximodControlSocketMaxBytes) {
-    throw new Error(
-      `muximod control socket path is too long (${bytes} bytes; maximum ${muximodControlSocketMaxBytes}): ${path}`,
-    );
-  }
 }
 
 function defaultPidFile(instanceDirectory: string, databaseFile: string): string {

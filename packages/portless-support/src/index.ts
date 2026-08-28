@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,6 +65,8 @@ const serviceDefinitions: Record<
 };
 
 const defaultPortlessTld = "localhost";
+const portlessRouteCacheTtlMs = 2_000;
+const portlessRouteCache = new Map<string, { routes: PortlessRoute[]; observedAt: number }>();
 
 /** Finds the source checkout containing the Portless JSON configuration. */
 export function resolveRepositoryRoot(startDirectory = process.cwd()): string {
@@ -162,10 +164,7 @@ export function spawnPortlessService(
   service: PortlessService,
   options: { repositoryRoot?: string; environment?: Environment; args?: readonly string[] } = {},
 ): PortlessProcessHandle {
-  const environment = loadDevelopmentEnvironment({
-    repositoryRoot: options.repositoryRoot,
-    environment: options.environment,
-  });
+  const environment = options.environment ?? process.env;
   const repositoryRoot = options.repositoryRoot ?? resolveRepositoryRoot();
   const config = readPortlessConfig(repositoryRoot);
   const definition = serviceDefinitions[service];
@@ -199,10 +198,13 @@ export function spawnPortlessService(
     child.once("error", reject);
     child.once("close", (code, signal) => resolvePromise(code ?? signalExitCode(signal)));
   });
+  let terminated = false;
   return {
     pid: child.pid,
     wait: () => waitForExit,
     terminate: (signal = "SIGTERM") => {
+      if (terminated) return;
+      terminated = true;
       if (process.platform !== "win32" && child.pid !== undefined) {
         try {
           process.kill(-child.pid, signal);
@@ -316,13 +318,54 @@ export function resolvePortlessRoute(
 ): PortlessServiceRoute | undefined {
   const runtime = resolvePortlessService(service, options);
   const stateDirectory = resolvePortlessStateDirectory(options.environment ?? process.env);
-  const routes = new RouteStore(stateDirectory).loadRoutes() as PortlessRoute[];
+  const routes = readPortlessRoutes(stateDirectory);
   const routeHostname = environmentHasPortlessUrl(options.environment ?? process.env)
     ? runtime.hostname
     : resolvePortlessServiceHostname(service, options);
   const route = routes.find((candidate) => candidate.hostname === routeHostname);
   if (!route) return undefined;
   return { ...runtime, routePort: route.port, routePid: route.pid };
+}
+
+/**
+ * Reads Portless's route file without treating an in-progress locked write as
+ * an immediate route loss. Portless writes routes.json in place while holding
+ * routes.lock, so a synchronous observer can otherwise see an empty or
+ * truncated file between truncate and write.
+ */
+function readPortlessRoutes(stateDirectory: string): PortlessRoute[] {
+  const store = new RouteStore(stateDirectory);
+  const routesPath = store.getRoutesPath();
+  const lockPath = join(stateDirectory, "routes.lock");
+  const cached = portlessRouteCache.get(stateDirectory);
+  const locked = existsSync(lockPath);
+  const before = routeFileSignature(routesPath);
+  const routes = store.loadRoutes() as PortlessRoute[];
+  const after = routeFileSignature(routesPath);
+
+  if (cached && (locked || (monotonicNow() - cached.observedAt <= portlessRouteCacheTtlMs && before !== after))) {
+    return clonePortlessRoutes(cached.routes);
+  }
+
+  portlessRouteCache.set(stateDirectory, { routes: clonePortlessRoutes(routes), observedAt: monotonicNow() });
+  return routes;
+}
+
+function monotonicNow(): number {
+  return performance.now();
+}
+
+function routeFileSignature(path: string): string | undefined {
+  try {
+    const stat = statSync(path);
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function clonePortlessRoutes(routes: readonly PortlessRoute[]): PortlessRoute[] {
+  return routes.map((route) => ({ ...route }));
 }
 
 /** Resolves the hostname Portless assigns outside the child process. */
@@ -354,13 +397,15 @@ export async function waitForPortlessRoute(
 ): Promise<PortlessServiceRoute> {
   const timeoutMs = options.timeoutMs ?? 15_000;
   const intervalMs = options.intervalMs ?? 50;
-  const deadline = Date.now() + timeoutMs;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("Portless route timeout must be non-negative");
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) throw new Error("Portless route interval must be positive");
+  const attempts = Math.floor(timeoutMs / intervalMs) + 1;
   throwIfAborted(options.signal);
-  while (Date.now() <= deadline) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     throwIfAborted(options.signal);
     const route = resolvePortlessRoute(service, options);
     if (route) return route;
-    await waitForPortlessRouteInterval(intervalMs, options.signal);
+    if (attempt < attempts - 1) await waitForPortlessRouteInterval(intervalMs, options.signal);
   }
   throw new Error(`${service} did not publish a Portless route within ${timeoutMs}ms`);
 }
@@ -531,15 +576,26 @@ function normalizeUrl(value: string): URL {
   try {
     url = new URL(value);
   } catch (error) {
-    throw new Error(`PORTLESS_URL must be a valid URL: ${value}`, { cause: error });
+    throw new Error(`PORTLESS_URL must be a valid URL: ${safeUrlForError(value)}`, { cause: error });
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`PORTLESS_URL must use http or https: ${value}`);
+    throw new Error(`PORTLESS_URL must use http or https: ${safeUrlForError(value)}`);
   }
+  if (url.username || url.password) throw new Error("PORTLESS_URL must not contain credentials");
   url.pathname = url.pathname.replace(/\/+$/u, "") || "/";
   url.search = "";
   url.hash = "";
   return url;
+}
+
+function safeUrlForError(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return "<redacted URL>";
+    return value;
+  } catch {
+    return "<invalid URL>";
+  }
 }
 
 function parseDotEnvValue(value: string, source: string, lineNumber: number): string {

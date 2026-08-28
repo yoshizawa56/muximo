@@ -27,6 +27,7 @@ export type AgentBackendProviderPreparation = {
 
 export type AgentBackendProviderOptions = {
   environment: NodeJS.ProcessEnv;
+  opencodeRegistryFile?: string;
   plugins: AgentPluginRegistry;
   sessions: AgentSessionRepository;
   audit: SessionAuditPort;

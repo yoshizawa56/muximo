@@ -5,7 +5,7 @@ import type {
   MuximodAuthPort,
 } from "@muximo/application";
 import type { MuximodEvent } from "@muximo/contract/api";
-import type { MuximodSocket, MuximodSocketFactory } from "@muximo/infrastructure";
+import type { MuximodSocket, MuximodSocketFactory } from "@muximo/infrastructure/runtime";
 
 export type { MuximodAuthContext, MuximodAuthDevice, MuximodAuthPort } from "@muximo/application";
 
@@ -27,6 +27,7 @@ export type MuximodHttpDependencies = {
   auth: MuximodAuthPort;
   application: MuximodApplication;
   isReady?: () => boolean;
+  configurationFingerprint: string;
   originPolicy: MuximodOriginPolicy;
   hookToken: string;
   /** Host-specific adapter construction is supplied by the composition root. */

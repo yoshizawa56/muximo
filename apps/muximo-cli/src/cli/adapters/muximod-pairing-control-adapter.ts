@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { createInterface, type Interface } from "node:readline";
@@ -12,11 +13,18 @@ import type { AuthSessionResponse } from "@muximo/contract/api";
 import {
   decodeMuximodControlResponse,
   encodeMuximodControlRequest,
+  type MuximodControlLogResult,
   type MuximodControlRequest,
   type MuximodControlResponse,
+  muximodControlMaxResponseBytes,
 } from "@muximo/contract/control";
 
 type AgentStatus = Extract<MuximodControlRequest, { type: "observe_agent_session" }>["state"];
+type MuximodControlCommand = MuximodControlRequest extends infer Request
+  ? Request extends { requestId: string }
+    ? Omit<Request, "requestId">
+    : never
+  : never;
 
 export class PairingControlError extends Error {
   public constructor(
@@ -32,6 +40,8 @@ export class PairingControlError extends Error {
 export class MuximodPairingControlAdapter implements PairingControlPort {
   private readonly reader: Interface;
   private readonly responses: AsyncIterator<string>;
+  private requestQueue: Promise<void> = Promise.resolve();
+  private readonly pendingClaims: Extract<MuximodControlResponse, { type: "pairing_claimed" }>[] = [];
   private socketError: PairingControlError | undefined;
 
   private constructor(private readonly socket: Socket) {
@@ -70,22 +80,28 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     return response.session;
   }
 
+  public async readLog(lines: number): Promise<MuximodControlLogResult> {
+    const response = await this.request({ type: "read_log", lines });
+    if (response.type !== "daemon_log") throw unexpectedResponse("daemon_log", response.type);
+    return response;
+  }
+
   public async waitForClaim(pairingId: string): Promise<PairingClaim> {
-    const response = await this.nextResponse();
-    if (response.type === "error") throw controlError(response);
-    if (response.type !== "pairing_claimed" || response.pairingId !== pairingId) {
+    while (true) {
+      const pendingIndex = this.pendingClaims.findIndex((claim) => claim.pairingId === pairingId);
+      if (pendingIndex >= 0) {
+        const [response] = this.pendingClaims.splice(pendingIndex, 1);
+        if (response) return toPairingClaim(response);
+      }
+      const response = await this.nextResponse();
+      if (response.type === "pairing_claimed") {
+        if (response.pairingId === pairingId) return toPairingClaim(response);
+        this.pendingClaims.push(response);
+        continue;
+      }
+      if (response.type === "error") throw controlError(response);
       throw unexpectedResponse("pairing_claimed", response.type);
     }
-    return {
-      pairingId: response.pairingId,
-      serverId: response.serverId,
-      deviceName: response.deviceName,
-      deviceType: response.deviceType,
-      platform: response.platform,
-      clientVersion: response.clientVersion,
-      keyFingerprint: response.keyFingerprint,
-      expiresAt: response.expiresAt,
-    };
   }
 
   public async approvePairing(pairingId: string): Promise<ApprovedDevice> {
@@ -164,11 +180,42 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     this.socket.destroy();
   }
 
-  private async request(request: MuximodControlRequest): Promise<MuximodControlResponse> {
-    this.socket.write(`${encodeMuximodControlRequest(request)}\n`);
-    const response = await this.nextResponse();
-    if (response.type === "error") throw controlError(response);
-    return response;
+  private async request(request: MuximodControlCommand): Promise<MuximodControlResponse> {
+    const requestWithId = { ...request, requestId: randomUUID() } as MuximodControlRequest;
+    const operation = this.requestQueue.then(async () => {
+      this.socket.write(`${encodeMuximodControlRequest(requestWithId)}\n`);
+      const response = await this.nextResponseFor(requestWithId.requestId);
+      if (response.type === "error") throw controlError(response);
+      return response;
+    });
+    this.requestQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  private async nextResponseFor(requestId: string): Promise<MuximodControlResponse> {
+    while (true) {
+      const response = await this.nextResponse();
+      if (response.type === "pairing_claimed") {
+        this.pendingClaims.push(response);
+        continue;
+      }
+      if (response.type === "error" && response.requestId === undefined) {
+        throw new PairingControlError(
+          "muximod control socket returned an uncorrelated error response",
+          "invalid_control_response",
+        );
+      }
+      if (response.requestId !== requestId) {
+        throw new PairingControlError(
+          `muximod control response ${response.type} did not match request ${requestId}`,
+          "control_response_mismatch",
+        );
+      }
+      return response;
+    }
   }
 
   private async nextResponse(): Promise<MuximodControlResponse> {
@@ -185,6 +232,12 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     if (this.socketError) throw this.socketError;
     if (next.done)
       throw new PairingControlError("muximod control socket closed before pairing completed", "control_socket_closed");
+    if (Buffer.byteLength(next.value, "utf8") > muximodControlMaxResponseBytes) {
+      throw new PairingControlError(
+        "muximod control socket returned an oversized response",
+        "invalid_control_response",
+      );
+    }
     const parsed = decodeMuximodControlResponse(next.value);
     if (!parsed.ok)
       throw new PairingControlError(`muximod control socket returned ${parsed.message}`, "invalid_control_response");
@@ -200,12 +253,15 @@ function connectControlSocket(path: string): Promise<Socket> {
     }
     const socket = createConnection(path);
     const onError = (error: Error) =>
-      reject(
-        new PairingControlError(
-          `could not connect to muximod control socket: ${error.message}`,
-          "control_socket_connect_failed",
-        ),
-      );
+      (() => {
+        socket.destroy();
+        reject(
+          new PairingControlError(
+            `could not connect to muximod control socket: ${error.message}`,
+            "control_socket_connect_failed",
+          ),
+        );
+      })();
     socket.once("connect", () => {
       socket.off("error", onError);
       resolve(socket);
@@ -216,6 +272,19 @@ function connectControlSocket(path: string): Promise<Socket> {
 
 function controlError(response: Extract<MuximodControlResponse, { type: "error" }>): PairingControlError {
   return new PairingControlError(`${response.code}: ${response.message}`, response.code);
+}
+
+function toPairingClaim(response: Extract<MuximodControlResponse, { type: "pairing_claimed" }>): PairingClaim {
+  return {
+    pairingId: response.pairingId,
+    serverId: response.serverId,
+    deviceName: response.deviceName,
+    deviceType: response.deviceType,
+    platform: response.platform,
+    clientVersion: response.clientVersion,
+    keyFingerprint: response.keyFingerprint,
+    expiresAt: response.expiresAt,
+  };
 }
 
 function unexpectedResponse(expected: string, received: MuximodControlResponse["type"]): PairingControlError {

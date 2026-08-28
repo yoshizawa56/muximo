@@ -1,14 +1,6 @@
-import { existsSync } from "node:fs";
-import type {
-  ManagedAgentSessionRepository,
-  ProcessResult,
-  SessionWorktreeLookupPort,
-  ShellProcessInput,
-  ShellProcessPort,
-} from "@muximo/application";
+import type { ProcessResult, ShellProcessInput, ShellProcessPort } from "@muximo/application";
 import { resolveExecutable } from "../agents/launch.js";
 import { spawnAttached } from "../process/process.js";
-import { realpathSafe } from "./filesystem.js";
 
 export type ShellProcessAdapterOptions = {
   environment: NodeJS.ProcessEnv;
@@ -26,28 +18,5 @@ export class ShellProcessAdapter implements ShellProcessPort {
     };
     if (input.interactive) delete environment.MUXIMOD_WORKTREE_SESSION_NAME;
     return spawnAttached(executable, [...input.args], input.cwd, environment);
-  }
-}
-
-export type SessionWorktreeLookupAdapterOptions = {
-  sessions: ManagedAgentSessionRepository;
-};
-
-/** Observes a wrapped shell's managed worktree without owning shell policy. */
-export class SessionWorktreeLookupAdapter implements SessionWorktreeLookupPort {
-  public constructor(private readonly options: SessionWorktreeLookupAdapterOptions) {}
-
-  public async findWorktreePath(
-    workspaceId: Parameters<ManagedAgentSessionRepository["findByName"]>[0],
-    sessionName: string,
-    fallbackCwd: string,
-  ): Promise<string> {
-    const session = await this.options.sessions.findByName(workspaceId, sessionName);
-    if (session?.useWorktree && session.worktreePath && existsSync(session.worktreePath)) {
-      return session.worktreePath;
-    }
-    // A missing session or removed worktree explicitly means that the shell
-    // stays in its requested working directory.
-    return realpathSafe(fallbackCwd);
   }
 }

@@ -5,9 +5,13 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+    "./cli-client": {
+      "types": "./src/cli-client.ts",
+      "default": "./src/cli-client.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "default": "./src/runtime.ts"
     }
   },
   "scripts": {

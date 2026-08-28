@@ -1,5 +1,4 @@
 import { Writable } from "node:stream";
-import { createMigrationSchemaSynchronizer } from "@muximo/infrastructure";
 import {
   hasObserved,
   type OperationCase,
@@ -88,7 +87,6 @@ const table: OperationTable<Fixture, "default", Input, number, Context> = {
   cases,
   execute: (fixture, input) =>
     runMuximoCli(input.args, {
-      schemaSynchronizer: createMigrationSchemaSynchronizer(),
       includeDevelopmentCommands: input.includeDevelopmentCommands,
       env: {},
       out: fixture.out,

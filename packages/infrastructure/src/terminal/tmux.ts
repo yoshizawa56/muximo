@@ -146,7 +146,7 @@ export class TmuxAdapter {
     configFile?: string,
     environment: NodeJS.ProcessEnv = process.env,
   ) {
-    this.environment = { ...process.env, ...environment };
+    this.environment = { ...environment };
     this.commandPrefix = [...(configFile ? ["-f", configFile] : []), ...(socketPath ? ["-S", socketPath] : [])];
     const namespace = this.environment.MUXIMO_WORKTREE_ID?.trim();
     this.metadataPrefix = namespace ? `@muximod.${sanitizeMetadataNamespace(namespace)}.` : "@muximod.";

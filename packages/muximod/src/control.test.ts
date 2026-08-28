@@ -10,7 +10,7 @@ import {
   MemoryAuthRateLimitStore,
   MemoryAuthWsTicketStore,
   nodeAuthCrypto,
-} from "@muximo/infrastructure";
+} from "@muximo/infrastructure/runtime";
 import {
   type FixtureHandle,
   hasObserved,
@@ -23,7 +23,7 @@ import { describe, it } from "vitest";
 import { MuximodControlServer } from "./control.js";
 
 type ControlRequest = { agentSessionId: string; hostPaneId: string; executionId: string };
-type ControlStep = { type: "adopt" | "observe" | "release" };
+type ControlStep = { type: "adopt" | "observe" | "release" } | { type: "read-log"; lines: number };
 type ControlFixture = {
   server: MuximodControlServer;
   handleRequest: (line: string) => void;
@@ -32,14 +32,17 @@ type ControlFixture = {
   calls: string[];
   applicationRequests: unknown[];
   observations: string[];
+  logReads: number[];
   socket: { destroyed: boolean; write(data: string): void };
   database: ReturnType<typeof createAgentDatabase>;
 };
 type ControlContext = {
   responses: readonly unknown[];
+  requestIds: readonly string[];
   calls: readonly string[];
   applicationRequests: readonly unknown[];
   observations: readonly string[];
+  logReads: readonly number[];
 };
 
 const request: ControlRequest = { agentSessionId: "session-id", hostPaneId: "%1", executionId: "execution-id-123456" };
@@ -66,10 +69,15 @@ const fixture = (): FixtureHandle<ControlFixture> => {
   const calls: string[] = [];
   const applicationRequests: unknown[] = [];
   const observations: string[] = [];
+  const logReads: number[] = [];
   const responses: string[] = [];
   const server = new MuximodControlServer({
     socketPath: "/tmp/muximod-control-test.sock",
     auth,
+    readLog: async (lines) => {
+      logReads.push(lines);
+      return { state: "available", logFile: "/tmp/muximod.log", lines: ["first", "second"].slice(-lines) };
+    },
     adoptAgentSession: async (input) => {
       applicationRequests.push({ operation: "adopt", ...input });
       calls.push(`adopt:${input.agentSessionId}:${input.hostPaneId}:${input.executionId}`);
@@ -105,11 +113,12 @@ const fixture = (): FixtureHandle<ControlFixture> => {
       calls,
       applicationRequests,
       observations,
+      logReads,
       socket,
       database,
     },
-    cleanup: () => {
-      server.stop();
+    cleanup: async () => {
+      await server.stop();
       database.close();
       rmSync(instanceDirectory, { recursive: true, force: true });
     },
@@ -125,6 +134,11 @@ const cases = [
         { type: "agent_session_adopted", ...request },
         { type: "agent_session_observed", ...request, state: "waiting_input" },
         { type: "agent_session_released", ...request },
+      ]),
+      hasObserved<ControlContext, undefined>("requestIds", [
+        "control-request-1",
+        "control-request-2",
+        "control-request-3",
       ]),
       hasObserved<ControlContext, undefined>("calls", [
         "adopt:session-id:%1:execution-id-123456",
@@ -157,6 +171,17 @@ const cases = [
       ]),
     ],
   },
+  {
+    name: "returns daemon log data through the private control contract",
+    steps: [{ type: "read-log", lines: 2 }],
+    assert: [
+      hasObserved<ControlContext, undefined>("responses", [
+        { type: "daemon_log", state: "available", logFile: "/tmp/muximod.log", lines: ["first", "second"] },
+      ]),
+      hasObserved<ControlContext, undefined>("requestIds", ["control-request-1"]),
+      hasObserved<ControlContext, undefined>("logReads", [2]),
+    ],
+  },
 ] satisfies readonly ScenarioCase<"default", ControlStep, undefined, ControlContext>[];
 
 const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, ControlContext> = {
@@ -169,23 +194,36 @@ const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, Co
           ? "adopt_agent_session"
           : step.type === "observe"
             ? "observe_agent_session"
-            : "release_agent_session";
+            : step.type === "release"
+              ? "release_agent_session"
+              : "read_log";
       const expectedCount = testFixture.responses.length + 1;
       testFixture.handleRequest(
         JSON.stringify({
           type,
-          ...testFixture.request,
-          ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
+          requestId: `control-request-${expectedCount}`,
+          ...(step.type === "read-log"
+            ? { lines: step.lines }
+            : {
+                ...testFixture.request,
+                ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
+              }),
         }),
       );
       await waitFor(() => testFixture.responses.length === expectedCount);
     }
   },
   observe: (testFixture) => ({
-    responses: testFixture.responses.map((value) => JSON.parse(value)),
+    responses: testFixture.responses.map((value) => {
+      const parsed = JSON.parse(value) as Record<string, unknown>;
+      delete parsed.requestId;
+      return parsed;
+    }),
+    requestIds: testFixture.responses.map((value) => (JSON.parse(value) as { requestId?: string }).requestId ?? ""),
     calls: [...testFixture.calls],
     applicationRequests: [...testFixture.applicationRequests],
     observations: [...testFixture.observations],
+    logReads: [...testFixture.logReads],
   }),
 };
 

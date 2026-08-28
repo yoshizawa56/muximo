@@ -6,16 +6,16 @@ export class StatusDaemon {
 
   public async execute(options: DaemonOptions): Promise<DaemonStatusResult> {
     const healthCheckStartedAt = this.dependencies.clock.now();
-    if (await this.dependencies.runtime.isHealthy(options.host, options.port)) {
+    const record = this.dependencies.runtime.readPidRecord(options.pidFile);
+    if (await this.dependencies.runtime.isHealthy(options, record?.pid)) {
       return {
         state: "running",
         host: options.host,
         port: options.port,
-        pid: this.dependencies.runtime.readPidRecord(options.pidFile)?.pid,
+        pid: record?.pid,
       };
     }
 
-    const record = this.dependencies.runtime.readPidRecord(options.pidFile);
     if (record && (await this.dependencies.runtime.isAlive(record.pid))) {
       return {
         state: "unhealthy",

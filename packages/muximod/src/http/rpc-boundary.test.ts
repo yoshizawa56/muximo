@@ -131,6 +131,7 @@ const appFixture =
     const app = createMuximodApp({
       auth: testAuth,
       application: createTestApplication(events, { sessionInputs, managedSessionInputs, paneInputs }),
+      configurationFingerprint: "0".repeat(64),
       isReady: () => ready,
       originPolicy: createOriginPolicy({ allowedOrigins: ["http://web.example"], allowNoOrigin: true }),
       hookToken: "test-token",

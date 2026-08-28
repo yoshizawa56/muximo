@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
-import { TmuxAdapter, TmuxPanePublicationAdapter } from "@muximo/infrastructure";
+import { TmuxAdapter, TmuxPanePublicationAdapter } from "@muximo/infrastructure/runtime";
 import {
   hasEvents,
   hasObserved,
@@ -209,7 +209,7 @@ function createAdapter(fixture: PaneFixture, mode: PaneMode): TmuxPanePublicatio
       MUXIMOD_MANAGED_SESSION_NAME: "muximod",
       MUXIMOD_PANE_NAME: "current-pane",
     },
-    databaseFile: join(fixture.root, "muximod.sqlite"),
+    controlSocket: join(fixture.root, "muximod.sock"),
     tmux: fixture.tmux,
     connect: async () => {
       fixture.events.push("connect");

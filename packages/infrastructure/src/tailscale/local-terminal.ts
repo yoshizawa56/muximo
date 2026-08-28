@@ -10,28 +10,25 @@ import { buildTailscaleInvocation } from "./index.js";
  * small, local CLI lookup and keeps child-process I/O out of the composition
  * root and application layer.
  */
-export async function getLocalTerminal(): Promise<MuximodTerminalEndpoint> {
+export async function getLocalTerminal(environment: NodeJS.ProcessEnv = process.env): Promise<MuximodTerminalEndpoint> {
   const host = osHostname();
   return {
     id: host,
     name: host.split(".")[0] || host,
     host,
-    tailnetIp: readTailscaleIpv4() ?? host,
+    tailnetIp: readTailscaleIpv4(environment) ?? host,
     state: "online",
     detail: `muximod - ${osPlatform()}`,
     lastSeen: "online now",
   };
 }
 
-function readTailscaleIpv4(): string | undefined {
+function readTailscaleIpv4(environment: NodeJS.ProcessEnv): string | undefined {
   const invocation = buildTailscaleInvocation(
-    process.env.TAILSCALE_BIN ?? "tailscale",
+    environment.TAILSCALE_BIN ?? "tailscale",
     ["ip", "-4"],
-    process.env,
+    environment,
     process.platform,
-    {
-      allowShellFallback: false,
-    },
   );
   const result = spawnSync(invocation.command, invocation.args, {
     encoding: "utf8",

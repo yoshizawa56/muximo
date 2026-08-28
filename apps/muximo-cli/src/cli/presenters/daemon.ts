@@ -5,7 +5,7 @@ import type {
   DaemonStatusResult,
   DaemonStopResult,
 } from "@muximo/application";
-import { type DaemonLogResult, readDaemonHealthDiagnostics } from "@muximo/infrastructure";
+import type { MuximodControlLogResult } from "@muximo/contract/control";
 import type { CliIo } from "../commands/types.js";
 
 export function presentDaemonStart(result: DaemonStartResult, io: CliIo): number {
@@ -27,7 +27,6 @@ export function presentDaemonStatus(result: DaemonStatusResult, io: CliIo): numb
       `${presentHealthFailure(
         `muximod process ${result.pid} exists but is not healthy at http://${displayDaemonHost(result.host)}:${result.port}`,
         result.logFile,
-        result.healthFailure,
       )}\n`,
     );
     return 1;
@@ -56,7 +55,7 @@ export function presentDaemonRestart(result: DaemonRestartResult, io: CliIo): nu
   return 0;
 }
 
-export function presentDaemonLog(result: DaemonLogResult, io: CliIo): number {
+export function presentDaemonLog(result: MuximodControlLogResult, io: CliIo): number {
   if (result.state === "missing") {
     io.err.write(`muximo: muximod log file was not found: ${result.logFile}\n`);
     return 1;
@@ -70,46 +69,13 @@ export function presentDaemonLog(result: DaemonLogResult, io: CliIo): number {
 }
 
 export function presentDaemonError(error: DaemonHealthError, io: CliIo): number {
-  const result = readDaemonHealthDiagnostics(error.details.options.logFile, error.details.context);
-  const lines = [healthErrorMessage(error), `muximod log: ${result.logFile}`];
-  if (result.diagnostics.length === 0) {
-    lines.push("muximod log: no recent warning or error records");
-  } else {
-    lines.push(
-      "muximod recent diagnostics:",
-      ...result.diagnostics.map((diagnostic) => {
-        const detail = diagnostic.message ? `: ${diagnostic.message}` : "";
-        const code = diagnostic.code ? ` code=${diagnostic.code}` : "";
-        const errorId = diagnostic.errorId ? ` errorId=${diagnostic.errorId}` : "";
-        return `  ${diagnostic.level} ${diagnostic.event}${detail}${code}${errorId}`;
-      }),
-    );
-  }
-  io.err.write(`muximo: ${lines.join("\n")}\n`);
+  const logFile = error.details.options.logFile;
+  io.err.write(`muximo: ${healthErrorMessage(error)}${logFile ? `\nmuximod log: ${logFile}` : ""}\n`);
   return 1;
 }
 
-function presentHealthFailure(
-  message: string,
-  logFile: string | undefined,
-  context: { startedAt: number; pid?: number },
-): string {
-  const result = readDaemonHealthDiagnostics(logFile, context);
-  const lines = [message, `muximod log: ${result.logFile}`];
-  if (result.diagnostics.length === 0) {
-    lines.push("muximod log: no recent warning or error records");
-  } else {
-    lines.push(
-      "muximod recent diagnostics:",
-      ...result.diagnostics.map((diagnostic) => {
-        const detail = diagnostic.message ? `: ${diagnostic.message}` : "";
-        const code = diagnostic.code ? ` code=${diagnostic.code}` : "";
-        const errorId = diagnostic.errorId ? ` errorId=${diagnostic.errorId}` : "";
-        return `  ${diagnostic.level} ${diagnostic.event}${detail}${code}${errorId}`;
-      }),
-    );
-  }
-  return lines.join("\n");
+function presentHealthFailure(message: string, logFile: string | undefined): string {
+  return logFile ? `${message}\nmuximod log: ${logFile}` : message;
 }
 
 function healthErrorMessage(error: DaemonHealthError): string {

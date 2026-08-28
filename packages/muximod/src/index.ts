@@ -1,3 +1,10 @@
+export type { MuximodClientPathOverrides, MuximodClientPaths } from "./client-paths.js";
+export {
+  defaultMuximodInstanceDirectory,
+  muximodControlSocketMaxBytes,
+  resolveMuximodClientPaths,
+  validateMuximodControlSocketPath,
+} from "./client-paths.js";
 export type { MuximodEntrypointOptions } from "./entrypoint.js";
 export { runMuximod } from "./entrypoint.js";
 export type {

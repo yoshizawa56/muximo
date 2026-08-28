@@ -81,6 +81,12 @@ const forbiddenCliTerms =
 const cliProviderLifecycleImport = /(?:from\s+|import\s*\(\s*)["'][^"']*\/agents\/(?:codex|claude|opencode)(?:\/|["'])/;
 const cliProviderLifecycleTerms =
   /\b(?:CodexBackendProvider|ClaudeBackendProvider|OpenCodeBackendProvider|OpenCodeServerManager|manageCodexThread|manageCodexThreadFromEnvironment|ensureCodexRemoteControl|CodexRpcClient|MUXIMO_CODEX_NAME_BIN)\b/;
+const cliDaemonStateTerms =
+  /\b(?:AgentDatabase|createAgentDatabase|Drizzle(?:AgentSession|CodexSessionState|Pane|Workspace)Repository|SqliteTransactionManager|DatabaseSchemaSynchronizer|ensureMuximodSnapshot|readDaemonLog|readDaemonHealthDiagnostics|resolveMuximodPaths|bun:sqlite)\b/;
+const cliForbiddenInfrastructureRootImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/infrastructure["']/;
+const cliForbiddenInfrastructureRuntimeImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/infrastructure\/runtime["']/;
+const cliForbiddenMuximodRootImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/muximod["']/;
+const cliForbiddenMuximodRuntimeImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/muximod\/runtime["']/;
 const forbiddenApplicationPaths = [
   "packages/application/src/ports/cli.ts",
   "packages/application/src/ports/terminal.ts",
@@ -225,7 +231,7 @@ function appName(relativePath) {
 }
 
 function inspectCliBoundary(source, relativePath) {
-  if (!relativePath.startsWith("apps/muximo-cli/src/")) return;
+  if (!relativePath.startsWith("apps/muximo-cli/")) return;
   if (forbiddenCliTerms.test(source)) {
     errors.push(`${relativePath}: CLI runtime/engine façade naming is forbidden`);
   }
@@ -239,6 +245,23 @@ function inspectCliBoundary(source, relativePath) {
     errors.push(
       `${relativePath}: provider lifecycle transport/implementation belongs in packages/infrastructure/src/agents; use a provider-neutral port or registry adapter`,
     );
+  }
+  if (cliDaemonStateTerms.test(source) || /@muximo\/infrastructure\/src\/persistence/.test(source)) {
+    errors.push(
+      `${relativePath}: CLI must access daemon-owned persistence and state only through API/control contracts`,
+    );
+  }
+  if (cliForbiddenInfrastructureRootImport.test(source)) {
+    errors.push(`${relativePath}: CLI must use @muximo/infrastructure/cli-client, not the full infrastructure surface`);
+  }
+  if (cliForbiddenInfrastructureRuntimeImport.test(source)) {
+    errors.push(`${relativePath}: CLI must use @muximo/infrastructure/cli-client, not the daemon runtime surface`);
+  }
+  if (cliForbiddenMuximodRootImport.test(source)) {
+    errors.push(`${relativePath}: CLI must use @muximo/muximod/client, not the full muximod surface`);
+  }
+  if (cliForbiddenMuximodRuntimeImport.test(source)) {
+    errors.push(`${relativePath}: CLI must use @muximo/muximod/client, not the daemon runtime surface`);
   }
 }
 

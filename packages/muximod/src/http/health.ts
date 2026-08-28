@@ -11,7 +11,7 @@ export type MuximodHealthPresentation =
   | { ready: false; status: 503; body: MuximodHealthUnavailable };
 
 /** Builds the single health representation shared by raw HTTP and oRPC. */
-export function presentMuximodHealth(isReady = true): MuximodHealthPresentation {
+export function presentMuximodHealth(configurationFingerprint: string, isReady = true): MuximodHealthPresentation {
   if (!isReady) {
     return {
       ready: false,
@@ -22,6 +22,12 @@ export function presentMuximodHealth(isReady = true): MuximodHealthPresentation 
   return {
     ready: true,
     status: 200,
-    body: muximodHealthSchema.parse({ ok: true, service: "muximod", protocolVersion }),
+    body: muximodHealthSchema.parse({
+      ok: true,
+      service: "muximod",
+      protocolVersion,
+      pid: process.pid,
+      configurationFingerprint,
+    }),
   };
 }

@@ -53,6 +53,7 @@ const httpFixture = (): FixtureHandle<HttpFixture> => {
   const app = createMuximodApp({
     auth,
     application: createApplication(),
+    configurationFingerprint: "0".repeat(64),
     originPolicy: createOriginPolicy({ allowedOrigins: ["http://web.example"], allowNoOrigin: true }),
     hookToken: "hook",
     socketFactory: createTestMuximodSocketFactory(),

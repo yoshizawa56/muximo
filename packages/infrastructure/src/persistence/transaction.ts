@@ -27,7 +27,7 @@ const defaultRetryOptions: Required<Pick<SqliteRetryOptions, "maxRetries" | "ret
  * This explicit BEGIN/COMMIT path is intentional; it is not Bun's unsafe
  * `Database.transaction(async callback)` form. The mutex protects this
  * connection in-process, while SQLite busy handling remains responsible for
- * writers in other processes such as the direct CLI.
+ * writers in other processes, if an external process is ever introduced.
  */
 export class SqliteTransactionManager implements TransactionManager {
   private readonly mutex = new AsyncMutex();

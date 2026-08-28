@@ -266,7 +266,7 @@ function createFixture(key: string): LifecycleFixture {
 
   const runtime: DaemonRuntimePort = {
     runForeground: async () => ({ code: 0, interrupted: false }),
-    spawn: () => {
+    spawn: async () => {
       fixture.spawnCount += 1;
       fixture.alive = true;
       if (fixture.healthyAfterSpawn) fixture.healthy = true;

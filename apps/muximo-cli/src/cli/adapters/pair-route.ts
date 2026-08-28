@@ -2,18 +2,19 @@ import {
   ensureTailscaleServe,
   type Logger,
   localMuximodUrl,
+  resolvePairingBaseUrl,
   resolveServeAllowedOrigins,
   resolveServeLogOptions,
   type ServeCommandOptions,
-  type ServeProcessHandle,
-} from "@muximo/infrastructure";
+  type ServeMuximodLease,
+} from "@muximo/infrastructure/cli-client";
 import type { CliServeInput } from "../commands/types.js";
 
 export type PairRouteDependencies = {
   ensureMuximod: (
     options: ServeCommandOptions,
     allowedOrigins: readonly string[],
-  ) => Promise<ServeProcessHandle | undefined>;
+  ) => Promise<ServeMuximodLease | undefined>;
   runCommand?: (
     command: string,
     args: string[],
@@ -24,7 +25,7 @@ export type PairRouteDependencies = {
 
 /** Resolves the browser endpoint used by pairing without importing muximod. */
 export async function resolvePairMuximodBaseUrl(
-  input: { withoutServe: boolean; environment: NodeJS.ProcessEnv },
+  input: { withoutServe: boolean; controlSocket?: string; environment: NodeJS.ProcessEnv },
   dependencies: PairRouteDependencies,
 ): Promise<string> {
   const environment = input.environment;
@@ -42,15 +43,20 @@ export async function resolvePairMuximodBaseUrl(
     ...options,
     tailscaleBinary: environment.TAILSCALE_BIN ?? "tailscale",
     hostname: environment.MUXIMO_TAILSCALE_HOSTNAME,
+    controlSocket: input.controlSocket,
+    muximodBaseUrl: environment.MUXIMOD_PAIRING_BASE_URL?.trim() || undefined,
   };
 
   if (input.withoutServe) {
+    const pairingBaseUrl = environment.MUXIMOD_PAIRING_BASE_URL
+      ? resolvePairingBaseUrl(environment)
+      : localMuximodUrl(options.muximodHost, options.muximodPort);
     const allowedOrigins =
       environment.MUXIMOD_ALLOWED_ORIGINS === undefined
-        ? [new URL(localMuximodUrl(options.muximodHost, options.muximodPort)).origin]
+        ? [new URL(pairingBaseUrl).origin]
         : resolveServeAllowedOrigins(options, environment);
     await dependencies.ensureMuximod(serveOptions, allowedOrigins);
-    return localMuximodUrl(options.muximodHost, options.muximodPort);
+    return pairingBaseUrl;
   }
 
   const result = await ensureTailscaleServe(
@@ -64,7 +70,7 @@ export async function resolvePairMuximodBaseUrl(
   );
   if (!result.url) {
     throw new Error(
-      "could not determine the Tailscale Serve URL; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_ALLOWED_ORIGINS",
+      "could not determine the Tailscale Serve URL; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_PAIRING_BASE_URL",
     );
   }
   return result.url;

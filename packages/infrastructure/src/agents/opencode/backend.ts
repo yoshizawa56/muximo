@@ -66,7 +66,8 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     }
     try {
       await new OpenCodeServerManager({
-        registryFile: defaultOpenCodeRegistryFile(this.options.environment),
+        environment: this.options.environment,
+        registryFile: this.options.opencodeRegistryFile ?? defaultOpenCodeRegistryFile(this.options.environment),
       }).dispose(runDir);
     } catch (error) {
       this.options.logger.warn("opencode.server_release_failed", { runDir, ...errorFields(error) });

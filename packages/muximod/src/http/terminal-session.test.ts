@@ -10,7 +10,7 @@ import {
   type MuximodSocketData,
   muximodSocketReadyState,
   type PtyProcess,
-} from "@muximo/infrastructure";
+} from "@muximo/infrastructure/runtime";
 import {
   type FixtureHandle,
   hasObserved,

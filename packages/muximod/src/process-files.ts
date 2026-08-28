@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { DaemonPidRecord } from "@muximo/application";
 
 export function writeMuximodPidRecord(path: string, record: DaemonPidRecord): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  writePrivateJson(path, record);
 }
 
 export function removeMuximodPidRecord(path: string, expectedPid: number): void {
@@ -38,14 +38,7 @@ export function readMuximodPidRecord(path: string): DaemonPidRecord | undefined 
 
 export function writeMuximodRestartMarker(path: string, refreshServers: boolean): void {
   const marker = `${path}.restart`;
-  mkdirSync(dirname(marker), { recursive: true, mode: 0o700 });
-  writeFileSync(
-    marker,
-    `${JSON.stringify({ pid: process.pid, refreshServers, startedAt: new Date().toISOString() })}\n`,
-    {
-      mode: 0o600,
-    },
-  );
+  writePrivateJson(marker, { pid: process.pid, refreshServers, startedAt: new Date().toISOString() });
 }
 
 export function hasMuximodRestartMarker(path: string): boolean {
@@ -69,11 +62,6 @@ export function consumeMuximodRestartMarker(path: string): boolean | undefined {
     if (!isRestartMarkerRecord(parsed)) throw new Error("restart marker does not match the current format");
     refreshServers = parsed.refreshServers;
   } catch (error) {
-    try {
-      unlinkSync(marker);
-    } catch {
-      // The marker may already have been removed.
-    }
     throw new Error(`muximod restart marker has an invalid format: ${marker}`, { cause: error });
   }
   try {
@@ -127,4 +115,28 @@ function isIsoTimestamp(value: string): boolean {
 
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+function writePrivateJson(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  let operationError: unknown;
+  let operationFailed = false;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    chmodSync(temporaryPath, 0o600);
+    renameSync(temporaryPath, path);
+    chmodSync(path, 0o600);
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+  }
+  let cleanupError: unknown;
+  try {
+    unlinkSync(temporaryPath);
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) cleanupError = error;
+  }
+  if (operationFailed) throw operationError;
+  if (cleanupError !== undefined) throw cleanupError;
 }

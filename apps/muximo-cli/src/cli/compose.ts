@@ -1,49 +1,39 @@
+import { randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Readable } from "node:stream";
-import {
-  type AgentSessionRepository,
-  manageSession,
-  PairDevice,
-  RunShell,
-  type WorkspaceRepository,
-} from "@muximo/application";
+import { PairDevice, RunShell } from "@muximo/application";
 import { AgentSession } from "@muximo/domain";
 import {
-  type AgentDatabase,
-  createAgentDatabase,
   createLogger,
-  type DatabaseSchemaSynchronizer,
-  DrizzleAgentSessionRepository,
-  DrizzleWorkspaceRepository,
   ensureTailscaleServe,
   GitShellWorktreeAdapter,
   GitWorktreeAdapter,
   type Logger,
   type LogLevel,
   localMuximodUrl,
-  readDaemonLog,
-  resolveFromRoot,
-  resolveMuximodPaths,
   runDevCommand,
   runDoctor,
   type ServeCommandOptions,
-  type ServeProcessHandle,
-  SessionWorktreeLookupAdapter,
+  type ServeMuximodLease,
   ShellProcessAdapter,
-  SqliteTransactionManager,
   TmuxAdapter,
-  TmuxMuximodHostAdapter,
   TmuxNewSessionService,
   TmuxPanePublicationAdapter,
-  validateMuximodControlSocketPath,
   WorkspaceHookAdapter,
-  WorkspaceResolverAdapter,
-  WorkspaceSelectionCatalog,
-} from "@muximo/infrastructure";
-import { createMuximodLifecycle, ensureMuximodSnapshot, type MuximodLifecycle } from "@muximo/muximod";
+} from "@muximo/infrastructure/cli-client";
+import {
+  createMuximodLifecycle,
+  type MuximodLifecycle,
+  resolveMuximodClientPaths,
+  validateMuximodControlSocketPath,
+} from "@muximo/muximod/client";
 import { confirmCleanup } from "./adapters/cleanup-prompt.js";
 import { BrowserPairingPresenter, PairCommand, TerminalPairingPresenter } from "./adapters/index.js";
-import { connectMuximodApi, type MuximodApiClient } from "./adapters/muximod-api-client.js";
+import { connectMuximodApi, type MuximodApiClient, readMuximodDaemonLog } from "./adapters/muximod-api-client.js";
 import { MuximodPairingControlAdapter } from "./adapters/muximod-pairing-control-adapter.js";
+import { MuximodShellSessionWorktreeLookup, MuximodShellWorkspaceResolver } from "./adapters/muximod-shell-context.js";
 import { resolvePairMuximodBaseUrl } from "./adapters/pair-route.js";
 import { type CliApp, createCliApp } from "./app.js";
 import type { CliHandlers, CliIo } from "./commands/types.js";
@@ -55,7 +45,6 @@ import { createWorkspaceHandlers } from "./handlers/workspace.js";
 import { createMuximodConfigResolver } from "./muximod-config.js";
 
 export type CliCompositionOptions = {
-  schemaSynchronizer: DatabaseSchemaSynchronizer;
   includeDevelopmentCommands: boolean;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -63,8 +52,6 @@ export type CliCompositionOptions = {
   input?: Readable;
   logger?: Logger;
   logLevel?: LogLevel;
-  databaseFile?: string;
-  repositoryRoot?: string;
   tmux?: TmuxAdapter;
   muximod?: MuximodLifecycle;
   muximodSchemaMode?: "migrate" | "push";
@@ -77,15 +64,7 @@ export type CliComposition = {
   close(): void;
 };
 
-type DatabaseResources = {
-  database: AgentDatabase;
-  transaction: SqliteTransactionManager | undefined;
-  sessions: DrizzleAgentSessionRepository;
-  workspaces: DrizzleWorkspaceRepository;
-  catalog: WorkspaceSelectionCatalog;
-};
-
-/** The sole CLI composition root: all concrete resources are wired here. */
+/** The sole CLI composition root: all client and host resources are wired here. */
 export function createCliComposition(options: CliCompositionOptions): CliComposition {
   const io = options.io ?? { out: process.stdout, err: process.stderr };
   const environment = { ...process.env, ...options.env };
@@ -99,98 +78,16 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       output: io.err,
       showStack: options.logLevel === "debug",
     });
-  const paths = resolveMuximodPaths(environment, { databaseFile: options.databaseFile });
-  const databaseFile = options.databaseFile ?? paths.databaseFile;
-  const instanceDirectory = databaseFile === ":memory:" ? undefined : paths.instanceDirectory;
-  let resources: DatabaseResources | undefined;
-  const ensureDatabase = (): DatabaseResources => {
-    if (resources) return resources;
-    if (options.muximodSchemaMode === "push" && options.muximodBaseInstanceDir && databaseFile !== ":memory:") {
-      ensureMuximodSnapshot({
-        baseInstanceDir: options.muximodBaseInstanceDir,
-        targetInstanceDir: paths.instanceDirectory,
-        targetDatabaseFile: databaseFile,
-      });
-    }
-    const database = createAgentDatabase(databaseFile, {
-      schemaSynchronizer: options.schemaSynchronizer,
-      migrationsFolder: environment.MUXIMOD_MIGRATIONS_DIR ?? environment.MUXIMO_MIGRATIONS_DIR,
-      instanceDirectory,
-    });
-    const transaction = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
-    const sessions = new DrizzleAgentSessionRepository(database.db);
-    const workspaces = new DrizzleWorkspaceRepository(database.db);
-    const catalog = new WorkspaceSelectionCatalog(["/"], cwd);
-    resources = {
-      database,
-      transaction,
-      sessions,
-      workspaces,
-      catalog,
-    };
-    return resources;
-  };
-
-  const repository = (): DatabaseResources => ensureDatabase();
-  const sessionRepository: AgentSessionRepository = {
-    findById: (id) => repository().sessions.findById(id),
-    findByName: (workspaceId, name) => repository().sessions.findByName(workspaceId, name),
-    list: (workspaceId) => repository().sessions.list(workspaceId),
-    insert: (record) => repository().sessions.insert(record),
-    update: (record) => repository().sessions.update(record),
-    claimExecution: (input) => repository().sessions.claimExecution(input),
-    setBackendSessionIdIfMissing: (id, backendSessionId) =>
-      repository().sessions.setBackendSessionIdIfMissing(id, backendSessionId),
-    delete: (id) => repository().sessions.delete(id),
-  };
-  const workspaceRepository: WorkspaceRepository = {
-    findById: (id) => repository().workspaces.findById(id),
-    list: () => repository().workspaces.list(),
-    insert: (record) => repository().workspaces.insert(record),
-    upsert: (record) => repository().workspaces.upsert(record),
-    delete: (id) => repository().workspaces.delete(id),
-  };
-  const workspace = () => new WorkspaceResolverAdapter({ cwd, environment, workspaces: workspaceRepository });
-  const workspaceResolver = workspace();
-  const worktrees = new GitWorktreeAdapter({
-    environment,
-    logger,
-  });
-  const hooks = new WorkspaceHookAdapter({
-    environment,
-    cwd,
-    hookOutputRoot: resolveFromRoot(paths.hookOutputDirectory, options.repositoryRoot ?? process.cwd()),
-    logger,
-  });
-  const tmux = options.tmux ?? new TmuxAdapter(environment.MUXIMOD_TMUX_SOCKET, undefined, environment);
-  const tmuxHost = new TmuxMuximodHostAdapter(tmux, environment);
-  const pane = new TmuxPanePublicationAdapter({
-    environment,
-    databaseFile,
-    tmux,
-    connect: (socketPath) => MuximodPairingControlAdapter.connect(socketPath),
-    logger,
-  });
-  const shell = new RunShell({
-    cwd,
-    paneName: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
-    workspace: workspaceResolver,
-    sessions: new SessionWorktreeLookupAdapter({ sessions: sessionRepository }),
-    process: new ShellProcessAdapter({ environment }),
-    worktrees: new GitShellWorktreeAdapter(worktrees),
-    hooks,
-    panes: pane,
-  });
-  const tmuxSession = new TmuxNewSessionService({ environment, tmux });
+  const paths = resolveMuximodClientPaths(environment, { baseDirectory: cwd });
   const muximod =
     options.muximod ??
     createMuximodLifecycle({
       schemaMode: options.muximodSchemaMode ?? "migrate",
       baseInstanceDir: options.muximodBaseInstanceDir,
+      environment,
       resolveConfig: createMuximodConfigResolver({
         environment,
         workingDirectory: cwd,
-        databaseFile: options.databaseFile,
       }),
     });
   const localDaemon = () => {
@@ -204,22 +101,37 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       controlSocket: paths.controlSocket,
     };
   };
-  let apiPromise: Promise<MuximodApiClient> | undefined;
-  const ensureApi = (): Promise<MuximodApiClient> => {
-    if (!apiPromise) {
-      apiPromise = (async () => {
+  let ensurePromise: Promise<void> | undefined;
+  const ensureLocalDaemon = async () => {
+    if (!ensurePromise) {
+      ensurePromise = (async () => {
         const daemon = localDaemon();
         await muximod.ensure({
           host: daemon.host,
           port: daemon.port,
           pidFile: daemon.pidFile,
           controlSocket: daemon.controlSocket,
-          muximodBaseUrl: daemon.baseUrl,
         });
+      })().finally(() => {
+        ensurePromise = undefined;
+      });
+    }
+    await ensurePromise;
+  };
+  let apiPromise: Promise<MuximodApiClient> | undefined;
+  const invalidateApi = () => {
+    apiPromise = undefined;
+  };
+  const ensureApi = (): Promise<MuximodApiClient> => {
+    if (!apiPromise) {
+      apiPromise = (async () => {
+        const daemon = localDaemon();
+        await ensureLocalDaemon();
         return connectMuximodApi({
           httpBaseUrl: daemon.baseUrl,
           controlSocket: daemon.controlSocket,
           cwd,
+          ensureDaemon: ensureLocalDaemon,
         });
       })().catch((error) => {
         apiPromise = undefined;
@@ -228,23 +140,68 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     }
     return apiPromise;
   };
+  const worktrees = new GitWorktreeAdapter({
+    environment,
+    logger,
+  });
+  const shellHookOutputRoot = join(tmpdir(), `muximo-cli-hooks-${process.pid}-${randomUUID()}`);
+  const hooks = new WorkspaceHookAdapter({
+    environment,
+    cwd,
+    // Shell hooks are a host-only CLI workflow. Keep their transient output
+    // outside the daemon instance so the client never writes daemon state.
+    hookOutputRoot: shellHookOutputRoot,
+    logger,
+  });
+  const tmux = options.tmux ?? new TmuxAdapter(environment.MUXIMOD_TMUX_SOCKET, undefined, environment);
+  const pane = new TmuxPanePublicationAdapter({
+    environment,
+    controlSocket: paths.controlSocket,
+    tmux,
+    connect: (socketPath) => MuximodPairingControlAdapter.connect(socketPath),
+    logger,
+  });
+  const shell = new RunShell({
+    cwd,
+    paneName: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
+    workspace: new MuximodShellWorkspaceResolver({ cwd, environment, api: ensureApi }),
+    sessions: new MuximodShellSessionWorktreeLookup(ensureApi),
+    process: new ShellProcessAdapter({ environment }),
+    worktrees: new GitShellWorktreeAdapter(worktrees),
+    hooks,
+    panes: pane,
+  });
+  const tmuxSession = new TmuxNewSessionService({ environment, tmux });
   const ensureMuximodForServe = async (
     serveOptions: ServeCommandOptions,
     allowedOrigins: readonly string[],
-  ): Promise<ServeProcessHandle | undefined> => {
+  ): Promise<ServeMuximodLease | undefined> => {
     const daemonOptions = {
       host: serveOptions.muximodHost,
       port: serveOptions.muximodPort,
       pidFile: serveOptions.pidFile ?? paths.pidFile,
-      controlSocket: paths.controlSocket,
+      controlSocket: serveOptions.controlSocket ?? paths.controlSocket,
       muximodBaseUrl: serveOptions.muximodBaseUrl,
       logLevel: serveOptions.logLevel,
       logFile: serveOptions.logFile,
       allowedOrigins,
     };
-    if (serveOptions.foreground) return muximod.startForeground(daemonOptions);
-    await muximod.ensure(daemonOptions);
-    return undefined;
+    if (serveOptions.foreground) {
+      const foregroundProcess = await muximod.startForeground(daemonOptions);
+      return {
+        foregroundProcess,
+        cleanup: async () => {
+          try {
+            foregroundProcess.terminate("SIGTERM");
+          } catch {
+            // The process may have exited between the health check and cleanup.
+          }
+          await foregroundProcess.wait().catch(() => undefined);
+        },
+      };
+    }
+    const result = await muximod.ensure(daemonOptions);
+    return result.state === "started" ? { cleanup: async () => void (await muximod.stop(daemonOptions)) } : undefined;
   };
   const runAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["run"]>[0]) => {
     const api = await ensureApi();
@@ -297,18 +254,23 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         runDoctor(value, {
           environment,
           logger,
-          databaseFile,
           defaultRemote: environment.MUXIMO_CODEX_REMOTE ?? "unix://",
         }),
     },
     daemon: {
       defaults: { pidFile: paths.pidFile, controlSocket: paths.controlSocket },
-      start: { execute: muximod.start },
+      start: { execute: async (input) => withApiInvalidation(() => muximod.start(input), invalidateApi) },
       status: { execute: muximod.status },
-      stop: { execute: muximod.stop },
-      restart: { execute: muximod.restart },
-      ensure: { execute: muximod.ensure },
-      log: { execute: async (value) => readDaemonLog(value.logFile, value.lines) },
+      stop: { execute: async (input) => withApiInvalidation(() => muximod.stop(input), invalidateApi) },
+      restart: { execute: async (input) => withApiInvalidation(() => muximod.restart(input), invalidateApi) },
+      ensure: { execute: async (input) => withApiInvalidation(() => muximod.ensure(input), invalidateApi) },
+      log: {
+        execute: (value) =>
+          readMuximodDaemonLog({
+            controlSocket: paths.controlSocket,
+            lines: value.lines,
+          }),
+      },
     },
     serve: {
       execute: async (value): Promise<ServeResult> =>
@@ -333,7 +295,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     },
     resolveMuximodBaseUrl: (value) =>
       resolvePairMuximodBaseUrl(
-        { withoutServe: value.withoutServe, environment },
+        { withoutServe: value.withoutServe, controlSocket: value.controlSocket, environment },
         { ensureMuximod: ensureMuximodForServe, logger },
       ),
   });
@@ -348,7 +310,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     ...createInteractiveHandlers({
       shell,
       tmux: tmuxSession,
-      manageSession: { execute: (input) => manageSession(input, tmuxHost) },
+      manageSession: { execute: (input) => ensureApi().then((api) => api.sessions.manage(input)) },
       io,
     }),
     ...systemHandlers,
@@ -377,8 +339,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     app,
     execute: (args) => app.execute(args),
     close: () => {
-      resources?.transaction?.close();
-      resources?.database.close();
+      rmSync(shellHookOutputRoot, { recursive: true, force: true });
       if (!options.logger) logger.close();
     },
   };
@@ -417,4 +378,12 @@ function readPort(value: string | undefined, fallback: number): number {
     throw new Error("muximod port must be between 1 and 65535");
   }
   return port;
+}
+
+async function withApiInvalidation<Result>(operation: () => Promise<Result>, invalidate: () => void): Promise<Result> {
+  try {
+    return await operation();
+  } finally {
+    invalidate();
+  }
 }

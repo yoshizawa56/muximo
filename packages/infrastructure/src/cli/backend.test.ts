@@ -8,7 +8,7 @@ import {
   AgentPluginRegistry,
   type AgentPluginV1,
   createDefaultAgentBackendProviders,
-} from "@muximo/infrastructure";
+} from "@muximo/infrastructure/runtime";
 import {
   hasObserved,
   type OperationCase,

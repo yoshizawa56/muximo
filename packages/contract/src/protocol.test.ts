@@ -272,17 +272,36 @@ const eventCases = [
 const healthCases = [
   {
     name: "accepts the current health contract",
-    input: { ok: true, service: "muximod", protocolVersion: terminalProtocolVersion },
+    input: {
+      ok: true,
+      service: "muximod",
+      protocolVersion: terminalProtocolVersion,
+      pid: 1234,
+      configurationFingerprint: "0".repeat(64),
+    },
     assert: [isValid()],
   },
   {
     name: "rejects a health response for an unsupported protocol version",
-    input: { ok: true, service: "muximod", protocolVersion: 99 },
+    input: {
+      ok: true,
+      service: "muximod",
+      protocolVersion: 99,
+      pid: 1234,
+      configurationFingerprint: "0".repeat(64),
+    },
     assert: [isInvalid(["protocolVersion"])],
   },
   {
     name: "rejects a health response with an unknown field",
-    input: { ok: true, service: "muximod", protocolVersion: terminalProtocolVersion, legacy: true },
+    input: {
+      ok: true,
+      service: "muximod",
+      protocolVersion: terminalProtocolVersion,
+      pid: 1234,
+      configurationFingerprint: "0".repeat(64),
+      legacy: true,
+    },
     assert: [isInvalid()],
   },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
@@ -331,11 +350,35 @@ const capabilitiesCases = [
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
 
 type PairingInput = { kind: "request" | "response"; value: unknown };
+const controlRequestId = "request-123456";
 const pairingCases = [
   {
     name: "accepts a pairing request with a muximod endpoint",
-    input: { kind: "request", value: { type: "create_pairing", muximodBaseUrl: "https://muximod.example" } },
+    input: {
+      kind: "request",
+      value: { type: "create_pairing", requestId: controlRequestId, muximodBaseUrl: "https://muximod.example" },
+    },
     assert: [isValid()],
+  },
+  {
+    name: "rejects a pairing request with a non-http endpoint",
+    input: {
+      kind: "request",
+      value: { type: "create_pairing", requestId: controlRequestId, muximodBaseUrl: "ftp://muximod.example" },
+    },
+    assert: [isInvalid(["muximodBaseUrl"])],
+  },
+  {
+    name: "rejects a pairing request with endpoint credentials",
+    input: {
+      kind: "request",
+      value: {
+        type: "create_pairing",
+        requestId: controlRequestId,
+        muximodBaseUrl: "https://user:password@muximod.example",
+      },
+    },
+    assert: [isInvalid(["muximodBaseUrl"])],
   },
   {
     name: "accepts a pairing response with a raw pairing code",
@@ -343,6 +386,7 @@ const pairingCases = [
       kind: "response",
       value: {
         type: "pairing_created",
+        requestId: controlRequestId,
         pairingId: "pairing-1234567890123456",
         pairingCode: encodePairingCode({
           v: 2,
@@ -370,6 +414,7 @@ const pairingCases = [
       kind: "response",
       value: {
         type: "pairing_result",
+        requestId: controlRequestId,
         pairingId: "pairing-1234567890123456",
         status: "approved",
         deviceId: "device-1",
@@ -393,6 +438,7 @@ const pairingCases = [
       kind: "request",
       value: {
         type: "adopt_agent_session",
+        requestId: controlRequestId,
         agentSessionId: "session-id",
         hostPaneId: "%1",
         executionId: "execution-id-123456",
@@ -406,6 +452,7 @@ const pairingCases = [
       kind: "request",
       value: {
         type: "release_agent_session",
+        requestId: controlRequestId,
         agentSessionId: "session-id",
         hostPaneId: "%1",
         executionId: "execution-id-123456",
@@ -419,6 +466,7 @@ const pairingCases = [
       kind: "request",
       value: {
         type: "observe_agent_session",
+        requestId: controlRequestId,
         agentSessionId: "session-id",
         hostPaneId: "%1",
         executionId: "execution-id-123456",
@@ -429,11 +477,36 @@ const pairingCases = [
     assert: [isValid()],
   },
   {
+    name: "accepts a bounded daemon log request",
+    input: {
+      kind: "request",
+      value: {
+        type: "read_log",
+        requestId: controlRequestId,
+        lines: 100,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "rejects an unbounded daemon log request",
+    input: {
+      kind: "request",
+      value: {
+        type: "read_log",
+        requestId: controlRequestId,
+        lines: 10_001,
+      },
+    },
+    assert: [isInvalid(["lines"])],
+  },
+  {
     name: "accepts an agent session adopted response",
     input: {
       kind: "response",
       value: {
         type: "agent_session_adopted",
+        requestId: controlRequestId,
         agentSessionId: "session-id",
         hostPaneId: "%1",
         executionId: "execution-id-123456",
@@ -447,6 +520,7 @@ const pairingCases = [
       kind: "response",
       value: {
         type: "agent_session_released",
+        requestId: controlRequestId,
         agentSessionId: "session-id",
         hostPaneId: "%1",
         executionId: "execution-id-123456",
@@ -460,10 +534,25 @@ const pairingCases = [
       kind: "response",
       value: {
         type: "agent_session_observed",
+        requestId: controlRequestId,
         agentSessionId: "session-id",
         hostPaneId: "%1",
         executionId: "execution-id-123456",
         state: "waiting_input",
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a daemon log response",
+    input: {
+      kind: "response",
+      value: {
+        type: "daemon_log",
+        requestId: controlRequestId,
+        state: "available",
+        logFile: "/var/tmp/muximod.log",
+        lines: ["muximod started"],
       },
     },
     assert: [isValid()],

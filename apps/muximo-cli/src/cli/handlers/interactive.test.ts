@@ -1,4 +1,4 @@
-import type { TmuxNewSessionResult } from "@muximo/infrastructure";
+import type { TmuxNewSessionResult } from "@muximo/infrastructure/cli-client";
 import {
   hasObserved,
   type OperationCase,

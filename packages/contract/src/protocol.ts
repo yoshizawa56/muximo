@@ -12,6 +12,10 @@ import { z } from "zod";
 
 export const protocolVersion = 2 as const;
 export const terminalProtocolVersion = protocolVersion;
+export const muximodControlMaxRequestBytes = 64 * 1024;
+export const muximodControlMaxResponseBytes = 4 * 1024 * 1024;
+export const muximodControlMaxBufferedResponseBytes = 8 * 1024 * 1024;
+export const muximodControlMaxPendingRequests = 128;
 
 /** Largest image (in bytes) the mobile client may paste into a pane. */
 export const maxPasteImageBytes = 10 * 1024 * 1024;
@@ -23,6 +27,8 @@ export const muximodHealthSchema = z
     ok: z.literal(true),
     service: z.literal("muximod"),
     protocolVersion: z.literal(protocolVersion),
+    pid: z.number().int().positive(),
+    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
 export type MuximodHealth = z.infer<typeof muximodHealthSchema>;
@@ -52,6 +58,11 @@ const displayValueSchema = z
   .min(1)
   .max(120)
   .regex(/^[^\u0000\r\n]+$/);
+const controlRequestIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
 
 export const tmuxSessionNameSchema = z
   .string()
@@ -61,6 +72,14 @@ export const tmuxSessionNameSchema = z
   .regex(/^[A-Za-z0-9._-]+$/);
 
 const hostPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
+
+const httpUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+  }, "URL must use http or https without credentials");
 
 export const publicKeyJwkSchema = z
   .object({
@@ -75,7 +94,7 @@ export type PublicKeyJwk = z.infer<typeof publicKeyJwkSchema>;
 export const pairingQrPayloadSchema = z
   .object({
     v: z.literal(2),
-    muximodBaseUrl: z.string().url(),
+    muximodBaseUrl: httpUrlSchema,
     serverId: z.string().min(16).max(256),
     pairingId: z.string().min(16).max(256),
     pairingSecret: base64UrlValueSchema.min(32).max(512),
@@ -86,7 +105,7 @@ export type PairingQrPayload = z.infer<typeof pairingQrPayloadSchema>;
 
 export const pairingCodePayloadSchema = z
   .object({
-    muximodBaseUrl: z.string().url(),
+    muximodBaseUrl: httpUrlSchema,
     pairingId: z.string().min(16).max(256),
     pairingSecret: base64UrlValueSchema.min(32).max(512),
   })
@@ -118,28 +137,32 @@ const pairingClaimNotificationSchema = z
 export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
 
 export const muximodControlRequestSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("create_local_session") }).strict(),
+  z.object({ type: z.literal("create_local_session"), requestId: controlRequestIdSchema }).strict(),
   z
     .object({
       type: z.literal("create_pairing"),
-      muximodBaseUrl: z.string().url(),
+      requestId: controlRequestIdSchema,
+      muximodBaseUrl: httpUrlSchema,
     })
     .strict(),
   z
     .object({
       type: z.literal("approve_pairing"),
+      requestId: controlRequestIdSchema,
       pairingId: z.string().min(16).max(256),
     })
     .strict(),
   z
     .object({
       type: z.literal("reject_pairing"),
+      requestId: controlRequestIdSchema,
       pairingId: z.string().min(16).max(256),
     })
     .strict(),
   z
     .object({
       type: z.literal("adopt_agent_session"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -148,6 +171,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("release_agent_session"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -156,11 +180,19 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("observe_agent_session"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
       state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
       recentOutput: z.string().max(2_000).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("read_log"),
+      requestId: controlRequestIdSchema,
+      lines: z.number().int().min(1).max(10_000),
     })
     .strict(),
 ]);
@@ -182,12 +214,14 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("local_session_created"),
+      requestId: controlRequestIdSchema,
       session: localAuthSessionResponseSchema,
     })
     .strict(),
   z
     .object({
       type: z.literal("pairing_created"),
+      requestId: controlRequestIdSchema,
       pairingId: z.string().min(16).max(256),
       pairingCode: z.string().startsWith("ma3:").min(16).max(8_192),
       payload: pairingQrPayloadSchema,
@@ -202,6 +236,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("pairing_result"),
+      requestId: controlRequestIdSchema,
       pairingId: z.string().min(16).max(256),
       status: z.enum(["approved", "rejected"]),
       deviceId: z.string().min(1).max(256).optional(),
@@ -210,6 +245,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("agent_session_adopted"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -218,6 +254,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("agent_session_released"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -226,6 +263,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("agent_session_observed"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -234,13 +272,28 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("daemon_log"),
+      requestId: controlRequestIdSchema,
+      state: z.enum(["available", "empty", "missing"]),
+      logFile: z.string().min(1),
+      lines: z.array(z.string()).max(10_000),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("error"),
+      requestId: controlRequestIdSchema.optional(),
       code: z.string().min(1).max(120),
       message: z.string().min(1).max(4_096),
     })
     .strict(),
 ]);
 export type MuximodControlResponse = z.infer<typeof muximodControlResponseSchema>;
+
+export type MuximodControlLogResult = Pick<
+  Extract<MuximodControlResponse, { type: "daemon_log" }>,
+  "state" | "logFile" | "lines"
+>;
 
 export function decodeMuximodControlResponse(data: string | Uint8Array): ControlFrameDecode<MuximodControlResponse> {
   return decodeControlFrame(data, muximodControlResponseSchema);

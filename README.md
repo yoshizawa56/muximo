@@ -83,7 +83,7 @@ muximo daemon restart
 muximo daemon stop
 ```
 
-`muximo daemon log` prints the most recent 100 lines from the configured daemon log. Use `--lines N` to change the limit and `--log-file PATH` or `MUXIMO_LOG_FILE` to select a file.
+`muximo daemon log` prints the most recent 100 lines from the daemon's configured log. Use `--lines N` to change the limit; configure the log with `muximo daemon start --log-file PATH` or `MUXIMO_LOG_FILE`.
 
 Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` should remain bound to loopback and be exposed through a trusted HTTPS route such as Tailscale Serve.
 

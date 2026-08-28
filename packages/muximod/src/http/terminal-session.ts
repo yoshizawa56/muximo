@@ -18,12 +18,13 @@ import {
   type PtySpawner,
   type TerminalViewportPort,
   type ViewportLease,
-} from "@muximo/infrastructure";
+} from "@muximo/infrastructure/runtime";
 
 type TerminalViewportManager = TerminalViewportPort;
 
 export type TerminalSessionOptions = {
   cwd: string;
+  environment?: NodeJS.ProcessEnv;
   viewportManager: TerminalViewportManager;
   /** How long a transport can be absent before the PTY and lease are released. */
   resumeGraceMs?: number;
@@ -72,13 +73,13 @@ export class TerminalSessionRegistry {
     return released;
   }
 
-  public closeAll(): void {
-    for (const session of [...this.sessions.values()]) {
-      // Server shutdown is synchronous at the lifecycle boundary; the session
-      // owns and observes its asynchronous PTY/viewport cleanup explicitly.
-      void session.dispose().catch(() => undefined);
-    }
+  public async closeAll(): Promise<void> {
+    const sessions = [...this.sessions.values()];
     this.sessions.clear();
+    const results = await Promise.allSettled(sessions.map((session) => session.dispose()));
+    const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "terminal session cleanup failed");
   }
 
   public get size(): number {
@@ -398,7 +399,7 @@ export class TerminalSession {
         rows: message.rows,
         cwd: this.options.cwd,
         env: {
-          ...stringEnvironment(process.env),
+          ...stringEnvironment(this.options.environment ?? process.env),
           TERM: "xterm-256color",
         },
       });

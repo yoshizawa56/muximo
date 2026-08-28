@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { createPushSchemaSynchronizer, defaultMuximodInstanceDirectory } from "@muximo/infrastructure";
+import { defaultMuximodInstanceDirectory } from "@muximo/muximod/client";
 import { loadDevelopmentEnvironment, resolveRepositoryRoot } from "@muximo/portless-support";
 import { runMuximoCli } from "./src/entrypoint.js";
 
@@ -14,7 +14,6 @@ if (process.env.PORT) process.env.MUXIMOD_PORT = process.env.PORT;
 const worktreeProfile = configureDevelopmentWorktreeEnvironment(process.env, repositoryRoot);
 
 const status = await runMuximoCli(process.argv.slice(2), {
-  schemaSynchronizer: createPushSchemaSynchronizer({ force: true }),
   includeDevelopmentCommands: true,
   env: process.env,
   input: process.stdin,
@@ -55,9 +54,12 @@ function configureDevelopmentWorktreeEnvironment(
     return undefined;
   }
 
-  const id = createHash("sha256").update(worktreeRoot).digest("hex").slice(0, 16);
+  const id = createHash("sha256").update(worktreeRoot).digest("hex").slice(0, 32);
   environment.MUXIMO_WORKTREE_ID = id;
-  const stateRoot = resolve(environment.MUXIMO_DEV_STATE_ROOT ?? defaultMuximodInstanceDirectory(environment));
+  const stateRoot = resolve(
+    repositoryRoot,
+    environment.MUXIMO_DEV_STATE_ROOT ?? defaultMuximodInstanceDirectory(environment),
+  );
   environment.MUXIMOD_INSTANCE_DIR = join(stateRoot, "worktrees", id);
   return { baseInstanceDir: stateRoot };
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,8 +15,11 @@ import { describe, it } from "vitest";
 import {
   configurePortlessService,
   loadDevelopmentEnvironment,
+  type PortlessServiceRoute,
   parseDotEnv,
   resolvePortlessPeerUrl,
+  resolvePortlessRoute,
+  resolvePortlessService,
   resolveRepositoryRoot,
 } from "./index.js";
 
@@ -180,9 +183,142 @@ function createEnvironmentFixture(
   };
 }
 
+type ServiceUrlContext = {};
+type ServiceUrlInput = { value: string };
+const serviceUrlCases = [
+  {
+    name: "rejects credentials in the Portless public URL",
+    input: { value: "https://user:password@feature.web.localhost" },
+    assert: [
+      hasError<ServiceUrlContext, ReturnType<typeof resolvePortlessService>>({
+        message: "PORTLESS_URL must not contain credentials",
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<
+  "default",
+  ServiceUrlInput,
+  ReturnType<typeof resolvePortlessService>,
+  ServiceUrlContext
+>[];
+
+const serviceUrlTable: OperationTable<
+  undefined,
+  "default",
+  ServiceUrlInput,
+  ReturnType<typeof resolvePortlessService>,
+  ServiceUrlContext
+> = {
+  defaultFixture: noFixture(),
+  cases: serviceUrlCases,
+  execute: (_fixture, input) =>
+    resolvePortlessService("web", {
+      repositoryRoot: resolveRepositoryRoot(),
+      environment: { PORTLESS_URL: input.value },
+    }),
+  observe: () => ({}),
+};
+
+type RouteFixture = {
+  root: string;
+  stateDirectory: string;
+  routesPath: string;
+  lockPath: string;
+  environment: NodeJS.ProcessEnv;
+  hostname: string;
+};
+
+type RouteStep = "stable" | "locked-corrupt" | "locked-empty" | "unlocked-empty";
+type RouteResult = { routePort: number; routePid: number } | undefined;
+type RouteContext = { routePort: number | undefined; routePid: number | undefined };
+
+const routeCases = [
+  {
+    name: "reads a stable Portless route",
+    input: "stable",
+    assert: [
+      hasObserved<RouteContext, RouteResult>("routePort", 4317),
+      hasObserved<RouteContext, RouteResult>("routePid", process.pid),
+    ],
+  },
+  {
+    name: "keeps the last route while Portless writes a corrupt locked file",
+    input: "locked-corrupt",
+    assert: [
+      hasObserved<RouteContext, RouteResult>("routePort", 4317),
+      hasObserved<RouteContext, RouteResult>("routePid", process.pid),
+    ],
+  },
+  {
+    name: "accepts an empty route after the write lock is removed",
+    input: "unlocked-empty",
+    assert: [
+      hasObserved<RouteContext, RouteResult>("routePort", undefined),
+      hasObserved<RouteContext, RouteResult>("routePid", undefined),
+    ],
+  },
+] satisfies readonly OperationCase<"default", RouteStep, RouteResult, RouteContext>[];
+
+const routeTable: OperationTable<RouteFixture, "default", RouteStep, RouteResult, RouteContext> = {
+  defaultFixture: () => createRouteFixture(),
+  cases: routeCases,
+  execute: (fixture, step) => {
+    writeStableRoute(fixture);
+    const initial = resolvePortlessRoute("web", { repositoryRoot: fixture.root, environment: fixture.environment });
+    if (step === "stable") return toRouteResult(initial);
+
+    if (step === "locked-corrupt") writeFileSync(fixture.routesPath, "[{", "utf8");
+    if (step === "locked-empty") writeFileSync(fixture.routesPath, "[]", "utf8");
+    if (step === "unlocked-empty") writeFileSync(fixture.routesPath, "[]", "utf8");
+    if (step !== "unlocked-empty") mkdirSync(fixture.lockPath);
+    const route = resolvePortlessRoute("web", { repositoryRoot: fixture.root, environment: fixture.environment });
+    if (step !== "unlocked-empty") rmSync(fixture.lockPath, { recursive: true, force: true });
+    return toRouteResult(route);
+  },
+  observe: (_fixture, result) => ({
+    routePort: result.ok ? result.value?.routePort : undefined,
+    routePid: result.ok ? result.value?.routePid : undefined,
+  }),
+};
+
+function createRouteFixture(): { fixture: RouteFixture; cleanup: () => void } {
+  const root = resolveRepositoryRoot();
+  const stateDirectory = mkdtempSync(join(tmpdir(), "muximo-portless-routes-"));
+  const environment: NodeJS.ProcessEnv = {
+    PORTLESS_URL: "https://feature.web.localhost",
+    PORTLESS_STATE_DIR: stateDirectory,
+  };
+  const runtime = resolvePortlessService("web", { repositoryRoot: root, environment });
+  return {
+    fixture: {
+      root,
+      stateDirectory,
+      routesPath: join(stateDirectory, "routes.json"),
+      lockPath: join(stateDirectory, "routes.lock"),
+      environment,
+      hostname: runtime.hostname,
+    },
+    cleanup: () => rmSync(stateDirectory, { recursive: true, force: true }),
+  };
+}
+
+function writeStableRoute(fixture: RouteFixture): void {
+  writeFileSync(
+    fixture.routesPath,
+    JSON.stringify([{ hostname: fixture.hostname, port: 4317, pid: process.pid }]),
+    "utf8",
+  );
+}
+
+function toRouteResult(route: PortlessServiceRoute | undefined): RouteResult {
+  return route ? { routePort: route.routePort, routePid: route.routePid } : undefined;
+}
+
 describe("Portless development support", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, dotEnvTable);
   runOperationTable(register, environmentTable);
   runOperationTable(register, portlessTable);
+  runOperationTable(register, serviceUrlTable);
+  runOperationTable(register, routeTable);
 });

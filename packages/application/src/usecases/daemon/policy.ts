@@ -12,12 +12,15 @@ export async function waitFor(
   timeoutMs: number,
   timing: Pick<DaemonLifecycleDependencies, "clock" | "scheduler">,
 ): Promise<boolean> {
+  const pollIntervalMs = 50;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("daemon wait timeout must be non-negative");
   const deadline = timing.clock.now() + timeoutMs;
-  while (timing.clock.now() < deadline) {
+  while (true) {
     if (await condition()) return true;
-    await timing.scheduler.sleep(50);
+    const remainingMs = deadline - timing.clock.now();
+    if (remainingMs <= 0) return false;
+    await timing.scheduler.sleep(Math.min(pollIntervalMs, remainingMs));
   }
-  return condition();
 }
 
 export function terminateQuietly(child: DaemonProcessHandle): void {

@@ -74,8 +74,8 @@ export type DaemonStartResult =
 /** OS process/filesystem/health capabilities supplied by infrastructure. */
 export interface DaemonRuntimePort {
   runForeground(options: DaemonOptions): Promise<ProcessResult>;
-  spawn(options: DaemonOptions): DaemonProcessHandle;
-  isHealthy(host: string, port: number): Promise<boolean>;
+  spawn(options: DaemonOptions): Promise<DaemonProcessHandle>;
+  isHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean>;
   isAlive(pid: number): Promise<boolean>;
   signal(pid: number, signal: "SIGTERM"): void;
   readPidRecord(path: string): DaemonPidRecord | undefined;

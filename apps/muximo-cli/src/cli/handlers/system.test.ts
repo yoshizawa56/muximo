@@ -7,7 +7,8 @@ import type {
   DaemonStopResult,
   StartDaemonInput,
 } from "@muximo/application";
-import type { DaemonLogResult, DoctorReport, TailscaleServeResult } from "@muximo/infrastructure";
+import type { MuximodControlLogResult } from "@muximo/contract/control";
+import type { DoctorReport, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
 import {
   type Assertion,
   type OperationCase,
@@ -61,7 +62,6 @@ const daemonInputs: readonly CliDaemonInput[] = [
     refreshServers: false,
     host: "127.0.0.1",
     port: 4317,
-    logFile: "/tmp/muximod.log",
     lines: 20,
   },
 ];
@@ -73,7 +73,7 @@ const cases = [
     assert: [
       called("passes the verbose doctor input", "doctor:true"),
       contains("presents doctor command diagnostics", "out", "git: /usr/bin/git"),
-      contains("presents verbose doctor details", "out", "database: /tmp/muximod.sqlite"),
+      contains("presents verbose doctor details", "out", "codex remote: unix://"),
     ],
   },
   ...daemonInputs.map((input) => ({
@@ -102,6 +102,24 @@ const cases = [
       contains("presents serve summary", "out", "muximo serve tailscale: https://tail.example"),
       contains("presents serve stdout", "out", "serve stdout"),
       contains("presents serve stderr", "err", "serve stderr"),
+    ],
+  },
+  {
+    name: "cleans up a foreground serve lease after the daemon exits",
+    input: {
+      kind: "serve",
+      input: {
+        provider: "tailscale",
+        foreground: true,
+        muximodHost: "127.0.0.1",
+        muximodPort: 4317,
+        externalPort: 8444,
+        logLevel: "info",
+      },
+    },
+    assert: [
+      called("waits for the foreground daemon", "serve:foreground-wait"),
+      called("cleans up the foreground daemon lease", "serve:cleanup"),
     ],
   },
   {
@@ -153,7 +171,6 @@ function createFixture(): SystemFixture {
     codexProfile: { profile: null, state: "not-configured" },
     mise: { path: "/usr/bin/mise" },
     details: {
-      databaseFile: "/tmp/muximod.sqlite",
       defaultRemote: "unix://",
       worktreeRootPattern: "<workspace-parent>/<workspace-name>.worktrees/<session-name>",
     },
@@ -195,11 +212,11 @@ function createFixture(): SystemFixture {
       },
     },
     log: {
-      execute: async (input: { logFile?: string; lines: number }): Promise<DaemonLogResult> => {
+      execute: async (_input: { lines: number }): Promise<MuximodControlLogResult> => {
         calls.push("daemon:log");
         return {
           state: "available",
-          logFile: input.logFile ?? "/tmp/muximod.log",
+          logFile: "/tmp/muximod.log",
           lines: ['{"service":"muximod","event":"daemon.started"}'],
         };
       },
@@ -237,7 +254,20 @@ function createFixture(): SystemFixture {
     serve: {
       execute: async (input) => {
         calls.push(`serve:${input.provider}`);
-        return serveResult;
+        if (!input.foreground) return serveResult;
+        return {
+          ...serveResult,
+          foregroundProcess: {
+            wait: async () => {
+              calls.push("serve:foreground-wait");
+              return { code: 0, interrupted: false };
+            },
+            terminate: () => calls.push("serve:foreground-terminate"),
+          },
+          cleanup: async () => {
+            calls.push("serve:cleanup");
+          },
+        };
       },
     },
     dev: {

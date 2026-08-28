@@ -1,4 +1,4 @@
-import type { TailscaleServeResult } from "@muximo/infrastructure";
+import type { TailscaleServeResult } from "@muximo/infrastructure/cli-client";
 import type { CliIo } from "../commands/types.js";
 
 export function presentServeResult(result: TailscaleServeResult, io: CliIo): number {

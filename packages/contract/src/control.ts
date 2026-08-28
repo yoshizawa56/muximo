@@ -2,6 +2,7 @@
 
 export type {
   ControlFrameDecode,
+  MuximodControlLogResult,
   MuximodControlRequest,
   MuximodControlResponse,
 } from "./protocol.js";
@@ -10,6 +11,10 @@ export {
   decodeMuximodControlResponse,
   encodeMuximodControlRequest,
   encodeMuximodControlResponse,
+  muximodControlMaxBufferedResponseBytes,
+  muximodControlMaxPendingRequests,
+  muximodControlMaxRequestBytes,
+  muximodControlMaxResponseBytes,
   muximodControlRequestSchema,
   muximodControlResponseSchema,
 } from "./protocol.js";

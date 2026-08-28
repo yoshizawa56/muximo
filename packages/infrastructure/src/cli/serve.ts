@@ -6,7 +6,6 @@ import {
   buildServeArgs,
   buildServeHttpUrl,
   buildTailscaleInvocation,
-  normalizeTailscaleStdout,
   parseTailscaleHostname,
 } from "../tailscale/index.js";
 
@@ -20,12 +19,17 @@ export type ServeInput = {
   muximodPort: number;
   externalPort: number;
   pidFile?: string;
+  controlSocket?: string;
   logLevel: "error" | "warn" | "info" | "debug";
   logFile?: string;
   allowedOrigins?: readonly string[];
 };
 
-export type ServeCommandOptions = ServeInput & { tailscaleBinary: string; hostname?: string; muximodBaseUrl?: string };
+export type ServeCommandOptions = ServeInput & {
+  tailscaleBinary: string;
+  hostname?: string;
+  muximodBaseUrl?: string;
+};
 
 export type ServeProcessHandle = {
   pid?: number;
@@ -33,11 +37,16 @@ export type ServeProcessHandle = {
   terminate(signal?: "SIGINT" | "SIGTERM"): void;
 };
 
+export type ServeMuximodLease = {
+  foregroundProcess?: ServeProcessHandle;
+  cleanup?: () => Promise<void>;
+};
+
 export type ServeCommandDependencies = {
   ensureMuximod: (
     options: ServeCommandOptions,
     allowedOrigins: readonly string[],
-  ) => Promise<ServeProcessHandle | undefined>;
+  ) => Promise<ServeMuximodLease | undefined>;
   runCommand?: CommandRunner;
   logger?: Logger;
 };
@@ -52,6 +61,7 @@ export type TailscaleServeResult = {
   stdout: string;
   stderr: string;
   foregroundProcess?: ServeProcessHandle;
+  cleanup?: () => Promise<void>;
 };
 
 type CommandRunner = (
@@ -82,34 +92,37 @@ export async function ensureTailscaleServe(
     logFileConfigured: Boolean(options.logFile),
   });
   let hostname = options.hostname;
-  if (!hostname && !options.allowedOrigins?.length && !environment.MUXIMOD_ALLOWED_ORIGINS) {
+  const hasConfiguredOrigins =
+    Boolean(options.allowedOrigins?.length) ||
+    environment.MUXIMOD_ALLOWED_ORIGINS !== undefined ||
+    Boolean(environment.MUXIMOD_PAIRING_BASE_URL);
+  const allowedOrigins = hasConfiguredOrigins ? resolveServeAllowedOrigins(options, environment, hostname) : undefined;
+  if (!hostname && !environment.MUXIMOD_PAIRING_BASE_URL) {
     hostname = await discoverHostname(options.tailscaleBinary, runCommand, environment, logger);
   }
-  const allowedOrigins = resolveServeAllowedOrigins(options, environment, hostname);
-  const localUrl = localMuximodUrl(options.muximodHost, options.muximodPort);
-  const url = hostname
-    ? buildServeHttpUrl(hostname, options.externalPort)
-    : (environment.MUXIMOD_PAIRING_BASE_URL ?? localUrl);
+  const resolvedAllowedOrigins = allowedOrigins ?? resolveServeAllowedOrigins(options, environment, hostname);
+  const url =
+    options.muximodBaseUrl ??
+    (hostname ? buildServeHttpUrl(hostname, options.externalPort) : resolvePairingBaseUrl(environment));
+  const serveArgs = buildServeArgs({ localPort: options.muximodPort, externalPort: options.externalPort });
   const muximodStartedAt = Date.now();
-  let foregroundProcess: ServeProcessHandle | undefined;
+  let muximodLease: ServeMuximodLease | undefined;
   try {
-    foregroundProcess = await dependencies.ensureMuximod(
-      { ...options, allowedOrigins, muximodBaseUrl: url },
-      allowedOrigins,
+    muximodLease = await dependencies.ensureMuximod(
+      { ...options, allowedOrigins: resolvedAllowedOrigins, muximodBaseUrl: url },
+      resolvedAllowedOrigins,
     );
     logger?.debug("muximod.ensure_finished", { durationMs: Date.now() - muximodStartedAt });
   } catch (error) {
     logger?.debug("muximod.ensure_failed", { durationMs: Date.now() - muximodStartedAt, ...errorFields(error) });
     throw error;
   }
-  const serveArgs = buildServeArgs({ localPort: options.muximodPort, externalPort: options.externalPort });
   const commandStartedAt = Date.now();
   let result: { stdout: string; stderr: string };
   try {
     result = await runCommand(options.tailscaleBinary, serveArgs, { env: environment });
   } catch (error) {
-    foregroundProcess?.terminate("SIGTERM");
-    await foregroundProcess?.wait().catch(() => undefined);
+    await muximodLease?.cleanup?.().catch(() => undefined);
     throw error;
   }
   logger?.debug("serve.subprocess_finished", {
@@ -119,7 +132,7 @@ export async function ensureTailscaleServe(
   logger?.debug("serve.finished", {
     durationMs: Date.now() - startedAt,
     hostnameResolved: Boolean(hostname),
-    allowedOrigins,
+    allowedOrigins: resolvedAllowedOrigins,
   });
   return {
     options,
@@ -127,10 +140,11 @@ export async function ensureTailscaleServe(
     hostname,
     url,
     localUrl: localMuximodUrl(options.muximodHost, options.muximodPort),
-    allowedOrigins,
+    allowedOrigins: resolvedAllowedOrigins,
     stdout: result.stdout,
     stderr: result.stderr,
-    ...(foregroundProcess ? { foregroundProcess } : {}),
+    ...(muximodLease?.foregroundProcess ? { foregroundProcess: muximodLease.foregroundProcess } : {}),
+    ...(muximodLease?.foregroundProcess && muximodLease.cleanup ? { cleanup: muximodLease.cleanup } : {}),
   };
 }
 
@@ -142,6 +156,9 @@ export function resolveServeAllowedOrigins(
   if (options.allowedOrigins?.length) return normalizeAllowedOrigins(options.allowedOrigins);
   if (environment.MUXIMOD_ALLOWED_ORIGINS !== undefined) {
     return normalizeAllowedOrigins(environment.MUXIMOD_ALLOWED_ORIGINS.split(","));
+  }
+  if (environment.MUXIMOD_PAIRING_BASE_URL) {
+    return normalizeAllowedOrigins([new URL(resolvePairingBaseUrl(environment)).origin]);
   }
   if (!hostname) {
     throw new Error("could not determine the browser origin; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_ALLOWED_ORIGINS");
@@ -159,13 +176,16 @@ export function normalizeAllowedOrigins(origins: readonly string[]): string[] {
     try {
       parsed = new URL(origin);
     } catch (error) {
-      throw new Error(`invalid browser origin: ${origin}`, { cause: error });
+      throw new Error(`invalid browser origin: ${safeUrlForError(origin)}`, { cause: error });
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error(`browser origin must use http or https: ${origin}`);
+      throw new Error(`browser origin must use http or https: ${safeUrlForError(origin)}`);
+    }
+    if (parsed.username || parsed.password) {
+      throw new Error("browser origin must not contain credentials");
     }
     if (parsed.origin !== origin.replace(/\/$/u, "")) {
-      throw new Error(`browser origin must not include a path: ${origin}`);
+      throw new Error(`browser origin must not include a path: ${safeUrlForError(origin)}`);
     }
     normalized.add(parsed.origin);
   }
@@ -207,7 +227,7 @@ async function runExternalCommand(
       maxBuffer: 256 * 1024,
       timeout: tailscaleCommandTimeoutMs,
     });
-    return { ...result, stdout: normalizeTailscaleStdout(result.stdout, invocation) };
+    return result;
   } catch (error) {
     throw new Error(`could not run ${command}: ${errorMessage(error)}`, { cause: error });
   }
@@ -222,4 +242,39 @@ export function resolveServeLogOptions(environment: NodeJS.ProcessEnv): Pick<Ser
     logLevel: value as LogLevel,
     logFile: environment.MUXIMO_LOG_FILE ? resolve(environment.MUXIMO_LOG_FILE) : undefined,
   };
+}
+
+export function resolvePairingBaseUrl(environment: NodeJS.ProcessEnv): string {
+  const value = environment.MUXIMOD_PAIRING_BASE_URL?.trim();
+  if (!value) {
+    throw new Error(
+      "could not determine the muximod pairing URL; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_PAIRING_BASE_URL",
+    );
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new Error(`invalid MUXIMOD_PAIRING_BASE_URL: ${safeUrlForError(value)}`, { cause: error });
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`MUXIMOD_PAIRING_BASE_URL must use http or https: ${safeUrlForError(value)}`);
+  }
+  if (url.username || url.password) {
+    throw new Error("MUXIMOD_PAIRING_BASE_URL must not contain credentials");
+  }
+  url.hash = "";
+  url.search = "";
+  url.pathname = url.pathname.replace(/\/+$/u, "") || "/";
+  return url.toString().replace(/\/$/u, "");
+}
+
+function safeUrlForError(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return "<redacted URL>";
+    return value;
+  } catch {
+    return "<invalid URL>";
+  }
 }

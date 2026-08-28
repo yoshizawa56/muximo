@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import {
   type AgentObservationPort,
   type AgentStateObservation,
@@ -35,6 +36,7 @@ import {
   DrizzleCodexSessionStateRepository,
   DrizzlePaneRepository,
   DrizzleWorkspaceRepository,
+  defaultLogFile,
   defaultPaneCleanupIntervalMs,
   defaultPaneRetentionMs,
   defaultTmuxPollIntervalMs,
@@ -52,6 +54,7 @@ import {
   mapTmuxSnapshotToTerminalHostSnapshot,
   nodeAuthCrypto,
   ProcessObservationAdapter,
+  readDaemonLog,
   recordAuditEvent,
   SessionNamingAdapter,
   SqliteTransactionManager,
@@ -63,19 +66,20 @@ import {
   WorkspaceHookAdapter,
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
-} from "@muximo/infrastructure";
+} from "@muximo/infrastructure/runtime";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
 import { createOriginPolicy } from "./http/middleware.js";
 import { TerminalSession, TerminalSessionRegistry } from "./http/terminal-session.js";
 import type { MuximodOriginPolicy } from "./http/types.js";
+import type { MuximodRuntimeEnvironment } from "./launch.js";
 
 export type MuximodOptions = {
   host: string;
   port: number;
+  configurationFingerprint: string;
   schemaSynchronizer: DatabaseSchemaSynchronizer;
-  databaseFile: string;
   instanceDirectory: string;
   hookOutputDirectory: string;
   allowedRoots: readonly string[];
@@ -96,6 +100,8 @@ export type MuximodOptions = {
   logLevel?: LogLevel;
   logFile?: string;
   workingDirectory: string;
+  runtimeEnvironment: MuximodRuntimeEnvironment;
+  environment: NodeJS.ProcessEnv;
 };
 
 export type { MuximodApp } from "./http/app.js";
@@ -104,10 +110,11 @@ export { createMuximodApp, MuximodHttpError } from "./http/app.js";
 export type MuximodServer = {
   app: MuximodApp;
   start(): Promise<void>;
-  stop(): void;
+  stop(): Promise<void>;
 };
 
 export function createMuximodServer(options: MuximodOptions): MuximodServer {
+  const environment = resolveMuximodEnvironment(options.environment, options.runtimeEnvironment);
   const ownsLogger = !options.logger;
   const logger =
     options.logger ??
@@ -119,18 +126,20 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       output: process.stderr,
       showStack: options.logLevel === "debug",
     });
-  const tmux = new TmuxAdapter();
-  const host = new TmuxMuximodHostAdapter(tmux);
+  const tmux = new TmuxAdapter(environment.MUXIMOD_TMUX_SOCKET, undefined, environment);
+  const host = new TmuxMuximodHostAdapter(tmux, environment);
   const viewportManager = new TmuxViewportManager(tmux);
   const applicationViewportManager = {
     handleTerminalHostHook: (event: Parameters<typeof viewportManager.handleTmuxHook>[0], client: string) =>
       viewportManager.handleTmuxHook(event, client),
     reassertMobileViewport: (target: string) => viewportManager.reassertMobileViewport(target),
   };
-  const databaseFile = options.databaseFile;
+  const databaseFile = join(options.instanceDirectory, "muximod.sqlite");
   const database = createAgentDatabase(databaseFile, {
     schemaSynchronizer: options.schemaSynchronizer,
-    instanceDirectory: databaseFile === ":memory:" ? undefined : options.instanceDirectory,
+    environment,
+    migrationsFolder: options.runtimeEnvironment.migrationsDirectory ?? undefined,
+    instanceDirectory: options.instanceDirectory,
   });
   const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
@@ -165,18 +174,18 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const agentStatus = new Map() as AgentStatusStore;
   const workspaceResolver = new WorkspaceResolverAdapter({
     cwd: options.workingDirectory,
-    environment: process.env,
+    environment,
     workspaces: workspaceRepository,
   });
-  const worktrees = new GitWorktreeAdapter({ environment: process.env, logger });
+  const worktrees = new GitWorktreeAdapter({ environment, logger });
   const hooks = new WorkspaceHookAdapter({
-    environment: process.env,
+    environment,
     cwd: options.workingDirectory,
     hookOutputRoot: options.hookOutputDirectory,
     logger,
   });
   const observations = new AgentSessionObservationAdapter({
-    environment: process.env,
+    environment,
     resolveWorkspace: () => workspaceResolver.resolveCurrent(),
   });
   const processObservation = new ProcessObservationAdapter();
@@ -194,10 +203,16 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const applicationForAgentPane = () => {
     return application;
   };
-  const agentPane = createAgentPanePublication(applicationForAgentPane, process.env);
+  const agentPane = createAgentPanePublication(applicationForAgentPane, environment);
   const backendOptions = {
-    environment: process.env,
-    plugins: createDefaultAgentPluginRegistry(),
+    environment,
+    opencodeRegistryFile: join(options.instanceDirectory, "opencode-servers.json"),
+    plugins: createDefaultAgentPluginRegistry({
+      opencode: {
+        environment,
+        registryFile: join(options.instanceDirectory, "opencode-servers.json"),
+      },
+    }),
     sessions: agentSessionRepository,
     audit: sessionAudit,
     logger,
@@ -208,7 +223,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     providers: createDefaultAgentBackendProviders(
       backendOptions,
       new DrizzleCodexSessionStateRepository(database.db),
-      process.env.MUXIMO_CODEX_REMOTE ?? "unix://",
+      environment.MUXIMO_CODEX_REMOTE ?? "unix://",
     ),
   });
   const locator = new LocateAgentSession({ sessions: agentSessionRepository, workspace: workspaceResolver });
@@ -262,7 +277,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       cleanup: (input) => cleanupAgentSession.execute(input),
       list: (input) => listAgentSessions.execute(input),
     },
-    getTerminal: getLocalTerminal,
+    getTerminal: () => getLocalTerminal(environment),
     host,
     sessionManagement: host,
     clock,
@@ -307,6 +322,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   controlServer = new MuximodControlServer({
     socketPath: options.controlSocket,
     auth,
+    readLog: async (lines) => {
+      const result = await readDaemonLog(options.logFile ?? defaultLogFile(environment), lines);
+      return { ...result, lines: [...result.lines] };
+    },
     adoptAgentSession: (request) => applicationForAgentPane().adoptAgentSession(request),
     observeAgentSession: (request) => applicationForAgentPane().observeAgentSession(request),
     releaseAgentSession: (request) => applicationForAgentPane().releaseAgentSession(request),
@@ -348,6 +367,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     auth,
     application,
     isReady: () => controlReady,
+    configurationFingerprint: options.configurationFingerprint,
     originPolicy:
       options.originPolicy ??
       createOriginPolicy({
@@ -365,6 +385,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       });
       new TerminalSession(socket, {
         cwd: options.workingDirectory,
+        environment,
         viewportManager,
         spawnPty,
         sessions: terminalSessions,
@@ -378,10 +399,13 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     logger,
   });
   let httpServer: ReturnType<typeof Bun.serve> | undefined;
+  let stopped = false;
+  let stopPromise: Promise<void> | undefined;
 
   return {
     app,
     async start(): Promise<void> {
+      if (stopped) throw new Error("muximod server has already stopped");
       if (httpServer) return;
 
       try {
@@ -400,30 +424,103 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         logger.info("daemon.listening", { host: options.host, port: httpServer.port });
       } catch (error) {
         controlReady = false;
-        authFlowLifecycle.stop();
-        tmuxStateMonitor.stop();
-        controlServer.stop();
-        httpServer?.stop(true);
+        try {
+          authFlowLifecycle.stop();
+        } catch {
+          // Preserve the startup error while releasing the remaining resources.
+        }
+        try {
+          tmuxStateMonitor.stop();
+        } catch {
+          // Preserve the startup error while releasing the remaining resources.
+        }
+        try {
+          await controlServer.stop();
+        } catch {
+          // Preserve the startup error while releasing the remaining resources.
+        }
+        try {
+          await terminalSessions.closeAll();
+        } catch {
+          // Preserve the startup error while releasing the remaining resources.
+        }
+        try {
+          httpServer?.stop(true);
+        } catch {
+          // Preserve the startup error while releasing the remaining resources.
+        }
         httpServer = undefined;
         const failure = error instanceof Error ? error : new Error(String(error));
         logger.error("daemon.start_failed", errorFields(failure));
         throw failure;
       }
     },
-    stop() {
+    stop(): Promise<void> {
+      if (stopPromise) return stopPromise;
+      if (stopped) return Promise.resolve();
+      stopped = true;
       controlReady = false;
       logger.info("daemon.stopping");
-      authFlowLifecycle.stop();
-      tmuxStateMonitor.stop();
-      terminalSessions.closeAll();
-      viewportManager.dispose();
-      eventHub.close();
-      controlServer.stop();
-      httpServer?.stop(true);
-      httpServer = undefined;
-      transactionManager?.close();
-      database.close();
-      if (ownsLogger) logger.close();
+      const cleanup = async (): Promise<void> => {
+        const cleanupErrors: unknown[] = [];
+        try {
+          authFlowLifecycle.stop();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          tmuxStateMonitor.stop();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          httpServer?.stop(true);
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        httpServer = undefined;
+        try {
+          await controlServer.stop();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          await terminalSessions.closeAll();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          viewportManager.dispose();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          eventHub.close();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          transactionManager?.close();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          database.close();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        if (ownsLogger) {
+          try {
+            logger.close();
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
+        }
+        if (cleanupErrors.length === 1) throw cleanupErrors[0];
+        if (cleanupErrors.length > 1) throw new AggregateError(cleanupErrors, "muximod cleanup failed");
+      };
+      stopPromise = cleanup();
+      return stopPromise;
     },
   };
 }
@@ -434,6 +531,34 @@ function durationOption(value: number | undefined, fallback: number, minimum: nu
     throw new Error(`duration must be an integer >= ${minimum}`);
   }
   return configured;
+}
+
+export function resolveMuximodEnvironment(
+  environment: NodeJS.ProcessEnv,
+  runtime: MuximodRuntimeEnvironment,
+): NodeJS.ProcessEnv {
+  const resolved = { ...environment };
+  setEnvironmentValue(resolved, "HOME", runtime.homeDirectory);
+  setEnvironmentValue(resolved, "PATH", runtime.path);
+  setEnvironmentValue(resolved, "CODEX_HOME", runtime.codexHome);
+  setEnvironmentValue(resolved, "CLAUDE_CONFIG_DIR", runtime.claudeConfigDirectory);
+  setEnvironmentValue(resolved, "TAILSCALE_BIN", runtime.tailscaleBinary);
+  setEnvironmentValue(resolved, "TMUX_PANE", runtime.tmuxPane);
+  setEnvironmentValue(resolved, "MUXIMOD_TMUX_SOCKET", runtime.tmuxSocket);
+  setEnvironmentValue(resolved, "MUXIMO_WORKTREE_ID", runtime.worktreeId);
+  setEnvironmentValue(resolved, "MUXIMO_WORKTREE_ROOT", runtime.worktreeRoot);
+  setEnvironmentValue(resolved, "MUXIMOD_MUXIMO_COMMAND", runtime.muximoCommand);
+  resolved.MUXIMO_CODEX_REMOTE = runtime.codexRemote;
+  setEnvironmentValue(resolved, "MUXIMO_CODEX_BIN", runtime.codexBinary);
+  setEnvironmentValue(resolved, "MUXIMO_CLAUDE_BIN", runtime.claudeBinary);
+  setEnvironmentValue(resolved, "MUXIMO_OPENCODE_BIN", runtime.opencodeBinary);
+  setEnvironmentValue(resolved, "MUXIMOD_MIGRATIONS_DIR", runtime.migrationsDirectory);
+  return resolved;
+}
+
+function setEnvironmentValue(environment: NodeJS.ProcessEnv, key: string, value: string | null): void {
+  if (value === null) delete environment[key];
+  else environment[key] = value;
 }
 
 function createAgentPanePublication(

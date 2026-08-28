@@ -4,6 +4,14 @@ import { defineOptions, registerOptions } from "../options/index.js";
 import type { CliCommandContext, CliHandlers } from "./types.js";
 import { invokeCliHandler, resolveCommandOptions } from "./validation.js";
 
+const httpUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+  }, "URL must use http or https without credentials");
+
 const csvEnvironmentValue = (value: string): string[] =>
   value
     .split(",")
@@ -104,7 +112,7 @@ const daemonOptions = {
   port: z.coerce.number().int().min(1).max(65_535).default(4317),
   pidFile: z.string().min(1).optional(),
   controlSocket: z.string().min(1).optional(),
-  muximodBaseUrl: z.string().url().optional(),
+  muximodBaseUrl: httpUrlSchema.optional(),
   logLevel: z.enum(["error", "warn", "info", "debug"]).optional(),
   logFile: z.string().min(1).optional(),
 };
@@ -136,10 +144,7 @@ const daemonLogSchema = z.object({
   ...daemonCommonSchema,
 });
 
-const daemonLogCommandOptionSpecs = [
-  ...daemonOptionSpecs.filter((spec) => spec.key === "logFile"),
-  ...daemonLogOptionSpecs,
-];
+const daemonLogCommandOptionSpecs = daemonLogOptionSpecs;
 
 export function registerDaemonCommands(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
   const daemon = parent.command("daemon").description("Manage the muximod daemon");

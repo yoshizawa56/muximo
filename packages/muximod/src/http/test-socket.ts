@@ -3,7 +3,7 @@ import type {
   MuximodSocketData,
   MuximodSocketFactory,
   MuximodSocketTransport,
-} from "@muximo/infrastructure";
+} from "@muximo/infrastructure/runtime";
 
 export class TestMuximodSocketAdapter implements MuximodSocketAdapter {
   private readonly messageListeners = new Set<(data: MuximodSocketData, isBinary: boolean) => void>();
