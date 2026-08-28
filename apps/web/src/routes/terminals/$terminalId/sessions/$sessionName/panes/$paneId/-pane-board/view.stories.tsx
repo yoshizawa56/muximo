@@ -112,3 +112,16 @@ export const WindowMapError: Story = {
     await expect(args.viewModel.refresh).toHaveBeenCalledTimes(1);
   },
 };
+
+export const WindowMapLoading: Story = {
+  args: {
+    viewModel: buildViewModel({ panes: [], status: "loading", errorMessage: null }),
+    isOpen: true,
+    layoutMode: "deck",
+    showLayout: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("status")).toHaveTextContent("Reading tmux");
+  },
+};

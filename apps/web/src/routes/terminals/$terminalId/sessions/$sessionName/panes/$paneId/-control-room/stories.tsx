@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { storyPanes } from "../../../../../../-story-fixtures";
 import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "../-custom-keyboard/viewmodel";
@@ -143,9 +144,27 @@ const controlRoomScenarios = {
     }),
 } satisfies Record<string, () => ControlRoomViewModel>;
 
+function InteractiveControlRoomStory() {
+  const [paneId, setPaneId] = useState("pane-review");
+
+  return (
+    <div className="relative min-h-screen">
+      <button
+        className="absolute top-2 left-2 z-[60] rounded bg-white px-2 py-1 text-xs text-black shadow"
+        type="button"
+        onClick={() => setPaneId((current) => (current === "pane-review" ? "pane-build" : "pane-review"))}
+      >
+        Switch pane route
+      </button>
+      <ControlRoomView paneId={paneId} viewModel={controlRoomScenarios.connectedIdle()} />
+    </div>
+  );
+}
+
 const meta = {
   title: "Pages/Control room",
   component: ControlRoomView,
+  args: { paneId: "pane-review" },
   parameters: { layout: "fullscreen" },
 } satisfies Meta<typeof ControlRoomView>;
 
@@ -259,6 +278,30 @@ export const KeyboardSettingsClose: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
     await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Close custom keyboard settings" }));
+    await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "Open custom keyboard settings" })).toBeVisible();
+  },
+};
+
+export const PaneRouteChangeResetsLocalState: Story = {
+  args: { viewModel: controlRoomScenarios.connectedIdle() },
+  render: () => <InteractiveControlRoomStory />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /open tmux window map/i }));
+    await expect(canvas.getByRole("button", { name: /close tmux window map/i })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await userEvent.click(canvas.getByRole("button", { name: "Switch pane route" }));
+    await expect(canvas.getByRole("button", { name: /open tmux window map/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Switch pane route" }));
     await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
     await expect(canvas.getByRole("button", { name: "Open custom keyboard settings" })).toBeVisible();
   },

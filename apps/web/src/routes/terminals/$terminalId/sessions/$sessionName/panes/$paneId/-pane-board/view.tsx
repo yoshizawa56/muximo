@@ -48,6 +48,14 @@ export function PaneBoardView({
             variant={layoutVariant}
           />
         ) : null}
+        {showLayout && viewModel.status === "loading" ? (
+          <div
+            className="absolute inset-0 z-10 flex items-center justify-center bg-[rgb(248_248_244_/_96%)] p-5 text-[0.7rem] text-muted"
+            role="status"
+          >
+            Reading tmux…
+          </div>
+        ) : null}
         {viewModel.status === "error" ? (
           <div
             className={

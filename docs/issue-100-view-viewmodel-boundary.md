@@ -219,12 +219,16 @@ only when a contract or extraction is actually required.
   consumers remain lazy by default. `isMockMode` is now resolved at the
   control-room composition boundary rather than inside the pane-board
   ViewModel.
-- Remounted `ControlRoomView` by route `paneId` so presentation-local map and
-  settings visibility cannot survive a route identity change.
+- Kept `ControlRoomView` mounted across route `paneId` changes so terminal
+  lifecycle cleanup can observe target changes, and reset only the
+  presentation-local map and settings visibility in the View.
 - Added named window-map error and missing-selected-pane scenarios, plus play
   coverage for both settings exit paths and pane-list close. The story harness
   now updates keyboard library, selection, and shortcut state in one functional
   state transition so drag/drop cannot observe stale sibling state.
+- Added a route-change story for the local-state reset. The route adapter now
+  passes `paneId` to `ControlRoomView` without keying the page, preserving the
+  terminal ViewModel's target-change cleanup path.
 - Reviewed the terminal View boundary and intentionally kept the current
   terminal surface together because its DOM host and transport lifecycle are
   coupled; no standalone terminal View/story module was added.
@@ -244,6 +248,9 @@ only when a contract or extraction is actually required.
 - Overlay errors render an explicit alert and retry action instead of an empty
   window map. `WindowMapError` covers that branch both at the pane-board and
   control-room levels.
+- Window-map loading renders an explicit status overlay as well; the
+  pane-board `WindowMapLoading` story covers the loading branch without
+  pretending that an empty layout is ready.
 - `ShellView` and `ShellViewModel` were removed because they represented a
   story/page host rather than a reusable semantic boundary. The Storybook
   harness now owns the local settings modal state and renders
@@ -251,6 +258,15 @@ only when a contract or extraction is actually required.
 - The internal `PaneBoardViewModel.isOpen` shape and `ShellView` host contract
   are intentionally breaking changes. All in-repository callers and stories
   were migrated in this change; no legacy alias is retained.
+- A route-change Story verifies that both presentation-local surfaces close
+  when the route pane identity changes without remounting the terminal host.
+- The route adapter intentionally does not use `key={paneId}`: terminal
+  lifecycle must remain mounted so `usePaneViewModel` can classify a target
+  change as an explicit detach and preserve resume behavior only for a true
+  same-pane remount.
+- Lazy pane-board consumers intentionally do not poll by default. The current
+  application consumer is the control room, which explicitly opts into
+  hidden polling; a future consumer must make that cost explicit.
 
 ### Verification after the first boundary pass
 
@@ -265,7 +281,7 @@ only when a contract or extraction is actually required.
   reported the existing absence of `src/**/*.mdx` files and a chunk-size
   warning; neither prevented the build.
 
-### Verification after review fixes
+### Verification after review fixes and lifecycle follow-up
 
 - `apps/web` tests passed: 24 files and 204 tests.
 - `apps/web` typecheck passed.

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppIcon } from "../../../../../../../../app/components/app-icon";
 import { AppSafeAreaOverlay } from "../../../../../../../../app/components/app-layout";
 import { MuximoLogo } from "../../../../../../../../app/components/muximo-logo";
@@ -13,9 +13,11 @@ import type { ControlRoomViewModel } from "./viewmodel";
 
 export function ControlRoomView({
   viewModel: controlRoomViewModel,
+  paneId,
   layoutVariant = "ghost",
 }: {
   viewModel: ControlRoomViewModel;
+  paneId: string;
   layoutVariant?: PaneLayoutOverlayVariant;
 }) {
   const viewModel: PaneViewModel = controlRoomViewModel.terminal;
@@ -26,6 +28,11 @@ export function ControlRoomView({
   const onNewPane = controlRoomViewModel.onNewPane;
   const [paneBoardOpen, setPaneBoardOpen] = useState(false);
   const [keyboardSettingsOpen, setKeyboardSettingsOpen] = useState(false);
+  useEffect(() => {
+    if (paneId.length === 0) return;
+    setPaneBoardOpen(false);
+    setKeyboardSettingsOpen(false);
+  }, [paneId]);
   const { notices, open: dismissNotice } = useWaitingNotices(paneBoard.panes);
   const selectedPane = paneBoard.panes.find((pane) => pane.hostPaneId === viewModel.target);
   const title = selectedPane?.name ?? viewModel.target;
