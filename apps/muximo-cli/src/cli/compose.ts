@@ -186,6 +186,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const shell = new RunShell({
     cwd,
     paneName: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
+    defaultShell: environment.SHELL ?? "sh",
     workspace: new MuximodShellWorkspaceResolver({ cwd, environment, api: ensureApi }),
     sessions: new MuximodShellSessionWorktreeLookup(ensureApi),
     process: new ShellProcessAdapter({ environment }),
@@ -205,7 +206,11 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const serveStatePath = join(runtime.muximodInstanceDirectory, "serve.json");
   const runAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["run"]>[0]) => {
     const api = await ensureApi();
-    const result = await api.agentSessions.run(hostPaneId === undefined ? input : { ...input, hostPaneId });
+    const result = await api.agentSessions.run({
+      ...input,
+      ...(input.hostPaneId === undefined && hostPaneId !== undefined ? { hostPaneId } : {}),
+      cwd: input.cwd ?? cwd,
+    });
     if (
       result.cleanup.disposition !== "retained" ||
       result.cleanup.reason !== "cleanup_declined" ||
@@ -278,7 +283,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
           const result = await ensureTailscaleServe(value, { logger }, environment);
           writeServeRouteState(serveStatePath, {
             schemaVersion: 1,
-            environment: runtime.environmentName,
+            ...(runtime.environmentName === undefined ? {} : { environment: runtime.environmentName }),
             component: "muximod",
             provider: "tailscale",
             hostname: result.route.hostname,
@@ -335,7 +340,9 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       resume: {
         execute: (input) =>
           ensureApi().then((api) =>
-            api.agentSessions.resume(hostPaneId === undefined ? input : { ...input, hostPaneId }),
+            input.hostPaneId === undefined && hostPaneId !== undefined
+              ? api.agentSessions.resume({ ...input, hostPaneId })
+              : api.agentSessions.resume(input),
           ),
       },
       cleanup: { execute: cleanupAgentSession },
@@ -380,11 +387,6 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   };
 }
 
-function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
-  const pane = environment.TMUX && environment.TMUX_PANE ? environment.TMUX_PANE.trim() : "";
-  return /^%[0-9]+$/u.test(pane) ? pane : undefined;
-}
-
 async function findAgentSession(api: MuximodApiClient, workspaceScope: "current" | "all", reference: string) {
   const result = await api.agentSessions.list({ workspaceScope, includeUnavailable: true });
   const separatorIndex = reference.indexOf("/");
@@ -410,6 +412,11 @@ function normalizeSessionName(value: string): string {
   } catch {
     return value;
   }
+}
+
+function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
+  const pane = environment.TMUX && environment.TMUX_PANE ? environment.TMUX_PANE.trim() : "";
+  return /^%[0-9]+$/u.test(pane) ? pane : undefined;
 }
 
 async function withApiInvalidation<Result>(operation: () => Promise<Result>, invalidate: () => void): Promise<Result> {

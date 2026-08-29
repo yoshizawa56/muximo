@@ -50,7 +50,7 @@ export class RunShell {
             ? await this.deps.hooks.resolveHook(workspace.cleanupScriptPath, workspace.rootPath)
             : null,
         };
-        if (!(await this.deps.worktrees.copyFiles(worktree, workspace.worktreeCopyPatterns))) {
+        if (!(await this.deps.worktrees.copyFiles(worktree))) {
           throw new Error("worktree file copy failed");
         }
         if (
@@ -65,9 +65,14 @@ export class RunShell {
         }
         shellCwd = worktree.worktreePath;
       }
-      const shell = input.shell ?? "sh";
+      const shell = input.shell ?? this.deps.defaultShell;
       return {
-        process: await this.deps.process.run({ executable: shell, args: ["-i"], cwd: shellCwd, interactive: true }),
+        process: await this.deps.process.run({
+          executable: shell,
+          args: ["-l", "-i"],
+          cwd: shellCwd,
+          interactive: true,
+        }),
       };
     } finally {
       try {

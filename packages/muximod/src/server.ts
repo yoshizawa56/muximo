@@ -175,6 +175,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     cwd: options.workingDirectory,
     environment,
     workspaces: workspaceRepository,
+    directory: workspaceCatalog,
   });
   const worktrees = new GitWorktreeAdapter({ environment, logger });
   const hooks = new WorkspaceHookAdapter({
@@ -202,7 +203,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const applicationForAgentPane = () => {
     return application;
   };
-  const agentPane = createAgentPanePublication(applicationForAgentPane, logger);
+  const agentPane = createAgentPanePublication(applicationForAgentPane, logger, environment);
   const backendOptions = {
     environment,
     opencodeRegistryFile: join(options.instanceDirectory, "opencode-servers.json"),
@@ -567,15 +568,18 @@ type AgentPaneApplication = Pick<
 export function createAgentPanePublication(
   getApplication: () => AgentPaneApplication,
   logger: Pick<Logger, "debug" | "warn">,
+  environment: NodeJS.ProcessEnv = {},
 ): PanePublicationPort & AgentObservationPort {
   const paneByExecution = new Map<string, string | undefined>();
+  const defaultHostPaneId = normalizeHostPaneId(environment.TMUX_PANE);
   const resolveHostPaneId = (session: AgentSessionRecord, requested?: string): string | undefined =>
-    requested ?? (session.executionId ? paneByExecution.get(session.executionId) : undefined);
+    requested ?? (session.executionId ? paneByExecution.get(session.executionId) : undefined) ?? defaultHostPaneId;
 
   return {
     adopt: async (session, hostPaneId) => {
-      if (session.executionId) paneByExecution.set(session.executionId, hostPaneId);
-      const request = agentPaneRequest(session, hostPaneId);
+      const resolvedHostPaneId = resolveHostPaneId(session, hostPaneId);
+      if (session.executionId) paneByExecution.set(session.executionId, resolvedHostPaneId);
+      const request = agentPaneRequest(session, resolvedHostPaneId);
       if (!request) return;
       try {
         await getApplication().adoptAgentSession(request);
@@ -618,6 +622,11 @@ function agentPaneRequest(
   const normalizedHostPaneId = hostPaneId?.trim();
   if (!normalizedHostPaneId || !/^%[0-9]+$/u.test(normalizedHostPaneId) || !session.executionId) return undefined;
   return { agentSessionId: session.id, hostPaneId: normalizedHostPaneId, executionId: session.executionId };
+}
+
+function normalizeHostPaneId(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized && /^%[0-9]+$/u.test(normalized) ? normalized : undefined;
 }
 
 function observe(

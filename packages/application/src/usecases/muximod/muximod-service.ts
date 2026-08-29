@@ -93,7 +93,6 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
           name: input.name,
           setupHook: input.setupScriptPath,
           cleanupHook: input.cleanupScriptPath,
-          worktreeCopyPatterns: input.worktreeCopyPatterns,
         });
         return workspaceCatalog.toDirectoryOption(workspace);
       },
@@ -103,9 +102,6 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
             name: input.name,
             setupHook: input.setupScriptPath,
             cleanupHook: input.cleanupScriptPath,
-            worktreeCopyPatterns: input.worktreeCopyPatterns,
-            appendCopyPatterns: input.appendWorktreeCopyPatterns,
-            clearCopyPatterns: input.clearWorktreeCopyPatterns,
           }),
         ),
       delete: async (workspaceId) => {

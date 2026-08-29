@@ -136,8 +136,7 @@ type CatalogStep =
   | { type: "register" }
   | { type: "resolve" }
   | { type: "resolve-missing" }
-  | { type: "invalid-hook" }
-  | { type: "invalid-pattern"; pattern: string };
+  | { type: "invalid-hook" };
 type CatalogContext = { browseGit: boolean; resolvedId: string | null };
 
 const catalogFixture = (): FixtureHandle<CatalogFixture> => {
@@ -181,26 +180,6 @@ const catalogCases = [
     steps: [{ type: "invalid-hook" }],
     assert: [hasError<CatalogContext, undefined>({ code: "invalid_hook", reason: "not_executable" })],
   },
-  {
-    name: "rejects an absolute worktree copy pattern",
-    steps: [{ type: "invalid-pattern", pattern: "/absolute/.env" }],
-    assert: [hasError<CatalogContext, undefined>({ code: "invalid_copy_pattern" })],
-  },
-  {
-    name: "rejects a parent traversal copy pattern",
-    steps: [{ type: "invalid-pattern", pattern: "../outside.env" }],
-    assert: [hasError<CatalogContext, undefined>({ code: "invalid_copy_pattern" })],
-  },
-  {
-    name: "rejects an embedded parent traversal copy pattern",
-    steps: [{ type: "invalid-pattern", pattern: "config/../../outside.env" }],
-    assert: [hasError<CatalogContext, undefined>({ code: "invalid_copy_pattern" })],
-  },
-  {
-    name: "rejects a backslash copy pattern",
-    steps: [{ type: "invalid-pattern", pattern: "config\\local.env" }],
-    assert: [hasError<CatalogContext, undefined>({ code: "invalid_copy_pattern" })],
-  },
 ] satisfies readonly ScenarioCase<"default", CatalogStep, undefined, CatalogContext>[];
 
 const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefined, CatalogContext> = {
@@ -217,7 +196,6 @@ const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefi
         fixture.registered = Workspace.create({
           ...resolved,
           setupScriptPath: fixture.catalog.resolveHook(fixture.setup, resolved.rootPath),
-          worktreeCopyPatterns: [".env", "config/**/*.local.json"],
           createdAt: "2026-08-10T00:00:00.000Z",
           updatedAt: "2026-08-10T00:00:00.000Z",
         });
@@ -241,10 +219,6 @@ const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefi
         const record = createRecord(fixture, { setupScriptPath: hook });
         await fixture.catalog.resolveWorkspaceDirectory(record.id, async () => record);
       }
-      if (step.type === "invalid-pattern") {
-        const record = createRecord(fixture, { worktreeCopyPatterns: [step.pattern] });
-        await fixture.catalog.resolveWorkspaceDirectory(record.id, async () => record);
-      }
     }
   },
   observe: (fixture) => ({ browseGit: fixture.browseGit, resolvedId: fixture.resolvedId }),
@@ -254,7 +228,6 @@ function createRecord(fixture: CatalogFixture, overrides: Partial<WorkspaceRecor
   const resolved = fixture.catalog.resolveDirectory(fixture.repository);
   return Workspace.create({
     ...resolved,
-    worktreeCopyPatterns: [],
     createdAt: "2026-08-10T00:00:00.000Z",
     updatedAt: "2026-08-10T00:00:00.000Z",
     ...overrides,

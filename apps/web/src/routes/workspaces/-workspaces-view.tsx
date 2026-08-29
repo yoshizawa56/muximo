@@ -31,8 +31,7 @@ export function WorkspacesListView({ viewModel }: { viewModel: WorkspacesListVie
             Workspace settings
           </h1>
           <p className="m-0 max-w-[520px] text-[0.76rem] leading-[1.5] text-[#719176]">
-            Each workspace owns its setup and cleanup hooks and worktree copy patterns. Tap a workspace to edit it as a
-            child screen.
+            Each workspace owns its setup and cleanup hooks. Tap a workspace to edit it as a child screen.
           </p>
         </div>
 
@@ -83,9 +82,6 @@ export function WorkspacesListView({ viewModel }: { viewModel: WorkspacesListVie
                   className={`rounded px-1.5 py-0.5 font-mono text-[0.48rem] ${workspace.isGit ? "bg-lime/15 text-lime" : "bg-[#1e4828] text-[#5d9168]"}`}
                 >
                   {workspace.isGit ? "git" : "plain"}
-                </span>
-                <span className="ml-auto font-mono text-[0.52rem] text-[#5d9168]">
-                  {workspace.worktreeCopyPatterns.length} patterns
                 </span>
               </span>
               <span className="truncate font-mono text-[0.58rem] text-[#638f6b]">{workspace.directory}</span>

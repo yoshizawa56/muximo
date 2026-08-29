@@ -7,7 +7,6 @@ import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
 import type { MuximodWorkspaceDirectory, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "@muximo/application";
 import {
-  validateWorktreeCopyPatterns as validateDomainWorktreeCopyPatterns,
   validateWorkspaceSelection,
   Workspace,
   type WorkspaceDirectoryOption,
@@ -133,7 +132,6 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
       isGit: record.isGit,
       setupScriptPath: record.setupScriptPath ? displayPath(record.setupScriptPath) : null,
       cleanupScriptPath: record.cleanupScriptPath ? displayPath(record.cleanupScriptPath) : null,
-      worktreeCopyPatterns: record.worktreeCopyPatterns,
     };
   }
 
@@ -158,7 +156,6 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
       isGit: workspace.isGit,
       setupScriptPath: workspace.setupScriptPath,
       cleanupScriptPath: workspace.cleanupScriptPath,
-      worktreeCopyPatterns: workspace.worktreeCopyPatterns,
     };
     validateWorkspaceSelection(selection, option);
     return workspace;
@@ -174,7 +171,6 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
       ...(workspace.cleanupScriptPath
         ? { cleanupScriptPath: validateHookPath(workspace.cleanupScriptPath, rootPath) }
         : {}),
-      worktreeCopyPatterns: validateWorktreeCopyPatterns(workspace.worktreeCopyPatterns),
     });
   }
 
@@ -186,7 +182,6 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
       isGit: isGitWorkspace(directory),
       setupScriptPath: null,
       cleanupScriptPath: null,
-      worktreeCopyPatterns: [],
     };
   }
 }
@@ -211,10 +206,6 @@ function validateHookPath(path: string, workspaceRoot: string): string {
     throw new InvalidWorkspaceHookError(path, "not_executable");
   }
   return realpathSync(expanded);
-}
-
-function validateWorktreeCopyPatterns(values: readonly string[] | undefined): string[] {
-  return validateDomainWorktreeCopyPatterns(values ?? []);
 }
 
 export function workspaceIdForPath(path: string): WorkspaceId {

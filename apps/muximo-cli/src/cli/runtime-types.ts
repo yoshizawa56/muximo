@@ -1,5 +1,5 @@
 export type MuximoCliRuntimeOptions = {
-  environmentName: string;
+  environmentName?: string;
   stateRoot: string;
   muximodInstanceDirectory: string;
   muximodHost: string;

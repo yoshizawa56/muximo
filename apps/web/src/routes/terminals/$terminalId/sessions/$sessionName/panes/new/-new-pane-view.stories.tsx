@@ -24,7 +24,6 @@ function buildWorkspacePicker(
     registrationDirectory: "",
     setupScriptPath: "",
     cleanupScriptPath: "",
-    worktreeCopyPatterns: "",
     isRegisteringWorkspace: false,
     registrationError: null,
     errorMessage: null,
@@ -37,7 +36,6 @@ function buildWorkspacePicker(
     onRegistrationDirectoryChange: fn(),
     onSetupScriptPathChange: fn(),
     onCleanupScriptPathChange: fn(),
-    onWorktreeCopyPatternsChange: fn(),
     onRegisterWorkspace: fn(),
   };
 }

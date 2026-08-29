@@ -84,9 +84,11 @@ muximo daemon stop
 ```
 
 `muximo daemon log` prints the most recent 100 lines from the daemon's derived
-state log. Use `--lines N` to change the limit. Select a named profile with
-`--env <name>`; each profile has its own derived state directory, ports, database,
-PID file, socket, and log.
+state log. Use `--lines N` to change the limit. The standalone production command
+uses the unnamed default profile and does not load source repository profiles.
+Use the checkout-based `mise muximo --env <name>` command for a named profile;
+each named profile has its own derived state directory, ports, database, PID
+file, socket, and log.
 
 Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
 
@@ -136,7 +138,7 @@ Manage workspaces and tmux sessions:
 
 ```sh
 muximo workspace list
-muximo workspace add ~/work/project --name project --copy-pattern .env
+muximo workspace add ~/work/project --name project
 muximo workspace update project --setup-hook ~/.config/muximo/setup
 muximo workspace delete project
 muximo tmux new-session -s project -c ~/work/project

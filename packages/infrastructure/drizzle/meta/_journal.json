@@ -50,6 +50,13 @@
       "when": 1787679734346,
       "tag": "0006_remove_tmux_server_default",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1788008698188,
+      "tag": "0007_remarkable_mac_gargan",
+      "breakpoints": true
     }
   ]
 }

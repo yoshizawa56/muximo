@@ -13,6 +13,8 @@ export type StartAgentSessionInput = {
   backend: AgentBackend;
   name?: string;
   hostPaneId?: string;
+  workspace?: string;
+  cwd?: string;
   useWorktree: boolean;
   worktreeRoot?: string;
   setupHook?: string;
@@ -81,6 +83,11 @@ export type AgentSessionListProjection = {
 export type AgentSessionListResult = {
   allViews: AgentSessionListProjection[];
   views: AgentSessionListProjection[];
+};
+
+export type WorkspaceResolutionInput = {
+  workspace?: string;
+  cwd?: string;
 };
 
 export type ManagedWorktreeState = {
@@ -165,7 +172,7 @@ export type CleanupAgentSessionResult = {
 
 /** Resolves the workspace selected by the current runtime context. */
 export interface WorkspaceResolverPort {
-  resolveCurrent(): Promise<WorkspaceRecord>;
+  resolveCurrent(input?: WorkspaceResolutionInput): Promise<WorkspaceRecord>;
 }
 
 /** Generates collision-free names without inspecting provider arguments. */
@@ -184,10 +191,7 @@ export interface HookPort {
 /** Owns Git worktree creation, copy, inspection, and removal. */
 export interface WorktreePort {
   create(workspace: WorkspaceDirectoryOption, name: string, override?: string): Promise<ManagedWorktreeState>;
-  copyFiles(
-    target: Pick<AgentSessionRecord, "workspaceRoot" | "worktreePath">,
-    patterns: readonly string[],
-  ): Promise<boolean>;
+  copyFiles(target: Pick<AgentSessionRecord, "workspaceRoot" | "worktreePath">): Promise<boolean>;
   isRegistered(session: AgentSessionRecord): Promise<boolean>;
   hasChanges(session: AgentSessionRecord): Promise<boolean>;
   remove(session: AgentSessionRecord, force: boolean): Promise<CleanupResult>;

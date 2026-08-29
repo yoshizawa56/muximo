@@ -57,7 +57,6 @@ function toAddInput(input: CliWorkspaceAddInput): RegisterWorkspaceRequest {
     ...(input.nameExplicit && input.name !== undefined ? { name: input.name } : {}),
     ...(input.setupHookExplicit ? { setupScriptPath: input.setupHook } : {}),
     ...(input.cleanupHookExplicit ? { cleanupScriptPath: input.cleanupHook } : {}),
-    ...(input.copyPatternsExplicit ? { worktreeCopyPatterns: input.copyPatterns } : {}),
   };
 }
 
@@ -66,9 +65,6 @@ function toUpdateInput(input: CliWorkspaceUpdateInput): UpdateWorkspaceRequest {
     ...(input.nameExplicit && input.name !== undefined ? { name: input.name } : {}),
     ...(input.setupHookExplicit ? { setupScriptPath: input.setupHook } : {}),
     ...(input.cleanupHookExplicit ? { cleanupScriptPath: input.cleanupHook } : {}),
-    ...(input.copyPatternsExplicit ? { worktreeCopyPatterns: input.copyPatterns } : {}),
-    ...(input.appendCopyPatterns.length > 0 ? { appendWorktreeCopyPatterns: input.appendCopyPatterns } : {}),
-    ...(input.clearCopyPatterns ? { clearWorktreeCopyPatterns: true } : {}),
   };
 }
 

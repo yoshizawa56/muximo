@@ -52,10 +52,6 @@ const cases = [
         setupHookExplicit: true,
         cleanupHook: "cleanup.sh",
         cleanupHookExplicit: true,
-        copyPatterns: [".env"],
-        copyPatternsExplicit: true,
-        appendCopyPatterns: [],
-        clearCopyPatterns: false,
       },
     },
     assert: [
@@ -78,19 +74,9 @@ const cases = [
         setupHookExplicit: false,
         cleanupHook: undefined,
         cleanupHookExplicit: false,
-        copyPatterns: [],
-        copyPatternsExplicit: false,
-        appendCopyPatterns: [".env.local"],
-        clearCopyPatterns: true,
       },
     },
-    assert: [
-      contains("presents the update result", "workspace 'workspace' updated"),
-      {
-        name: "passes append and clear copy policy",
-        check: (context) => expect(context.calls).toContain("update-copy-policy"),
-      },
-    ],
+    assert: [contains("presents the update result", "workspace 'workspace' updated")],
   },
   {
     name: "presents workspace list output from typed records",
@@ -133,7 +119,6 @@ function createFixture(): WorkspaceFixture {
     isGit: true,
     setupScriptPath: null,
     cleanupScriptPath: null,
-    worktreeCopyPatterns: [".env"],
   };
   const out: string[] = [];
   const calls: string[] = [];
@@ -156,14 +141,8 @@ function createFixture(): WorkspaceFixture {
       },
     },
     update: {
-      execute: async (selector, input) => {
-        if (
-          selector === "workspace" &&
-          input.appendWorktreeCopyPatterns?.[0] === ".env.local" &&
-          input.clearWorktreeCopyPatterns
-        ) {
-          calls.push("update-copy-policy");
-        }
+      execute: async (selector) => {
+        calls.push(`update:${selector}`);
         return workspace;
       },
     },

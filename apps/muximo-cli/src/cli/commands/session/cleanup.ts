@@ -39,7 +39,7 @@ export function registerSessionCleanupCommand(
   options: SessionCleanupCommandOptions,
 ): Command {
   const command = parent.command(`${options.commandName} <reference>`).description("Clean up a managed session");
-  registerOptions(command, sessionCleanupOptionSpecs);
+  registerOptions(command, sessionCleanupOptionSpecs, context.buildMode);
 
   command.action(async (reference, commandOptions) => {
     const resolved = resolveCommandOptions(commandOptions, sessionCleanupOptionSpecs, context);

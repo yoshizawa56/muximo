@@ -20,7 +20,6 @@ export type WorkspacePickerInput = {
   registrationDirectory: string;
   setupScriptPath: string;
   cleanupScriptPath: string;
-  worktreeCopyPatterns: string;
   isRegisteringWorkspace: boolean;
   registrationError: string | null;
   errorMessage: string | null;
@@ -42,7 +41,6 @@ export type WorkspacePickerViewModel = WorkspacePickerInput & {
   onRegistrationDirectoryChange: (directory: string) => void;
   onSetupScriptPathChange: (path: string) => void;
   onCleanupScriptPathChange: (path: string) => void;
-  onWorktreeCopyPatternsChange: (patterns: string) => void;
   onRegisterWorkspace: () => void;
 };
 
@@ -84,7 +82,6 @@ export function useWorkspacePickerViewModel({
   const [registrationDirectory, setRegistrationDirectory] = useState("");
   const [setupScriptPath, setSetupScriptPath] = useState("");
   const [cleanupScriptPath, setCleanupScriptPath] = useState("");
-  const [worktreeCopyPatterns, setWorktreeCopyPatterns] = useState("");
   const [registrationError, setRegistrationError] = useState<string | null>(null);
   const [isRegisteringWorkspace, setIsRegisteringWorkspace] = useState(false);
 
@@ -133,14 +130,6 @@ export function useWorkspacePickerViewModel({
           directory,
           setupScriptPath: setupScriptPath.trim() || null,
           cleanupScriptPath: cleanupScriptPath.trim() || null,
-          worktreeCopyPatterns: [
-            ...new Set(
-              worktreeCopyPatterns
-                .split(/\r?\n/)
-                .map((pattern) => pattern.trim())
-                .filter(Boolean),
-            ),
-          ],
         },
         {},
       )
@@ -162,7 +151,6 @@ export function useWorkspacePickerViewModel({
     registrationDirectory,
     setupScriptPath,
     cleanupScriptPath,
-    worktreeCopyPatterns,
     utils,
   ]);
 
@@ -178,7 +166,6 @@ export function useWorkspacePickerViewModel({
     registrationDirectory,
     setupScriptPath,
     cleanupScriptPath,
-    worktreeCopyPatterns,
     isRegisteringWorkspace,
     registrationError,
     errorMessage: workspacePickerErrorMessage(workspacesQuery.error) ?? browserError,
@@ -195,7 +182,6 @@ export function useWorkspacePickerViewModel({
     onRegistrationDirectoryChange: setRegistrationDirectory,
     onSetupScriptPathChange: setSetupScriptPath,
     onCleanupScriptPathChange: setCleanupScriptPath,
-    onWorktreeCopyPatternsChange: setWorktreeCopyPatterns,
     onRegisterWorkspace,
   };
 }

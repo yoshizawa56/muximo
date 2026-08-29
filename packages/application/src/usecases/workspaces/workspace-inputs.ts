@@ -6,14 +6,10 @@ export type RegisterWorkspaceInput = {
   name?: string;
   setupHook?: Patch<string>;
   cleanupHook?: Patch<string>;
-  worktreeCopyPatterns?: readonly string[];
 };
 
 export type UpdateWorkspaceInput = {
   name?: string;
   setupHook?: Patch<string>;
   cleanupHook?: Patch<string>;
-  worktreeCopyPatterns?: readonly string[];
-  appendCopyPatterns?: readonly string[];
-  clearCopyPatterns?: boolean;
 };

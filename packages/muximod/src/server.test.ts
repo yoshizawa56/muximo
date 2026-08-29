@@ -33,7 +33,6 @@ const workspace: WorkspaceRecord = {
   rootPath: "/workspace",
   name: "workspace",
   isGit: false,
-  worktreeCopyPatterns: [],
   createdAt: "2026-08-23T00:00:00.000Z",
   updatedAt: "2026-08-23T00:00:00.000Z",
 };

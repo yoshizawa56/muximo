@@ -29,7 +29,7 @@ const serveOptions = defineOptions(
 );
 
 type Fixture = { completion: string };
-type Input = { command: "root" | "serve" };
+type Input = { command: "root" | "serve" | "workspace" };
 type Context = Fixture;
 
 const createFixture = () => {
@@ -37,6 +37,8 @@ const createFixture = () => {
   registerOptions(program, rootOptions);
   const serve = program.command("serve");
   registerOptions(serve, serveOptions);
+  const workspace = program.command("workspace");
+  workspace.command("list").alias("ls");
   return { fixture: { completion: generateZshCompletion(program) } };
 };
 
@@ -66,6 +68,15 @@ const cases = [
       containsText("--verbose[Show\\ diagnostics.]"),
       containsText("--port[Port.]:port:"),
       containsText("--log-level[Log\\ level.]:level:(error warn info debug)"),
+    ],
+  },
+  {
+    name: "generates completion entries for command aliases",
+    input: { command: "workspace" },
+    assert: [
+      containsText("'1:command:(list ls)'"),
+      containsText("'list') _muximo_workspace_list ;;"),
+      containsText("'ls') _muximo_workspace_list ;;"),
     ],
   },
 ] satisfies readonly OperationCase<"default", Input, string, Context>[];

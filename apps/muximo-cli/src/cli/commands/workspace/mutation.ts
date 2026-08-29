@@ -3,7 +3,7 @@ import { z } from "zod";
 import { defineOptions, registerOptions } from "../../options/index.js";
 import type { CliCommandContext, CliHandlers, CliWorkspaceAddInput, CliWorkspaceUpdateInput } from "../types.js";
 import { invokeCliHandler, resolveCommandOptions } from "../validation.js";
-import { firstBooleanOrString, firstString, mergeStringArrays } from "./common.js";
+import { firstBooleanOrString, firstString } from "./common.js";
 
 export const workspaceMutationOptionSpecs = defineOptions(
   {
@@ -32,27 +32,6 @@ export const workspaceMutationOptionSpecs = defineOptions(
     exposure: "cli",
     completion: { kind: "file" },
   },
-  {
-    key: "copyPattern",
-    flags: ["--copy-pattern <pattern>"],
-    description: "Replace workspace copy patterns.",
-    exposure: "cli",
-    repeatable: true,
-  },
-  {
-    key: "addCopyPattern",
-    flags: ["--add-copy-pattern <pattern>"],
-    description: "Append a workspace copy pattern.",
-    exposure: "cli",
-    repeatable: true,
-  },
-  {
-    key: "clearCopyPatterns",
-    flags: ["--clear-copy-patterns"],
-    description: "Clear all workspace copy patterns.",
-    exposure: "cli",
-    defaultValue: false,
-  },
 );
 
 const mutationFields = {
@@ -62,55 +41,24 @@ const mutationFields = {
   setupHookExplicit: z.boolean().default(false),
   cleanupHook: z.union([z.string(), z.null()]).optional(),
   cleanupHookExplicit: z.boolean().default(false),
-  copyPatterns: z.array(z.string()).default([]),
-  copyPatternsExplicit: z.boolean().default(false),
-  appendCopyPatterns: z.array(z.string()).default([]),
-  clearCopyPatterns: z.boolean().default(false),
 };
 
-export const workspaceAddSchema = z
-  .object({
-    directory: z.string().trim().min(1, { error: "workspace add requires a directory" }),
-    ...mutationFields,
-  })
-  .superRefine((input, context) => {
-    if (input.appendCopyPatterns.length > 0 || input.clearCopyPatterns) {
-      context.addIssue({
-        code: "custom",
-        path: ["appendCopyPatterns"],
-        message: "--add-copy-pattern and --clear-copy-patterns are only valid for workspace update",
-      });
-    }
-    if (input.copyPatternsExplicit && input.clearCopyPatterns) {
-      context.addIssue({
-        code: "custom",
-        path: ["clearCopyPatterns"],
-        message: "--clear-copy-patterns cannot be combined with --copy-pattern",
-      });
-    }
-  });
+export const workspaceAddSchema = z.object({
+  directory: z.string().trim().min(1, { error: "workspace add requires a directory" }),
+  ...mutationFields,
+});
 
-export const workspaceUpdateSchema = z
-  .object({
-    selector: z.string().trim().min(1, { error: "workspace update requires a workspace selector" }),
-    ...mutationFields,
-  })
-  .superRefine((input, context) => {
-    if (input.copyPatternsExplicit && input.clearCopyPatterns) {
-      context.addIssue({
-        code: "custom",
-        path: ["clearCopyPatterns"],
-        message: "--clear-copy-patterns cannot be combined with --copy-pattern",
-      });
-    }
-  });
+export const workspaceUpdateSchema = z.object({
+  selector: z.string().trim().min(1, { error: "workspace update requires a workspace selector" }),
+  ...mutationFields,
+});
 
 export function registerWorkspaceAddCommand(
   parent: Command,
   handlers: CliHandlers,
   context: CliCommandContext,
 ): Command {
-  const command = configureMutationCommand(parent.command("add [directory]"));
+  const command = configureMutationCommand(parent.command("add [directory]").alias("create"), context);
   command.action(async (directory, options) => {
     const resolved = resolveCommandOptions(options, workspaceMutationOptionSpecs, context);
     context.report(
@@ -131,7 +79,7 @@ export function registerWorkspaceUpdateCommand(
   handlers: CliHandlers,
   context: CliCommandContext,
 ): Command {
-  const command = configureMutationCommand(parent.command("update [selector]"));
+  const command = configureMutationCommand(parent.command("update [selector]"), context);
   command.action(async (selector, options) => {
     const resolved = resolveCommandOptions(options, workspaceMutationOptionSpecs, context);
     context.report(
@@ -147,9 +95,9 @@ export function registerWorkspaceUpdateCommand(
   return command;
 }
 
-function configureMutationCommand(command: Command): Command {
+function configureMutationCommand(command: Command, context: CliCommandContext): Command {
   command.description("Register or update a workspace");
-  registerOptions(command, workspaceMutationOptionSpecs);
+  registerOptions(command, workspaceMutationOptionSpecs, context.buildMode);
   return command.allowUnknownOption(false);
 }
 
@@ -160,16 +108,9 @@ function normalizeMutationOptions(options: Record<string, unknown>): {
   setupHookExplicit: boolean;
   cleanupHook?: string | null;
   cleanupHookExplicit: boolean;
-  copyPatterns: string[];
-  copyPatternsExplicit: boolean;
-  appendCopyPatterns: string[];
-  clearCopyPatterns: boolean;
 } {
   const setupHook = firstBooleanOrString(options, ["setupHook"], []);
   const cleanupHook = firstBooleanOrString(options, ["cleanupHook"], []);
-  const copyPatterns = mergeStringArrays(options, ["copyPattern"]);
-  const appendCopyPatterns = mergeStringArrays(options, ["addCopyPattern"]);
-  const clearCopyPatterns = options.clearCopyPatterns === true;
   return {
     name: firstString(options, ["name"]),
     nameExplicit: options.name !== undefined,
@@ -177,10 +118,6 @@ function normalizeMutationOptions(options: Record<string, unknown>): {
     setupHookExplicit: setupHook.explicit,
     cleanupHook: cleanupHook.value,
     cleanupHookExplicit: cleanupHook.explicit,
-    copyPatterns,
-    copyPatternsExplicit: copyPatterns.length > 0,
-    appendCopyPatterns,
-    clearCopyPatterns,
   };
 }
 

@@ -98,25 +98,6 @@ export function WorkspaceDetailView({ viewModel }: { viewModel: WorkspaceDetailV
             Hook paths are host-side executable files. They run with the created worktree as cwd. Empty clears the hook.
           </small>
 
-          <label className={fieldClass}>
-            <span className={fieldLabelClass}>
-              WORKTREE COPY PATTERNS <small className="tracking-normal">(one per line)</small>
-            </span>
-            <textarea
-              className="min-h-[90px] w-full resize-y rounded-[9px] border border-[#24552e] bg-[rgb(6_20_9_/_82%)] px-[13px] py-[11px] font-mono text-base leading-[1.45] text-[#d8ffdc] outline-none placeholder:text-[#416a49] focus:border-lime-deep max-[920px]:min-h-12"
-              value={viewModel.worktreeCopyPatterns}
-              onChange={(event) => viewModel.onWorktreeCopyPatternsChange(event.target.value)}
-              placeholder={".env\nconfig/*.local.json"}
-              rows={4}
-              spellCheck={false}
-            />
-          </label>
-          <small className={fieldHelpClass}>
-            Relative patterns like <code className="font-mono text-[#a9e9af]">.env</code> or{" "}
-            <code className="font-mono text-[#a9e9af]">config{/**/}*.local.json</code> copy unmanaged files before the
-            setup hook.
-          </small>
-
           {viewModel.saveError ? (
             <p className="m-0 text-[0.62rem] leading-[1.45] text-[#ff9a8f]" role="alert">
               {viewModel.saveError}

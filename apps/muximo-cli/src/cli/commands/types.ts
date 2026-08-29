@@ -1,5 +1,6 @@
 import type { Writable } from "node:stream";
 import type { AgentBackend } from "@muximo/domain";
+import type { CliBuildMode } from "../build-mode.js";
 import type { MuximoCliRuntimeOptions } from "../runtime-types.js";
 
 export type CliIo = {
@@ -10,6 +11,7 @@ export type CliIo = {
 export type CliRunInput = {
   backend: AgentBackend;
   name?: string;
+  workspace?: string;
   useWorktree: boolean;
   worktreeRoot?: string;
   setupHook?: string;
@@ -92,10 +94,6 @@ export type CliWorkspaceMutationInput = {
   setupHookExplicit: boolean;
   cleanupHook?: string | null;
   cleanupHookExplicit: boolean;
-  copyPatterns: string[];
-  copyPatternsExplicit: boolean;
-  appendCopyPatterns: string[];
-  clearCopyPatterns: boolean;
 };
 
 export type CliWorkspaceAddInput = CliWorkspaceMutationInput & {
@@ -133,6 +131,7 @@ export type CliAppDeps = {
   handlers: CliHandlers;
   cwd: string;
   environment: NodeJS.ProcessEnv;
+  buildMode?: CliBuildMode;
   runtime?: MuximoCliRuntimeOptions;
   rootCommand?: string;
   lifecycle?: CliCommandLifecycle;
@@ -148,6 +147,7 @@ export type CliCommandContext = {
   cwd: string;
   args: readonly string[];
   environment: NodeJS.ProcessEnv;
+  buildMode: CliBuildMode;
   runtime?: MuximoCliRuntimeOptions;
   rootCommand: string;
   report(status: number): void;

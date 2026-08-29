@@ -8,12 +8,14 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
+import type { ShellProcessInput } from "../../ports/shell.js";
 import { RunShell, type RunShellResult } from "./run-shell.js";
 
 type ShellFixture = {
   workspaceRoot: string;
   worktreePath: string;
   events: string[];
+  shellInputs: ShellProcessInput[];
   exitCode: number;
   service: RunShell;
 };
@@ -21,10 +23,11 @@ type ShellFixture = {
 type ShellResult = {
   process: RunShellResult["process"];
   events: readonly string[];
+  shell: ShellProcessInput | undefined;
 };
 
 type ShellFixtureKey = "success" | "failure";
-type Input = {};
+type Input = { shell?: string };
 
 const cases = [
   {
@@ -69,6 +72,32 @@ const cases = [
       ]),
     ],
   },
+  {
+    name: "uses the host-selected shell when no shell override is provided",
+    fixture: "success",
+    input: {},
+    assert: [
+      hasObserved<ShellResult, ShellResult>("shell", {
+        executable: "/bin/zsh",
+        args: ["-l", "-i"],
+        cwd: "/workspace/.worktrees/review",
+        interactive: true,
+      }),
+    ],
+  },
+  {
+    name: "uses an explicit shell override instead of the host-selected shell",
+    fixture: "success",
+    input: { shell: "/bin/bash" },
+    assert: [
+      hasObserved<ShellResult, ShellResult>("shell", {
+        executable: "/bin/bash",
+        args: ["-l", "-i"],
+        cwd: "/workspace/.worktrees/review",
+        interactive: true,
+      }),
+    ],
+  },
 ] satisfies readonly OperationCase<ShellFixtureKey, Input, ShellResult, ShellResult>[];
 
 const table: OperationTable<ShellFixture, ShellFixtureKey, Input, ShellResult, ShellResult> = {
@@ -78,18 +107,24 @@ const table: OperationTable<ShellFixture, ShellFixtureKey, Input, ShellResult, S
     failure: () => createShellFixture(3),
   },
   cases,
-  execute: async (fixture) => {
+  execute: async (fixture, input) => {
     const result = await fixture.service.execute({
+      shell: input.shell,
       command: [],
       exitAfterCommand: false,
       worktree: true,
       worktreeName: "review",
     });
-    return { process: result.process, events: [...fixture.events] };
+    return {
+      process: result.process,
+      events: [...fixture.events],
+      shell: fixture.shellInputs.find((shellInput) => shellInput.interactive),
+    };
   },
   observe: (fixture, result) => ({
     process: result.ok ? result.value.process : { started: false, code: -1, interrupted: false },
     events: [...fixture.events],
+    shell: fixture.shellInputs.find((shellInput) => shellInput.interactive),
   }),
 };
 
@@ -106,7 +141,6 @@ function createShellFixture(
     isGit: true,
     setupScriptPath: "setup-hook",
     cleanupScriptPath: "cleanup-hook",
-    worktreeCopyPatterns: [".env"],
     createdAt: "2026-08-23T00:00:00.000Z",
     updatedAt: "2026-08-23T00:00:00.000Z",
   });
@@ -116,12 +150,14 @@ function createShellFixture(
     workspaceRoot,
     worktreePath,
     events,
+    shellInputs: [],
     exitCode,
     service: undefined as unknown as RunShell,
   };
   fixture.service = new RunShell({
     cwd: workspaceRoot,
     paneName: "shell-pane",
+    defaultShell: "/bin/zsh",
     workspace: {
       resolveCurrent: async () => {
         record("resolve-workspace");
@@ -132,7 +168,8 @@ function createShellFixture(
       findWorktreePath: async () => workspaceRoot,
     },
     process: {
-      run: async () => {
+      run: async (input) => {
+        fixture.shellInputs.push({ ...input, args: [...input.args] });
         record("shell");
         return { started: true, code: exitCode, interrupted: false };
       },

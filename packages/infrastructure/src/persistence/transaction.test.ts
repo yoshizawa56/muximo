@@ -165,7 +165,6 @@ function createWorkspace(id: string, name: string): WorkspaceRecord {
     rootPath: `/tmp/${id}`,
     name,
     isGit: false,
-    worktreeCopyPatterns: [],
     createdAt: "2026-08-22T00:00:00.000Z",
     updatedAt: "2026-08-22T00:00:00.000Z",
   });

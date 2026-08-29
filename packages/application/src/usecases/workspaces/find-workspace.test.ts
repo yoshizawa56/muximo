@@ -95,7 +95,6 @@ function createWorkspace(): FindWorkspaceResult {
     rootPath: "/work/project",
     name: "project",
     isGit: true,
-    worktreeCopyPatterns: [],
     createdAt: "2026-08-15T00:00:00.000Z",
     updatedAt: "2026-08-15T00:00:00.000Z",
   });

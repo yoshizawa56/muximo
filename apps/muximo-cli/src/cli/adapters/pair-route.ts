@@ -34,7 +34,7 @@ export async function resolvePairMuximodBaseUrl(
   if (!state) {
     throw new Error(`muximod Serve route is unavailable; run "muximo serve tailscale" first`);
   }
-  const expectedEnvironment = readRequired(input.environment.MUXIMO_ENV, "MUXIMO_ENV");
+  const expectedEnvironment = input.environment.MUXIMO_ENV?.trim() || undefined;
   if (state.environment !== expectedEnvironment || state.component !== "muximod") {
     throw new Error(`muximod Serve route belongs to a different environment: ${input.routeStateFile}`);
   }

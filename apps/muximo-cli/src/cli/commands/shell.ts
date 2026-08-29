@@ -58,7 +58,7 @@ export const shellSchema = z
 
 export function registerShellCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
   const command = parent.command("shell [command...]").description("Open a shell in the current workspace");
-  registerOptions(command, shellOptionSpecs);
+  registerOptions(command, shellOptionSpecs, context.buildMode);
   command.allowExcessArguments(true);
 
   command.action(async (commandArgs, options) => {

@@ -41,10 +41,7 @@ export interface ShellWorktreePort {
     branch?: string;
     baseCommit?: string;
   }>;
-  copyFiles(
-    target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">,
-    patterns: readonly string[],
-  ): Promise<boolean>;
+  copyFiles(target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">): Promise<boolean>;
   remove(input: ShellWorktree): Promise<void>;
 }
 
@@ -77,6 +74,8 @@ export interface SessionWorktreeLookupPort {
 export type RunShellDependencies = {
   cwd: string;
   paneName: string;
+  /** Host-selected shell used when the command input does not override it. */
+  defaultShell: string;
   workspace: ShellWorkspaceResolverPort;
   sessions: SessionWorktreeLookupPort;
   process: ShellProcessPort;
