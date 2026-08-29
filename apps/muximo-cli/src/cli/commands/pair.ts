@@ -62,7 +62,7 @@ export const pairSchema = z
 
 export function registerPairCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
   const command = parent.command("pair").description("Pair a device with muximod");
-  registerOptions(command, pairOptionSpecs);
+  registerOptions(command, pairOptionSpecs, context.buildMode);
   command.action(async (options) => {
     const resolved = resolveCommandOptions(options, pairOptionSpecs, context);
     context.report(

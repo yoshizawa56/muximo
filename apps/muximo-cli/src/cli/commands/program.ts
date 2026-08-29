@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { allCliBuildModes, type CliCommandRegistration, isAvailableIn } from "../build-mode.js";
 import { registerOptions } from "../options/index.js";
 import { registerCompletionCommand } from "./completion.js";
 import { registerDaemonCommands } from "./daemon.js";
@@ -22,24 +23,29 @@ export function buildCliProgram(handlers: CliHandlers, context: CliCommandContex
     .enablePositionalOptions()
     .addHelpCommand()
     .configureOutput({ writeErr: () => undefined, writeOut: (value) => context.io.out.write(value) });
-  registerOptions(program, globalOptionSpecs);
+  registerOptions(program, globalOptionSpecs, context.buildMode);
 
   program.action(() => {
     program.outputHelp();
     context.report(2);
   });
 
-  registerRunCommand(program, handlers, context);
-  registerShellCommand(program, handlers, context);
-  registerTmuxCommands(program, handlers, context);
-  registerWorkspaceCommands(program, handlers, context);
-  registerSessionCommands(program, handlers, context);
-  registerSessionAliases(program, handlers, context);
-  registerDoctorCommand(program, handlers, context);
-  registerDaemonCommands(program, handlers, context);
-  registerPairCommand(program, handlers, context);
-  registerServeCommand(program, handlers, context);
-  registerCompletionCommand(program, context);
+  const commands = [
+    { availableIn: allCliBuildModes, register: () => registerRunCommand(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerShellCommand(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerTmuxCommands(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerWorkspaceCommands(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerSessionCommands(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerSessionAliases(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerDoctorCommand(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerDaemonCommands(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerPairCommand(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerServeCommand(program, handlers, context) },
+    { availableIn: allCliBuildModes, register: () => registerCompletionCommand(program, context) },
+  ] satisfies readonly CliCommandRegistration[];
+  for (const command of commands) {
+    if (isAvailableIn(command.availableIn, context.buildMode)) command.register();
+  }
 
   return program;
 }

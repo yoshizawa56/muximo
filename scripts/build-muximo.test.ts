@@ -51,7 +51,7 @@ const cases = [
         assert.equal(plan.repositoryRoot, repositoryRoot);
         assert.equal(plan.outputPath, join(repositoryRoot, "dist", "muximo"));
         assert.equal(plan.muximodOutputPath, join(repositoryRoot, "dist", "muximod"));
-        assert.equal(plan.cliEntrypoint, join(repositoryRoot, "apps", "muximo-cli", "src", "index.ts"));
+        assert.equal(plan.cliEntrypoint, join(repositoryRoot, "apps", "muximo-cli", "src", "production-entrypoint.ts"));
         assert.equal(
           plan.muximodEntrypoint,
           join(repositoryRoot, "packages", "muximod", "src", "process-entrypoint.ts"),

@@ -88,7 +88,7 @@ export const runSchema = z
 
 export function registerRunCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
   const command = parent.command("run <backend> [backendArgs...]").description("Run an agent backend");
-  registerOptions(command, runOptionSpecs);
+  registerOptions(command, runOptionSpecs, context.buildMode);
   command.allowUnknownOption(true);
 
   command.action(async (backend, backendArgs, options) => {

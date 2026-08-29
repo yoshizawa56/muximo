@@ -64,7 +64,7 @@ export function registerSessionListCommand(
   options: SessionListCommandOptions,
 ): Command {
   const command = parent.command(options.commandName).description("List managed sessions");
-  registerOptions(command, sessionListOptionSpecs);
+  registerOptions(command, sessionListOptionSpecs, context.buildMode);
 
   command.action(async (commandOptions) => {
     const resolved = resolveCommandOptions(commandOptions, sessionListOptionSpecs, context);

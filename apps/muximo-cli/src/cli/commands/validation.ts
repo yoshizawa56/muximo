@@ -7,7 +7,7 @@ export type CliSchema<TOutput> = z.ZodType<TOutput>;
 export function resolveCommandOptions(
   raw: Record<string, unknown>,
   specs: readonly CliOptionSpec[],
-  context: Pick<CliCommandContext, "args" | "environment">,
+  context: Pick<CliCommandContext, "args" | "environment" | "buildMode">,
 ): Record<string, unknown> {
   return resolveCliOptions(raw, specs, context);
 }
