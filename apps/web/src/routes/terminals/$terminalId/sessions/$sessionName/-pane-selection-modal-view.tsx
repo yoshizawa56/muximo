@@ -1,4 +1,5 @@
 import type { PaneSummary } from "@muximo/contract/api";
+import { useRef } from "react";
 import { AppIcon } from "../../../../../app/components/app-icon";
 import { AppSafeAreaOverlay } from "../../../../../app/components/app-layout";
 import { PaneLayoutOverlay } from "./-pane-layout-overlay-view";
@@ -24,9 +25,16 @@ export function PaneSelectionModal({
   onRefresh: () => void;
   onCreatePane?: () => void;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+
   return (
-    <AppSafeAreaOverlay className="z-40 bg-[#020503] pointer-events-auto">
-      <div className="mx-auto h-full min-h-0 w-full max-w-[960px]">
+    <AppSafeAreaOverlay
+      className="z-40 bg-[#020503] pointer-events-auto"
+      onPointerDown={(event) => {
+        if (isOutsideModalTarget(event.target, modalRef.current)) onClose();
+      }}
+    >
+      <div ref={modalRef} className="mx-auto h-full min-h-0 w-full max-w-[960px]">
         {status === "ready" ? (
           <PaneLayoutOverlay
             id="tmux-window-map"
@@ -96,4 +104,10 @@ export function PaneSelectionModal({
       </div>
     </AppSafeAreaOverlay>
   );
+}
+
+type ContainmentElement = { contains(target: unknown): boolean };
+
+export function isOutsideModalTarget(target: unknown, modal: ContainmentElement | null): boolean {
+  return target !== null && modal !== null && !modal.contains(target);
 }
