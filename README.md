@@ -143,9 +143,24 @@ muximo tmux new-session -s project -c ~/work/project
 muximo doctor --verbose
 ```
 
-The selected environment is shared by all worktrees on the host. Source
-checkouts use the committed `.env.local` and `.env.stg` profile files; no
-worktree-local database, snapshot, or port allocation is created.
+The selected environment is shared by all worktrees on the host. Generate an
+ignored profile with the interactive setup command:
+
+```sh
+mise profile
+```
+
+The command asks for an arbitrary profile name, a tracked `.env.<name>.example`
+recipe, client runtime (`browser`, `capacitor`, or `none`), connection details,
+schema mode, and optional iOS Local configuration. A browser client requires a
+Web runtime in the recipe. A bundled Capacitor client can use a recipe without
+Web settings because muximod always allows its fixed `capacitor://localhost`
+origin; a Capacitor Local client uses the generated HTTP(S) Web origin instead.
+Each run regenerates the selected `.env.<name>` file from the recipe and
+overwrites the generated iOS configuration when requested. The tracked
+`.env.local.example` and `.env.stg.example` files are recommended recipes, not
+fixed environment names. No worktree-local database, snapshot, or port
+allocation is created.
 
 The Web UI can also create shell or agent panes, choose a new tmux window or split, and select a workspace or managed worktree. Use `muximo --help` for commands and options not shown here.
 
@@ -157,6 +172,9 @@ The repository uses `mise` for Bun, Node.js, and tmux versions:
 mise install
 bun install --frozen-lockfile
 
+# Generate or overwrite the ignored local profile and optional iOS settings.
+mise profile
+
 # Start the local muximod and Web processes independently.
 mise muximo --env local daemon restart
 mise web --env local daemon restart
@@ -164,7 +182,6 @@ mise muximo --env local serve tailscale
 mise web --env local serve tailscale
 ```
 
-The repository's `.env.local` explicitly selects `push` schema synchronization.
 The Web process uses one fixed local port and keeps HMR available after `web
 daemon start`; the two processes have independent lifecycle commands. To inspect
 the Web UI without a running muximod:

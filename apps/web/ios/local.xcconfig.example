@@ -1,5 +1,5 @@
-// Copy this file to local.xcconfig and set the fixed Tailscale Serve URL for
-// the Local scheme. The copied file is ignored by Git.
+// `mise profile` generates the ignored local.xcconfig when iOS Local is
+// enabled. This file is a provider-neutral example for manual setup.
 MUXIMO_WEB_SCHEME = https
 MUXIMO_WEB_HOST = your-machine.tailnet.ts.net
 MUXIMO_WEB_PORT = 8449

@@ -31,7 +31,6 @@ coverage
 .env
 .env.*
 !.env.example
-!.env.local
-!.env.stg
+!.env.*.example
 apps/web/vite.config.timestamp-*.mjs
 .worktrees
