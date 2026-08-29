@@ -22,6 +22,7 @@
         "@muximo/application": "workspace:*",
         "@muximo/contract": "workspace:*",
         "@muximo/domain": "workspace:*",
+        "@muximo/environment": "workspace:*",
         "@muximo/infrastructure": "workspace:*",
         "@muximo/muximod": "workspace:*",
         "@orpc/client": "^1.15.0",
@@ -31,7 +32,6 @@
         "zod": "^4.4.3",
       },
       "devDependencies": {
-        "@muximo/portless-support": "workspace:*",
         "@muximo/test-support": "workspace:*",
         "@types/node": "^26.1.2",
         "bun-types": "^1.3.14",
@@ -39,21 +39,12 @@
         "vitest": "^4.1.10",
       },
     },
-    "apps/serve": {
-      "name": "serve",
-      "version": "0.1.0",
-      "dependencies": {
-        "@muximo/portless-support": "workspace:*",
-      },
-      "devDependencies": {
-        "@types/node": "^26.1.2",
-        "bun-types": "^1.3.14",
-        "typescript": "^7.0.2",
-      },
-    },
     "apps/web": {
       "name": "@muximo/web",
       "version": "0.1.0",
+      "bin": {
+        "web": "cli.ts",
+      },
       "dependencies": {
         "@capacitor/app": "8.1.1",
         "@capacitor/core": "8.4.2",
@@ -61,6 +52,8 @@
         "@capacitor/ios": "8.4.2",
         "@capacitor/preferences": "8.0.1",
         "@muximo/contract": "workspace:*",
+        "@muximo/environment": "workspace:*",
+        "@muximo/infrastructure": "workspace:*",
         "@orpc/client": "^1.15.0",
         "@orpc/contract": "^1.15.0",
         "@orpc/tanstack-query": "^1.15.0",
@@ -129,6 +122,15 @@
         "vitest": "^4.1.10",
       },
     },
+    "packages/environment": {
+      "name": "@muximo/environment",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/node": "^26.1.2",
+        "bun-types": "^1.3.14",
+        "typescript": "^7.0.2",
+      },
+    },
     "packages/infrastructure": {
       "name": "@muximo/infrastructure",
       "version": "0.1.0",
@@ -153,6 +155,7 @@
         "@muximo/application": "workspace:*",
         "@muximo/contract": "workspace:*",
         "@muximo/domain": "workspace:*",
+        "@muximo/environment": "workspace:*",
         "@muximo/infrastructure": "workspace:*",
         "@orpc/server": "^1.15.0",
         "zod": "^4.4.3",
@@ -163,22 +166,6 @@
         "@orpc/contract": "^1.15.0",
         "@types/node": "^26.1.2",
         "bun-types": "^1.3.14",
-        "typescript": "^7.0.2",
-        "vitest": "^4.1.10",
-      },
-    },
-    "packages/portless-support": {
-      "name": "@muximo/portless-support",
-      "version": "0.1.0",
-      "bin": {
-        "portless-support": "./src/cli.ts",
-      },
-      "dependencies": {
-        "portless": "0.15.5",
-      },
-      "devDependencies": {
-        "@muximo/test-support": "workspace:*",
-        "@types/node": "^26.1.2",
         "typescript": "^7.0.2",
         "vitest": "^4.1.10",
       },
@@ -359,13 +346,13 @@
 
     "@muximo/domain": ["@muximo/domain@workspace:packages/domain"],
 
+    "@muximo/environment": ["@muximo/environment@workspace:packages/environment"],
+
     "@muximo/infrastructure": ["@muximo/infrastructure@workspace:packages/infrastructure"],
 
     "@muximo/muximo-cli": ["@muximo/muximo-cli@workspace:apps/muximo-cli"],
 
     "@muximo/muximod": ["@muximo/muximod@workspace:packages/muximod"],
-
-    "@muximo/portless-support": ["@muximo/portless-support@workspace:packages/portless-support"],
 
     "@muximo/test-support": ["@muximo/test-support@workspace:packages/test-support"],
 
@@ -1005,8 +992,6 @@
 
     "pngjs": ["pngjs@5.0.0", "", {}, "sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw=="],
 
-    "portless": ["portless@0.15.5", "", { "os": [ "linux", "win32", "darwin", ], "bin": { "portless": "dist/cli.js" } }, "sha512-zmJu4Q8/fY54oVUT/5NnmF4Ih8wTdCvCf6JCN783dRYl9mXkJBzXSckX2lztGCLIbM70varDjCudAbGKT73XPg=="],
-
     "postcss": ["postcss@8.5.25", "", { "dependencies": { "nanoid": "3.3.17", "picocolors": "1.1.1", "source-map-js": "1.2.1" } }, "sha512-DTPx3RWSSnWyzLxQnlH0rJP+EW5ekl16ZU4/psbIhA0e53kJfdgaN5vKM+xP7yJtXVu+nfdVFmlgFDEKAe4Pyw=="],
 
     "prettier": ["prettier@3.9.6", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g=="],
@@ -1062,8 +1047,6 @@
     "seroval": ["seroval@1.6.0", "", {}, "sha512-TBwwKfscTEgnBEWmYKKeCcmCGmrJi0LV6qNUY//WBA3MDesh/zfn+KOMq/ckpxM4gZ0ouAE706A1eenekM2sug=="],
 
     "seroval-plugins": ["seroval-plugins@1.6.0", "", { "peerDependencies": { "seroval": "1.6.0" } }, "sha512-CbR5DP5DPicpd9RwRUzka7hi4x1577eGFXJVBW409LXqqJNst99JSUTZ8CXcnskQX7laPOWpmzliq0gBZEGlrQ=="],
-
-    "serve": ["serve@workspace:apps/serve"],
 
     "set-blocking": ["set-blocking@2.0.0", "", {}, "sha512-KiKBS8AnWGEyLzofFfmvKwpdPzqiy16LvQfK3yv/fVH7Bj13/wl3JSR1J+rfgRE9q7xUJK4qvgS8raSOeLUehw=="],
 

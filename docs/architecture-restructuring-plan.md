@@ -83,7 +83,7 @@ control socket, process bootstrap, and lifecycle composition now live in
 packages/muximod/src/index.ts              internal aggregate exports
 packages/muximod/src/client.ts             CLI-facing lifecycle/path exports
 packages/muximod/src/runtime.ts            daemon runtime exports
-packages/muximod/src/launch.ts             typed lifecycle and snapshot bootstrap
+packages/muximod/src/launch.ts             typed lifecycle and process bootstrap
 packages/muximod/src/process-entrypoint.ts private child-process bootstrap
 packages/muximod/src/process-files.ts     PID and restart marker ownership
 packages/muximod/src/entrypoint.ts         private runtime process entrypoint
@@ -93,7 +93,7 @@ packages/muximod/src/control.ts           private Unix-socket control transport
 ```
 
 `packages/muximod` is the only owner of muximod DI, child-process creation,
-PID/restart files, full push snapshots, and runtime resource cleanup. Its
+PID/restart files, schema synchronization, and runtime resource cleanup. Its
 private process bootstrap receives a validated typed launch payload through an
 internal process-boundary serialization; it is not a public CLI command and is
 not present in help or completion.
@@ -122,10 +122,12 @@ receive an application-generated `ClaimExecutionInput.updatedAt`.
 
 Concrete CLI capabilities live under `packages/infrastructure/src/cli/`: backend
 launch/discovery, worktrees, hooks, panes, workspace, observations, shell, tmux sessions,
-serve, dev, and diagnostics. Muximod lifecycle, persistence, snapshot/bootstrap, and
-timing adapters live under `packages/muximod`; they are selected by the CLI composition
-root with either `migrate` or `push` schema mode. Pairing UI and control-socket clients
-remain CLI-local adapters. Normal workspace and agent-session operations use the typed
+serve, and diagnostics. The application entrypoints load the selected environment
+profile, while the neutral Tailscale provider adapter remains in infrastructure.
+Muximod lifecycle, persistence, bootstrap, and timing adapters live under
+`packages/muximod`; the CLI composition root selects either `migrate` or `push` schema
+mode. Pairing UI and control-socket clients remain CLI-local adapters.
+Normal workspace and agent-session operations use the typed
 API over local HTTP after minting a short-lived local token through the private control
 socket. Browser origins are normalized and passed exactly to daemon options; wildcard
 origins are rejected.
@@ -139,12 +141,12 @@ mapping. If a client needs another daemon value or operation, the API or private
 contract is extended and the implementation remains in muximod; a local persistence
 shortcut is not permitted.
 
-`apps/muximo-cli/dev.ts` is the development overlay. It detects a linked worktree,
-selects `push`, supplies the base instance directory, and invokes the normal CLI
-entrypoint. `packages/muximod` copies the complete base database only when the target
-database is absent, then starts the target instance unchanged; no seed or scrub policy
-is applied. `apps/serve` supervises Portless, Web, and the CLI foreground serve command;
-it does not parse Muximo environment variables or construct muximod configuration.
+The selected `--env local|stg|prod` profile determines the shared environment state
+directory and fixed local/external ports. `local` selects `push` against its one persistent
+SQLite database; `stg` and `prod` select `migrate`. No worktree-specific database, snapshot,
+seeding, or Portless URL is used. `apps/web/cli.ts` independently manages one Vite process
+and its Web Serve route; it does not import or invoke muximod. Muximod Serve is a separate
+route-only command, and no combined development supervisor is part of the runtime.
 
 ## Verification per phase
 

@@ -18,9 +18,9 @@ registration, daemon-owned resource ownership, and daemon disposal remain inside
   owns shell workflow policy.
 - `packages/application/src/ports/agent-sessions.ts`, `daemon.ts`, and `shell.ts`:
   focused asynchronous capability ports with provider-neutral business vocabulary.
-- `packages/infrastructure/src/cli/`: concrete filesystem, Git, tmux, hook, serve, dev,
+- `packages/infrastructure/src/cli/`: concrete filesystem, Git, tmux, hook, serve,
   shell, workspace, and diagnostic adapters. It must not read daemon-owned logs or state.
-  Muximod process lifecycle, database composition, snapshot bootstrap, and resource
+  Muximod process lifecycle, database composition, bootstrap, and resource
   cleanup live in `packages/muximod`.
 
 The old host/runtime directories, engine/lifecycle façade classes, broad session host
@@ -38,21 +38,16 @@ CLI presenter owns the user-facing serve sentence. `apps/muximod` does not exist
 `packages/muximod` contains the private runtime bootstrap without a public CLI;
 daemon parsing remains in `apps/muximo-cli`.
 
-Serve and dev composition computes deterministic exact browser origins, passes them to
-daemon options, and rejects `*`. Local CLI calls without an Origin remain supported
-separately by muximod. The CLI uses the muximod API over local HTTP for workspace and
-agent-session operations, minting a short-lived local API token through the private
-control socket. Pairing, pane control, and daemon diagnostics use the typed private
-control contract. The CLI never opens the daemon database or reads daemon-owned files.
-`apps/muximo-cli/dev.ts` selects `push` and the base instance directory for linked
-worktrees; `packages/muximod` performs the complete snapshot bootstrap and the normal
-CLI composition only invokes its typed lifecycle API.
+The CLI resolves the selected `--env` profile, then uses the muximod API over local HTTP
+for workspace and agent-session operations, minting a short-lived local API token through
+the private control socket. Pairing, pane control, and daemon diagnostics use the typed
+private control contract. The CLI never opens the daemon database or reads daemon-owned
+files. `local` selects push against one persistent database; `stg` and `prod` use
+migrations. There is no worktree snapshot or base-instance copy.
 
-`apps/serve` is only a development supervisor. It starts Portless-managed Web and CLI
-foreground processes, monitors route and listener ownership, and cleans up processes it
-started. It does not parse `MUXIMOD_*`, resolve Tailscale URLs, or construct muximod
-configuration. Tailscale URL resolution and injection of `muximodBaseUrl` remain CLI
-responsibilities.
+`apps/web/cli.ts` independently manages the Web process and its Tailscale route. It does
+not import or invoke muximod. Muximod Serve is route-only, and there is no combined
+development supervisor or Portless dependency.
 
 ## Verification contract
 

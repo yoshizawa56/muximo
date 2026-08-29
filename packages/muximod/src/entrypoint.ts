@@ -22,10 +22,6 @@ export type MuximodEntrypointOptions = MuximodLaunchOptions;
 export async function runMuximod(options: MuximodEntrypointOptions): Promise<void> {
   const config = options.config;
   const environment = resolveMuximodEnvironment(process.env, config.runtimeEnvironment);
-  const schemaSynchronizer =
-    options.schemaMode === "push"
-      ? createPushSchemaSynchronizer({ environment, force: true })
-      : createMigrationSchemaSynchronizer();
   const logger = createLogger({
     service: "muximod",
     mode: config.logFile ? "background" : "attached",
@@ -83,6 +79,10 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
   };
 
   try {
+    const schemaSynchronizer =
+      options.schemaMode === "push"
+        ? createPushSchemaSynchronizer({ environment, force: true })
+        : createMigrationSchemaSynchronizer();
     server = createMuximodServer({
       ...config,
       environment,
@@ -119,7 +119,7 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
     } catch {
       // Preserve the startup error after attempting to remove the pid record.
     }
-    if (!hasMuximodRestartMarker(config.pidFile)) {
+    if (server && !hasMuximodRestartMarker(config.pidFile)) {
       try {
         await disposeOwnedOpenCodeServers({
           environment,

@@ -24,17 +24,8 @@ export const pairOptionSpecs = defineOptions(
     key: "muximodBaseUrl",
     flags: ["--muximod-base-url <url>"],
     description: "Base URL used to reach muximod.",
-    exposure: "both",
-    environment: { name: "MUXIMOD_PAIRING_BASE_URL", description: "Base URL used to reach muximod." },
+    exposure: "cli",
     completion: { kind: "url" },
-  },
-  {
-    key: "controlSocket",
-    flags: ["--control-socket <path>"],
-    description: "Path to the muximod control socket.",
-    exposure: "both",
-    environment: { name: "MUXIMOD_CONTROL_SOCKET", description: "Path to the muximod control socket." },
-    completion: { kind: "file" },
   },
   {
     key: "open",
@@ -56,7 +47,6 @@ export const pairSchema = z
   .object({
     withoutServe: z.boolean().default(false),
     muximodBaseUrl: httpUrlSchema.optional(),
-    controlSocket: z.string().min(1).optional(),
     open: z.boolean().default(false),
     terminal: z.boolean().default(false),
   })

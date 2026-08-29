@@ -17,11 +17,10 @@ export type {
 } from "./launch.js";
 export {
   createMuximodLifecycle,
-  ensureMuximodSnapshot,
+  MuximodStartupError,
   muximodConfigSchema,
   muximodRestartMarkerPath,
   parseMuximodBootstrap,
-  snapshotSqliteDatabase,
   spawnMuximod,
   systemClock,
   systemScheduler,

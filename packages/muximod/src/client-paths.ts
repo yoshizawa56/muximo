@@ -10,9 +10,6 @@ export type MuximodClientPaths = {
 
 export type MuximodClientPathOverrides = {
   baseDirectory?: string;
-  hookOutputDirectory?: string;
-  pidFile?: string;
-  controlSocket?: string;
 };
 
 export const muximodControlSocketMaxBytes = 103;
@@ -28,24 +25,9 @@ export function resolveMuximodClientPaths(
     configuredInstanceDirectory ?? defaultMuximodInstanceDirectory(env),
     baseDirectory,
   );
-  const hookOutputDirectory = resolvePath(
-    nonEmptyPath(overrides.hookOutputDirectory) ??
-      nonEmptyPath(env.MUXIMO_HOOK_OUTPUT_DIR) ??
-      join(instanceDirectory, "hooks"),
-    baseDirectory,
-  );
-  const pidFile = resolvePath(
-    nonEmptyPath(overrides.pidFile) ??
-      nonEmptyPath(env.MUXIMOD_PID_FILE) ??
-      join(instanceDirectory, "muximod.sqlite.pid"),
-    baseDirectory,
-  );
-  const controlSocket = resolvePath(
-    nonEmptyPath(overrides.controlSocket) ??
-      nonEmptyPath(env.MUXIMOD_CONTROL_SOCKET) ??
-      join(instanceDirectory, "muximod.sock"),
-    baseDirectory,
-  );
+  const hookOutputDirectory = join(instanceDirectory, "hooks");
+  const pidFile = join(instanceDirectory, "muximod.pid");
+  const controlSocket = join(instanceDirectory, "muximod.sock");
 
   return { instanceDirectory, hookOutputDirectory, pidFile, controlSocket };
 }

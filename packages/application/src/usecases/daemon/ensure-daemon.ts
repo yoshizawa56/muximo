@@ -8,7 +8,11 @@ export class EnsureDaemon {
     const healthCheckStartedAt = this.dependencies.clock.now();
     const record = this.dependencies.runtime.readPidRecord(options.pidFile);
     if (await this.dependencies.runtime.isHealthy(options, record?.pid)) {
-      return { state: "already-running", host: options.host, port: options.port };
+      return {
+        state: "already-running",
+        host: record?.host ?? options.host,
+        port: record?.port ?? options.port,
+      };
     }
 
     if (record && (await this.dependencies.runtime.isAlive(record.pid))) {

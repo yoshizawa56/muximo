@@ -84,7 +84,6 @@ export type MuximodOptions = {
   hookOutputDirectory: string;
   allowedRoots: readonly string[];
   controlSocket: string;
-  muximodBaseUrl: string;
   /**
    * Additional exact browser origins allowed to call muximod. The bundled
    * Capacitor shell origin is always allowed. Requests without Origin remain
@@ -313,7 +312,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     crypto: nodeAuthCrypto,
     clock: { now: () => new Date() },
     claimSink: { publish: (notification) => controlServer.notifyPairingClaim(notification) },
-    muximodBaseUrl: options.muximodBaseUrl,
     challenges: authChallenges,
     rateLimits: authRateLimits,
     wsTickets: authWsTickets,

@@ -1,18 +1,13 @@
-import { Database } from "bun:sqlite";
 import { spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
   existsSync,
-  linkSync,
-  mkdirSync,
   mkdtempSync,
   openSync,
-  readFileSync,
   readSync,
   rmSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -40,6 +35,7 @@ import {
   StopDaemon,
 } from "@muximo/application";
 import { muximodHealthSchema } from "@muximo/contract/api";
+import { isLoopbackOrPrivateBindHost } from "@muximo/environment";
 import { z } from "zod";
 import {
   consumeMuximodRestartMarker,
@@ -55,10 +51,6 @@ const legacyBootstrapEnvironmentName = "MUXIMO_MUXIMOD_BOOTSTRAP";
 const bootstrapPayloadName = "muximod bootstrap";
 const bootstrapFileDescriptor = 3;
 const maxBootstrapBytes = 1024 * 1024;
-// A lease bounds recovery from a frozen owner. Snapshot writes use a temporary
-// file and an atomic hard link, so a second owner can safely finish after the
-// lease expires without corrupting the target database.
-const bootstrapLockTimeoutMs = 15_000;
 const bootstrapPollIntervalMs = 25;
 const healthProbeTimeoutMs = 500;
 const lifecycleTimeoutMs = 5_000;
@@ -92,13 +84,15 @@ const muximodRuntimeEnvironmentSchema = z
 
 export const muximodConfigSchema = z
   .object({
-    host: z.string().min(1),
+    host: z
+      .string()
+      .min(1)
+      .refine(isLoopbackOrPrivateBindHost, "host must be localhost, a loopback address, or a private IP address"),
     port: z.number().int().min(1).max(65_535),
     instanceDirectory: z.string().min(1),
     hookOutputDirectory: z.string().min(1),
     pidFile: z.string().min(1),
     controlSocket: z.string().min(1),
-    muximodBaseUrl: httpUrlSchema,
     allowedOrigins: z.array(httpUrlSchema),
     allowedRoots: z.array(z.string().min(1)),
     logLevel: z.enum(["error", "warn", "info", "debug"]),
@@ -115,16 +109,10 @@ export const muximodConfigSchema = z
 export type MuximodConfig = z.infer<typeof muximodConfigSchema>;
 export type MuximodRuntimeEnvironment = z.infer<typeof muximodRuntimeEnvironmentSchema>;
 
-export type MuximodLaunchOptions =
-  | {
-      schemaMode: "migrate";
-      config: MuximodConfig;
-    }
-  | {
-      schemaMode: "push";
-      config: MuximodConfig;
-      baseInstanceDir: string;
-    };
+export type MuximodLaunchOptions = {
+  schemaMode: "migrate" | "push";
+  config: MuximodConfig;
+};
 
 /**
  * Derives the identity of a daemon process from every effective launch
@@ -135,7 +123,6 @@ export function muximodConfigurationFingerprint(options: MuximodLaunchOptions): 
   const config = normalizeMuximodConfig(options.config);
   const fingerprintInput = {
     schemaMode: options.schemaMode,
-    baseInstanceDir: options.schemaMode === "push" ? resolve(config.workingDirectory, options.baseInstanceDir) : null,
     config: {
       host: config.host,
       port: config.port,
@@ -143,7 +130,6 @@ export function muximodConfigurationFingerprint(options: MuximodLaunchOptions): 
       hookOutputDirectory: resolve(config.hookOutputDirectory),
       pidFile: resolve(config.pidFile),
       controlSocket: resolve(config.controlSocket),
-      muximodBaseUrl: config.muximodBaseUrl,
       allowedOrigins: [...config.allowedOrigins],
       allowedRoots: config.allowedRoots.map((root) => resolve(root)),
       logLevel: config.logLevel,
@@ -176,9 +162,11 @@ export type MuximodLifecycle = {
   restart(input: DaemonOptions): Promise<DaemonRestartResult>;
 };
 
+export type MuximodForegroundConflictPolicy = "reject" | "replace-owned";
+
 export type MuximodLifecycleOptions = {
   schemaMode?: "migrate" | "push";
-  baseInstanceDir?: string;
+  foregroundConflictPolicy?: MuximodForegroundConflictPolicy;
   environment?: NodeJS.ProcessEnv;
   resolveConfig: (options: DaemonOptions) => MuximodConfig;
 };
@@ -193,14 +181,6 @@ export async function spawnMuximod(
   options: MuximodLaunchOptions,
   processOptions: { detached?: boolean; stdio?: "ignore" | "inherit"; environment?: NodeJS.ProcessEnv } = {},
 ): Promise<MuximodProcessHandle> {
-  if (options.schemaMode === "push") {
-    await ensureMuximodSnapshot({
-      baseInstanceDir: options.baseInstanceDir,
-      targetInstanceDir: options.config.instanceDirectory,
-      targetDatabaseFile: join(options.config.instanceDirectory, "muximod.sqlite"),
-    });
-  }
-
   const processCommand = resolveMuximodProcess();
   const bootstrap = createBootstrapFile(options);
   const stdio = processOptions.stdio ?? (processOptions.detached ? "ignore" : "inherit");
@@ -263,14 +243,10 @@ export async function spawnMuximod(
 /** Creates the CLI-facing daemon lifecycle bound to one schema mode. */
 export function createMuximodLifecycle(options: MuximodLifecycleOptions): MuximodLifecycle {
   const schemaMode = options.schemaMode ?? "migrate";
-  const baseInstanceDir = options.baseInstanceDir;
-  if (schemaMode === "push" && !baseInstanceDir) {
-    throw new Error("push schema mode requires a base muximod instance directory");
-  }
 
   const runtime = new MuximodRuntime({
     schemaMode,
-    baseInstanceDir,
+    foregroundConflictPolicy: options.foregroundConflictPolicy ?? "reject",
     environment: options.environment ?? process.env,
     resolveConfig: options.resolveConfig,
   });
@@ -290,73 +266,6 @@ export function createMuximodLifecycle(options: MuximodLifecycleOptions): Muximo
   };
 }
 
-/** Full, lossless snapshot bootstrap for a worktree muximod instance. */
-export async function ensureMuximodSnapshot(input: {
-  baseInstanceDir: string;
-  targetInstanceDir: string;
-  targetDatabaseFile: string;
-  snapshot?: (sourceDatabaseFile: string, targetDatabaseFile: string) => void | Promise<void>;
-}): Promise<void> {
-  const targetDatabaseFile = resolve(input.targetDatabaseFile);
-  const baseInstanceDir = resolve(input.baseInstanceDir);
-  const targetInstanceDir = resolve(input.targetInstanceDir);
-  const sourceDatabaseFile = join(baseInstanceDir, "muximod.sqlite");
-  if (sourceDatabaseFile === targetDatabaseFile || baseInstanceDir === targetInstanceDir) {
-    throw new Error("base and target muximod instances must be different");
-  }
-  if (existsSync(targetDatabaseFile)) return;
-  if (!existsSync(sourceDatabaseFile)) {
-    throw new Error(`base muximod database was not found: ${sourceDatabaseFile}`);
-  }
-
-  mkdirSync(targetInstanceDir, { recursive: true, mode: 0o700 });
-  chmodSync(targetInstanceDir, 0o700);
-  const lockFile = join(targetInstanceDir, "muximod.sqlite.bootstrap.lock");
-
-  while (!existsSync(targetDatabaseFile)) {
-    const lock = tryAcquireBootstrapLock(lockFile);
-    if (lock === undefined) {
-      await waitForBootstrap(targetDatabaseFile, lockFile);
-      continue;
-    }
-
-    try {
-      if (existsSync(targetDatabaseFile)) return;
-      const temporaryDirectory = mkdtempSync(join(targetInstanceDir, ".muximod-bootstrap-"));
-      const temporaryDatabaseFile = join(temporaryDirectory, basename(targetDatabaseFile));
-      try {
-        await (input.snapshot ?? snapshotSqliteDatabase)(sourceDatabaseFile, temporaryDatabaseFile);
-        verifySqliteDatabase(temporaryDatabaseFile);
-        chmodSync(temporaryDatabaseFile, 0o600);
-        try {
-          linkSync(temporaryDatabaseFile, targetDatabaseFile);
-          chmodSync(targetDatabaseFile, 0o600);
-        } catch (error) {
-          if (!hasErrorCode(error, "EEXIST")) throw error;
-        }
-      } finally {
-        rmSync(temporaryDirectory, { recursive: true, force: true });
-      }
-      return;
-    } finally {
-      releaseBootstrapLock(lock.handle, lockFile, lock.token);
-    }
-  }
-}
-
-export function snapshotSqliteDatabase(sourceDatabaseFile: string, targetDatabaseFile: string): void {
-  assertSqlitePath(sourceDatabaseFile);
-  assertSqlitePath(targetDatabaseFile);
-  const source = new Database(sourceDatabaseFile, { readonly: true });
-  try {
-    // Bun exposes sqlite3_serialize(), which produces a consistent database
-    // image without interpolating a caller-controlled path into SQL.
-    writeFileSync(targetDatabaseFile, source.serialize("main"), { mode: 0o600 });
-  } finally {
-    source.close();
-  }
-}
-
 export function parseMuximodBootstrap(value: string | undefined): MuximodLaunchOptions {
   if (!value) throw new Error(`${bootstrapPayloadName} is required for the private muximod process`);
   if (Buffer.byteLength(value, "utf8") > maxBootstrapBytes) {
@@ -368,12 +277,7 @@ export function parseMuximodBootstrap(value: string | undefined): MuximodLaunchO
   } catch (error) {
     throw new Error(`invalid ${bootstrapPayloadName} payload`, { cause: error });
   }
-  const schema = z.discriminatedUnion("schemaMode", [
-    z.object({ schemaMode: z.literal("migrate"), config: muximodConfigSchema }).strict(),
-    z
-      .object({ schemaMode: z.literal("push"), config: muximodConfigSchema, baseInstanceDir: z.string().min(1) })
-      .strict(),
-  ]);
+  const schema = z.object({ schemaMode: z.enum(["migrate", "push"]), config: muximodConfigSchema }).strict();
   return schema.parse(parsed);
 }
 
@@ -502,19 +406,30 @@ class MuximodRuntime implements DaemonRuntimePort {
   public constructor(
     private readonly options: {
       schemaMode: "migrate" | "push";
-      baseInstanceDir?: string;
+      foregroundConflictPolicy: MuximodForegroundConflictPolicy;
       environment: NodeJS.ProcessEnv;
       resolveConfig: (options: DaemonOptions) => MuximodConfig;
     },
   ) {}
 
   public async startForeground(options: DaemonOptions): Promise<MuximodProcessHandle> {
+    await this.prepareForegroundStart(options);
     const handle = await this.createForegroundHandle(options);
+    const startupAbort = new AbortController();
     try {
-      const ready = await this.waitForHealthy(options, handle.pid);
-      if (ready) return handle;
-      throw new Error(`muximod did not become healthy within ${lifecycleTimeoutMs}ms`);
+      const outcome = await Promise.race([
+        this.waitForHealthy(options, handle.pid, startupAbort.signal).then((ready) => ({
+          kind: "health" as const,
+          ready,
+        })),
+        handle.wait().then((result) => ({ kind: "exit" as const, result })),
+      ]);
+      startupAbort.abort();
+      if (outcome.kind === "health" && outcome.ready) return handle;
+      if (outcome.kind === "exit") throw new MuximodStartupError(outcome.result);
+      throw new MuximodStartupError();
     } catch (error) {
+      startupAbort.abort();
       try {
         handle.terminate("SIGTERM");
       } catch {
@@ -522,6 +437,62 @@ class MuximodRuntime implements DaemonRuntimePort {
       }
       await handle.wait().catch(() => undefined);
       throw error;
+    }
+  }
+
+  private async prepareForegroundStart(options: DaemonOptions): Promise<void> {
+    if (this.options.foregroundConflictPolicy !== "replace-owned") return;
+
+    const launchOptions = this.launchOptions(options);
+    const pidFile = launchOptions.config.pidFile;
+    const record = readMuximodPidRecord(pidFile);
+    if (!record) return;
+    if (record.pid === process.pid) {
+      throw new Error(`cannot replace the current process recorded in ${pidFile}`);
+    }
+    if (!isProcessAlive(record.pid)) {
+      removeMuximodPidRecord(pidFile, record.pid);
+      return;
+    }
+
+    if (!(await this.probeProcessIdentity(record))) {
+      throw new Error(
+        `cannot replace muximod process ${record.pid}: ownership could not be verified; stop it with daemon restart`,
+      );
+    }
+
+    try {
+      process.kill(record.pid, "SIGTERM");
+    } catch (error) {
+      if (!hasErrorCode(error, "ESRCH")) throw error;
+    }
+    const stopped = await waitForProcessExit(record.pid, lifecycleTimeoutMs);
+    if (!stopped) throw new Error(`muximod process ${record.pid} did not stop before foreground replacement`);
+    removeMuximodPidRecord(pidFile, record.pid);
+  }
+
+  private async probeProcessIdentity(record: DaemonPidRecord): Promise<boolean> {
+    return this.probeProcessHealth(record.host, record.port, record.pid);
+  }
+
+  public isProcessHealthy(options: Pick<DaemonOptions, "host" | "port">, expectedPid: number): Promise<boolean> {
+    return this.probeProcessHealth(options.host, options.port, expectedPid);
+  }
+
+  private async probeProcessHealth(host: string, port: number, expectedPid: number): Promise<boolean> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), healthProbeTimeoutMs);
+    try {
+      const response = await fetch(`http://${displayHost(host)}:${port}/health`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) return false;
+      const parsed = muximodHealthSchema.safeParse(await response.json());
+      return parsed.success && parsed.data.pid === expectedPid;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -585,9 +556,23 @@ class MuximodRuntime implements DaemonRuntimePort {
   }
 
   public async isHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean> {
-    const launchOptions = this.launchOptions(options);
+    const requestedLaunchOptions = this.launchOptions(options);
+    const record = readMuximodPidRecord(requestedLaunchOptions.config.pidFile);
+    if (record && expectedPid !== undefined && record.pid !== expectedPid) {
+      const configurationFingerprint = muximodConfigurationFingerprint(requestedLaunchOptions);
+      return this.probeHealthy(options.host, options.port, expectedPid, configurationFingerprint, healthProbeTimeoutMs);
+    }
+
+    const effectiveOptions = record ? { ...options, host: record.host, port: record.port } : options;
+    const launchOptions = record ? this.launchOptions(effectiveOptions) : requestedLaunchOptions;
     const configurationFingerprint = muximodConfigurationFingerprint(launchOptions);
-    return this.probeHealthy(options.host, options.port, expectedPid, configurationFingerprint, healthProbeTimeoutMs);
+    return this.probeHealthy(
+      effectiveOptions.host,
+      effectiveOptions.port,
+      record?.pid ?? expectedPid,
+      configurationFingerprint,
+      healthProbeTimeoutMs,
+    );
   }
 
   private async probeHealthy(
@@ -596,10 +581,14 @@ class MuximodRuntime implements DaemonRuntimePort {
     expectedPid: number | undefined,
     configurationFingerprint: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     const controller = new AbortController();
+    const abortProbe = () => controller.abort();
+    signal?.addEventListener("abort", abortProbe, { once: true });
     const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
     try {
+      if (signal?.aborted) return false;
       const response = await fetch(`http://${displayHost(host)}:${port}/health`, { signal: controller.signal });
       if (!response.ok) return false;
       const parsed = muximodHealthSchema.safeParse(await response.json());
@@ -612,14 +601,16 @@ class MuximodRuntime implements DaemonRuntimePort {
       return false;
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortProbe);
     }
   }
 
-  private async waitForHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean> {
+  private async waitForHealthy(options: DaemonOptions, expectedPid?: number, signal?: AbortSignal): Promise<boolean> {
     const launchOptions = this.launchOptions(options);
     const configurationFingerprint = muximodConfigurationFingerprint(launchOptions);
     const deadline = systemClock.now() + lifecycleTimeoutMs;
     while (true) {
+      if (signal?.aborted) return false;
       const remainingMs = deadline - systemClock.now();
       if (remainingMs <= 0) return false;
       if (
@@ -629,9 +620,11 @@ class MuximodRuntime implements DaemonRuntimePort {
           expectedPid,
           configurationFingerprint,
           Math.min(healthProbeTimeoutMs, remainingMs),
+          signal,
         )
       )
         return true;
+      if (signal?.aborted) return false;
       const sleepMs = Math.min(bootstrapPollIntervalMs, deadline - systemClock.now());
       if (sleepMs <= 0) return false;
       await systemScheduler.sleep(sleepMs);
@@ -676,10 +669,17 @@ class MuximodRuntime implements DaemonRuntimePort {
 
   private launchOptions(options: DaemonOptions): MuximodLaunchOptions {
     const config = normalizeMuximodConfig(muximodConfigSchema.parse(this.options.resolveConfig(options)));
-    if (this.options.schemaMode !== "push") return { schemaMode: "migrate", config };
-    const baseInstanceDir = this.options.baseInstanceDir;
-    if (!baseInstanceDir) throw new Error("push schema mode requires a base muximod instance directory");
-    return { schemaMode: "push", config, baseInstanceDir: resolve(config.workingDirectory, baseInstanceDir) };
+    return { schemaMode: this.options.schemaMode, config };
+  }
+}
+
+export class MuximodStartupError extends Error {
+  public readonly result?: MuximodProcessResult;
+
+  public constructor(result?: MuximodProcessResult) {
+    super("muximod failed to start; see the daemon log for details");
+    this.name = "MuximodStartupError";
+    this.result = result;
   }
 }
 
@@ -726,143 +726,18 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = systemClock.now() + timeoutMs;
+  while (isProcessAlive(pid)) {
+    const remainingMs = deadline - systemClock.now();
+    if (remainingMs <= 0) return false;
+    await systemScheduler.sleep(Math.min(bootstrapPollIntervalMs, remainingMs));
+  }
+  return true;
+}
+
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
-}
-
-function tryAcquireBootstrapLock(lockFile: string): { handle: number; token: string } | undefined {
-  const token = randomUUID();
-  try {
-    const handle = openSync(lockFile, "wx", 0o600);
-    try {
-      writeFileSync(handle, JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString(), token }), {
-        encoding: "utf8",
-      });
-      chmodSync(lockFile, 0o600);
-      return { handle, token };
-    } catch (error) {
-      closeSync(handle);
-      try {
-        unlinkSync(lockFile);
-      } catch {
-        // Preserve the lock creation failure.
-      }
-      throw error;
-    }
-  } catch (error) {
-    if (hasErrorCode(error, "EEXIST")) return undefined;
-    throw error;
-  }
-}
-
-async function waitForBootstrap(databaseFile: string, lockFile: string): Promise<void> {
-  while (existsSync(lockFile) && !existsSync(databaseFile)) {
-    if (reclaimStaleBootstrapLock(lockFile)) return;
-    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, bootstrapPollIntervalMs));
-  }
-}
-
-function reclaimStaleBootstrapLock(lockFile: string): boolean {
-  if (!existsSync(lockFile)) return false;
-  let ageMs: number;
-  try {
-    ageMs = Math.max(0, Date.now() - statSync(lockFile).mtimeMs);
-  } catch {
-    return false;
-  }
-  let contents: string;
-  try {
-    const descriptor = openSync(lockFile, "r");
-    try {
-      const buffer = Buffer.alloc(1024);
-      const bytesRead = readSync(descriptor, buffer, 0, buffer.length, 0);
-      contents = buffer.subarray(0, bytesRead).toString("utf8");
-    } finally {
-      closeSync(descriptor);
-    }
-  } catch {
-    return false;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(contents);
-  } catch {
-    return ageMs >= bootstrapLockTimeoutMs && unlinkBootstrapLock(lockFile);
-  }
-  if (!isBootstrapLockRecord(parsed)) {
-    return ageMs >= bootstrapLockTimeoutMs && unlinkBootstrapLock(lockFile);
-  }
-  if (isProcessAlive(parsed.pid) && ageMs < bootstrapLockTimeoutMs) return false;
-
-  return unlinkBootstrapLock(lockFile);
-}
-
-function unlinkBootstrapLock(lockFile: string): boolean {
-  try {
-    unlinkSync(lockFile);
-    return true;
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) return true;
-    return false;
-  }
-}
-
-function isBootstrapLockRecord(value: unknown): value is { pid: number; acquiredAt: string; token: string } {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    Object.keys(record).sort().join(",") === "acquiredAt,pid,token" &&
-    typeof record.pid === "number" &&
-    Number.isInteger(record.pid) &&
-    record.pid > 0 &&
-    typeof record.acquiredAt === "string" &&
-    Number.isFinite(Date.parse(record.acquiredAt)) &&
-    new Date(record.acquiredAt).toISOString() === record.acquiredAt &&
-    typeof record.token === "string" &&
-    record.token.length > 0
-  );
-}
-
-function releaseBootstrapLock(lockHandle: number, lockFile: string, token: string): void {
-  closeSync(lockHandle);
-  let contents: string;
-  try {
-    contents = readFileSync(lockFile, "utf8");
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) return;
-    throw error;
-  }
-  let record: unknown;
-  try {
-    record = JSON.parse(contents);
-  } catch {
-    // A replacement owner may have taken the lock after this process was
-    // reclaimed. Never remove an unrecognized replacement lock.
-    return;
-  }
-  if (!isBootstrapLockRecord(record) || record.token !== token) return;
-  try {
-    unlinkSync(lockFile);
-  } catch (error) {
-    if (!hasErrorCode(error, "ENOENT")) throw error;
-  }
-}
-
-function verifySqliteDatabase(databaseFile: string): void {
-  const database = new Database(databaseFile, { readonly: true });
-  try {
-    const result = database.query("PRAGMA integrity_check").get() as { integrity_check?: string } | null;
-    if (result?.integrity_check !== "ok") {
-      throw new Error(`SQLite integrity check failed for ${databaseFile}: ${result?.integrity_check ?? "unknown"}`);
-    }
-  } finally {
-    database.close();
-  }
-}
-
-function assertSqlitePath(value: string): void {
-  if (value.includes("\u0000")) throw new Error("SQLite snapshot paths must not contain NUL bytes");
 }
 
 function displayHost(host: string): string {

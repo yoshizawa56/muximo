@@ -24,11 +24,7 @@ export function createMuximodConfigResolver(
 ): (daemon: DaemonOptions) => MuximodConfig {
   return (daemon) => {
     const workingDirectory = resolve(options.workingDirectory);
-    const paths = resolveMuximodClientPaths(options.environment, {
-      baseDirectory: workingDirectory,
-      pidFile: daemon.pidFile,
-      controlSocket: daemon.controlSocket,
-    });
+    const paths = resolveMuximodClientPaths(options.environment, { baseDirectory: workingDirectory });
     validateMuximodControlSocketPath(paths.controlSocket);
 
     const logLevel = daemon.logLevel ?? parseLogLevel(options.environment.MUXIMO_LOG_LEVEL, "info");
@@ -36,11 +32,6 @@ export function createMuximodConfigResolver(
     const logFile = configuredLogFile
       ? resolveConfiguredPath(configuredLogFile, options.workingDirectory)
       : defaultLogFile(options.environment);
-    const muximodBaseUrl = resolveMuximodBaseUrl(
-      daemon.muximodBaseUrl ?? options.environment.MUXIMOD_PAIRING_BASE_URL,
-      daemon.host,
-      daemon.port,
-    );
     const allowedOrigins = normalizeAllowedOrigins(
       daemon.allowedOrigins ?? readOrigins(options.environment.MUXIMOD_ALLOWED_ORIGINS),
     );
@@ -51,7 +42,6 @@ export function createMuximodConfigResolver(
       hookOutputDirectory: paths.hookOutputDirectory,
       pidFile: paths.pidFile,
       controlSocket: paths.controlSocket,
-      muximodBaseUrl,
       allowedOrigins: [...allowedOrigins],
       allowedRoots: allowedRootsFromEnvironment(options.environment, workingDirectory).map((root) =>
         resolveConfiguredPath(root, workingDirectory),
@@ -112,41 +102,4 @@ function readDuration(value: string | undefined, minimum: number): number | unde
     throw new Error(`duration must be an integer >= ${minimum}`);
   }
   return parsed;
-}
-
-function localMuximodUrl(host: string, port: number): string {
-  const normalizedHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
-  const formattedHost =
-    normalizedHost.includes(":") && !normalizedHost.startsWith("[") ? `[${normalizedHost}]` : normalizedHost;
-  return `http://${formattedHost}:${port}`;
-}
-
-function resolveMuximodBaseUrl(value: string | undefined, host: string, port: number): string {
-  const candidate = value?.trim() || localMuximodUrl(host, port);
-  let url: URL;
-  try {
-    url = new URL(candidate);
-  } catch (error) {
-    throw new Error(`invalid muximod base URL: ${safeUrlForError(candidate)}`, { cause: error });
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`muximod base URL must use http or https: ${safeUrlForError(candidate)}`);
-  }
-  if (url.username || url.password) {
-    throw new Error("muximod base URL must not contain credentials");
-  }
-  url.hash = "";
-  url.search = "";
-  url.pathname = url.pathname.replace(/\/+$/u, "") || "/";
-  return url.toString().replace(/\/$/u, "");
-}
-
-function safeUrlForError(value: string): string {
-  try {
-    const url = new URL(value);
-    if (url.username || url.password) return "<redacted URL>";
-    return value;
-  } catch {
-    return "<invalid URL>";
-  }
 }

@@ -10,8 +10,8 @@ export class StatusDaemon {
     if (await this.dependencies.runtime.isHealthy(options, record?.pid)) {
       return {
         state: "running",
-        host: options.host,
-        port: options.port,
+        host: record?.host ?? options.host,
+        port: record?.port ?? options.port,
         pid: record?.pid,
       };
     }
@@ -19,8 +19,8 @@ export class StatusDaemon {
     if (record && (await this.dependencies.runtime.isAlive(record.pid))) {
       return {
         state: "unhealthy",
-        host: options.host,
-        port: options.port,
+        host: record.host,
+        port: record.port,
         pid: record.pid,
         logFile: options.logFile,
         healthFailure: { startedAt: healthCheckStartedAt, pid: record.pid },

@@ -80,5 +80,5 @@ function toCleanupInput(input: CliSessionCleanupInput): CleanupAgentSessionReque
 }
 
 function writeInfo(io: CliIo, message: string): void {
-  io.out.write(`muximo: ${message}\n`);
+  io.out.write(`[muximo-cli] ${message}\n`);
 }

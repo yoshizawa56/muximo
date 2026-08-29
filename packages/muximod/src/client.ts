@@ -7,5 +7,11 @@ export {
   resolveMuximodClientPaths,
   validateMuximodControlSocketPath,
 } from "./client-paths.js";
-export type { MuximodConfig, MuximodLifecycle, MuximodLifecycleOptions, MuximodRuntimeEnvironment } from "./launch.js";
+export type {
+  MuximodConfig,
+  MuximodForegroundConflictPolicy,
+  MuximodLifecycle,
+  MuximodLifecycleOptions,
+  MuximodRuntimeEnvironment,
+} from "./launch.js";
 export { createMuximodLifecycle } from "./launch.js";

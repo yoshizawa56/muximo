@@ -9,36 +9,36 @@ export function presentRunAgentSession(result: RunAgentSessionResponse, io: CliI
   if (result.cleanup.disposition === "not_requested") {
     io.out.write(
       result.cleanup.reason === "interrupted"
-        ? `muximo: session '${result.session.name}' kept for resume after interruption\n`
-        : `muximo: session '${result.session.name}' mapping retained; use 'muximo session resume ${result.session.name}' or 'muximo session cleanup ${result.session.name}'\n`,
+        ? `[muximo-cli] session '${result.session.name}' kept for resume after interruption\n`
+        : `[muximo-cli] session '${result.session.name}' mapping retained; use 'muximo session resume ${result.session.name}' or 'muximo session cleanup ${result.session.name}'\n`,
     );
   } else if (result.cleanup.disposition === "retained") {
-    io.out.write(`muximo: ${cleanupRetainedMessage(result)}\n`);
+    io.out.write(`[muximo-cli] ${cleanupRetainedMessage(result)}\n`);
   } else if (result.cleanup.disposition === "failed") {
-    io.out.write(`muximo: ${cleanupFailedMessage(result)}\n`);
+    io.out.write(`[muximo-cli] ${cleanupFailedMessage(result)}\n`);
   } else {
-    io.out.write(`muximo: session '${result.session.name}' cleaned up\n`);
+    io.out.write(`[muximo-cli] session '${result.session.name}' cleaned up\n`);
   }
   return result.process.code === 0 && cleanupNeedsFailureStatus(result) ? 1 : result.process.code;
 }
 
 export function presentResumeAgentSession(result: ResumeAgentSessionResponse, io: CliIo): number {
   if (result.session.status === "interrupted") {
-    io.out.write(`muximo: session '${result.session.name}' kept for resume after interruption\n`);
+    io.out.write(`[muximo-cli] session '${result.session.name}' kept for resume after interruption\n`);
   }
   return result.process.code;
 }
 
 export function presentCleanupAgentSession(result: CleanupAgentSessionResponse, io: CliIo): number {
   if (result.cleanup.disposition === "removed") {
-    io.out.write(`muximo: session '${result.session.name}' cleaned up\n`);
+    io.out.write(`[muximo-cli] session '${result.session.name}' cleaned up\n`);
     return 0;
   }
   if (result.cleanup.reason === "cleanup_declined") {
-    io.out.write(`muximo: cleanup cancelled; session '${result.session.name}' was kept\n`);
+    io.out.write(`[muximo-cli] cleanup cancelled; session '${result.session.name}' was kept\n`);
     return 0;
   }
-  io.out.write(`muximo: ${cleanupFailureMessage(result)}\n`);
+  io.out.write(`[muximo-cli] ${cleanupFailureMessage(result)}\n`);
   return 1;
 }
 

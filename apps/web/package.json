@@ -4,13 +4,15 @@
   "private": true,
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "web": "cli.ts"
+  },
   "scripts": {
     "build": "node ./node_modules/vite/bin/vite.js build",
     "cap:sync": "bun run build && cap sync ios",
     "cap:open": "cap open ios",
     "cap:run": "cap run ios --scheme Local",
     "build-storybook": "node ./node_modules/storybook/dist/bin/dispatcher.js build",
-    "dev": "bun dev.ts",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
     "storybook": "node ./node_modules/storybook/dist/bin/dispatcher.js dev --host 0.0.0.0 -p 6006",
     "test": "node ./node_modules/vitest/vitest.mjs run src",
@@ -23,6 +25,8 @@
     "@capacitor/ios": "8.4.2",
     "@capacitor/preferences": "8.0.1",
     "@muximo/contract": "workspace:*",
+    "@muximo/environment": "workspace:*",
+    "@muximo/infrastructure": "workspace:*",
     "@orpc/client": "^1.15.0",
     "@orpc/contract": "^1.15.0",
     "@orpc/tanstack-query": "^1.15.0",

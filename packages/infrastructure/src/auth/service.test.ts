@@ -78,7 +78,6 @@ const authFixture = async (): Promise<FixtureHandle<AuthFixture>> => {
     crypto: nodeAuthCrypto,
     clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
     claimSink: { publish: () => undefined },
-    muximodBaseUrl: "http://127.0.0.1:4317",
     challenges: new MemoryAuthChallengeStore(),
     rateLimits: new MemoryAuthRateLimitStore(),
     wsTickets: new MemoryAuthWsTicketStore(),
@@ -164,7 +163,7 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
   execute: async (fixture, steps) => {
     for (const step of steps) {
       if (step.type === "create-pairing") {
-        fixture.payload = await fixture.auth.createPairing();
+        fixture.payload = await fixture.auth.createPairing({ muximodBaseUrl: "http://127.0.0.1:4317" });
         continue;
       }
       if (step.type === "claim") {
@@ -350,7 +349,6 @@ const createRevokeFixture = (storeFails: boolean): FixtureHandle<RevokeFixture> 
     crypto: nodeAuthCrypto,
     clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
     claimSink: { publish: () => undefined },
-    muximodBaseUrl: "http://127.0.0.1:4317",
     challenges: new MemoryAuthChallengeStore(),
     rateLimits: new MemoryAuthRateLimitStore(),
     wsTickets: new MemoryAuthWsTicketStore(),

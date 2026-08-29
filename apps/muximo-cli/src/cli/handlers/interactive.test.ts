@@ -38,7 +38,7 @@ const cases = [
       hasObserved<InteractiveContext, number>("calls", [input]),
       hasObserved<InteractiveContext, number>(
         "output",
-        "muximo: created managed tmux session 'review' (managed-session-1)\n",
+        "[muximo-cli] created managed tmux session 'review' (managed-session-1)\n",
       ),
       hasObserved<InteractiveContext, number>("events", ["output"]),
     ],
@@ -52,7 +52,7 @@ const cases = [
       hasObserved<InteractiveContext, number>("calls", [input]),
       hasObserved<InteractiveContext, number>(
         "output",
-        "muximo: created managed tmux session 'review' (managed-session-1)\n",
+        "[muximo-cli] created managed tmux session 'review' (managed-session-1)\n",
       ),
       hasObserved<InteractiveContext, number>("events", ["output", "attach"]),
     ],

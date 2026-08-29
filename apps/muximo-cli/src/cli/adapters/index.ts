@@ -12,7 +12,7 @@ export {
   type PairDeviceRuntimeFactory,
   type ResolvedPairCommandOptions,
 } from "./pair-command.js";
-export { type PairRouteDependencies, resolvePairMuximodBaseUrl } from "./pair-route.js";
+export { type PairRouteInput, resolvePairMuximodBaseUrl } from "./pair-route.js";
 export { SvgQrRenderer } from "./svg-qr-renderer.js";
 export { TerminalPairingPresenter, type TerminalPairingPresenterOptions } from "./terminal-pairing-presenter.js";
 export { type QrRendererPort, TerminalQrRenderer, type TerminalQrRendererOptions } from "./terminal-qr-renderer.js";

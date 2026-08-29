@@ -32,7 +32,6 @@ import { startPairing as startPairingOp } from "./start-pairing.js";
 export type AuthServiceOptions = {
   store: AuthStorePort;
   serverId: string;
-  muximodBaseUrl: string;
   crypto: AuthCryptoPort;
   clock: Clock;
   claimSink: AuthPairingClaimSinkPort;
@@ -54,8 +53,8 @@ export class AuthService implements MuximodAuthPort, AuthControlExtras {
     this.serverId = options.serverId;
   }
 
-  public createPairing(overrides: { muximodBaseUrl?: string } = {}): Promise<AuthPairingPayload> {
-    return startPairingOp(this.options, overrides);
+  public createPairing(input: { muximodBaseUrl: string }): Promise<AuthPairingPayload> {
+    return startPairingOp(this.options, input);
   }
 
   /** Issues a short-lived in-memory token after the caller passed the private control-socket boundary. */

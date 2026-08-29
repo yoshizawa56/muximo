@@ -8,8 +8,8 @@ From the repository root:
 
 ```sh
 bun install --frozen-lockfile
-bun run --filter @muximo/web cap:sync
-bun run --filter @muximo/web cap:open
+bun --cwd apps/web run cap:sync
+bun --cwd apps/web run cap:open
 ```
 
 The same sync-and-open sequence is available as `mise ios`. `cap:sync` already performs the Web build before syncing the native project.

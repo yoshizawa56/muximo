@@ -1,5 +1,4 @@
 export * from "./backend.js";
-export * from "./dev.js";
 export * from "./doctor.js";
 export * from "./filesystem.js";
 export * from "./git.js";

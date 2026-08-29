@@ -1,6 +1,5 @@
 /** Host capabilities that may be used by the CLI client composition root. */
 
-export * from "./cli/dev.js";
 export * from "./cli/doctor.js";
 export {
   isPathWithin,
@@ -25,20 +24,35 @@ export {
   ensureTailscaleServe,
   localMuximodUrl,
   normalizeAllowedOrigins,
-  resolvePairingBaseUrl,
-  resolveServeAllowedOrigins,
-  resolveServeLogOptions,
   type ServeCommandDependencies,
   type ServeCommandOptions,
   type ServeInput,
-  type ServeMuximodLease,
-  type ServeProcessHandle,
   type TailscaleServeResult,
 } from "./cli/serve.js";
 export * from "./cli/shell.js";
 export * from "./cli/tmux-session.js";
 export { GitShellWorktreeAdapter, GitWorktreeAdapter, type WorktreeAdapterOptions } from "./cli/worktree.js";
 export { createLogger, defaultLogFile, type Logger, type LogLevel, parseLogLevel } from "./logging/index.js";
+export {
+  buildServeArgs,
+  buildServeHttpUrl,
+  buildServeStopArgs,
+  buildTailscaleInvocation,
+  createTailscaleServeClient,
+  fingerprintRoute,
+  hasTailscaleServeRoute,
+  parseTailscaleHostname,
+  readServeRouteState,
+  removeServeRouteState,
+  type ServeRouteState,
+  type TailscaleCommandResult,
+  type TailscaleCommandRunner,
+  type TailscaleServeClient,
+  type TailscaleServeClientOptions,
+  type TailscaleServeRoute,
+  type TailscaleServeRouteIdentity,
+  writeServeRouteState,
+} from "./tailscale/index.js";
 export {
   buildMuximoShellCommand,
   configureManagedTmuxSession,

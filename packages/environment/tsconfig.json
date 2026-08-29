@@ -5,5 +5,5 @@
     "moduleResolution": "NodeNext",
     "types": ["node", "bun-types"]
   },
-  "include": ["dev.ts"]
+  "include": ["src"]
 }

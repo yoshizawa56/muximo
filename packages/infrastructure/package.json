@@ -9,6 +9,10 @@
       "types": "./src/cli-client.ts",
       "default": "./src/cli-client.ts"
     },
+    "./web-client": {
+      "types": "./src/web-client.ts",
+      "default": "./src/web-client.ts"
+    },
     "./runtime": {
       "types": "./src/runtime.ts",
       "default": "./src/runtime.ts"

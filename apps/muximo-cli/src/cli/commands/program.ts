@@ -2,7 +2,6 @@ import { Command } from "commander";
 import { registerOptions } from "../options/index.js";
 import { registerCompletionCommand } from "./completion.js";
 import { registerDaemonCommands } from "./daemon.js";
-import { registerDevCommand } from "./dev.js";
 import { registerDoctorCommand } from "./doctor.js";
 import { globalOptionSpecs } from "./global.js";
 import { registerPairCommand } from "./pair.js";
@@ -40,7 +39,6 @@ export function buildCliProgram(handlers: CliHandlers, context: CliCommandContex
   registerDaemonCommands(program, handlers, context);
   registerPairCommand(program, handlers, context);
   registerServeCommand(program, handlers, context);
-  if (context.includeDevelopmentCommands) registerDevCommand(program, handlers, context);
   registerCompletionCommand(program, context);
 
   return program;

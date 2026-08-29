@@ -39,7 +39,6 @@ packages/
 
 apps/
   muximo-cli/
-  serve/
   web/
 ```
 
@@ -241,9 +240,9 @@ adapters, but no CLI handler is exported by `infrastructure`.
 
 ## Composition roots and CLI
 
-`apps/muximo-cli/src/entrypoint.ts`, `apps/muximo-cli/src/cli/compose.ts`, and
-`packages/muximod/src/server.ts` are composition roots for their respective
-boundaries. `apps/serve` is a development-only process supervisor. These
+`apps/muximo-cli/src/entrypoint.ts`, `apps/muximo-cli/src/cli/compose.ts`,
+`apps/web/cli.ts`, and `packages/muximod/src/server.ts` are composition roots for
+their respective boundaries. These
 composition roots may:
 
 - read argv and environment variables;
@@ -278,29 +277,25 @@ runtime-managed state. An in-process mutex in `muximod` therefore cannot
 provide a global serialization guarantee by itself; the daemon's database
 transactions and private control contract provide the cross-process boundary.
 
-## Muximod lifecycle and development topology
+## Muximod lifecycle and environment topology
 
 `packages/muximod` owns the typed lifecycle API exposed to the CLI:
 `ensure`, `start`, `startForeground`, `status`, `stop`, and `restart`. It also
-owns the child-process bootstrap, PID and restart markers, snapshot bootstrap,
+owns the child-process bootstrap, PID and restart markers, schema synchronization,
 and cleanup of muximod resources. A private process bootstrap is used for the
 separate runtime process; it is an internal package implementation detail, not
 a hidden or public CLI command.
 
-The CLI resolves all Muximo configuration before calling that lifecycle API.
-Normal invocations use `migrate`. `apps/muximo-cli/dev.ts` detects a linked
-worktree, assigns its deterministic target instance directory, and selects
-`push` with the base instance directory. In push mode, the launcher copies the
-complete SQLite database only when the target database is absent, verifies it,
-and starts against the copied database unchanged. No authentication table is
-scrubbed or selected by a seed policy; the persisted `serverId` and all other
-durable state are retained.
+The CLI resolves all Muximo configuration before calling that lifecycle API. The
+`--env` profile selects one state root and fixed ports for the environment. `local`
+uses `push` against one persistent SQLite file; `stg` and `prod` use migrations
+against their own files. Worktrees do not derive state directories and no snapshot,
+seeding, or base-instance copy is performed.
 
-`apps/serve` is a development-only supervisor for Portless, Web, and the CLI
-foreground serve command. It owns child-process cleanup, route readiness, and
-replacement detection. It does not interpret `MUXIMOD_*`, resolve Tailscale
-URLs, or construct muximod configuration. The CLI's serve flow resolves the
-Tailscale URL and passes the final URL and exact allowed origins to muximod.
+`apps/web/cli.ts` independently manages one Web process per environment and its
+provider route. It does not import or invoke muximod. Muximod Serve only manages the
+muximod route. The two lifecycle surfaces share only neutral environment and
+Tailscale provider mechanics; neither is a combined supervisor.
 
 ## Web structure
 

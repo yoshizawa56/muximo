@@ -51,6 +51,7 @@ export type MuximodApiConnectionOptions = {
   controlSocket: string;
   cwd?: string;
   ensureDaemon?: () => Promise<void>;
+  resolveHttpBaseUrl?: () => string | Promise<string>;
 };
 
 export type MuximodDaemonLogOptions = {
@@ -74,15 +75,17 @@ export async function connectMuximodApi(options: MuximodApiConnectionOptions): P
       });
     return refreshPromise;
   };
-  const rpc = createORPCClient<RpcClient>(
-    new RPCLink({
-      url: `${options.httpBaseUrl.replace(/\/$/u, "")}/rpc`,
-      headers: async () => {
-        await refreshSession(false);
-        return { authorization: `Bearer ${session.accessToken}` };
-      },
-    }),
-  );
+  const createRpc = (httpBaseUrl: string): RpcClient =>
+    createORPCClient<RpcClient>(
+      new RPCLink({
+        url: `${httpBaseUrl.replace(/\/$/u, "")}/rpc`,
+        headers: async () => {
+          await refreshSession(false);
+          return { authorization: `Bearer ${session.accessToken}` };
+        },
+      }),
+    );
+  let rpc = createRpc(options.httpBaseUrl);
   const request = async <Result>(operation: () => Promise<Result>, retryConnection = false): Promise<Result> => {
     await refreshSession(false);
     try {
@@ -92,6 +95,7 @@ export async function connectMuximodApi(options: MuximodApiConnectionOptions): P
       const reconnectable = retryConnection && isConnectionError(error);
       if (!unauthorized && !reconnectable) throw error;
       if ((unauthorized || reconnectable) && options.ensureDaemon) await options.ensureDaemon();
+      if (options.resolveHttpBaseUrl) rpc = createRpc(await options.resolveHttpBaseUrl());
       await refreshSession(true);
       return operation();
     }

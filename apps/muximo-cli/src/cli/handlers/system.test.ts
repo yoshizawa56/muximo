@@ -8,31 +8,18 @@ import type {
   StartDaemonInput,
 } from "@muximo/application";
 import type { MuximodControlLogResult } from "@muximo/contract/control";
-import type { DoctorReport, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
-import {
-  type Assertion,
-  type OperationCase,
-  type OperationTable,
-  runOperationTable,
-  type TestRegistrar,
-} from "@muximo/test-support";
+import type { DoctorReport, ServeRouteState, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
+import { type OperationCase, type OperationTable, runOperationTable, type TestRegistrar } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
-import type { CliDaemonInput, CliDevInput, CliDoctorInput, CliIo, CliServeInput } from "../commands/types.js";
+import type { CliDaemonInput, CliDoctorInput, CliIo, CliServeInput } from "../commands/types.js";
 import { createSystemHandlers } from "./system.js";
 
 type SystemInput =
   | { kind: "doctor"; input: CliDoctorInput }
   | { kind: "daemon"; input: CliDaemonInput }
-  | { kind: "serve"; input: CliServeInput }
-  | { kind: "dev"; input: CliDevInput };
+  | { kind: "serve"; input: CliServeInput };
 
-type SystemResult = {
-  status: number;
-  out: string;
-  err: string;
-  calls: readonly string[];
-};
-
+type SystemResult = { status: number; out: string; err: string; calls: readonly string[] };
 type SystemFixture = {
   out: string[];
   err: string[];
@@ -40,98 +27,101 @@ type SystemFixture = {
   handlers: ReturnType<typeof createSystemHandlers>;
 };
 
-const contains = (name: string, key: keyof SystemResult, value: string): Assertion<SystemResult, SystemResult> => ({
-  name,
-  check: (context) => expect(context[key]).toContain(value),
-});
+function hasValue<Key extends keyof SystemResult>(name: string, key: Key, expected: SystemResult[Key]) {
+  return { name, check: (context: SystemResult) => expect(context[key]).toEqual(expected) };
+}
 
-const called = (name: string, value: string): Assertion<SystemResult, SystemResult> => ({
-  name,
-  check: (context) => expect(context.calls).toContain(value),
-});
+function containsText(name: string, key: "out" | "err", expected: string) {
+  return { name, check: (context: SystemResult) => expect(context[key]).toContain(expected) };
+}
+
+function includesCall(name: string, expected: string) {
+  return { name, check: (context: SystemResult) => expect(context.calls).toContain(expected) };
+}
 
 const daemonInputs: readonly CliDaemonInput[] = [
-  { command: "start", foreground: false, refreshServers: false, host: "127.0.0.1", port: 4317 },
-  { command: "status", foreground: false, refreshServers: false, host: "127.0.0.1", port: 4317 },
-  { command: "stop", foreground: false, refreshServers: false, host: "127.0.0.1", port: 4317 },
-  { command: "restart", foreground: false, refreshServers: true, host: "127.0.0.1", port: 4317 },
-  { command: "ensure", foreground: false, refreshServers: false, host: "127.0.0.1", port: 4317 },
-  {
-    command: "log",
-    foreground: false,
-    refreshServers: false,
-    host: "127.0.0.1",
-    port: 4317,
-    lines: 20,
-  },
+  { command: "start", foreground: false, refreshServers: false },
+  { command: "status", foreground: false, refreshServers: false },
+  { command: "stop", foreground: false, refreshServers: false },
+  { command: "restart", foreground: false, refreshServers: true },
+  { command: "ensure", foreground: false, refreshServers: false },
+  { command: "log", foreground: false, refreshServers: false, lines: 20 },
 ];
+
+const routeState: ServeRouteState = {
+  schemaVersion: 1,
+  environment: "local",
+  component: "muximod",
+  provider: "tailscale",
+  hostname: "tail.example",
+  publicUrl: "https://tail.example:8444/",
+  localTarget: "http://127.0.0.1:4317",
+  externalPort: 8444,
+  path: "/",
+  routeFingerprint: "fingerprint",
+  updatedAt: "2026-08-29T00:00:00.000Z",
+};
+
+const serveResult: TailscaleServeResult = {
+  options: { provider: "tailscale", localPort: 4317, externalPort: 8444, tailscaleBinary: "tailscale" },
+  route: {
+    localPort: 4317,
+    externalPort: 8444,
+    hostname: routeState.hostname,
+    localTarget: routeState.localTarget,
+    publicUrl: routeState.publicUrl,
+    routeFingerprint: routeState.routeFingerprint,
+  },
+  serveArgs: ["serve", "--bg"],
+  hostname: "tail.example",
+  url: routeState.publicUrl,
+  localUrl: routeState.localTarget,
+  stdout: "serve stdout\n",
+  stderr: "serve stderr\n",
+  statusJson: "{}",
+};
 
 const cases = [
   {
-    name: "maps typed doctor input and presents the diagnostic report",
+    name: "presents doctor diagnostics",
     input: { kind: "doctor", input: { verbose: true } },
     assert: [
-      called("passes the verbose doctor input", "doctor:true"),
-      contains("presents doctor command diagnostics", "out", "git: /usr/bin/git"),
-      contains("presents verbose doctor details", "out", "codex remote: unix://"),
-    ],
+      hasValue("presents a successful status", "status", 0),
+      containsText("presents git", "out", "git: /usr/bin/git"),
+    ] as const,
   },
   ...daemonInputs.map((input) => ({
-    name: `maps daemon ${input.command} input to the focused use case`,
+    name: `dispatches daemon ${input.command}`,
     input: { kind: "daemon" as const, input },
-    assert: [
-      called(`passes the daemon ${input.command} input`, `daemon:${input.command}`),
-      contains(`presents the daemon ${input.command} result`, "out", "muximod"),
-    ] as const,
+    assert: [includesCall(`passes the daemon ${input.command}`, `daemon:${input.command}`)] as const,
   })),
   {
-    name: "maps typed serve input and presents structured serve data",
+    name: "presents a configured serve route",
     input: {
       kind: "serve",
-      input: {
-        provider: "tailscale",
-        foreground: false,
-        muximodHost: "127.0.0.1",
-        muximodPort: 4317,
-        externalPort: 8444,
-        logLevel: "info",
-      },
+      input: { provider: "tailscale", command: "tailscale", localPort: 4317, externalPort: 8444 },
     },
     assert: [
-      called("passes the serve input", "serve:tailscale"),
-      contains("presents serve summary", "out", "muximo serve tailscale: https://tail.example"),
-      contains("presents serve stdout", "out", "serve stdout"),
-      contains("presents serve stderr", "err", "serve stderr"),
-    ],
+      includesCall("passes the serve command", "serve:tailscale"),
+      containsText("presents route", "out", "[muximo-cli] muximod Tailscale Serve"),
+      containsText("presents provider errors", "err", "serve stderr"),
+    ] as const,
   },
   {
-    name: "cleans up a foreground serve lease after the daemon exits",
-    input: {
-      kind: "serve",
-      input: {
-        provider: "tailscale",
-        foreground: true,
-        muximodHost: "127.0.0.1",
-        muximodPort: 4317,
-        externalPort: 8444,
-        logLevel: "info",
-      },
-    },
+    name: "presents serve status without controlling muximod",
+    input: { kind: "serve", input: { provider: "tailscale", command: "status", localPort: 4317, externalPort: 8444 } },
     assert: [
-      called("waits for the foreground daemon", "serve:foreground-wait"),
-      called("cleans up the foreground daemon lease", "serve:cleanup"),
-    ],
+      includesCall("passes serve status", "serve:status"),
+      containsText("presents route status", "out", routeState.publicUrl),
+    ] as const,
   },
   {
-    name: "maps typed dev input and preserves its process status",
-    input: { kind: "dev", input: { serveProvider: "tailscale" } },
+    name: "presents serve stop",
+    input: { kind: "serve", input: { provider: "tailscale", command: "stop", localPort: 4317, externalPort: 8444 } },
     assert: [
-      called("passes the dev input", "dev:tailscale"),
-      {
-        name: "returns the development process status",
-        check: (context: SystemResult) => expect(context.status).toBe(7),
-      },
-    ],
+      includesCall("passes serve stop", "serve:stop"),
+      containsText("presents stop", "out", "Serve stopped"),
+    ] as const,
   },
 ] satisfies readonly OperationCase<"default", SystemInput, SystemResult, SystemResult>[];
 
@@ -144,9 +134,7 @@ const table: OperationTable<SystemFixture, "default", SystemInput, SystemResult,
         ? await fixture.handlers.doctor(input.input)
         : input.kind === "daemon"
           ? await fixture.handlers.daemon(input.input)
-          : input.kind === "serve"
-            ? await fixture.handlers.serve(input.input)
-            : await fixture.handlers.dev(input.input);
+          : await fixture.handlers.serve(input.input);
     return { status, out: fixture.out.join(""), err: fixture.err.join(""), calls: [...fixture.calls] };
   },
   observe: (fixture, result) => ({
@@ -179,6 +167,8 @@ function createFixture(): SystemFixture {
     host: "127.0.0.1",
     port: 4317,
     pidFile: "/tmp/muximod.pid",
+    controlSocket: "/tmp/muximod.sock",
+    logFile: "/tmp/muximod.log",
   };
   const daemon = {
     start: {
@@ -212,33 +202,11 @@ function createFixture(): SystemFixture {
       },
     },
     log: {
-      execute: async (_input: { lines: number }): Promise<MuximodControlLogResult> => {
+      execute: async (): Promise<MuximodControlLogResult> => {
         calls.push("daemon:log");
-        return {
-          state: "available",
-          logFile: "/tmp/muximod.log",
-          lines: ['{"service":"muximod","event":"daemon.started"}'],
-        };
+        return { state: "available", logFile: "/tmp/muximod.log", lines: ["muximod log"] };
       },
     },
-  };
-  const serveResult: TailscaleServeResult = {
-    options: {
-      provider: "tailscale",
-      foreground: false,
-      muximodHost: "127.0.0.1",
-      muximodPort: 4317,
-      externalPort: 8444,
-      logLevel: "info",
-      tailscaleBinary: "tailscale",
-    },
-    serveArgs: ["serve"],
-    hostname: "tail.example",
-    url: "https://tail.example",
-    localUrl: "http://127.0.0.1:4317",
-    allowedOrigins: ["https://tail.example"],
-    stdout: "serve stdout\n",
-    stderr: "serve stderr\n",
   };
   const handlers = createSystemHandlers({
     doctor: {
@@ -247,33 +215,14 @@ function createFixture(): SystemFixture {
         return report;
       },
     },
-    daemon: {
-      defaults: { pidFile: daemonOptions.pidFile, controlSocket: "/tmp/muximod.sock" },
-      ...daemon,
-    },
+    daemon: { defaults: daemonOptions, ...daemon },
     serve: {
       execute: async (input) => {
-        calls.push(`serve:${input.provider}`);
-        if (!input.foreground) return serveResult;
-        return {
-          ...serveResult,
-          foregroundProcess: {
-            wait: async () => {
-              calls.push("serve:foreground-wait");
-              return { code: 0, interrupted: false };
-            },
-            terminate: () => calls.push("serve:foreground-terminate"),
-          },
-          cleanup: async () => {
-            calls.push("serve:cleanup");
-          },
-        };
-      },
-    },
-    dev: {
-      execute: async (input: CliDevInput) => {
-        calls.push(`dev:${input.serveProvider}`);
-        return 7;
+        calls.push(`serve:${input.command}`);
+        if (input.command === "tailscale") return { command: "tailscale", result: serveResult, state: routeState };
+        if (input.command === "status")
+          return { command: "status", state: routeState, providerOutput: "route status\n" };
+        return { command: "stop", state: "stopped", publicUrl: routeState.publicUrl };
       },
     },
     io,

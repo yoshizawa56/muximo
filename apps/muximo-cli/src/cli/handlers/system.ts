@@ -9,15 +9,8 @@ import type {
 } from "@muximo/application";
 import { DaemonHealthError } from "@muximo/application";
 import type { MuximodControlLogResult } from "@muximo/contract/control";
-import type { DoctorReport, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
-import type {
-  CliDaemonInput,
-  CliDevInput,
-  CliDoctorInput,
-  CliHandlers,
-  CliIo,
-  CliServeInput,
-} from "../commands/types.js";
+import type { DoctorReport, ServeRouteState, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
+import type { CliDaemonInput, CliDoctorInput, CliHandlers, CliIo, CliServeInput } from "../commands/types.js";
 import {
   presentDaemonError,
   presentDaemonLog,
@@ -29,20 +22,25 @@ import {
 import { presentDoctorReport } from "../presenters/doctor.js";
 import { presentServeResult } from "../presenters/serve.js";
 
-type StatusService<Input> = {
-  execute(input: Input): Promise<number> | number;
-};
-
 type AsyncService<Input, Result> = {
   execute(input: Input): Promise<Result>;
 };
 
-export type ServeResult = TailscaleServeResult;
+export type ServeResult =
+  | { command: "tailscale"; result: TailscaleServeResult; state: ServeRouteState }
+  | {
+      command: "status";
+      state?: ServeRouteState;
+      routeAvailable?: boolean;
+      providerOutput?: string;
+      providerError?: string;
+    }
+  | { command: "stop"; state: "stopped" | "already-stopped"; publicUrl?: string };
 
 export type SystemHandlerDependencies = {
   doctor: { execute(input: CliDoctorInput): Promise<DoctorReport> };
   daemon: {
-    defaults: Pick<DaemonOptions, "pidFile" | "controlSocket">;
+    defaults: DaemonOptions;
     start: AsyncService<StartDaemonInput, DaemonStartResult>;
     status: AsyncService<DaemonOptions, DaemonStatusResult>;
     stop: AsyncService<DaemonOptions, DaemonStopResult>;
@@ -51,13 +49,12 @@ export type SystemHandlerDependencies = {
     log: AsyncService<{ lines: number }, MuximodControlLogResult>;
   };
   serve: { execute(input: CliServeInput): Promise<ServeResult> };
-  dev: StatusService<CliDevInput>;
   io: CliIo;
 };
 
 export function createSystemHandlers(
   dependencies: SystemHandlerDependencies,
-): Pick<CliHandlers, "doctor" | "daemon" | "serve" | "dev"> {
+): Pick<CliHandlers, "doctor" | "daemon" | "serve"> {
   return {
     doctor: async (input) => presentDoctorReport(await dependencies.doctor.execute(input), dependencies.io),
     daemon: async (input) => {
@@ -93,31 +90,14 @@ export function createSystemHandlers(
     },
     serve: async (input) => {
       const result = await dependencies.serve.execute(input);
-      try {
-        const status = presentServeResult(result, dependencies.io);
-        if (!result.foregroundProcess) return status;
-        return (await result.foregroundProcess.wait()).code;
-      } finally {
-        await result.cleanup?.();
-      }
+      return presentServeResult(result, dependencies.io);
     },
-    dev: (input) => Promise.resolve(dependencies.dev.execute(input)),
   };
 }
 
-function toDaemonOptions(
-  input: CliDaemonInput,
-  defaults: Pick<DaemonOptions, "pidFile" | "controlSocket">,
-): DaemonOptions {
+function toDaemonOptions(input: CliDaemonInput, defaults: DaemonOptions): DaemonOptions {
   return {
-    host: input.host,
-    port: input.port,
-    pidFile: input.pidFile ?? defaults.pidFile,
-    controlSocket: input.controlSocket ?? defaults.controlSocket,
-    muximodBaseUrl: input.muximodBaseUrl,
-    logLevel: input.logLevel,
-    logFile: input.logFile,
+    ...defaults,
     refreshServers: input.refreshServers,
-    allowedOrigins: input.allowedOrigins,
   };
 }

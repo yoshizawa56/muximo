@@ -2,7 +2,6 @@
 import { runMuximoCli } from "./entrypoint.js";
 
 const status = await runMuximoCli(process.argv.slice(2), {
-  includeDevelopmentCommands: false,
   env: process.env,
   input: process.stdin,
   out: process.stdout,

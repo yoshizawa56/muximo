@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 
-printf '%s\n' 'hook: development ports are deterministic; no release is required'
+printf '%s\n' 'hook: no profile or process state requires cleanup'

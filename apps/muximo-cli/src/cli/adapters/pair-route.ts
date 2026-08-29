@@ -1,83 +1,82 @@
 import {
-  ensureTailscaleServe,
-  type Logger,
+  createTailscaleServeClient,
+  hasTailscaleServeRoute,
   localMuximodUrl,
-  resolvePairingBaseUrl,
-  resolveServeAllowedOrigins,
-  resolveServeLogOptions,
-  type ServeCommandOptions,
-  type ServeMuximodLease,
+  readServeRouteState,
+  type ServeRouteState,
 } from "@muximo/infrastructure/cli-client";
-import type { CliServeInput } from "../commands/types.js";
 
-export type PairRouteDependencies = {
-  ensureMuximod: (
-    options: ServeCommandOptions,
-    allowedOrigins: readonly string[],
-  ) => Promise<ServeMuximodLease | undefined>;
-  runCommand?: (
-    command: string,
-    args: string[],
-    options: { env: NodeJS.ProcessEnv },
-  ) => Promise<{ stdout: string; stderr: string }>;
-  logger?: Logger;
+export type PairRouteInput = {
+  withoutServe: boolean;
+  environment: NodeJS.ProcessEnv;
+  routeStateFile: string;
 };
 
-/** Resolves the browser endpoint used by pairing without importing muximod. */
+export type PairRouteDependencies = {
+  verifyLiveRoute?: (state: ServeRouteState, environment: NodeJS.ProcessEnv) => Promise<boolean>;
+};
+
+/** Resolves the client-owned muximod route without starting or configuring it. */
 export async function resolvePairMuximodBaseUrl(
-  input: { withoutServe: boolean; controlSocket?: string; environment: NodeJS.ProcessEnv },
-  dependencies: PairRouteDependencies,
+  input: PairRouteInput,
+  dependencies: PairRouteDependencies = {},
 ): Promise<string> {
-  const environment = input.environment;
-  const log = resolveServeLogOptions(environment);
-  const options: CliServeInput = {
-    provider: "tailscale",
-    foreground: false,
-    muximodHost: environment.MUXIMOD_HOST ?? "127.0.0.1",
-    muximodPort: readPort(environment.MUXIMOD_PORT, 4317),
-    externalPort: readPort(environment.MUXIMO_SERVE_PORT, 8444),
-    pidFile: environment.MUXIMOD_PID_FILE,
-    ...log,
-  };
-  const serveOptions: ServeCommandOptions = {
-    ...options,
-    tailscaleBinary: environment.TAILSCALE_BIN ?? "tailscale",
-    hostname: environment.MUXIMO_TAILSCALE_HOSTNAME,
-    controlSocket: input.controlSocket,
-    muximodBaseUrl: environment.MUXIMOD_PAIRING_BASE_URL?.trim() || undefined,
-  };
-
   if (input.withoutServe) {
-    const pairingBaseUrl = environment.MUXIMOD_PAIRING_BASE_URL
-      ? resolvePairingBaseUrl(environment)
-      : localMuximodUrl(options.muximodHost, options.muximodPort);
-    const allowedOrigins =
-      environment.MUXIMOD_ALLOWED_ORIGINS === undefined
-        ? [new URL(pairingBaseUrl).origin]
-        : resolveServeAllowedOrigins(options, environment);
-    await dependencies.ensureMuximod(serveOptions, allowedOrigins);
-    return pairingBaseUrl;
+    const localUrl = localMuximodUrl(
+      input.environment.MUXIMOD_HOST ?? "127.0.0.1",
+      readPort(input.environment.MUXIMOD_PORT),
+    );
+    await verifyMuximodRoute(localUrl);
+    return localUrl;
   }
 
-  const result = await ensureTailscaleServe(
-    serveOptions,
-    {
-      ensureMuximod: dependencies.ensureMuximod,
-      runCommand: dependencies.runCommand,
-      logger: dependencies.logger,
-    },
-    environment,
-  );
-  if (!result.url) {
-    throw new Error(
-      "could not determine the Tailscale Serve URL; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_PAIRING_BASE_URL",
-    );
+  const state = readServeRouteState(input.routeStateFile);
+  if (!state) {
+    throw new Error(`muximod Serve route is unavailable; run "muximo serve tailscale" first`);
   }
-  return result.url;
+  const expectedEnvironment = input.environment.MUXIMO_ENV ?? "prod";
+  if (state.environment !== expectedEnvironment || state.component !== "muximod") {
+    throw new Error(`muximod Serve route belongs to a different environment: ${input.routeStateFile}`);
+  }
+  const routeMatchesLiveProvider = await (dependencies.verifyLiveRoute ?? verifyLiveRoute)(state, input.environment);
+  if (!routeMatchesLiveProvider) {
+    throw new Error(`muximod Serve route state does not match the live provider configuration`);
+  }
+  await verifyMuximodRoute(state.publicUrl);
+  return state.publicUrl;
 }
 
-function readPort(value: string | undefined, fallback: number): number {
-  const port = Number(value ?? fallback);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("muximod port must be between 1 and 65535");
+async function verifyLiveRoute(state: ServeRouteState, environment: NodeJS.ProcessEnv): Promise<boolean> {
+  const result = await createTailscaleServeClient({ environment }).status();
+  return hasTailscaleServeRoute(result.stdout, state);
+}
+
+function readPort(value: string | undefined): number {
+  const port = Number(value ?? 4317);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`muximod port must be between 1 and 65535: ${value ?? 4317}`);
+  }
   return port;
+}
+
+async function verifyMuximodRoute(baseUrl: string): Promise<void> {
+  const url = new URL(baseUrl);
+  url.pathname = `${url.pathname.replace(/\/+$/u, "")}/health`;
+  url.search = "";
+  url.hash = "";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`muximod Serve health check returned HTTP ${response.status}`);
+    const payload = (await response.json()) as { ok?: unknown; service?: unknown };
+    if (payload.ok !== true || payload.service !== "muximod") {
+      throw new Error("muximod Serve health check returned an unexpected service");
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("muximod Serve health check")) throw error;
+    throw new Error(`muximod Serve route is not reachable: ${baseUrl}`, { cause: error });
+  } finally {
+    clearTimeout(timeout);
+  }
 }

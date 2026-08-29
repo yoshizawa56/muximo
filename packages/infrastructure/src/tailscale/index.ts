@@ -2,6 +2,8 @@ import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
 
 export { getLocalTerminal } from "./local-terminal.js";
+export * from "./route-state.js";
+export * from "./serve-client.js";
 
 export type TailscaleServeConfig = {
   localPort: number;
@@ -62,7 +64,7 @@ export function buildTailscaleInvocation(
 /**
  * Builds a persistent HTTPS reverse-proxy configuration. The local target is
  * deliberately loopback-only: Tailscale terminates HTTPS and keeps the
- * public-facing listener separate from the worktree-specific local port.
+ * public-facing listener separate from the component's fixed local port.
  */
 export function buildServeArgs(config: TailscaleServeConfig): string[] {
   if (!Number.isInteger(config.localPort) || config.localPort < 1 || config.localPort > 65_535) {

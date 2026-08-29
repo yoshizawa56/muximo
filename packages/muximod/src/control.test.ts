@@ -60,7 +60,6 @@ const fixture = (): FixtureHandle<ControlFixture> => {
     crypto: nodeAuthCrypto,
     clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
     claimSink: { publish: () => undefined },
-    muximodBaseUrl: "http://127.0.0.1:4317",
     challenges: new MemoryAuthChallengeStore(),
     rateLimits: new MemoryAuthRateLimitStore(),
     wsTickets: new MemoryAuthWsTicketStore(),

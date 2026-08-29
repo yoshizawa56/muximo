@@ -25,7 +25,7 @@ const resolveCases = [
       returns<Context, ResolvedPaths>({
         instanceDirectory: "/home/test/.local/state/muximo",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
-        pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
+        pidFile: "/home/test/.local/state/muximo/muximod.pid",
         controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
@@ -39,7 +39,7 @@ const resolveCases = [
       returns<Context, ResolvedPaths>({
         instanceDirectory: "/tmp/muximo/main",
         hookOutputDirectory: "/tmp/muximo/main/hooks",
-        pidFile: "/tmp/muximo/main/muximod.sqlite.pid",
+        pidFile: "/tmp/muximo/main/muximod.pid",
         controlSocket: "/tmp/muximo/main/muximod.sock",
       }),
     ],
@@ -50,16 +50,14 @@ const resolveCases = [
       environment: { MUXIMOD_INSTANCE_DIR: "state" },
       overrides: {
         baseDirectory: "/workspace/project",
-        pidFile: "run/muximod.pid",
-        controlSocket: "run/muximod.sock",
       },
     },
     assert: [
       returns<Context, ResolvedPaths>({
         instanceDirectory: "/workspace/project/state",
         hookOutputDirectory: "/workspace/project/state/hooks",
-        pidFile: "/workspace/project/run/muximod.pid",
-        controlSocket: "/workspace/project/run/muximod.sock",
+        pidFile: "/workspace/project/state/muximod.pid",
+        controlSocket: "/workspace/project/state/muximod.sock",
       }),
     ],
   },
