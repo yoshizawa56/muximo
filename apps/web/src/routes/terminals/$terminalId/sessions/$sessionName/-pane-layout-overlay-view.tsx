@@ -4,22 +4,20 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AppIcon } from "../../../../../app/components/app-icon";
 import { paneStateLabel } from "./-pane-state";
 
-export type PaneLayoutOverlayVariant = "ghost";
-
 export function PaneLayoutOverlay({
   id,
   panes,
   selectedTarget,
   onSelect,
   onClose,
-  variant = "ghost",
+  onCreatePane,
 }: {
   id?: string;
   panes: PaneSummary[];
   selectedTarget: string;
   onSelect: (pane: PaneSummary) => void;
   onClose?: () => void;
-  variant?: PaneLayoutOverlayVariant;
+  onCreatePane?: () => void;
 }) {
   const windows = useMemo(() => groupByWindow(panes), [panes]);
   const selectedPane = panes.find((pane) => pane.hostPaneId === selectedTarget);
@@ -30,29 +28,21 @@ export function PaneLayoutOverlay({
   const activeSessionPaneCount = activeWindow
     ? panes.filter((pane) => pane.sessionName === activeWindow.sessionName).length
     : 0;
+  const selectedPaneUnavailable = Boolean(selectedTarget) && !selectedPane;
   const useCompactPaneList = activeWindow
-    ? activeWindow.hasGeometry &&
-      paneLayoutNeedsCompactTargets(activeWindow.panes, activeWindow.windowWidth, activeWindow.windowHeight)
-    : false;
-  const ghost = variant === "ghost";
+    ? selectedPaneUnavailable ||
+      (activeWindow.hasGeometry &&
+        paneLayoutNeedsCompactTargets(activeWindow.panes, activeWindow.windowWidth, activeWindow.windowHeight))
+    : selectedPaneUnavailable;
   const paneGridClass = useCompactPaneList
     ? "grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] content-stretch overflow-auto"
     : activeWindow?.hasGeometry
-      ? "relative block min-h-0 overflow-hidden bg-terminal-grid bg-[length:100%_16px]"
+      ? "relative min-h-0 overflow-hidden bg-terminal-grid bg-[length:100%_16px]"
       : activeWindow?.panes.length === 1
         ? "grid-cols-[minmax(0,1fr)]"
         : activeWindow?.panes.length === 2
           ? "grid-cols-2"
           : "grid-cols-2 [&>button:first-child]:row-span-2";
-  const overlayVariantClass = ghost
-    ? "gap-2 rounded-none border-0 bg-[rgb(0_3_1_/_20%)] p-2.5 shadow-none backdrop-blur-[2px] max-[920px]:p-[calc(12px+var(--safe-area-top))_max(12px,var(--safe-area-right))_calc(12px+var(--safe-area-bottom))_max(12px,var(--safe-area-left))] max-[620px]:pt-[calc(8px+var(--safe-area-top))] max-[620px]:px-2"
-    : "";
-  const headingVariantClass = ghost ? "px-[3px] opacity-80" : "";
-  const headingCopyVariantClass = ghost ? "gap-1" : "";
-  const windowTabsVariantClass = ghost ? "px-[3px] pb-[3px]" : "";
-  const panelVariantClass = ghost ? "mx-[3px] rounded-[3px] border-0 bg-transparent shadow-none" : "";
-  const footerVariantClass = ghost ? "px-[3px] opacity-70 [text-shadow:0_1px_8px_#000]" : "";
-
   useEffect(() => {
     if (selectedPane && selectedPane.windowId !== activeWindowId) setActiveWindowId(selectedPane.windowId);
   }, [activeWindowId, selectedPane]);
@@ -61,13 +51,6 @@ export function PaneLayoutOverlay({
     if (!onClose) return;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
-    const onPointerDownOutside = (event: PointerEvent) => {
-      const overlay = overlayRef.current;
-      if (!overlay) return;
-      const target = event.target;
-      if (target instanceof Node && overlay.contains(target)) return;
-      onClose();
-    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -90,11 +73,9 @@ export function PaneLayoutOverlay({
       event.preventDefault();
       focusable[nextIndex]?.focus();
     };
-    document.addEventListener("pointerdown", onPointerDownOutside);
     document.addEventListener("keydown", onKeyDown);
     return () => {
       window.cancelAnimationFrame(focusFrame);
-      document.removeEventListener("pointerdown", onPointerDownOutside);
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus({ preventScroll: true });
     };
@@ -106,27 +87,18 @@ export function PaneLayoutOverlay({
     <section
       ref={overlayRef}
       id={id}
-      className={`relative flex h-full min-h-0 w-full flex-col gap-3 overflow-hidden rounded-[15px] border border-[rgb(139_255_154_/_24%)] bg-[rgb(2_8_4_/_78%)] p-[18px] text-ink shadow-[0_24px_80px_rgb(0_0_0_/_52%),inset_0_0_0_1px_rgb(139_255_154_/_4%)] backdrop-blur-[20px] max-[920px]:rounded-xl max-[620px]:gap-2 max-[620px]:rounded-[10px] max-[620px]:p-3 ${overlayVariantClass}`}
+      className="relative flex h-full min-h-0 w-full flex-col gap-3 overflow-hidden rounded-[15px] border border-[#2b6036] bg-[#071108] p-[18px] text-ink shadow-[0_24px_80px_rgb(0_0_0_/_52%),inset_0_0_0_1px_rgb(139_255_154_/_4%)] max-[920px]:rounded-xl max-[620px]:gap-2 max-[620px]:rounded-[10px] max-[620px]:p-3"
       role={overlayRole}
       aria-modal={overlayRole === "dialog" ? true : undefined}
       aria-label="tmux window layout"
       tabIndex={onClose ? -1 : undefined}
-      onPointerDown={
-        onClose
-          ? (event) => {
-              if (isOverlayBackdropTarget(event.target, event.currentTarget)) onClose();
-            }
-          : undefined
-      }
     >
-      <div className={`flex min-w-0 items-center justify-between gap-3 ${headingVariantClass}`}>
-        <div className={`flex min-w-0 flex-col items-start gap-[7px] ${headingCopyVariantClass}`}>
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-col items-start gap-[7px]">
           <span className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted">
             <span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(97_143_55_/_12%)]" /> WINDOW MAP
           </span>
-          <strong
-            className={`overflow-hidden font-mono text-[0.72rem] font-semibold text-ellipsis whitespace-nowrap text-[#dcffe0] ${ghost ? "text-[0.64rem] text-[#c4f3c9] [text-shadow:0_1px_8px_#000]" : ""}`}
-          >
+          <strong className="overflow-hidden font-mono text-[0.72rem] font-semibold text-ellipsis whitespace-nowrap text-[#dcffe0]">
             {activeWindow
               ? `${activeWindow.sessionName} · ${activeWindow.name || `window ${activeWindow.index}`}`
               : "No tmux window"}
@@ -136,6 +108,15 @@ export function PaneLayoutOverlay({
           <span className="shrink-0 font-mono text-[0.52rem] text-[#4b7c54] max-[620px]:text-[0.47rem]">
             {windows.length} windows · {activeSessionPaneCount} panes
           </span>
+          {onCreatePane ? (
+            <button
+              className="rounded-[7px] border border-[#315f3a] bg-[#0b2110] px-2 py-1.5 font-mono text-[0.52rem] text-[#9acba1] transition-colors hover:border-lime-deep hover:text-lime"
+              type="button"
+              onClick={onCreatePane}
+            >
+              + pane
+            </button>
+          ) : null}
           {onClose ? (
             <button
               ref={closeButtonRef}
@@ -151,7 +132,7 @@ export function PaneLayoutOverlay({
       </div>
 
       <div
-        className={`flex min-w-0 gap-[5px] overflow-x-auto p-0.5 [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable] ${windowTabsVariantClass}`}
+        className="flex min-w-0 gap-[5px] overflow-x-auto p-0.5 [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]"
         role="tablist"
         aria-label="tmux windows"
       >
@@ -162,13 +143,10 @@ export function PaneLayoutOverlay({
           const selected = window.id === activeWindow?.id;
           const windowSelectionClass = selected
             ? "border-[#347243] bg-[#12331a] text-[#d8ffdc] shadow-[inset_0_-2px_0_var(--color-lime-deep)]"
-            : "border-transparent bg-[rgb(7_21_10_/_64%)]";
-          const windowGhostClass = ghost
-            ? `border-[rgb(139_255_154_/_42%)] bg-[rgb(3_14_6_/_32%)] shadow-none backdrop-blur-[3px] ${selected ? "border-[rgb(139_255_154_/_46%)] bg-[rgb(57_214_91_/_24%)] shadow-[inset_0_-1px_0_var(--color-lime-deep)]" : ""}`
-            : "";
+            : "border-transparent bg-[#07150a] text-[#6c9a75]";
           return (
             <button
-              className={`flex min-w-0 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[7px] border px-[9px] py-[7px] font-mono text-[0.56rem] text-[#6c9a75] transition-colors hover:border-[#347243] hover:bg-[#12331a] hover:text-[#d8ffdc] max-[620px]:px-[7px] max-[620px]:py-1.5 max-[620px]:text-[0.5rem] ${windowSelectionClass} ${windowGhostClass}`}
+              className={`flex min-w-0 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[7px] border px-[9px] py-[7px] font-mono text-[0.56rem] transition-colors hover:border-[#347243] hover:bg-[#12331a] hover:text-[#d8ffdc] max-[620px]:px-[7px] max-[620px]:py-1.5 max-[620px]:text-[0.5rem] ${windowSelectionClass}`}
               key={window.id}
               type="button"
               role="tab"
@@ -189,24 +167,21 @@ export function PaneLayoutOverlay({
 
       {activeWindow ? (
         <div
-          className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-[11px] border border-[#2b6036] bg-[rgb(1_6_3_/_86%)] shadow-[inset_0_0_30px_rgb(57_214_91_/_5%)] ${panelVariantClass}`}
+          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[11px] border border-[#2b6036] bg-[#020503] shadow-[inset_0_0_30px_rgb(57_214_91_/_5%)]"
           role="tabpanel"
           aria-label={`${activeWindow.sessionName} window ${activeWindow.index}`}
         >
-          <div
-            className={`flex min-h-[30px] items-center justify-between gap-2.5 border-b border-[#1d4426] px-2.5 font-mono text-[0.53rem] text-[#5d9168] max-[620px]:min-h-[26px] max-[620px]:px-2 max-[620px]:text-[0.47rem] ${ghost ? "hidden" : ""}`}
-          >
+          <div className="flex min-h-[30px] items-center justify-between gap-2.5 border-b border-[#1d4426] px-2.5 font-mono text-[0.53rem] text-[#5d9168] max-[620px]:min-h-[26px] max-[620px]:px-2 max-[620px]:text-[0.47rem]">
             <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[#9fd5a6]">
               {activeWindow.sessionName}
             </span>
             <span>window {activeWindow.index}</span>
             <span>{activeWindow.panes.length} panes in window</span>
           </div>
-          <div
-            className={`grid min-h-0 flex-1 gap-1 p-1 max-[620px]:gap-[3px] max-[620px]:p-[3px] ${paneGridClass} ${ghost ? "gap-0 p-0" : ""}`}
-          >
+          <div className={`grid min-h-0 flex-1 gap-1 p-1 max-[620px]:gap-[3px] max-[620px]:p-[3px] ${paneGridClass}`}>
             {activeWindow.panes.map((pane) => {
               const waiting = pane.state === "waiting_input" || pane.state === "waiting_approval";
+              const selected = pane.hostPaneId === selectedTarget;
               const statusClass = waiting
                 ? "text-amber"
                 : pane.state === "failed"
@@ -217,9 +192,23 @@ export function PaneLayoutOverlay({
                 : pane.state === "failed"
                   ? "bg-[#f07e7e]"
                   : "bg-lime-deep";
+              const paneButtonLayoutClass =
+                activeWindow.hasGeometry && !useCompactPaneList
+                  ? "absolute min-h-0"
+                  : useCompactPaneList
+                    ? "relative min-h-14"
+                    : "min-h-[72px]";
+              const paneButtonShapeClass =
+                activeWindow.hasGeometry && !useCompactPaneList ? "rounded-none" : "rounded-[7px]";
+              const paneButtonSurfaceClass = selected
+                ? "border-lime-deep bg-[#0b2511] text-[#e0ffe3] shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)]"
+                : "border-[#1b4526] bg-[#071409] text-[#89bd91]";
+              const paneButtonInteractionClass =
+                "hover:border-lime-deep hover:bg-[#0b2511] hover:text-[#e0ffe3] hover:shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)]";
+              const paneButtonSpacingClass = `p-[9px] ${useCompactPaneList ? "" : "max-[620px]:min-h-[62px] max-[620px]:p-[7px]"}`;
               return (
                 <button
-                  className={`flex min-w-0 min-h-[72px] flex-col items-start justify-end overflow-hidden rounded-[7px] border border-[#1b4526] bg-pane-grid bg-[#071409] bg-[length:100%_16px] p-[9px] text-left text-[#89bd91] transition-[border-color,background,box-shadow] hover:border-lime-deep hover:bg-[#0b2511] hover:text-[#e0ffe3] hover:shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)] max-[620px]:min-h-[62px] max-[620px]:p-[7px] ${activeWindow.hasGeometry && !useCompactPaneList ? "absolute min-h-0 rounded-none" : useCompactPaneList ? "relative min-h-14" : ""} ${pane.hostPaneId === selectedTarget ? "border-lime-deep bg-[#0b2511] text-[#e0ffe3] shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)]" : ""} ${ghost ? "min-h-0 justify-end rounded-[3px] border-[rgb(139_255_154_/_42%)] bg-[rgb(3_14_6_/_18%)] p-[9px] shadow-[inset_0_0_0_1px_rgb(0_0_0_/_14%)] backdrop-blur-[1px] [text-shadow:0_1px_8px_#000] hover:bg-[rgb(57_214_91_/_31%)]" : ""}`}
+                  className={`flex min-w-0 flex-col items-start justify-end overflow-hidden border bg-pane-grid bg-[length:100%_16px] text-left transition-[border-color,background,box-shadow] ${paneButtonLayoutClass} ${paneButtonShapeClass} ${paneButtonSurfaceClass} ${paneButtonInteractionClass} ${paneButtonSpacingClass}`}
                   key={pane.id}
                   type="button"
                   onClick={() => onSelect(pane)}
@@ -255,18 +244,12 @@ export function PaneLayoutOverlay({
         <p className="m-0 text-[0.7rem] text-muted">No tmux windows found.</p>
       )}
 
-      <div
-        className={`flex items-center justify-between gap-2.5 font-mono text-[0.52rem] text-[#4b7c54] ${footerVariantClass}`}
-      >
+      <div className="flex items-center justify-between gap-2.5 font-mono text-[0.52rem] text-[#4b7c54]">
         <span>tap a pane to open</span>
         <span>⌁ live tmux layout</span>
       </div>
     </section>
   );
-}
-
-export function isOverlayBackdropTarget(target: unknown, currentTarget: unknown): boolean {
-  return target !== null && target === currentTarget;
 }
 
 const FOCUSABLE_SELECTOR =

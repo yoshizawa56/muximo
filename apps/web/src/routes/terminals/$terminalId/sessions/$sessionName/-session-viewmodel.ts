@@ -12,6 +12,7 @@ export type SessionOverviewViewModel = {
   errorMessage?: string | null;
   onSelectPane: (pane: PaneSummary) => void;
   onCreatePane: () => void;
+  onRefresh: () => void;
   onBack: () => void;
   onDisconnect: () => void;
 };
@@ -48,6 +49,9 @@ export function useSessionViewModel(): SessionOverviewViewModel {
         to: "/terminals/$terminalId/sessions/$sessionName/panes/new",
         params: { terminalId, sessionName },
       });
+    },
+    onRefresh: () => {
+      void panesQuery.refetch();
     },
     onBack: () => {
       void navigate({ to: "/terminals/$terminalId/sessions", params: { terminalId } });

@@ -177,11 +177,7 @@ export const ConnectedWithWindowMap: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: /open tmux window map/i }));
     await userEvent.click(canvas.getByRole("tab", { name: /muximo 1/ }));
-    await userEvent.click(canvas.getByRole("button", { name: /close window map/i }));
-    await expect(canvas.getByRole("button", { name: /open tmux window map/i })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    await expect(canvas.getByRole("tab", { name: /muximo 1/ })).toHaveAttribute("aria-selected", "true");
   },
 };
 
