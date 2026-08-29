@@ -18,17 +18,15 @@ export class RestartDaemon {
       throw error;
     }
 
-    if (
-      await waitFor(() => this.dependencies.runtime.isHealthy(options.host, options.port), 1_000, this.dependencies)
-    ) {
+    if (await waitFor(() => this.dependencies.runtime.isHealthy(options), 1_000, this.dependencies)) {
       return { state: "restarted-by-service-manager", host: options.host, port: options.port };
     }
 
     const startupStartedAt = this.dependencies.clock.now();
-    const child = this.dependencies.runtime.spawn(options);
+    const child = await this.dependencies.runtime.spawn(options);
     if (
       !(await waitFor(
-        () => this.dependencies.runtime.isHealthy(options.host, options.port),
+        () => this.dependencies.runtime.isHealthy(options, child.pid),
         this.dependencies.lifecycleTimeoutMs,
         this.dependencies,
       ))

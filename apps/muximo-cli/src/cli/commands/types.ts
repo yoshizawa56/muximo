@@ -1,5 +1,6 @@
 import type { Writable } from "node:stream";
 import type { AgentBackend } from "@muximo/domain";
+import type { MuximoCliRuntimeOptions } from "../runtime-types.js";
 
 export type CliIo = {
   out: Writable;
@@ -60,39 +61,24 @@ export type CliDoctorInput = {
 };
 
 export type CliDaemonInput = {
-  command: "start" | "status" | "stop" | "restart" | "ensure";
+  command: "start" | "status" | "stop" | "restart" | "ensure" | "log";
   foreground: boolean;
   refreshServers: boolean;
-  host: string;
-  port: number;
-  pidFile?: string;
-  controlSocket?: string;
-  muximodBaseUrl?: string;
-  logLevel?: "error" | "warn" | "info" | "debug";
-  logFile?: string;
-  allowedOrigins?: readonly string[];
+  lines?: number;
 };
 
 export type CliPairInput = {
   withoutServe: boolean;
   muximodBaseUrl?: string;
-  controlSocket?: string;
   display: "browser" | "terminal";
 };
 
 export type CliServeInput = {
   provider: "tailscale";
-  muximodHost: string;
-  muximodPort: number;
+  command: "tailscale" | "status" | "stop";
+  localPort: number;
   externalPort: number;
-  pidFile?: string;
-  logLevel: "error" | "warn" | "info" | "debug";
-  logFile?: string;
-  allowedOrigins?: readonly string[];
-};
-
-export type CliDevInput = {
-  serveProvider?: "tailscale";
+  path?: string;
 };
 
 export type CliWorkspaceListInput = {
@@ -136,7 +122,6 @@ export type CliHandlers = {
   daemon(input: CliDaemonInput): Promise<number>;
   pair(input: CliPairInput): Promise<number>;
   serve(input: CliServeInput): Promise<number>;
-  dev(input: CliDevInput): Promise<number>;
   workspaceList(input: CliWorkspaceListInput): Promise<number>;
   workspaceAdd(input: CliWorkspaceAddInput): Promise<number>;
   workspaceUpdate(input: CliWorkspaceUpdateInput): Promise<number>;
@@ -147,8 +132,8 @@ export type CliAppDeps = {
   io: CliIo;
   handlers: CliHandlers;
   cwd: string;
-  environment?: NodeJS.ProcessEnv;
-  includeDevelopmentCommands?: boolean;
+  environment: NodeJS.ProcessEnv;
+  runtime?: MuximoCliRuntimeOptions;
   rootCommand?: string;
   lifecycle?: CliCommandLifecycle;
 };
@@ -163,8 +148,8 @@ export type CliCommandContext = {
   cwd: string;
   args: readonly string[];
   environment: NodeJS.ProcessEnv;
+  runtime?: MuximoCliRuntimeOptions;
   rootCommand: string;
-  includeDevelopmentCommands: boolean;
   report(status: number): void;
   lifecycle?: CliCommandLifecycle;
 };

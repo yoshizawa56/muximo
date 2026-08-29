@@ -1,14 +1,16 @@
 import type { Readable, Writable } from "node:stream";
-import type { DatabaseSchemaSynchronizer } from "@muximo/infrastructure";
+import { DaemonHealthError } from "@muximo/application";
+import { defaultLogFile } from "@muximo/infrastructure/cli-client";
+import { getProfile, resolveProfileName } from "@muximo/profile";
 import { createCliApp } from "./cli/app.js";
 import { globalOptionSpecs } from "./cli/commands/global.js";
 import type { CliHandlers } from "./cli/commands/types.js";
 import { createCliComposition } from "./cli/compose.js";
-import { resolveCliOptions } from "./cli/options/index.js";
+import { readOptionValues, scanRootOptions } from "./cli/options/index.js";
+import { presentDaemonError } from "./cli/presenters/daemon.js";
+import { resolveMuximoCliRuntimeOptions } from "./cli/runtime.js";
 
 export type CliEntrypointOptions = {
-  schemaSynchronizer: DatabaseSchemaSynchronizer;
-  includeDevelopmentCommands: boolean;
   env?: NodeJS.ProcessEnv;
   input?: Readable;
   out?: Writable;
@@ -21,52 +23,62 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
     out: options.out ?? process.stdout,
     err: options.err ?? process.stderr,
   };
-  const environment = { ...process.env, ...options.env };
+  const inputEnvironment = { ...process.env, ...options.env };
 
   if (isParserOnlyInvocation(args)) {
     const app = createCliApp({
       io,
       cwd: process.cwd(),
-      environment,
+      environment: inputEnvironment,
       handlers: createNoopHandlers(),
-      includeDevelopmentCommands: options.includeDevelopmentCommands,
     });
     try {
       return await app.execute(args);
     } catch (error) {
-      return reportEntrypointError(io.err, error);
+      return reportEntrypointError(io.err, error, inputEnvironment);
     }
   }
 
-  const globalOptions = resolveCliOptions({}, globalOptionSpecs, {
-    args: rootOptionArguments(args),
-    environment,
-  });
-  const composition = createCliComposition({
-    schemaSynchronizer: options.schemaSynchronizer,
-    includeDevelopmentCommands: options.includeDevelopmentCommands,
-    env: environment,
-    input: options.input,
-    io,
-    logLevel: globalOptions.verbose === true ? "debug" : undefined,
-  });
+  let environment = inputEnvironment;
+  let composition: ReturnType<typeof createCliComposition> | undefined;
   try {
+    const rootOptions = scanRootOptions(args, globalOptionSpecs);
+    const rawGlobalOptions = readOptionValues(rootOptions.options, globalOptionSpecs);
+    const profile = getProfile({
+      name: resolveProfileName(rawGlobalOptions.environment ?? inputEnvironment.MUXIMO_ENV),
+      cwd: process.cwd(),
+      baseEnvironment: inputEnvironment,
+    });
+    const runtimeResolution = resolveMuximoCliRuntimeOptions({
+      raw: rawGlobalOptions,
+      args: rootOptions.options,
+      environment: profile.environment,
+      cwd: process.cwd(),
+    });
+    environment = runtimeResolution.environment;
+    composition = createCliComposition({
+      environment,
+      input: options.input,
+      io,
+      runtime: runtimeResolution.runtime,
+    });
     return await composition.execute(args);
   } catch (error) {
-    return reportEntrypointError(io.err, error);
+    return reportEntrypointError(io.err, error, environment);
   } finally {
-    composition.close();
+    composition?.close();
   }
 }
 
 function isCompletionInvocation(args: readonly string[]): boolean {
-  return args.find((argument) => argument !== "--" && !argument.startsWith("-")) === "completion";
+  const commandIndex = firstCommandIndex(args);
+  return commandIndex >= 0 && args[commandIndex] === "completion";
 }
 
 function isParserOnlyInvocation(args: readonly string[]): boolean {
-  const end = args.indexOf("--");
-  const parserArguments = end < 0 ? args : args.slice(0, end);
-  const hasCommand = args.some((argument) => argument !== "--" && !argument.startsWith("-"));
+  const commandIndex = firstCommandIndex(args);
+  const parserArguments = commandIndex < 0 ? args : args.slice(0, commandIndex);
+  const hasCommand = commandIndex >= 0;
   return (
     args.length === 0 ||
     !hasCommand ||
@@ -75,13 +87,19 @@ function isParserOnlyInvocation(args: readonly string[]): boolean {
   );
 }
 
-function rootOptionArguments(args: readonly string[]): readonly string[] {
-  const commandIndex = args.findIndex((argument) => argument !== "--" && !argument.startsWith("-"));
-  return commandIndex < 0 ? args : args.slice(0, commandIndex);
+function firstCommandIndex(args: readonly string[]): number {
+  return scanRootOptions(args, globalOptionSpecs).commandIndex;
 }
 
-function reportEntrypointError(err: Writable, error: unknown): number {
-  err.write(`muximo: ${error instanceof Error ? error.message : String(error)}\n`);
+function reportEntrypointError(err: Writable, error: unknown, environment?: NodeJS.ProcessEnv): number {
+  if (error instanceof DaemonHealthError) {
+    return presentDaemonError(
+      error,
+      { out: err, err },
+      environment === undefined ? undefined : defaultLogFile(environment),
+    );
+  }
+  err.write(`[muximo-cli] error: ${error instanceof Error ? error.message : String(error)}\n`);
   return 1;
 }
 
@@ -98,7 +116,6 @@ function createNoopHandlers(): CliHandlers {
     daemon: async () => 0,
     pair: async () => 0,
     serve: async () => 0,
-    dev: async () => 0,
     workspaceList: async () => 0,
     workspaceAdd: async () => 0,
     workspaceUpdate: async () => 0,

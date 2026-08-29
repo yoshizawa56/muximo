@@ -1,4 +1,4 @@
-import type { WorkspaceDirectory } from "@muximo/contract";
+import type { WorkspaceDirectory } from "@muximo/contract/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";

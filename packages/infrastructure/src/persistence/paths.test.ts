@@ -1,5 +1,4 @@
 import {
-  hasError,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -8,13 +7,12 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { resolveMuximodPaths, validateMuximodControlSocketPath } from "./paths.js";
+import { resolveMuximodPaths } from "./paths.js";
 
 type Context = {};
 type ResolveInput = { environment: NodeJS.ProcessEnv; overrides?: Parameters<typeof resolveMuximodPaths>[1] };
 type ResolvedPaths = ReturnType<typeof resolveMuximodPaths>;
 
-const longInstanceDirectory = `/tmp/${"a".repeat(120)}`;
 const resolveCases = [
   {
     name: "uses the default instance layout when no profile is configured",
@@ -24,7 +22,7 @@ const resolveCases = [
         instanceDirectory: "/home/test/.local/state/muximo",
         databaseFile: "/home/test/.local/state/muximo/muximod.sqlite",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
-        pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
+        pidFile: "/home/test/.local/state/muximo/muximod.pid",
         controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
@@ -37,7 +35,7 @@ const resolveCases = [
         instanceDirectory: "/tmp/muximo/main",
         databaseFile: "/tmp/muximo/main/muximod.sqlite",
         hookOutputDirectory: "/tmp/muximo/main/hooks",
-        pidFile: "/tmp/muximo/main/muximod.sqlite.pid",
+        pidFile: "/tmp/muximo/main/muximod.pid",
         controlSocket: "/tmp/muximo/main/muximod.sock",
       }),
     ],
@@ -48,18 +46,15 @@ const resolveCases = [
       environment: { MUXIMOD_INSTANCE_DIR: "/tmp/muximo/main" },
       overrides: {
         databaseFile: "/var/lib/muximo/muximod.sqlite",
-        hookOutputDirectory: "/tmp/muximo/hooks",
-        pidFile: "/tmp/muximo/run/muximod.pid",
-        controlSocket: "/tmp/muximo/run/muximod.sock",
       },
     },
     assert: [
       returns<Context, ResolvedPaths>({
         instanceDirectory: "/tmp/muximo/main",
         databaseFile: "/var/lib/muximo/muximod.sqlite",
-        hookOutputDirectory: "/tmp/muximo/hooks",
-        pidFile: "/tmp/muximo/run/muximod.pid",
-        controlSocket: "/tmp/muximo/run/muximod.sock",
+        hookOutputDirectory: "/tmp/muximo/main/hooks",
+        pidFile: "/tmp/muximo/main/muximod.pid",
+        controlSocket: "/tmp/muximo/main/muximod.sock",
       }),
     ],
   },
@@ -74,7 +69,7 @@ const resolveCases = [
         instanceDirectory: "/home/test/.local/state/muximo",
         databaseFile: "/tmp/custom.sqlite",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
-        pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
+        pidFile: "/home/test/.local/state/muximo/muximod.pid",
         controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
@@ -100,7 +95,7 @@ const resolveCases = [
         instanceDirectory: "/home/test/.local/state/muximo",
         databaseFile: "/home/test/.local/state/muximo/muximod.sqlite",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
-        pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
+        pidFile: "/home/test/.local/state/muximo/muximod.pid",
         controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
@@ -113,7 +108,7 @@ const resolveCases = [
         instanceDirectory: "/home/test/.local/state/muximo",
         databaseFile: "/home/test/.local/state/muximo/muximod.sqlite",
         hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
-        pidFile: "/home/test/.local/state/muximo/muximod.sqlite.pid",
+        pidFile: "/home/test/.local/state/muximo/muximod.pid",
         controlSocket: "/home/test/.local/state/muximo/muximod.sock",
       }),
     ],
@@ -127,27 +122,7 @@ const resolveTable: OperationTable<undefined, "default", ResolveInput, ResolvedP
   observe: () => ({}),
 };
 
-type ValidateInput = { path: string };
-const validateCases = [
-  {
-    name: "rejects control socket paths that cannot fit the Unix socket address",
-    input: { path: resolveMuximodPaths({ MUXIMOD_INSTANCE_DIR: longInstanceDirectory }).controlSocket },
-    assert: [hasError<Context, undefined>({ message: /control socket path is too long/ })],
-  },
-] satisfies readonly OperationCase<"default", ValidateInput, undefined, Context>[];
-
-const validateTable: OperationTable<undefined, "default", ValidateInput, undefined, Context> = {
-  defaultFixture: noFixture(),
-  cases: validateCases,
-  execute: (_fixture, input) => {
-    validateMuximodControlSocketPath(input.path);
-    return undefined;
-  },
-  observe: () => ({}),
-};
-
 describe("muximod instance paths", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, resolveTable);
-  runOperationTable(register, validateTable);
 });

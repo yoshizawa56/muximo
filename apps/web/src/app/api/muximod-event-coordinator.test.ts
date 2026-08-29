@@ -1,4 +1,4 @@
-import type { MuximodEvent } from "@muximo/contract";
+import type { MuximodEvent } from "@muximo/contract/api";
 import {
   type FixtureHandle,
   hasObserved,

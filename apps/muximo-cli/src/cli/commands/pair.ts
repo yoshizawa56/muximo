@@ -4,6 +4,14 @@ import { defineOptions, registerOptions } from "../options/index.js";
 import type { CliCommandContext, CliHandlers } from "./types.js";
 import { invokeCliHandler, resolveCommandOptions } from "./validation.js";
 
+const httpUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+  }, "URL must use http or https without credentials");
+
 export const pairOptionSpecs = defineOptions(
   {
     key: "withoutServe",
@@ -16,17 +24,8 @@ export const pairOptionSpecs = defineOptions(
     key: "muximodBaseUrl",
     flags: ["--muximod-base-url <url>"],
     description: "Base URL used to reach muximod.",
-    exposure: "both",
-    environment: { name: "MUXIMOD_PAIRING_BASE_URL", description: "Base URL used to reach muximod." },
+    exposure: "cli",
     completion: { kind: "url" },
-  },
-  {
-    key: "controlSocket",
-    flags: ["--control-socket <path>"],
-    description: "Path to the muximod control socket.",
-    exposure: "both",
-    environment: { name: "MUXIMOD_CONTROL_SOCKET", description: "Path to the muximod control socket." },
-    completion: { kind: "file" },
   },
   {
     key: "open",
@@ -47,8 +46,7 @@ export const pairOptionSpecs = defineOptions(
 export const pairSchema = z
   .object({
     withoutServe: z.boolean().default(false),
-    muximodBaseUrl: z.string().url().optional(),
-    controlSocket: z.string().min(1).optional(),
+    muximodBaseUrl: httpUrlSchema.optional(),
     open: z.boolean().default(false),
     terminal: z.boolean().default(false),
   })

@@ -28,6 +28,7 @@ type Harness = {
   healthyPorts: Set<number>;
   availablePorts: Set<number>;
   spawnRecords: SpawnRecord[];
+  spawnEnvironments: NodeJS.ProcessEnv[];
   alivePids: Set<number>;
   killed: { pid: number; signal: string }[];
   childrenDieImmediately: boolean;
@@ -68,6 +69,7 @@ type ServerInput = {
   processExit?: ProcessExitMode;
   processExitByPid?: Readonly<Record<number, ProcessExitMode>>;
   childrenDieImmediately?: boolean;
+  environment?: NodeJS.ProcessEnv;
 };
 
 type ServerResult = {
@@ -75,6 +77,7 @@ type ServerResult = {
   entries?: { workspaceRoot: string; pid: number; port: number; version: string }[];
   spawned: readonly SpawnRecord[];
   killed: readonly { pid: number; signal: string }[];
+  spawnEnvironment?: NodeJS.ProcessEnv;
   registry: Record<string, unknown>;
   errorCode?: string;
   errorMessage?: string;
@@ -98,6 +101,7 @@ function createHarness(): Harness {
     healthyPorts: new Set(),
     availablePorts: new Set(),
     spawnRecords: [],
+    spawnEnvironments: [],
     alivePids: new Set(),
     killed: [],
     childrenDieImmediately: false,
@@ -111,7 +115,11 @@ function createManager(harness: Harness, input: ServerInput): OpenCodeServerMana
     executable: "opencode",
     startupTimeoutMs: input.startupTimeoutMs ?? 500,
     healthPollIntervalMs: input.healthPollIntervalMs ?? 5,
-    spawn: (command, args, options) => spawnRecord(harness, command, args, options.cwd),
+    environment: input.environment,
+    spawn: (command, args, options) => {
+      harness.spawnEnvironments.push(options.env);
+      return spawnRecord(harness, command, args, options.cwd);
+    },
     allocatePort: async () => {
       const port = input.portSequence?.[harness.ports.length] ?? 49_152 + harness.ports.length;
       harness.ports.push(port);
@@ -206,6 +214,30 @@ const cases = [
           },
         ],
         killed: [],
+        registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        failure: "none",
+      }),
+    ],
+  },
+  {
+    name: "passes the injected environment to an owned server",
+    input: {
+      operation: "ensure" as const,
+      environment: { MUXIMO_OPENCODE_BIN: "/opt/opencode", MUXIMO_WORKTREE_ID: "worktree-1" },
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: { workspaceRoot: "/ws", pid: 1_000, port: 49_152, version: "1.2.3" },
+        spawned: [
+          {
+            command: "opencode",
+            args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"],
+            cwd: "/ws",
+            pid: 1_000,
+          },
+        ],
+        killed: [],
+        spawnEnvironment: { MUXIMO_OPENCODE_BIN: "/opt/opencode", MUXIMO_WORKTREE_ID: "worktree-1" },
         registry: { "/ws": { pid: 1_000, port: 49_152, version: "1.2.3", startedAt: expectAnyStartedAt } },
         failure: "none",
       }),
@@ -817,6 +849,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
           : undefined,
         spawned: harness.spawnRecords,
         killed: harness.killed,
+        ...(input.environment ? { spawnEnvironment: harness.spawnEnvironments[0] } : {}),
         registry: normalizedRegistry,
         ...(errorCode ? { errorCode, retryable } : {}),
         ...(errorMessage ? { errorMessage } : {}),

@@ -1,57 +1,46 @@
-import { execFile as execFileCallback } from "node:child_process";
-import { resolve } from "node:path";
-import { promisify } from "node:util";
-import { errorFields, errorMessage, type Logger, type LogLevel } from "../logging/index.js";
-import { buildMuximodDaemonEnvironment, normalizeAllowedOrigins } from "../process/daemon.js";
+import { errorFields, type Logger } from "../logging/index.js";
 import {
   buildServeArgs,
   buildServeHttpUrl,
-  buildTailscaleInvocation,
-  normalizeTailscaleStdout,
-  parseTailscaleHostname,
+  createTailscaleServeClient,
+  type TailscaleCommandRunner,
+  type TailscaleServeRoute,
 } from "../tailscale/index.js";
-
-const execFile = promisify(execFileCallback);
-const tailscaleCommandTimeoutMs = 15_000;
 
 export type ServeInput = {
   provider: "tailscale";
-  muximodHost: string;
-  muximodPort: number;
+  localPort: number;
   externalPort: number;
-  pidFile?: string;
-  logLevel: "error" | "warn" | "info" | "debug";
-  logFile?: string;
-  allowedOrigins?: readonly string[];
+  path?: string;
 };
 
-export type ServeCommandOptions = ServeInput & { tailscaleBinary: string; hostname?: string };
-
-export type ServeCommandDependencies = {
-  ensureMuximod: (options: ServeCommandOptions, allowedOrigins: readonly string[]) => Promise<void>;
-  runCommand?: CommandRunner;
-  logger?: Logger;
+export type ServeCommandOptions = ServeInput & {
+  tailscaleBinary: string;
+  hostname?: string;
 };
 
 export type TailscaleServeResult = {
   options: ServeCommandOptions;
+  route: TailscaleServeRoute;
   serveArgs: string[];
-  hostname?: string;
-  url?: string;
+  hostname: string;
+  url: string;
   localUrl: string;
-  allowedOrigins: readonly string[];
-  daemonEnvironment: NodeJS.ProcessEnv;
   stdout: string;
   stderr: string;
+  statusJson: string;
 };
 
-type CommandRunner = (
-  command: string,
-  args: string[],
-  options: { env: NodeJS.ProcessEnv },
-) => Promise<{ stdout: string; stderr: string }>;
+export type ServeCommandDependencies = {
+  runCommand?: (
+    command: string,
+    args: string[],
+    options: { env: NodeJS.ProcessEnv },
+  ) => Promise<{ stdout: string; stderr: string }>;
+  logger?: Logger;
+};
 
-/** Configures Tailscale Serve after muximod receives exact browser origins. */
+/** Configures only the muximod external route; process lifecycle is separate. */
 export async function ensureTailscaleServe(
   input: ServeInput,
   dependencies: ServeCommandDependencies,
@@ -60,73 +49,57 @@ export async function ensureTailscaleServe(
   const options: ServeCommandOptions = {
     ...input,
     tailscaleBinary: environment.TAILSCALE_BIN ?? "tailscale",
-    hostname: environment.MUXIMO_TAILSCALE_HOSTNAME,
+    ...(environment.MUXIMO_TAILSCALE_HOSTNAME ? { hostname: environment.MUXIMO_TAILSCALE_HOSTNAME } : {}),
   };
-  const runCommand = dependencies.runCommand ?? runExternalCommand;
-  const logger = dependencies.logger;
-  const startedAt = Date.now();
-  logger?.debug("serve.started", {
-    muximodHost: options.muximodHost,
-    muximodPort: options.muximodPort,
-    externalPort: options.externalPort,
-    logLevel: options.logLevel,
-    logFileConfigured: Boolean(options.logFile),
+  const run = dependencies.runCommand === undefined ? undefined : adaptCommandRunner(dependencies.runCommand);
+  const client = createTailscaleServeClient({
+    environment,
+    binary: options.tailscaleBinary,
+    ...(run === undefined ? {} : { run }),
   });
-  let hostname = options.hostname;
-  if (!hostname && !options.allowedOrigins?.length && !environment.MUXIMOD_ALLOWED_ORIGINS) {
-    hostname = await discoverHostname(options.tailscaleBinary, runCommand, environment, logger);
-  }
-  const allowedOrigins = resolveServeAllowedOrigins(options, environment, hostname);
-  const daemonEnvironment = buildMuximodDaemonEnvironment({ allowedOrigins }, environment);
-  const muximodStartedAt = Date.now();
+  const startedAt = Date.now();
+  dependencies.logger?.debug("serve.route_started", {
+    component: "muximod",
+    localPort: input.localPort,
+    externalPort: input.externalPort,
+  });
   try {
-    await dependencies.ensureMuximod({ ...options, allowedOrigins }, allowedOrigins);
-    logger?.debug("muximod.ensure_finished", { durationMs: Date.now() - muximodStartedAt });
+    const result = await client.applyRoute({
+      localHost: "127.0.0.1",
+      localPort: input.localPort,
+      externalPort: input.externalPort,
+      path: input.path,
+      hostname: options.hostname,
+    });
+    dependencies.logger?.debug("serve.route_finished", {
+      component: "muximod",
+      durationMs: Date.now() - startedAt,
+    });
+    return {
+      options,
+      route: result.route,
+      serveArgs: buildServeArgs({ localPort: input.localPort, externalPort: input.externalPort, path: input.path }),
+      hostname: result.route.hostname,
+      url: result.route.publicUrl,
+      localUrl: `http://127.0.0.1:${input.localPort}`,
+      stdout: result.command.stdout,
+      stderr: result.command.stderr,
+      statusJson: result.statusJson,
+    };
   } catch (error) {
-    logger?.debug("muximod.ensure_failed", { durationMs: Date.now() - muximodStartedAt, ...errorFields(error) });
+    dependencies.logger?.debug("serve.route_failed", {
+      component: "muximod",
+      durationMs: Date.now() - startedAt,
+      ...errorFields(error),
+    });
     throw error;
   }
-  const serveArgs = buildServeArgs({ localPort: options.muximodPort, externalPort: options.externalPort });
-  const commandStartedAt = Date.now();
-  const result = await runCommand(options.tailscaleBinary, serveArgs, { env: environment });
-  logger?.debug("serve.subprocess_finished", {
-    kind: "tailscale",
-    durationMs: Date.now() - commandStartedAt,
-  });
-  const url = hostname
-    ? buildServeHttpUrl(hostname, options.externalPort)
-    : (options.allowedOrigins?.[0] ?? allowedOrigins[0]);
-  logger?.debug("serve.finished", {
-    durationMs: Date.now() - startedAt,
-    hostnameResolved: Boolean(hostname),
-    allowedOrigins,
-  });
-  return {
-    options,
-    serveArgs,
-    hostname,
-    url,
-    localUrl: localMuximodUrl(options.muximodHost, options.muximodPort),
-    allowedOrigins,
-    daemonEnvironment,
-    stdout: result.stdout,
-    stderr: result.stderr,
-  };
 }
 
-export function resolveServeAllowedOrigins(
-  options: Pick<ServeInput, "externalPort" | "allowedOrigins">,
-  environment: NodeJS.ProcessEnv,
-  hostname?: string,
-): string[] {
-  if (options.allowedOrigins?.length) return normalizeAllowedOrigins(options.allowedOrigins);
-  if (environment.MUXIMOD_ALLOWED_ORIGINS !== undefined) {
-    return normalizeAllowedOrigins(environment.MUXIMOD_ALLOWED_ORIGINS.split(","));
-  }
-  if (!hostname) {
-    throw new Error("could not determine the browser origin; set MUXIMO_TAILSCALE_HOSTNAME or MUXIMOD_ALLOWED_ORIGINS");
-  }
-  return normalizeAllowedOrigins([new URL(buildServeHttpUrl(hostname, options.externalPort)).origin]);
+export function adaptCommandRunner(
+  runCommand: NonNullable<ServeCommandDependencies["runCommand"]>,
+): TailscaleCommandRunner {
+  return (command, args, options) => runCommand(command, [...args], { env: options.environment });
 }
 
 export function localMuximodUrl(host: string, port: number): string {
@@ -136,47 +109,40 @@ export function localMuximodUrl(host: string, port: number): string {
   return `http://${urlHost}:${port}`;
 }
 
-async function discoverHostname(
-  binary: string,
-  runCommand: CommandRunner,
-  environment: NodeJS.ProcessEnv,
-  logger?: Logger,
-): Promise<string | undefined> {
-  try {
-    const result = await runCommand(binary, ["status", "--json"], { env: environment });
-    return parseTailscaleHostname(result.stdout);
-  } catch (error) {
-    logger?.debug("serve.hostname_lookup_failed", errorFields(error));
-    return undefined;
+export function normalizeAllowedOrigins(origins: readonly string[]): string[] {
+  const normalized = new Set<string>();
+  for (const value of origins) {
+    const origin = value.trim();
+    if (!origin) continue;
+    if (origin === "*") throw new Error("wildcard browser origins are not allowed");
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch (error) {
+      throw new Error(`invalid browser origin: ${safeUrlForError(origin)}`, { cause: error });
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`browser origin must use http or https: ${safeUrlForError(origin)}`);
+    }
+    if (parsed.username || parsed.password) throw new Error("browser origin must not contain credentials");
+    if (parsed.origin !== origin.replace(/\/$/u, "")) {
+      throw new Error(`browser origin must not include a path: ${safeUrlForError(origin)}`);
+    }
+    normalized.add(parsed.origin);
   }
+  return [...normalized].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
-async function runExternalCommand(
-  command: string,
-  args: string[],
-  options: { env: NodeJS.ProcessEnv },
-): Promise<{ stdout: string; stderr: string }> {
-  try {
-    const invocation = buildTailscaleInvocation(command, args, options.env);
-    const result = await execFile(invocation.command, invocation.args, {
-      env: invocation.environment,
-      encoding: "utf8",
-      maxBuffer: 256 * 1024,
-      timeout: tailscaleCommandTimeoutMs,
-    });
-    return { ...result, stdout: normalizeTailscaleStdout(result.stdout, invocation) };
-  } catch (error) {
-    throw new Error(`could not run ${command}: ${errorMessage(error)}`, { cause: error });
-  }
+export function routePublicUrl(route: Pick<TailscaleServeRoute, "hostname" | "externalPort" | "path">): string {
+  return buildServeHttpUrl(route.hostname, route.externalPort, route.path);
 }
 
-export function resolveServeLogOptions(environment: NodeJS.ProcessEnv): Pick<ServeInput, "logLevel" | "logFile"> {
-  const value = environment.MUXIMO_LOG_LEVEL ?? "info";
-  if (value !== "error" && value !== "warn" && value !== "info" && value !== "debug") {
-    throw new Error("MUXIMO_LOG_LEVEL must be one of error, warn, info, or debug");
+function safeUrlForError(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return "<redacted URL>";
+    return value;
+  } catch {
+    return "<invalid URL>";
   }
-  return {
-    logLevel: value as LogLevel,
-    logFile: environment.MUXIMO_LOG_FILE ? resolve(environment.MUXIMO_LOG_FILE) : undefined,
-  };
 }

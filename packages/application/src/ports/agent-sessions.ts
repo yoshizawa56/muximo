@@ -1,4 +1,11 @@
-import type { AgentBackend, AgentSessionRecord, PaneState, WorkspaceId, WorkspaceRecord } from "@muximo/domain";
+import type {
+  AgentBackend,
+  AgentSessionRecord,
+  PaneState,
+  WorkspaceDirectoryOption,
+  WorkspaceId,
+  WorkspaceRecord,
+} from "@muximo/domain";
 import type { ClaimExecutionInput } from "./repositories.js";
 
 /** Provider-neutral input for starting a managed agent session. */
@@ -172,7 +179,7 @@ export interface HookPort {
 
 /** Owns Git worktree creation, copy, inspection, and removal. */
 export interface WorktreePort {
-  create(workspace: WorkspaceRecord, name: string, override?: string): Promise<ManagedWorktreeState>;
+  create(workspace: WorkspaceDirectoryOption, name: string, override?: string): Promise<ManagedWorktreeState>;
   copyFiles(
     target: Pick<AgentSessionRecord, "workspaceRoot" | "worktreePath">,
     patterns: readonly string[],

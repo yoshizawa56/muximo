@@ -27,6 +27,7 @@ export type OpenCodePluginOptions = {
   serverManager?: OpenCodeServerManager;
   clientFactory?: (baseUrl: string) => OpenCodeClient;
   monitorFactory?: (options: OpenCodeMonitorOptions) => AgentMonitor;
+  environment?: NodeJS.ProcessEnv;
   registryFile?: string;
   executable?: string;
   attachExecutable?: string;
@@ -47,7 +48,8 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
   const manager =
     options.serverManager ??
     new OpenCodeServerManager({
-      registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(),
+      registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(options.environment),
+      environment: options.environment,
       executable: options.executable,
     });
 

@@ -2,10 +2,11 @@ import { errorFields, type Logger } from "../../logging/index.js";
 import { defaultOpenCodeRegistryFile, OpenCodeServerManager } from "./server.js";
 
 export async function disposeOwnedOpenCodeServers(
-  options: { registryFile?: string; logger?: Logger } = {},
+  options: { environment?: NodeJS.ProcessEnv; registryFile?: string; logger?: Logger } = {},
 ): Promise<void> {
   const manager = new OpenCodeServerManager({
-    registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(),
+    environment: options.environment,
+    registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(options.environment),
     onLog: (level, message, extra) => {
       if (level === "warn" || level === "error") {
         options.logger?.warn("opencode.server_cleanup", { message, ...extra });
@@ -24,10 +25,11 @@ export async function disposeOwnedOpenCodeServers(
 
 /** Refreshes owned servers while preserving their registered ports. */
 export async function refreshOwnedOpenCodeServers(
-  options: { registryFile?: string; logger?: Logger } = {},
+  options: { environment?: NodeJS.ProcessEnv; registryFile?: string; logger?: Logger } = {},
 ): Promise<void> {
   const manager = new OpenCodeServerManager({
-    registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(),
+    environment: options.environment,
+    registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(options.environment),
     onLog: (level, message, extra) => {
       if (level === "warn" || level === "error") {
         options.logger?.warn("opencode.server_refresh", { message, ...extra });

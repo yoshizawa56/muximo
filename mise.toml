@@ -7,24 +7,22 @@ tmux = "3.7b"
 description = "Install the locked workspace dependencies"
 run = "bun install --frozen-lockfile"
 
-[tasks.dev]
-description = "Start the local muximod and web development stack through Turbo and Portless"
-run = "bun dev"
-
-[tasks.dev-serve]
-description = "Start the source development stack and upsert its Tailscale Serve route"
-run = "bun run --filter serve dev"
-
 [tasks.ios]
 description = "Build, sync, and open the Web iOS app"
 raw = true
-run = "bun -F @muximo/web cap:sync && bun -F @muximo/web cap:open"
+run = "bun --cwd apps/web run cap:sync && bun --cwd apps/web run cap:open"
 
 [tasks.muximo]
 description = "Run the local muximo CLI with the supplied arguments"
 raw = true
 raw_args = true
-run = "bun run --filter @muximo/muximo-cli dev --"
+run = "bun --no-env-file apps/muximo-cli/src/index.ts --"
+
+[tasks.web]
+description = "Run the Web lifecycle CLI with the supplied arguments"
+raw = true
+raw_args = true
+run = "bun --no-env-file apps/web/cli.ts --"
 
 [tasks.check]
 description = "Run the complete repository verification"

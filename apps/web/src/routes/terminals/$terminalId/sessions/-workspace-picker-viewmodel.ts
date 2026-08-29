@@ -1,4 +1,4 @@
-import type { WorkspaceDirectory } from "@muximo/contract";
+import type { WorkspaceDirectory } from "@muximo/contract/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { invalidateWorkspaceData } from "../../../../app/api/invalidation";

@@ -31,6 +31,7 @@ type LifecycleResult =
   | DaemonStopResult;
 type LifecycleInput =
   | { operation: "ensure" }
+  | { operation: "ensure-dynamic-port" }
   | { operation: "restart"; refreshServers: boolean }
   | { operation: "start-background" }
   | { operation: "start-foreground" }
@@ -62,6 +63,7 @@ type LifecycleFixture = {
 type LifecycleContext = {
   outcomeState: string | undefined;
   outcomeKind: string | undefined;
+  outcomeEndpoint: string | undefined;
   errorReason: string | undefined;
   spawnCount: number;
   signalCount: number;
@@ -85,6 +87,16 @@ const cases = [
     input: { operation: "ensure" },
     assert: [
       hasObserved<LifecycleContext, LifecycleResult>("outcomeState", "already-running"),
+      hasObserved<LifecycleContext, LifecycleResult>("spawnCount", 0),
+    ],
+  },
+  {
+    name: "ensure returns the endpoint recorded by an already-running daemon",
+    fixture: "dynamic-port",
+    input: { operation: "ensure-dynamic-port" },
+    assert: [
+      hasObserved<LifecycleContext, LifecycleResult>("outcomeState", "already-running"),
+      hasObserved<LifecycleContext, LifecycleResult>("outcomeEndpoint", "127.0.0.1:4965"),
       hasObserved<LifecycleContext, LifecycleResult>("spawnCount", 0),
     ],
   },
@@ -194,6 +206,7 @@ const table: OperationTable<LifecycleFixture, string, LifecycleInput, LifecycleR
   defaultFixture: () => ({ fixture: createFixture("running") }),
   fixtures: {
     running: () => ({ fixture: createFixture("running") }),
+    "dynamic-port": () => ({ fixture: createFixture("dynamic-port") }),
     startable: () => ({ fixture: createFixture("startable") }),
     timeout: () => ({ fixture: createFixture("timeout") }),
     stale: () => ({ fixture: createFixture("stale") }),
@@ -206,6 +219,7 @@ const table: OperationTable<LifecycleFixture, string, LifecycleInput, LifecycleR
   execute: (fixture, input) => {
     switch (input.operation) {
       case "ensure":
+      case "ensure-dynamic-port":
         return fixture.service.ensure.execute(options);
       case "restart":
         return fixture.service.restart.execute({ ...options, refreshServers: input.refreshServers });
@@ -225,6 +239,7 @@ const table: OperationTable<LifecycleFixture, string, LifecycleInput, LifecycleR
       outcomeState:
         value && "state" in value ? value.state : value && "result" in value ? value.result.state : undefined,
       outcomeKind: value && "kind" in value ? value.kind : undefined,
+      outcomeEndpoint: readEndpoint(value),
       errorReason: result.ok
         ? undefined
         : result.error instanceof DaemonHealthError
@@ -240,19 +255,39 @@ const table: OperationTable<LifecycleFixture, string, LifecycleInput, LifecycleR
   },
 };
 
+function readEndpoint(value: LifecycleResult | undefined): string | undefined {
+  if (!value) return undefined;
+  if ("host" in value && "port" in value) return `${value.host}:${value.port}`;
+  if ("result" in value && "host" in value.result && "port" in value.result) {
+    return `${value.result.host}:${value.result.port}`;
+  }
+  return undefined;
+}
+
 function createFixture(key: string): LifecycleFixture {
   const fixture: LifecycleFixture = {
-    healthy: key === "running" || key === "restartable" || key === "service-manager" || key === "stop-timeout",
+    healthy:
+      key === "running" ||
+      key === "dynamic-port" ||
+      key === "restartable" ||
+      key === "service-manager" ||
+      key === "stop-timeout",
     healthyAfterSpawn: key === "startable" || key === "foreground" || key === "restartable",
     healthyAfterStop: key === "service-manager",
     alive: key !== "stale" && key !== "foreground",
     record:
       key === "stale" ||
       key === "running" ||
+      key === "dynamic-port" ||
       key === "restartable" ||
       key === "service-manager" ||
       key === "stop-timeout"
-        ? { pid: 401, host: options.host, port: options.port, startedAt: "2026-08-23T00:00:00.000Z" }
+        ? {
+            pid: 401,
+            host: options.host,
+            port: key === "dynamic-port" ? 4965 : options.port,
+            startedAt: "2026-08-23T00:00:00.000Z",
+          }
         : undefined,
     now: 0,
     sleeps: [],
@@ -266,7 +301,7 @@ function createFixture(key: string): LifecycleFixture {
 
   const runtime: DaemonRuntimePort = {
     runForeground: async () => ({ code: 0, interrupted: false }),
-    spawn: () => {
+    spawn: async () => {
       fixture.spawnCount += 1;
       fixture.alive = true;
       if (fixture.healthyAfterSpawn) fixture.healthy = true;
@@ -279,6 +314,7 @@ function createFixture(key: string): LifecycleFixture {
       };
     },
     isHealthy: async () => fixture.healthy,
+    isProcessHealthy: async () => fixture.healthy,
     isAlive: async () => fixture.alive,
     signal: () => {
       fixture.signalCount += 1;

@@ -1,4 +1,4 @@
-import { ensureTailscaleServe, type TailscaleServeResult } from "@muximo/infrastructure";
+import { ensureTailscaleServe, type TailscaleServeResult } from "@muximo/infrastructure/cli-client";
 import {
   hasError,
   hasObserved,
@@ -10,101 +10,86 @@ import {
 import { describe, it } from "vitest";
 
 type ServeFixture = {
-  ensureCalls: Array<{ origins: readonly string[]; environment: NodeJS.ProcessEnv }>;
-  commands: Array<{ args: readonly string[]; environment: NodeJS.ProcessEnv }>;
-  origin?: string;
-  daemonOrigin?: string;
-  daemonEnvironment?: string;
-  wildcard?: boolean;
-  ensureCount?: number;
-  commandCount?: number;
+  commands: string[][];
+  commandCount: number;
 };
 
 type ServeInput = {
   environment: NodeJS.ProcessEnv;
-  allowedOrigins?: readonly string[];
+  hostname?: string;
+  failCommand?: boolean;
 };
-const createFixture = () => ({ fixture: { ensureCalls: [], commands: [] } });
 
 const cases = [
   {
-    name: "passes the exact configured Tailscale origin before starting muximod",
-    input: {
-      environment: { MUXIMO_TAILSCALE_HOSTNAME: "web.tailnet.ts.net", PATH: "/usr/bin" },
-    },
+    name: "discovers the hostname and configures a persistent loopback route",
+    input: { environment: {} },
     assert: [
-      hasObserved<ServeFixture, TailscaleServeResult>("origin", "https://web.tailnet.ts.net"),
-      hasObserved<ServeFixture, TailscaleServeResult>("daemonOrigin", "https://web.tailnet.ts.net"),
-      hasObserved<ServeFixture, TailscaleServeResult>("daemonEnvironment", "https://web.tailnet.ts.net"),
-      hasObserved<ServeFixture, TailscaleServeResult>("wildcard", false),
+      hasObserved<ServeFixture, TailscaleServeResult>("commandCount", 3),
+      hasObserved<ServeFixture, TailscaleServeResult>("commands", [
+        ["status", "--json"],
+        ["serve", "--bg", "--https=8444", "--yes", "http://127.0.0.1:4317"],
+        ["serve", "status", "--json"],
+      ]),
     ],
   },
   {
-    name: "passes explicit origins without requiring a discovered hostname",
-    input: {
-      environment: { PATH: "/usr/bin", MUXIMOD_ALLOWED_ORIGINS: "https://configured.example" },
-      allowedOrigins: ["https://configured.example"],
-    },
+    name: "uses an explicitly configured hostname without a discovery call",
+    input: { environment: { MUXIMO_TAILSCALE_HOSTNAME: "machine.tailnet.ts.net" } },
     assert: [
-      hasObserved<ServeFixture, TailscaleServeResult>("origin", "https://configured.example"),
-      hasObserved<ServeFixture, TailscaleServeResult>("daemonOrigin", "https://configured.example"),
-      hasObserved<ServeFixture, TailscaleServeResult>("wildcard", false),
+      hasObserved<ServeFixture, TailscaleServeResult>("commandCount", 2),
+      hasObserved<ServeFixture, TailscaleServeResult>("commands", [
+        ["serve", "--bg", "--https=8444", "--yes", "http://127.0.0.1:4317"],
+        ["serve", "status", "--json"],
+      ]),
     ],
   },
   {
-    name: "rejects a wildcard environment before daemon startup",
-    input: {
-      environment: { MUXIMOD_ALLOWED_ORIGINS: "*", PATH: "/usr/bin" },
-    },
-    assert: [
-      hasError<ServeFixture, TailscaleServeResult>({ message: "wildcard browser origins are not allowed" }),
-      hasObserved<ServeFixture, TailscaleServeResult>("ensureCount", 0),
-      hasObserved<ServeFixture, TailscaleServeResult>("commandCount", 0),
-    ],
+    name: "reports a provider failure without managing a daemon as a side effect",
+    input: { environment: {}, failCommand: true },
+    assert: [hasError<ServeFixture, TailscaleServeResult>({ message: /provider failed/ })],
   },
 ] satisfies readonly OperationCase<"default", ServeInput, TailscaleServeResult, ServeFixture>[];
 
 const table: OperationTable<ServeFixture, "default", ServeInput, TailscaleServeResult, ServeFixture> = {
-  defaultFixture: createFixture,
+  defaultFixture: () => ({ fixture: { commands: [], commandCount: 0 } }),
   cases,
   execute: (fixture, input) =>
     ensureTailscaleServe(
       {
         provider: "tailscale",
-        muximodHost: "127.0.0.1",
-        muximodPort: 4317,
-        externalPort: 443,
-        logLevel: "info",
-        allowedOrigins: input.allowedOrigins,
+        localPort: 4317,
+        externalPort: 8444,
+        ...(input.hostname === undefined ? {} : {}),
       },
       {
-        ensureMuximod: async (_options, allowedOrigins) => {
-          fixture.ensureCalls.push({
-            origins: allowedOrigins,
-            environment: { MUXIMOD_ALLOWED_ORIGINS: allowedOrigins.join(",") },
-          });
-        },
-        runCommand: async (_command, args, commandOptions) => {
-          fixture.commands.push({ args, environment: commandOptions.env });
-          return { stdout: "", stderr: "" };
+        runCommand: async (_command, args, _options) => {
+          fixture.commands.push([...args]);
+          fixture.commandCount += 1;
+          if (input.failCommand) throw new Error("provider failed");
+          if (args[0] === "status" && args[1] === "--json") {
+            return { stdout: JSON.stringify({ Self: { DNSName: "machine.tailnet.ts.net." } }), stderr: "" };
+          }
+          if (args[0] === "serve" && args[1] === "status") {
+            return {
+              stdout: JSON.stringify({
+                Web: {
+                  "machine.tailnet.ts.net:8444": {
+                    Handlers: { "/": { Proxy: "http://127.0.0.1:4317" } },
+                  },
+                },
+              }),
+              stderr: "",
+            };
+          }
+          return { stdout: "provider output\n", stderr: "" };
         },
       },
-      input.environment,
+      { ...input.environment, ...(input.hostname ? { MUXIMO_TAILSCALE_HOSTNAME: input.hostname } : {}) },
     ),
-  observe: (fixture, result) => {
-    fixture.origin = result.ok ? result.value.allowedOrigins[0] : undefined;
-    fixture.daemonOrigin = fixture.ensureCalls[0]?.origins[0];
-    fixture.daemonEnvironment = result.ok ? result.value.daemonEnvironment.MUXIMOD_ALLOWED_ORIGINS : undefined;
-    fixture.wildcard = result.ok
-      ? (result.value.daemonEnvironment.MUXIMOD_ALLOWED_ORIGINS?.includes("*") ?? false)
-      : false;
-    fixture.ensureCount = fixture.ensureCalls.length;
-    fixture.commandCount = fixture.commands.length;
-    return fixture;
-  },
+  observe: (fixture) => ({ ...fixture }),
 };
 
-describe("muximo serve origin composition", () => {
-  const register = it as unknown as TestRegistrar;
-  runOperationTable(register, table);
+describe("muximo Tailscale route composition", () => {
+  runOperationTable(it as unknown as TestRegistrar, table);
 });

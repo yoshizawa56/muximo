@@ -34,17 +34,19 @@ packages/
   application/
   contract/
   infrastructure/
+  muximod/
   test-support/
 
 apps/
-  muximod/
   muximo-cli/
   web/
 ```
 
-There should not be separate `muximod-*`, `protocol`, or Hono wrapper
-packages merely to split transport technologies. A package is justified by a
-stable architectural boundary, not by the number of files in a directory.
+`packages/muximod` owns the muximod runtime and its lifecycle composition. It
+is not a user-facing CLI and has no `apps/muximod` counterpart. There should
+not be separate `muximod-*`, `protocol`, or Hono wrapper packages merely to
+split transport technologies. A package is justified by a stable
+architectural boundary, not by the number of files in a directory.
 
 The wire-schema package is referred to as `contract` in this document. The
 repository should not use both `api` and `contract` for the same responsibility.
@@ -95,13 +97,13 @@ policies. It must not import HTTP, WebSocket, CLI, Bun, Node.js, SQLite,
 Drizzle, tmux, PTY, agent providers, filesystem APIs, or UI code.
 
 Entities are Zod-backed namespace values. Each entity exposes `schema`,
-`validate`, `create`, and `update` as appropriate. `create` normalizes and
-validates input, `update` validates the current entity and the resulting
-entity, and every persistence reconstitution path validates the database row
-before returning it. Domain business methods validate their entity input when
-they accept an existing entity. No application or adapter code may construct
-an entity-shaped object and bypass these boundaries. An entity that crosses a
-domain boundary is therefore always structurally valid and invariant-safe.
+`create`, `restore`, `update`, and predicates as appropriate. `create`
+normalizes and validates new input, `restore` reconstitutes persisted data,
+`update` validates the current entity and the resulting entity, and every
+persistence reconstitution path restores the database row before returning it.
+No application or adapter code may construct an entity-shaped object and
+bypass these boundaries. An entity that crosses a domain boundary is
+therefore always structurally valid and invariant-safe.
 
 Domain optional properties use `undefined`; `null` is a transport or database
 representation only. Transport PATCH schemas use omitted/`undefined` for
@@ -135,13 +137,13 @@ application/src/
     sessions/
     panes/
     pairing/
-  models/
 ```
 
 The exact domain directory names may follow the actual use-case vocabulary,
 but each use case should have a focused file and its related use cases should
 be grouped by domain. Ports and use cases must not be mixed in one flat
-directory.
+directory. Application-owned boundary data lives with the relevant port or use
+case; a generic `models/` directory is not used.
 
 Repository and gateway ports belong to application because the use cases own
 the required abstractions. Their public methods should generally be
@@ -177,18 +179,25 @@ The ownership split is deliberately explicit:
 
 - `packages/contract` defines the shared schemas, oRPC contract, and protocol
   codecs only.
-- `apps/muximod/src/http` owns the muximod-specific oRPC handler, HTTP
+- `packages/muximod/src/http` owns the muximod-specific oRPC handler, HTTP
   endpoint policy, authentication context, SSE subscription, and WebSocket
   upgrade wiring.
-- `apps/muximod/src/control.ts` owns the muximod-specific private IPC
+- `packages/muximod/src/control.ts` owns the muximod-specific private IPC
   handler, because it interprets the contract and invokes application ports.
-- `packages/infrastructure/src/http` contains only the concrete Bun socket
-  adapter. It does not import `contract`.
+- `packages/contract/api`, `packages/contract/control`, and
+  `packages/contract/shared` expose explicit audience-specific contract
+  surfaces. API consumers do not need to know the private socket protocol.
 
-This means the composition root in `apps/muximod` injects infrastructure
-implementations into the application and then injects that application into
-the transport handler. The handler is not exported from the infrastructure
-package.
+`packages/muximod/src/server.ts` is the runtime composition root. It injects
+infrastructure implementations into the application and then injects that
+application into the HTTP and private control transports. The package exposes
+typed lifecycle operations through `launch.ts`; the separate child process is
+started through its private process bootstrap. The handler is not exported from
+the CLI-facing infrastructure package surface. Daemon composition imports the
+explicit `@muximo/infrastructure/runtime` surface; CLI composition imports only
+`@muximo/infrastructure/cli-client` and `@muximo/muximod/client`. The package
+root exports are intentionally absent so the two audiences cannot silently
+share the same broad import surface.
 
 ## Infrastructure
 
@@ -231,8 +240,10 @@ adapters, but no CLI handler is exported by `infrastructure`.
 
 ## Composition roots and CLI
 
-`apps/muximod/src/index.ts` and `apps/muximo-cli/src/index.ts` are composition
-roots. They may:
+`apps/muximo-cli/src/entrypoint.ts`, `apps/muximo-cli/src/cli/compose.ts`,
+`apps/web/cli.ts`, and `packages/muximod/src/server.ts` are composition roots for
+their respective boundaries. These
+composition roots may:
 
 - read argv and environment variables;
 - select a command or runtime profile;
@@ -250,13 +261,42 @@ still call application use cases and must not reimplement business behavior.
 If a CLI adapter becomes shared, move it to the infrastructure CLI adapter
 area rather than adding a second use-case implementation.
 
-Some host CLI commands currently open the same SQLite database directly rather
-than going through the running daemon. Pairing and daemon-control commands may
-use the control socket, but workspace and agent-session commands can be direct
-database clients. An in-process mutex in `muximod` therefore cannot provide a
-global serialization guarantee. Cross-process coordination must rely on
-SQLite locking, database transactions, constraints, conditional updates, or a
-future single-writer control path.
+Normal workspace and agent-session CLI commands call the muximod API over
+local HTTP using a short-lived local token minted through the private control
+socket. Pairing and host-only pane control use the private socket directly;
+starting, stopping, and restarting muximod call the typed package lifecycle
+locally. The CLI may still run host integrations such as tmux, Git, shell, and
+doctor directly, but those integrations may use only command input, local host
+state, or data returned by a daemon contract. They must never open the daemon
+database, read daemon-owned log/state files, or construct a second repository
+view. If a client needs another daemon value, the contract is extended and the
+daemon remains the only implementation of the read or write.
+
+The daemon is the single writer and source of truth for durable and
+runtime-managed state. An in-process mutex in `muximod` therefore cannot
+provide a global serialization guarantee by itself; the daemon's database
+transactions and private control contract provide the cross-process boundary.
+
+## Muximod lifecycle and environment topology
+
+`packages/muximod` owns the typed lifecycle API exposed to the CLI:
+`ensure`, `start`, `startForeground`, `status`, `stop`, and `restart`. It also
+owns the child-process bootstrap, PID and restart markers, schema synchronization,
+and cleanup of muximod resources. A private process bootstrap is used for the
+separate runtime process; it is an internal package implementation detail, not
+a hidden or public CLI command.
+
+The CLI resolves all Muximo configuration before calling that lifecycle API. The
+`--env <name>` profile selects one state root and its configured ports. Every
+profile defaults to `migrate`; `push` is selected only by an explicit
+`MUXIMO_SCHEMA_MODE=push` value. Worktrees do not derive state directories and no
+snapshot, seeding, or base-instance copy is performed.
+
+`apps/web/cli.ts` independently manages one Web process per environment and its
+provider route. It does not import or invoke muximod. Muximod Serve only manages the
+muximod route. The two lifecycle surfaces share only raw profile loading and
+neutral Tailscale provider mechanics; each app interprets its own environment
+values and neither is a combined supervisor.
 
 ## Web structure
 
@@ -331,9 +371,9 @@ global application lock.
 The `TransactionManager` mutex is a process-local safety mechanism for
 transactions sharing one connection or one transaction resource. It is not a
 cross-process lock and must not be treated as the source of global data
-consistency. Direct CLI writers use separate connections and may still contend
-with the daemon; SQLite's writer lock preserves database-level atomicity, but
-the application must handle busy errors and stale-write policy explicitly.
+consistency. The daemon is the only database writer, so SQLite's writer lock
+and transaction policy stay behind the daemon boundary; clients must use its
+contracts instead of opening competing connections.
 
 SQLite still provides atomic commit for the statements inside one transaction.
 The issue is not that SQLite cannot preserve atomicity; the issue is safely
@@ -354,10 +394,10 @@ an optimization to introduce if event-loop delay measurements show that
 synchronous SQLite calls are material in production.
 
 Busy handling is an infrastructure concern and must be transparent to
-application use cases and CLI commands:
+application use cases and daemon clients:
 
-- configure a busy timeout for every SQLite connection in the shared database
-  factory, including daemon and direct CLI connections;
+- configure a busy timeout for every SQLite connection in the daemon database
+  factory;
 - acquire a write transaction up front, preferably with `BEGIN IMMEDIATE`, so
   lock failure happens before business mutations when possible;
 - when a retryable busy error still occurs, rollback and retry the complete
@@ -370,9 +410,9 @@ application use cases and CLI commands:
   the outer adapter report it normally.
 
 The process-local transaction mutex remains useful for same-process connection
-ownership, but it cannot coordinate direct CLI processes. SQLite's connection
-level busy handling and whole-transaction retry policy are the cross-process
-fallback.
+ownership. CLI processes do not open SQLite connections; they observe and
+mutate state through daemon contracts, so the daemon owns all database lock and
+retry behavior.
 
 ## Database tests
 

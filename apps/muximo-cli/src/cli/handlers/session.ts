@@ -1,13 +1,13 @@
 import type {
-  AgentSessionListInput,
-  AgentSessionListResult,
-  CleanupAgentSessionInput,
-  CleanupAgentSessionResult,
-  ResumeAgentSessionInput,
-  ResumeAgentSessionResult,
-  RunAgentSessionResult,
-  StartAgentSessionInput,
-} from "@muximo/application";
+  AgentSessionListResponse,
+  CleanupAgentSessionRequest,
+  CleanupAgentSessionResponse,
+  ListAgentSessionsRequest,
+  ResumeAgentSessionRequest,
+  ResumeAgentSessionResponse,
+  RunAgentSessionRequest,
+  RunAgentSessionResponse,
+} from "@muximo/contract/api";
 import type {
   CliHandlers,
   CliIo,
@@ -27,10 +27,10 @@ type AsyncExecutor<Input, Result> = {
 };
 
 export type SessionHandlerDependencies = {
-  run: AsyncExecutor<StartAgentSessionInput, RunAgentSessionResult>;
-  resume: AsyncExecutor<ResumeAgentSessionInput, ResumeAgentSessionResult>;
-  cleanup: AsyncExecutor<CleanupAgentSessionInput, CleanupAgentSessionResult>;
-  list: AsyncExecutor<AgentSessionListInput, AgentSessionListResult>;
+  run: AsyncExecutor<RunAgentSessionRequest, RunAgentSessionResponse>;
+  resume: AsyncExecutor<ResumeAgentSessionRequest, ResumeAgentSessionResponse>;
+  cleanup: AsyncExecutor<CleanupAgentSessionRequest, CleanupAgentSessionResponse>;
+  list: AsyncExecutor<ListAgentSessionsRequest, AgentSessionListResponse>;
   io: CliIo;
 };
 
@@ -59,19 +59,19 @@ export function createSessionHandlers(
   };
 }
 
-function toStartInput(input: CliRunInput): StartAgentSessionInput {
-  return input;
+function toStartInput(input: CliRunInput): RunAgentSessionRequest {
+  return { ...input, backendArgs: [...input.backendArgs] };
 }
 
-function toResumeInput(input: CliSessionResumeInput): ResumeAgentSessionInput {
+function toResumeInput(input: CliSessionResumeInput): ResumeAgentSessionRequest {
   return {
     workspaceScope: input.global ? "all" : "current",
     reference: input.reference,
-    backendArgs: input.backendArgs,
+    backendArgs: [...input.backendArgs],
   };
 }
 
-function toCleanupInput(input: CliSessionCleanupInput): CleanupAgentSessionInput {
+function toCleanupInput(input: CliSessionCleanupInput): CleanupAgentSessionRequest {
   return {
     workspaceScope: input.global ? "all" : "current",
     force: input.force,
@@ -80,5 +80,5 @@ function toCleanupInput(input: CliSessionCleanupInput): CleanupAgentSessionInput
 }
 
 function writeInfo(io: CliIo, message: string): void {
-  io.out.write(`muximo: ${message}\n`);
+  io.out.write(`[muximo-cli] ${message}\n`);
 }

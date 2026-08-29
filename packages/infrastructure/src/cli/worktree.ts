@@ -11,7 +11,7 @@ import {
   type AgentSessionRecord,
   isValidWorktreeCopyPattern,
   normalizeWorktreeCopyPatterns,
-  type WorkspaceRecord,
+  type WorkspaceDirectoryOption,
 } from "@muximo/domain";
 import { errorFields, type Logger } from "../logging/index.js";
 import { isPathWithin, realpathAfterMkdir, realpathSafe, resolveFromRoot, unlinkEmptyDirectory } from "./filesystem.js";
@@ -26,7 +26,11 @@ export type WorktreeAdapterOptions = {
 export class GitWorktreeAdapter implements WorktreePort {
   public constructor(private readonly options: WorktreeAdapterOptions) {}
 
-  public async create(workspace: WorkspaceRecord, name: string, override?: string): Promise<ManagedWorktreeState> {
+  public async create(
+    workspace: WorkspaceDirectoryOption,
+    name: string,
+    override?: string,
+  ): Promise<ManagedWorktreeState> {
     if (!workspace.isGit) throw new Error("a managed worktree requires a git workspace; use --no-worktree here");
     const defaultRoot =
       this.options.environment.MUXIMO_WORKTREE_ROOT ?? join(dirname(workspace.rootPath), `${workspace.name}.worktrees`);
@@ -319,7 +323,7 @@ export class GitWorktreeAdapter implements WorktreePort {
 export class GitShellWorktreeAdapter implements ShellWorktreePort {
   public constructor(private readonly worktrees: GitWorktreeAdapter) {}
 
-  public create(workspace: WorkspaceRecord, name: string): Promise<ManagedWorktreeState> {
+  public create(workspace: WorkspaceDirectoryOption, name: string): Promise<ManagedWorktreeState> {
     return this.worktrees.create(workspace, name);
   }
 

@@ -40,6 +40,7 @@ export type PushCommandRunner = (command: string, args: readonly string[], optio
 
 export type PushSchemaSynchronizerOptions = {
   configFile?: string;
+  environment?: NodeJS.ProcessEnv;
   workingDirectory?: string;
   force?: boolean;
   run?: PushCommandRunner;
@@ -49,12 +50,14 @@ const infrastructureDirectory = resolve(dirname(fileURLToPath(import.meta.url)),
 
 export class PushSchemaSynchronizer implements DatabaseSchemaSynchronizer {
   private readonly configFile: string;
+  private readonly environment: NodeJS.ProcessEnv;
   private readonly workingDirectory: string;
   private readonly force: boolean;
   private readonly run: PushCommandRunner;
 
   public constructor(options: PushSchemaSynchronizerOptions = {}) {
     this.configFile = resolve(options.configFile ?? resolve(infrastructureDirectory, "drizzle.dev.config.ts"));
+    this.environment = options.environment ?? process.env;
     this.workingDirectory = resolve(options.workingDirectory ?? infrastructureDirectory);
     this.force = options.force ?? false;
     this.run = options.run ?? runPushCommand;
@@ -73,7 +76,7 @@ export class PushSchemaSynchronizer implements DatabaseSchemaSynchronizer {
       ...(this.force ? ["--force"] : []),
     ];
     const environment = {
-      ...process.env,
+      ...this.environment,
       MUXIMOD_DB_FILE: input.databaseFile,
     };
 

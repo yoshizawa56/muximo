@@ -1,0 +1,25 @@
+{
+  "name": "@muximo/profile",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "node node_modules/typescript/bin/tsc -p tsconfig.build.json",
+    "test": "bun test src --pass-with-no-tests",
+    "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@muximo/test-support": "workspace:*",
+    "@types/node": "^26.1.2",
+    "bun-types": "^1.3.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { createCliApp } from "./app.js";
 import type { CliHandlers } from "./commands/types.js";
+import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 class CaptureOutput extends Writable {
   public value = "";
@@ -38,7 +39,22 @@ function contains<ContextType>(key: keyof ContextType, value: string) {
   };
 }
 
-function createFixture(environment: NodeJS.ProcessEnv = {}) {
+const defaultRuntime: MuximoCliRuntimeOptions = {
+  environmentName: "prod",
+  stateRoot: "/workspace/.state",
+  muximodInstanceDirectory: "/workspace/.state/prod/muximod",
+  muximodHost: "127.0.0.1",
+  muximodPort: 4317,
+  muximodServePort: 8444,
+  schemaMode: "migrate",
+  logLevel: "info",
+  logFile: "/workspace/.state/prod/muximod/muximod.log",
+  allowedOrigins: [],
+  codexRemote: "unix://",
+  verbose: false,
+};
+
+function createFixture(environment: NodeJS.ProcessEnv = {}, runtime: MuximoCliRuntimeOptions = defaultRuntime) {
   const out = new CaptureOutput();
   const err = new CaptureOutput();
   const calls: Fixture["calls"] = [];
@@ -55,7 +71,6 @@ function createFixture(environment: NodeJS.ProcessEnv = {}) {
     "daemon",
     "pair",
     "serve",
-    "dev",
     "workspaceList",
     "workspaceAdd",
     "workspaceUpdate",
@@ -66,7 +81,7 @@ function createFixture(environment: NodeJS.ProcessEnv = {}) {
       return 7;
     };
   }
-  const app = createCliApp({ io: { out, err }, cwd: "/workspace", environment, handlers });
+  const app = createCliApp({ io: { out, err }, cwd: "/workspace", environment, runtime, handlers });
   return { fixture: { out, err, calls, app } };
 }
 
@@ -79,7 +94,7 @@ const cases = [
     assert: [
       returns<Context, number>(2),
       contains<Context>("output", "Usage: muximo"),
-      contains<Context>("output", "MUXIMOD_INSTANCE_DIR"),
+      contains<Context>("output", "--env <profile>"),
       hasObserved<Context, number>("calls", []),
     ],
   },
@@ -134,6 +149,58 @@ const cases = [
     ],
   },
   {
+    name: "dispatches the top-level list alias to the session list handler",
+    input: { args: ["list", "--json"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionList",
+          input: { global: false, names: false, json: true, all: false },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the top-level ls alias to the session list handler",
+    input: { args: ["ls", "--json"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionList",
+          input: { global: false, names: false, json: true, all: false },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the top-level resume alias to the session resume handler",
+    input: { args: ["resume", "review"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionResume",
+          input: { global: false, reference: "review", backendArgs: [] },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the top-level cleanup alias to the session cleanup handler",
+    input: { args: ["cleanup", "review"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionCleanup",
+          input: { global: false, force: false, reference: "review" },
+        },
+      ]),
+    ],
+  },
+  {
     name: "dispatches existing tmux session adoption through the typed handler",
     input: { args: ["tmux", "manage-session", "--name", "desktop"] },
     assert: [
@@ -174,37 +241,48 @@ const cases = [
           command: "serve",
           input: {
             provider: "tailscale",
-            muximodHost: "127.0.0.1",
-            muximodPort: 4317,
+            command: "tailscale",
+            localPort: 4317,
             externalPort: 8444,
-            pidFile: undefined,
-            logLevel: "info",
-            logFile: undefined,
           },
         },
       ]),
     ],
   },
   {
-    name: "dispatches explicit browser origins without wildcard expansion",
-    input: { args: ["serve", "tailscale", "--allowed-origin", "https://web.example", "http://127.0.0.1:5227"] },
+    name: "dispatches daemon log with its default line limit",
+    input: { args: ["daemon", "log"] },
     assert: [
       returns<Context, number>(7),
       hasObserved<Context, number>("calls", [
         {
-          command: "serve",
+          command: "daemon",
           input: {
-            provider: "tailscale",
-            muximodHost: "127.0.0.1",
-            muximodPort: 4317,
-            externalPort: 8444,
-            pidFile: undefined,
-            logLevel: "info",
-            logFile: undefined,
-            allowedOrigins: ["https://web.example", "http://127.0.0.1:5227"],
+            command: "log",
+            foreground: false,
+            refreshServers: false,
+            lines: 100,
           },
         },
       ]),
+    ],
+  },
+  {
+    name: "rejects direct daemon log file selection",
+    input: { args: ["daemon", "log", "--log-file", "/tmp/cli.log"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "unknown option"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
+    name: "rejects component-specific serve overrides",
+    input: { args: ["serve", "tailscale", "--port", "9444"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "unknown option"),
+      hasObserved<Context, number>("calls", []),
     ],
   },
   {
@@ -220,14 +298,6 @@ const cases = [
             command: "start",
             foreground: false,
             refreshServers: false,
-            host: "0.0.0.0",
-            port: 5001,
-            pidFile: "/tmp/muximod.pid",
-            controlSocket: undefined,
-            muximodBaseUrl: undefined,
-            logLevel: "debug",
-            logFile: "/tmp/muximod.log",
-            allowedOrigins: ["https://configured.example", "http://127.0.0.1:5227"],
           },
         },
       ]),
@@ -244,55 +314,9 @@ const cases = [
           command: "serve",
           input: {
             provider: "tailscale",
-            muximodHost: "0.0.0.0",
-            muximodPort: 5001,
+            command: "tailscale",
+            localPort: 5001,
             externalPort: 9443,
-            pidFile: "/tmp/muximod.pid",
-            logLevel: "debug",
-            logFile: "/tmp/muximod.log",
-            allowedOrigins: ["https://configured.example", "http://127.0.0.1:5227"],
-          },
-        },
-      ]),
-    ],
-  },
-  {
-    name: "prefers explicit serve options over environment values",
-    fixture: "environment",
-    input: {
-      args: [
-        "serve",
-        "tailscale",
-        "--port",
-        "9444",
-        "--muximod-port",
-        "5002",
-        "--muximod-host",
-        "127.0.0.1",
-        "--pid-file",
-        "/tmp/cli.pid",
-        "--log-level",
-        "warn",
-        "--log-file",
-        "/tmp/cli.log",
-        "--allowed-origin",
-        "https://cli.example",
-      ],
-    },
-    assert: [
-      returns<Context, number>(7),
-      hasObserved<Context, number>("calls", [
-        {
-          command: "serve",
-          input: {
-            provider: "tailscale",
-            muximodHost: "127.0.0.1",
-            muximodPort: 5002,
-            externalPort: 9444,
-            pidFile: "/tmp/cli.pid",
-            logLevel: "warn",
-            logFile: "/tmp/cli.log",
-            allowedOrigins: ["https://cli.example"],
           },
         },
       ]),
@@ -304,15 +328,17 @@ const table: OperationTable<AppFixture, FixtureKey, Input, number, Context> = {
   defaultFixture: () => createFixture(),
   fixtures: {
     environment: () =>
-      createFixture({
-        MUXIMOD_HOST: "0.0.0.0",
-        MUXIMOD_PORT: "5001",
-        MUXIMO_SERVE_PORT: "9443",
-        MUXIMOD_PID_FILE: "/tmp/muximod.pid",
-        MUXIMO_LOG_LEVEL: "debug",
-        MUXIMO_LOG_FILE: "/tmp/muximod.log",
-        MUXIMOD_ALLOWED_ORIGINS: "https://configured.example,http://127.0.0.1:5227",
-      }),
+      createFixture(
+        {
+          MUXIMOD_HOST: "0.0.0.0",
+          MUXIMOD_PORT: "5001",
+          MUXIMO_MUXIMOD_SERVE_PORT: "9443",
+          MUXIMO_LOG_LEVEL: "debug",
+          MUXIMO_LOG_FILE: "/tmp/muximod.log",
+          MUXIMOD_ALLOWED_ORIGINS: "https://configured.example,http://127.0.0.1:5227",
+        },
+        { ...defaultRuntime, muximodPort: 5001, muximodServePort: 9443 },
+      ),
   },
   cases,
   execute: (fixture, input) => fixture.app.execute(input.args),

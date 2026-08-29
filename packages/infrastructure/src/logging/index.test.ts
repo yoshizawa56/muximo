@@ -67,6 +67,7 @@ const humanAssertion: Assertion<LogContext, LogResult> = {
   name: "renders stack traces only in verbose mode",
   check: (ctx) => {
     const [normal, verbose] = ctx.output.split("---verbose---");
+    expect(normal).toContain("[muximo-cli]");
     expect(normal).toContain("unexpected error: failed to connect");
     expect(normal).not.toContain("at main");
     expect(verbose).toContain("at main");

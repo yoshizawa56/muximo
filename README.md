@@ -78,11 +78,17 @@ The standalone command manages the long-running `muximod` process:
 ```sh
 muximo daemon start
 muximo daemon status
+muximo daemon log
 muximo daemon restart
 muximo daemon stop
 ```
 
-Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` should remain bound to loopback and be exposed through a trusted HTTPS route such as Tailscale Serve.
+`muximo daemon log` prints the most recent 100 lines from the daemon's derived
+state log. Use `--lines N` to change the limit. Select a named profile with
+`--env <name>`; each profile has its own derived state directory, ports, database,
+PID file, socket, and log.
+
+Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
 
 Starting `muximod` does not create a tmux session. Create a new managed session with `muximo tmux new-session`, adopt an existing session with `muximo tmux manage-session --name <name>`, or let the Web connection flow adopt an unmanaged session automatically.
 
@@ -92,9 +98,13 @@ To configure a muximod-only Tailscale Serve route:
 muximo serve tailscale
 ```
 
+The command discovers the current Tailscale hostname, configures the fixed
+environment route, and records its public URL in the environment state. It
+does not start or supervise `muximod`.
+
 ## Pair a device
 
-The default pairing flow starts or verifies the host route, displays a QR code, and waits for explicit host approval:
+After configuring the muximod Serve route, pairing displays a QR code and waits for explicit host approval:
 
 ```sh
 muximo pair
@@ -103,8 +113,8 @@ muximo pair
 Scan the QR code inside the Muximo Web or iOS client. The QR code is an in-app pairing code, not a browser navigation URL. For a local endpoint or an explicitly supplied route:
 
 ```sh
-muximo pair --without-serve
-muximo pair --muximod-base-url https://workstation.tailnet.ts.net:8449
+muximo pair --without-serve  # use the fixed loopback endpoint
+muximo pair --muximod-base-url https://workstation.tailnet.ts.net:8444
 ```
 
 ## Common commands
@@ -120,6 +130,8 @@ muximo session list --json
 muximo session cleanup review
 ```
 
+The top-level `muximo list`, `muximo ls`, `muximo resume`, and `muximo cleanup` commands are aliases for the corresponding `session` commands.
+
 Manage workspaces and tmux sessions:
 
 ```sh
@@ -131,10 +143,9 @@ muximo tmux new-session -s project -c ~/work/project
 muximo doctor --verbose
 ```
 
-For a workspace that is already registered, enable the same worktree-local
-environment copy with `muximo workspace update project --add-copy-pattern .env`.
-Muximo copies the ignored `.env` from the workspace root when it creates a
-managed worktree; development entrypoints only read the copied file.
+The selected environment is shared by all worktrees on the host. Source
+checkouts use the committed `.env.local` and `.env.stg` profile files; no
+worktree-local database, snapshot, or port allocation is created.
 
 The Web UI can also create shell or agent panes, choose a new tmux window or split, and select a workspace or managed worktree. Use `muximo --help` for commands and options not shown here.
 
@@ -145,14 +156,22 @@ The repository uses `mise` for Bun, Node.js, and tmux versions:
 ```sh
 mise install
 bun install --frozen-lockfile
-bun run dev
+
+# Start the local muximod and Web processes independently.
+mise muximo --env local daemon restart
+mise web --env local daemon restart
+mise muximo --env local serve tailscale
+mise web --env local serve tailscale
 ```
 
-`bun run dev` starts an isolated muximod and Web profile for the current linked worktree while continuing to use the normal user tmux server. To inspect the Web UI without a running muximod:
+The repository's `.env.local` explicitly selects `push` schema synchronization.
+The Web process uses one fixed local port and keeps HMR available after `web
+daemon start`; the two processes have independent lifecycle commands. To inspect
+the Web UI without a running muximod:
 
 ```sh
 cd apps/web
-VITE_MUXIMOD_MOCK_MODE=true bun dev
+VITE_MUXIMOD_MOCK_MODE=true bun node_modules/vite/bin/vite.js
 ```
 
 For the Capacitor iOS workflow, use `mise ios` to build, sync, and open the native project. To run the local CLI through the repository's toolchain, use `mise muximo <option>`, for example `mise muximo --help`.

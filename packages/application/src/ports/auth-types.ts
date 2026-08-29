@@ -148,5 +148,6 @@ export type WsTicketResponse = {
 export type MuximodAuthDevice = AuthDeviceRecord;
 
 export type MuximodAuthContext = AuthSessionRecord & {
-  device: MuximodAuthDevice;
+  /** Paired device metadata is absent for a trusted local control-socket session. */
+  device?: MuximodAuthDevice;
 };

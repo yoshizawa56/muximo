@@ -1,4 +1,4 @@
-import type { PanePlacement, PaneSummary, TerminalEndpoint, TmuxSession } from "@muximo/contract";
+import type { PanePlacement, PaneSummary, TerminalEndpoint, TmuxSession } from "@muximo/contract/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";

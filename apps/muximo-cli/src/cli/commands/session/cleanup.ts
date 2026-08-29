@@ -66,3 +66,14 @@ export function registerNestedSessionCleanupCommand(
     commandPath: ["session", "cleanup"],
   });
 }
+
+export function registerRootCleanupCommand(
+  parent: Command,
+  handlers: CliHandlers,
+  context: CliCommandContext,
+): Command {
+  return registerSessionCleanupCommand(parent, handlers, context, {
+    commandName: "cleanup",
+    commandPath: ["cleanup"],
+  });
+}

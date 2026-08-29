@@ -1,4 +1,5 @@
-import { muximodContract, protocolVersion } from "@muximo/contract";
+import { muximodContract } from "@muximo/contract/api";
+import { protocolVersion } from "@muximo/contract/shared";
 import {
   type FixtureHandle,
   hasError,
@@ -30,6 +31,20 @@ const workspace = {
   worktreeCopyPatterns: [],
 };
 const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", managed: true };
+const agentSession = {
+  id: "agent-session-1",
+  name: "integration-agent",
+  backend: "codex" as const,
+  status: "exited" as const,
+  workspaceId: "workspace-1",
+  workspaceRoot: "/work/muximo",
+  workspaceName: "muximo",
+  useWorktree: false,
+  setupRan: false,
+  resuming: false,
+  createdAt: "2026-08-15T00:00:00.000Z",
+  updatedAt: "2026-08-15T00:00:00.000Z",
+};
 const pane = {
   id: "pane-1",
   hostPaneId: "%0",
@@ -270,7 +285,13 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
   const os = implement(muximodContract).$context<Record<never, never>>();
   return new RPCHandler(
     os.router({
-      health: os.health.handler(() => ({ ok: true, service: "muximod", protocolVersion })),
+      health: os.health.handler(() => ({
+        ok: true,
+        service: "muximod",
+        protocolVersion,
+        pid: process.pid,
+        configurationFingerprint: "0".repeat(64),
+      })),
       capabilities: os.capabilities.handler(() => ({
         protocolVersion,
         features: { tmuxSessions: true, terminalWebSocket: true, paneState: true, resourceInvalidationEvents: true },
@@ -351,6 +372,34 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
       panes: {
         list: os.panes.list.handler(() => ({ panes: [pane] })),
         create: os.panes.create.handler(() => ({ pane })),
+      },
+      agentSessions: {
+        run: os.agentSessions.run.handler(() => ({
+          process: { code: 0, interrupted: false },
+          session: agentSession,
+          cleanup: { disposition: "not_requested", reason: "no_worktree" },
+        })),
+        resume: os.agentSessions.resume.handler(() => ({
+          process: { code: 0, interrupted: false },
+          session: agentSession,
+        })),
+        cleanup: os.agentSessions.cleanup.handler(() => ({
+          session: agentSession,
+          cleanup: { disposition: "removed" },
+        })),
+        list: os.agentSessions.list.handler(() => ({
+          allViews: [
+            {
+              session: agentSession,
+              executionHealth: "inactive",
+              resume: "unavailable",
+              resumeReason: "not_resumable_state",
+              worktreeState: "not_applicable",
+              visibleByDefault: true,
+            },
+          ],
+          views: [],
+        })),
       },
       events: {
         subscribe: os.events.subscribe.handler(async function* () {}),

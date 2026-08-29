@@ -1,4 +1,4 @@
-import type { CreatePaneRequest } from "@muximo/contract";
+import type { CreatePaneRequest } from "@muximo/contract/api";
 
 export type NewPaneAgent = Exclude<CreatePaneRequest["agentId"], null>;
 

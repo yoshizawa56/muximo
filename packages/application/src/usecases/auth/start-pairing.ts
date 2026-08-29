@@ -4,13 +4,13 @@ import type { AuthPairingPayload } from "../../ports/auth-types.js";
 const PAIRING_TTL_MS = 5 * 60_000;
 
 export async function startPairing(
-  deps: { store: AuthStorePort; crypto: AuthCryptoPort; muximodBaseUrl: string; clock: Clock },
-  overrides: { muximodBaseUrl?: string } = {},
+  deps: { store: AuthStorePort; crypto: AuthCryptoPort; clock: Clock },
+  input: { muximodBaseUrl: string },
 ): Promise<AuthPairingPayload> {
   const now = deps.clock.now();
   const expiresAt = new Date(now.getTime() + PAIRING_TTL_MS);
   const pairing = await deps.store.createPairing({
-    muximodBaseUrl: overrides.muximodBaseUrl ?? deps.muximodBaseUrl,
+    muximodBaseUrl: input.muximodBaseUrl,
     expiresAt: expiresAt.toISOString(),
     secret: deps.crypto.randomOpaque(32),
   });

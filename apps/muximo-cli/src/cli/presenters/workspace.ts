@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
-import type { WorkspaceRecord } from "@muximo/domain";
+import type { WorkspaceDirectory } from "@muximo/contract/api";
 
 export function presentWorkspaceList(
-  workspaces: readonly WorkspaceRecord[],
+  workspaces: readonly WorkspaceDirectory[],
   json: boolean,
   output: { write(value: string): void; info(message: string): void },
 ): number {
@@ -20,7 +20,7 @@ export function presentWorkspaceList(
       padRow([
         workspace.id,
         workspace.name,
-        displayWorkspacePath(workspace.rootPath),
+        displayWorkspacePath(workspace.directory),
         workspace.isGit ? "yes" : "no",
         workspace.setupScriptPath ? displayWorkspacePath(workspace.setupScriptPath) : "-",
         workspace.cleanupScriptPath ? displayWorkspacePath(workspace.cleanupScriptPath) : "-",
@@ -31,17 +31,15 @@ export function presentWorkspaceList(
   return 0;
 }
 
-export function toWorkspaceJson(workspace: WorkspaceRecord): Record<string, unknown> {
+export function toWorkspaceJson(workspace: WorkspaceDirectory): Record<string, unknown> {
   return {
     id: workspace.id,
     name: workspace.name,
-    directory: workspace.rootPath,
+    directory: workspace.directory,
     is_git: workspace.isGit,
     setup_hook: workspace.setupScriptPath,
     cleanup_hook: workspace.cleanupScriptPath,
     worktree_copy_patterns: workspace.worktreeCopyPatterns,
-    created_at: workspace.createdAt,
-    updated_at: workspace.updatedAt,
   };
 }
 

@@ -45,11 +45,32 @@ implementation, its package, or its runtime library.
   ports and host integrations. Organize it by technical concern and port:
   `persistence/repositories`, `terminal`, `auth`, `agents`, `logging`,
   `tailscale`, and concrete transport adapters such as `http`.
-- `apps/muximod` owns muximod-specific oRPC/HTTP/SSE/WebSocket handlers,
-  private control handlers, runtime lifecycle, and dependency injection.
-  `apps/muximo-cli` owns CLI argument parsing, command transport, presenters,
-  and control-socket clients. Both are outer roots and must call application
-  use cases rather than reimplement business rules.
+- `packages/muximod` is the only muximod runtime composition root. It owns
+  muximod-specific oRPC/HTTP/SSE/WebSocket handlers, private control handlers,
+  runtime lifecycle, persistence composition, snapshot/bootstrap, and daemon
+  resource cleanup. There must be no `apps/muximod` entrypoint.
+- `apps/muximo-cli` and `apps/web` are daemon clients. They interact with
+  daemon-owned state only through the typed API/control contracts. The CLI may
+  use the private control contract because it runs locally and is in the local
+  trust boundary; that does not permit direct database, repository, schema,
+  log-file, or other daemon-state access.
+- CLI production code imports host capabilities through the narrow
+  `@muximo/infrastructure/cli-client` surface and imports lifecycle/path
+  utilities through `@muximo/muximod/client`. It must not import the full
+  infrastructure or muximod package surfaces, which expose daemon-only
+  persistence and process-bootstrap capabilities.
+- Daemon composition uses the explicit `@muximo/infrastructure/runtime` and
+  `@muximo/muximod/runtime` surfaces. The package root exports are absent on
+  purpose; a client must not regain daemon internals by changing only an
+  import path.
+- `apps/muximo-cli` owns argv/environment parsing, client request mapping,
+  presenters, host-only process/Git/tmux/shell operations, and the client-side
+  daemon process bootstrap adapter. It must never open SQLite, construct a
+  Drizzle repository, run schema synchronization, perform snapshot copying, or
+  reimplement a daemon use case. Any daemon data needed by a host operation
+  must first be obtained through the API or private control contract.
+- Both client apps are outer roots and must call typed contracts rather than
+  importing daemon persistence or application implementations.
 - `apps/*/src/index.ts` may read argv/environment/I/O, select a command,
   construct concrete dependencies, manage lifecycle, and report process-level
   errors. Host integration and infrastructure policy belong in injected
@@ -100,9 +121,9 @@ implementation, its package, or its runtime library.
   service, and other external side effects are not.
 - The transaction connection and root/autocommit connections are distinct.
   Code must not write through a root connection from an active transaction
-  scope. A process-local mutex is not cross-process coordination; direct CLI
-  writers still rely on SQLite locking, constraints, conditional updates, and
-  transparent busy handling.
+  scope. The daemon is the only process allowed to access its database; client
+  processes must use API/control contracts instead of relying on SQLite
+  locking, constraints, or conditional updates directly.
 - Use explicit transactions only for multiple writes that must commit or roll
   back together. Reads and independent single writes may use autocommit.
   Keep transactions short and database-only.
@@ -114,16 +135,47 @@ implementation, its package, or its runtime library.
 Provider-neutral ports remain in application. Provider registries, defaults,
 monitors, sidecars, RPC clients, tmux/PTY/process/filesystem adapters,
 authentication crypto, logging, Tailscale, and SQLite repositories remain in
-infrastructure. Keep implementation-specific invariants in short comments
-beside the implementation; do not make a temporary architecture document the
-only source of truth.
+infrastructure. Persistence implementations may be composed only by
+`packages/muximod`; a CLI host adapter must use a daemon contract instead of a
+persistence adapter. Keep implementation-specific invariants in short
+comments beside the implementation; do not make a temporary architecture
+document the only source of truth.
+
+## Daemon client boundary
+
+The daemon is the single source of truth for all durable and runtime-managed
+state. This is an absolute boundary, not a preference that can be relaxed for
+host-local commands:
+
+- `packages/muximod` is the only package allowed to instantiate the daemon
+  database, schema synchronizer, Drizzle repositories, database transaction
+  manager, or lossless snapshot implementation.
+- CLI and Web code must not import persistence modules, open a SQLite file,
+  query daemon tables, or read daemon-owned log/state files directly.
+- API contract operations are used for normal daemon commands. Private control
+  contract operations are used for local-only capabilities such as session
+  token minting, pairing, pane control, and other operations that must not be
+  exposed publicly.
+- A local Git, tmux, shell, or process operation is allowed only when its
+  inputs come from CLI arguments, the local host, or a daemon contract response.
+  It must not obtain daemon state through a second local repository.
+- If a client needs information or an operation that is not represented by a
+  contract, extend the appropriate contract and implement it in the daemon.
+  Do not add a client-side persistence shortcut.
+- Process creation before a daemon is running is a lifecycle/bootstrap concern,
+  not a second daemon implementation. The bootstrap adapter may start or stop
+  the private process, but all daemon state remains behind the daemon package
+  and its contracts.
 
 ## Review workflow
 
 Before changing code, identify the layer of every touched module, separate
 business decisions from I/O, put abstractions in the inward layer, and wire
 concrete implementations at the composition root. Check both imports and
-workspace manifest dependencies for reverse edges. Preserve authentication
+workspace manifest dependencies for reverse edges. For every CLI change,
+search for SQLite, Drizzle, persistence repositories, schema synchronization,
+and direct daemon-state file reads; all such access must remain in
+`packages/muximod`. Preserve authentication
 replay prevention, credential ownership, session claims, worktree containment
 and cleanup, hook ordering, provider lifecycle disposal, and tmux identity
 reconciliation.

@@ -1,4 +1,14 @@
 import type { AgentBackend, PaneRecord, Patch } from "@muximo/domain";
+import type {
+  AgentSessionListInput,
+  AgentSessionListResult,
+  CleanupAgentSessionInput,
+  CleanupAgentSessionResult,
+  ResumeAgentSessionInput,
+  ResumeAgentSessionResult,
+  RunAgentSessionResult,
+  StartAgentSessionInput,
+} from "./agent-sessions.js";
 
 export type ApplicationClock = {
   now(): string;
@@ -99,11 +109,19 @@ export type MuximodSessionSummary = {
 
 export type MuximodPaneSummary = PaneRecord;
 
+export type MuximodAgentSessionApplication = {
+  run(input: StartAgentSessionInput): Promise<RunAgentSessionResult>;
+  resume(input: ResumeAgentSessionInput): Promise<ResumeAgentSessionResult>;
+  cleanup(input: CleanupAgentSessionInput): Promise<CleanupAgentSessionResult>;
+  list(input: AgentSessionListInput): Promise<AgentSessionListResult>;
+};
+
 /**
  * Application use-case port consumed by delivery adapters. It contains no
  * transport-runtime, provider, SQLite, or filesystem types.
  */
 export type MuximodApplication = {
+  agentSessions: MuximodAgentSessionApplication;
   terminal: {
     get(): Promise<MuximodTerminalEndpoint>;
   };

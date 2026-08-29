@@ -1,5 +1,5 @@
-import type { PairingCodePayload } from "@muximo/contract";
-import { encodePairingCode } from "@muximo/contract";
+import type { PairingCodePayload } from "@muximo/contract/shared";
+import { encodePairingCode } from "@muximo/contract/shared";
 import {
   type Assertion,
   type FixtureHandle,
@@ -40,7 +40,9 @@ const cases = [
   {
     name: "rejects an endpoint with an unsupported protocol",
     input: { code: encodePairingCode({ ...payload, muximodBaseUrl: "ftp://muximo-host.example" }) },
-    assert: [hasError<EmptyContext, PairingCodePayload>({ message: "Pairing endpoint must use http or https" })],
+    assert: [
+      hasError<EmptyContext, PairingCodePayload>({ message: "QR code does not contain a valid muximo pairing code" }),
+    ],
   },
 ] satisfies readonly OperationCase<"default", PairingPayloadInput, PairingCodePayload, EmptyContext>[];
 

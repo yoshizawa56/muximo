@@ -68,6 +68,7 @@ export class OpenCodeServerDisposalError extends Error {
 
 export type OpenCodeServerManagerOptions = {
   registryFile: string;
+  environment?: NodeJS.ProcessEnv;
   executable?: string;
   spawn?: (
     command: string,
@@ -127,7 +128,7 @@ export class OpenCodeServerManager {
   private readonly children = new Set<SpawnedChild>();
 
   public constructor(private readonly options: OpenCodeServerManagerOptions) {
-    this.executable = options.executable ?? "opencode";
+    this.executable = options.executable ?? options.environment?.MUXIMO_OPENCODE_BIN ?? "opencode";
     this.spawn = options.spawn ?? ((command, args, spawnOptions) => spawnServe(command, args, spawnOptions));
     this.request = options.request ?? ((url, init) => fetch(url, init));
     this.allocatePort = options.allocatePort ?? allocateLoopbackPort;
@@ -301,7 +302,7 @@ export class OpenCodeServerManager {
     if (!spawn) throw new Error("opencode server cannot start without a spawn function");
     const child = spawn(this.executable, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
       cwd: workspaceRoot,
-      env: process.env,
+      env: this.options.environment ?? process.env,
       detached: true,
       logFile,
     });
@@ -663,9 +664,11 @@ const defaultSignaller: ProcessSignaller = {
       process.kill(pid, 0);
       return true;
     } catch (error) {
-      // EPERM means the process exists but belongs to another user; treat it
-      // as alive so an unowned server is never force-stopped.
-      return error instanceof Error && "code" in error && error.code === "EPERM";
+      // A muximod child is owned by the invoking account. EPERM therefore means
+      // that the PID is not signalable by this lifecycle, so treat the record as
+      // stale instead of blocking a new daemon behind an unrelated PID.
+      void error;
+      return false;
     }
   },
   kill(pid: number, signal: NodeJS.Signals): void {

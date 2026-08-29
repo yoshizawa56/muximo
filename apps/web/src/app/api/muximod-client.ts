@@ -1,4 +1,4 @@
-import type { MuximodEvent, muximodContract } from "@muximo/contract";
+import type { MuximodEvent, muximodContract } from "@muximo/contract/api";
 import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";

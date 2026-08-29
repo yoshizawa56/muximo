@@ -29,11 +29,25 @@ const packageRules = new Map([
   ["@muximo/contract", ["@muximo/domain"]],
   ["@muximo/application", ["@muximo/domain"]],
   ["@muximo/domain", []],
+  ["@muximo/profile", []],
   ["@muximo/infrastructure", ["@muximo/application", "@muximo/domain"]],
   ["@muximo/test-support", []],
-  ["@muximo/muximo-cli", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure"]],
-  ["@muximo/muximod", ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/infrastructure"]],
-  ["@muximo/web", ["@muximo/contract"]],
+  [
+    "@muximo/muximo-cli",
+    [
+      "@muximo/application",
+      "@muximo/contract",
+      "@muximo/domain",
+      "@muximo/profile",
+      "@muximo/infrastructure",
+      "@muximo/muximod",
+    ],
+  ],
+  [
+    "@muximo/muximod",
+    ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/profile", "@muximo/infrastructure"],
+  ],
+  ["@muximo/web", ["@muximo/contract", "@muximo/profile", "@muximo/infrastructure"]],
 ]);
 
 const forbiddenImports = [
@@ -75,10 +89,15 @@ const entityRules = {
 const forbiddenCliDirectories = ["apps/muximo-cli/src/cli/host", "apps/muximo-cli/src/cli/runtime"];
 const forbiddenCliTerms =
   /\b(?:CliRuntime|SessionLifecycleRuntime|RuntimeSessionHostAdapter|CliSessionHostPort|CommandEngine|MuximoCommand)\b/;
-const muximodCliDirectory = "apps/muximod/src/cli";
 const cliProviderLifecycleImport = /(?:from\s+|import\s*\(\s*)["'][^"']*\/agents\/(?:codex|claude|opencode)(?:\/|["'])/;
 const cliProviderLifecycleTerms =
   /\b(?:CodexBackendProvider|ClaudeBackendProvider|OpenCodeBackendProvider|OpenCodeServerManager|manageCodexThread|manageCodexThreadFromEnvironment|ensureCodexRemoteControl|CodexRpcClient|MUXIMO_CODEX_NAME_BIN)\b/;
+const cliDaemonStateTerms =
+  /\b(?:AgentDatabase|createAgentDatabase|Drizzle(?:AgentSession|CodexSessionState|Pane|Workspace)Repository|SqliteTransactionManager|DatabaseSchemaSynchronizer|ensureMuximodSnapshot|readDaemonLog|readDaemonHealthDiagnostics|resolveMuximodPaths|bun:sqlite)\b/;
+const cliForbiddenInfrastructureRootImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/infrastructure["']/;
+const cliForbiddenInfrastructureRuntimeImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/infrastructure\/runtime["']/;
+const cliForbiddenMuximodRootImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/muximod["']/;
+const cliForbiddenMuximodRuntimeImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/muximod\/runtime["']/;
 const forbiddenApplicationPaths = [
   "packages/application/src/ports/cli.ts",
   "packages/application/src/ports/terminal.ts",
@@ -89,7 +108,7 @@ const applicationPresentationTerms =
   /\b(?:Cli[A-Z][A-Za-z0-9_]*|SessionOutputPort|CommandEngine|MuximoCommand|Presenter|Presentation|codexProfile|codexRemote|codexSessionBaseline)\b|\b(?:console\.(?:log|warn|error)|process\.(?:stdout|stderr)|Writable)\b/;
 const applicationTerminalTransportTerms =
   /\b(?:MuximodPty(?:Exit|Process|Spawner|SpawnOptions)?|MuximodPreparedViewport|MuximodViewport(?:Event|Lease)|MuximodImage(?:PasteInput|Paster)|MuximodTerminal(?:Pane|ProcessSpec|ViewportPort))\b/;
-const forbiddenInfrastructureDaemonPath = "packages/infrastructure/src/cli/daemon.ts";
+const forbiddenMuximodAppPath = "apps/muximod";
 
 // The application layer has no models/ directory: port-owned data lives in the
 // port file, use-case inputs live in the use case file, and shared business
@@ -113,16 +132,8 @@ for (const relativePath of forbiddenApplicationPaths) {
   }
 }
 
-if (existsSync(join(root, forbiddenInfrastructureDaemonPath))) {
-  errors.push(
-    `${forbiddenInfrastructureDaemonPath}: daemon process infrastructure is shared by apps; move it under packages/infrastructure/src/process`,
-  );
-}
-
-if (existsSync(join(root, muximodCliDirectory))) {
-  errors.push(
-    `${muximodCliDirectory}: muximod has no public CLI; keep parsing, validation, and presentation in apps/muximo-cli`,
-  );
+if (existsSync(join(root, forbiddenMuximodAppPath))) {
+  errors.push(`${forbiddenMuximodAppPath}: muximod belongs in packages/muximod and must not be recreated as an app`);
 }
 
 for (const [packageName, packageInfo] of workspacePackages) {
@@ -231,7 +242,7 @@ function appName(relativePath) {
 }
 
 function inspectCliBoundary(source, relativePath) {
-  if (!relativePath.startsWith("apps/muximo-cli/src/")) return;
+  if (!relativePath.startsWith("apps/muximo-cli/")) return;
   if (forbiddenCliTerms.test(source)) {
     errors.push(`${relativePath}: CLI runtime/engine façade naming is forbidden`);
   }
@@ -245,6 +256,23 @@ function inspectCliBoundary(source, relativePath) {
     errors.push(
       `${relativePath}: provider lifecycle transport/implementation belongs in packages/infrastructure/src/agents; use a provider-neutral port or registry adapter`,
     );
+  }
+  if (cliDaemonStateTerms.test(source) || /@muximo\/infrastructure\/src\/persistence/.test(source)) {
+    errors.push(
+      `${relativePath}: CLI must access daemon-owned persistence and state only through API/control contracts`,
+    );
+  }
+  if (cliForbiddenInfrastructureRootImport.test(source)) {
+    errors.push(`${relativePath}: CLI must use @muximo/infrastructure/cli-client, not the full infrastructure surface`);
+  }
+  if (cliForbiddenInfrastructureRuntimeImport.test(source)) {
+    errors.push(`${relativePath}: CLI must use @muximo/infrastructure/cli-client, not the daemon runtime surface`);
+  }
+  if (cliForbiddenMuximodRootImport.test(source)) {
+    errors.push(`${relativePath}: CLI must use @muximo/muximod/client, not the full muximod surface`);
+  }
+  if (cliForbiddenMuximodRuntimeImport.test(source)) {
+    errors.push(`${relativePath}: CLI must use @muximo/muximod/client, not the daemon runtime surface`);
   }
 }
 

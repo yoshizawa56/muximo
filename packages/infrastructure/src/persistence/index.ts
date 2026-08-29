@@ -24,13 +24,11 @@ export type {
   CreatePairingResult,
 } from "@muximo/application";
 export { AuthStoreError } from "@muximo/application";
-export type { MuximodInstancePaths, MuximodPathOverrides } from "./paths.js";
-export {
-  defaultMuximodInstanceDirectory,
-  muximodControlSocketMaxBytes,
-  resolveMuximodPaths,
-  validateMuximodControlSocketPath,
+export type {
+  MuximodInstancePaths,
+  MuximodPathOverrides,
 } from "./paths.js";
+export { resolveMuximodPaths } from "./paths.js";
 export { AuthStore } from "./repositories/sqlite/auth.js";
 export {
   DrizzleAgentSessionRepository,
@@ -64,6 +62,7 @@ export type AgentDatabase = {
 
 export type AgentDatabaseOptions = {
   schemaSynchronizer: DatabaseSchemaSynchronizer;
+  environment?: NodeJS.ProcessEnv;
   migrationsFolder?: string;
   instanceDirectory?: string;
   busyTimeoutMs?: number;
@@ -74,10 +73,11 @@ export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): 
 }
 
 export function createAgentDatabase(file: string | undefined, options: AgentDatabaseOptions): AgentDatabase {
-  const databaseFile = file ?? defaultCreateDatabaseFile(process.env);
+  const environment = options.environment ?? process.env;
+  const databaseFile = file ?? defaultCreateDatabaseFile(environment);
   const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
   const configuredInstanceDirectory =
-    file === undefined ? resolveMuximodPaths(process.env).instanceDirectory : undefined;
+    file === undefined ? resolveMuximodPaths(environment).instanceDirectory : undefined;
   const instanceDirectory = options.instanceDirectory ?? configuredInstanceDirectory;
   if (databasePath !== ":memory:") {
     if (instanceDirectory) {
@@ -90,7 +90,8 @@ export function createAgentDatabase(file: string | undefined, options: AgentData
   const busyTimeoutMs = options.busyTimeoutMs ?? defaultSqliteBusyTimeoutMs;
   const sqlite = openConfiguredConnection(databasePath, busyTimeoutMs);
   secureDatabaseFiles(databasePath);
-  const migrationsFolder = options.migrationsFolder ?? findAgentMigrationsFolder() ?? materializeEmbeddedMigrations();
+  const migrationsFolder =
+    options.migrationsFolder ?? findAgentMigrationsFolder(environment) ?? materializeEmbeddedMigrations();
   const db = drizzle({ client: sqlite });
   try {
     options.schemaSynchronizer.synchronize({

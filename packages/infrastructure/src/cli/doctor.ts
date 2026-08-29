@@ -21,7 +21,6 @@ export type DoctorReport = {
   codexProfile: DoctorProfileCheck;
   mise: { path?: string };
   details?: {
-    databaseFile: string;
     defaultRemote: string;
     worktreeRootPattern: string;
   };
@@ -29,7 +28,6 @@ export type DoctorReport = {
 
 export type DoctorServiceOptions = {
   environment: NodeJS.ProcessEnv;
-  databaseFile: string;
   defaultRemote: string;
   logger: { child(fields: Record<string, unknown>): { debug(event: string, fields?: Record<string, unknown>): void } };
 };
@@ -58,7 +56,6 @@ export function runDoctor(options: { verbose: boolean }, deps: DoctorServiceOpti
     ...(options.verbose
       ? {
           details: {
-            databaseFile: deps.databaseFile,
             defaultRemote: deps.defaultRemote,
             worktreeRootPattern: `<workspace-parent>/<workspace-name>.worktrees${deps.environment.MUXIMO_WORKTREE_ID ? `/${deps.environment.MUXIMO_WORKTREE_ID}` : ""}/<session-name>`,
           },

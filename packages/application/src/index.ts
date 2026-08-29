@@ -53,6 +53,7 @@ export type {
   CreateSessionInput,
   ManageSessionInput,
   ManageSessionResult,
+  MuximodAgentSessionApplication,
   MuximodPanePlacement,
   MuximodPaneSummary,
   MuximodSessionSummary,
@@ -152,6 +153,7 @@ export type {
   ShellPanePort,
   ShellProcessInput,
   ShellProcessPort,
+  ShellWorkspaceResolverPort,
   ShellWorktree,
   ShellWorktreePort,
 } from "./ports/shell.js";

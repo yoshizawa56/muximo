@@ -1,4 +1,4 @@
-import { createOpenCodePlugin } from "./opencode/plugin.js";
+import { createOpenCodePlugin, type OpenCodePluginOptions } from "./opencode/plugin.js";
 import { createClaudeMonitor, createCodexMonitor } from "./provider-monitors.js";
 
 export * from "./backend.js";
@@ -200,10 +200,15 @@ export const opencodePlugin: AgentPluginV1 = createOpenCodePlugin();
 
 export const defaultAgentPlugins: readonly AgentPluginV1[] = [shellPlugin, codexPlugin, claudePlugin, opencodePlugin];
 
+export type DefaultAgentPluginRegistryOptions = {
+  opencode?: OpenCodePluginOptions;
+};
+
 /** Creates the default provider registry for a composition root. */
-export function createDefaultAgentPluginRegistry(): AgentPluginRegistry {
+export function createDefaultAgentPluginRegistry(options: DefaultAgentPluginRegistryOptions = {}): AgentPluginRegistry {
   const registry = new AgentPluginRegistry();
-  for (const plugin of defaultAgentPlugins) registry.register(plugin);
+  for (const plugin of [shellPlugin, codexPlugin, claudePlugin]) registry.register(plugin);
+  registry.register(options.opencode ? createOpenCodePlugin(options.opencode) : opencodePlugin);
   return registry;
 }
 

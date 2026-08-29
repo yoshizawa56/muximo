@@ -1,4 +1,5 @@
 import {
+  AgentSession,
   agentBackendSchema,
   Pane,
   PaneId,
@@ -11,6 +12,10 @@ import { z } from "zod";
 
 export const protocolVersion = 2 as const;
 export const terminalProtocolVersion = protocolVersion;
+export const muximodControlMaxRequestBytes = 64 * 1024;
+export const muximodControlMaxResponseBytes = 4 * 1024 * 1024;
+export const muximodControlMaxBufferedResponseBytes = 8 * 1024 * 1024;
+export const muximodControlMaxPendingRequests = 128;
 
 /** Largest image (in bytes) the mobile client may paste into a pane. */
 export const maxPasteImageBytes = 10 * 1024 * 1024;
@@ -22,6 +27,8 @@ export const muximodHealthSchema = z
     ok: z.literal(true),
     service: z.literal("muximod"),
     protocolVersion: z.literal(protocolVersion),
+    pid: z.number().int().positive(),
+    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
 export type MuximodHealth = z.infer<typeof muximodHealthSchema>;
@@ -51,6 +58,11 @@ const displayValueSchema = z
   .min(1)
   .max(120)
   .regex(/^[^\u0000\r\n]+$/);
+const controlRequestIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
 
 export const tmuxSessionNameSchema = z
   .string()
@@ -60,6 +72,14 @@ export const tmuxSessionNameSchema = z
   .regex(/^[A-Za-z0-9._-]+$/);
 
 const hostPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
+
+const httpUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+  }, "URL must use http or https without credentials");
 
 export const publicKeyJwkSchema = z
   .object({
@@ -74,7 +94,7 @@ export type PublicKeyJwk = z.infer<typeof publicKeyJwkSchema>;
 export const pairingQrPayloadSchema = z
   .object({
     v: z.literal(2),
-    muximodBaseUrl: z.string().url(),
+    muximodBaseUrl: httpUrlSchema,
     serverId: z.string().min(16).max(256),
     pairingId: z.string().min(16).max(256),
     pairingSecret: base64UrlValueSchema.min(32).max(512),
@@ -85,12 +105,22 @@ export type PairingQrPayload = z.infer<typeof pairingQrPayloadSchema>;
 
 export const pairingCodePayloadSchema = z
   .object({
-    muximodBaseUrl: z.string().url(),
+    muximodBaseUrl: httpUrlSchema,
     pairingId: z.string().min(16).max(256),
     pairingSecret: base64UrlValueSchema.min(32).max(512),
   })
   .strict();
 export type PairingCodePayload = z.infer<typeof pairingCodePayloadSchema>;
+
+const localAuthSessionResponseSchema = z
+  .object({
+    serverId: z.string().min(16).max(256),
+    deviceId: z.string().min(1).max(256),
+    sessionId: z.string().min(1).max(256),
+    accessToken: base64UrlValueSchema.min(32).max(512),
+    expiresAt: z.string().datetime(),
+  })
+  .strict();
 
 const pairingClaimNotificationSchema = z
   .object({
@@ -107,27 +137,32 @@ const pairingClaimNotificationSchema = z
 export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
 
 export const muximodControlRequestSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("create_local_session"), requestId: controlRequestIdSchema }).strict(),
   z
     .object({
       type: z.literal("create_pairing"),
-      muximodBaseUrl: z.string().url(),
+      requestId: controlRequestIdSchema,
+      muximodBaseUrl: httpUrlSchema,
     })
     .strict(),
   z
     .object({
       type: z.literal("approve_pairing"),
+      requestId: controlRequestIdSchema,
       pairingId: z.string().min(16).max(256),
     })
     .strict(),
   z
     .object({
       type: z.literal("reject_pairing"),
+      requestId: controlRequestIdSchema,
       pairingId: z.string().min(16).max(256),
     })
     .strict(),
   z
     .object({
       type: z.literal("adopt_agent_session"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -136,6 +171,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("release_agent_session"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -144,11 +180,19 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("observe_agent_session"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
       state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
       recentOutput: z.string().max(2_000).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("read_log"),
+      requestId: controlRequestIdSchema,
+      lines: z.number().int().min(1).max(10_000),
     })
     .strict(),
 ]);
@@ -169,7 +213,15 @@ export function encodeMuximodControlRequest(request: MuximodControlRequest): str
 export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
+      type: z.literal("local_session_created"),
+      requestId: controlRequestIdSchema,
+      session: localAuthSessionResponseSchema,
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("pairing_created"),
+      requestId: controlRequestIdSchema,
       pairingId: z.string().min(16).max(256),
       pairingCode: z.string().startsWith("ma3:").min(16).max(8_192),
       payload: pairingQrPayloadSchema,
@@ -184,6 +236,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("pairing_result"),
+      requestId: controlRequestIdSchema,
       pairingId: z.string().min(16).max(256),
       status: z.enum(["approved", "rejected"]),
       deviceId: z.string().min(1).max(256).optional(),
@@ -192,6 +245,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("agent_session_adopted"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -200,6 +254,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("agent_session_released"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -208,6 +263,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("agent_session_observed"),
+      requestId: controlRequestIdSchema,
       agentSessionId: z.string().min(1).max(128),
       hostPaneId: hostPaneIdWireSchema,
       executionId: z.string().min(16).max(128),
@@ -216,13 +272,28 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("daemon_log"),
+      requestId: controlRequestIdSchema,
+      state: z.enum(["available", "empty", "missing"]),
+      logFile: z.string().min(1),
+      lines: z.array(z.string()).max(10_000),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("error"),
+      requestId: controlRequestIdSchema.optional(),
       code: z.string().min(1).max(120),
       message: z.string().min(1).max(4_096),
     })
     .strict(),
 ]);
 export type MuximodControlResponse = z.infer<typeof muximodControlResponseSchema>;
+
+export type MuximodControlLogResult = Pick<
+  Extract<MuximodControlResponse, { type: "daemon_log" }>,
+  "state" | "logFile" | "lines"
+>;
 
 export function decodeMuximodControlResponse(data: string | Uint8Array): ControlFrameDecode<MuximodControlResponse> {
   return decodeControlFrame(data, muximodControlResponseSchema);
@@ -425,6 +496,161 @@ export const workspaceSelectionSchema = z
   })
   .strict();
 export type WorkspaceSelection = z.infer<typeof workspaceSelectionSchema>;
+
+export const agentSessionWorkspaceScopeSchema = z.enum(["current", "all"]);
+export type AgentSessionWorkspaceScope = z.infer<typeof agentSessionWorkspaceScopeSchema>;
+
+const agentSessionArgumentSchema = z.string().max(4_096);
+
+export const runAgentSessionRequestSchema = z
+  .object({
+    backend: agentBackendSchema,
+    name: AgentSession.schema.shape.name.optional(),
+    useWorktree: z.boolean(),
+    worktreeRoot: z.string().trim().min(1).max(4_096).optional(),
+    setupHook: z.string().trim().min(1).max(4_096).optional(),
+    cleanupHook: z.string().trim().min(1).max(4_096).optional(),
+    setupHookExplicit: z.boolean(),
+    cleanupHookExplicit: z.boolean(),
+    backendArgs: z.array(agentSessionArgumentSchema).max(256),
+  })
+  .strict();
+export type RunAgentSessionRequest = z.infer<typeof runAgentSessionRequestSchema>;
+
+export const resumeAgentSessionRequestSchema = z
+  .object({
+    workspaceScope: agentSessionWorkspaceScopeSchema,
+    reference: z.string().trim().min(1).max(256),
+    backendArgs: z.array(agentSessionArgumentSchema).max(256),
+  })
+  .strict();
+export type ResumeAgentSessionRequest = z.infer<typeof resumeAgentSessionRequestSchema>;
+
+export const cleanupAgentSessionRequestSchema = z
+  .object({
+    workspaceScope: agentSessionWorkspaceScopeSchema,
+    force: z.boolean(),
+    reference: z.string().trim().min(1).max(256),
+  })
+  .strict();
+export type CleanupAgentSessionRequest = z.infer<typeof cleanupAgentSessionRequestSchema>;
+
+export const listAgentSessionsRequestSchema = z
+  .object({
+    workspaceScope: agentSessionWorkspaceScopeSchema,
+    includeUnavailable: z.boolean(),
+  })
+  .strict();
+export type ListAgentSessionsRequest = z.infer<typeof listAgentSessionsRequestSchema>;
+
+export const processResultSchema = z
+  .object({
+    code: z.number().int(),
+    interrupted: z.boolean(),
+    signal: z.string().nullable().optional(),
+  })
+  .strict();
+export type ProcessResult = z.infer<typeof processResultSchema>;
+
+export const cleanupReasonSchema = z.enum([
+  "cleanup_declined",
+  "remote_archive_failed",
+  "remote_restore_failed",
+  "cleanup_hook_failed",
+  "unregistered_worktree",
+  "worktree_removal_failed",
+]);
+export type CleanupReason = z.infer<typeof cleanupReasonSchema>;
+
+export const cleanupResultSchema = z.discriminatedUnion("disposition", [
+  z.object({ disposition: z.literal("removed") }).strict(),
+  z.object({ disposition: z.literal("retained"), reason: cleanupReasonSchema }).strict(),
+  z.object({ disposition: z.literal("failed"), reason: cleanupReasonSchema }).strict(),
+]);
+export type CleanupResult = z.infer<typeof cleanupResultSchema>;
+
+export const runCleanupResultSchema = z.discriminatedUnion("disposition", [
+  z.object({ disposition: z.literal("not_requested"), reason: z.enum(["interrupted", "no_worktree"]) }).strict(),
+  ...cleanupResultSchema.options,
+]);
+export type RunCleanupResult = z.infer<typeof runCleanupResultSchema>;
+
+export const agentSessionRecordSchema = AgentSession.schema;
+export type AgentSessionRecord = z.infer<typeof agentSessionRecordSchema>;
+
+export const agentSessionExecutionHealthSchema = z.enum(["inactive", "active", "long_running", "stale", "unknown"]);
+export type AgentSessionExecutionHealth = z.infer<typeof agentSessionExecutionHealthSchema>;
+
+export const agentSessionResumeStateSchema = z.enum(["available", "unavailable", "unknown"]);
+export type AgentSessionResumeState = z.infer<typeof agentSessionResumeStateSchema>;
+
+export const agentSessionResumeReasonSchema = z
+  .enum([
+    "backend_session_missing",
+    "backend_session_discovery_required",
+    "currently_running",
+    "execution_state_unknown",
+    "not_resumable_state",
+    "worktree_missing",
+    "worktree_state_unknown",
+    "worktree_unregistered",
+  ])
+  .nullable();
+export type AgentSessionResumeReason = z.infer<typeof agentSessionResumeReasonSchema>;
+
+export const agentSessionWorktreeStateSchema = z.enum([
+  "not_applicable",
+  "available",
+  "missing",
+  "unregistered",
+  "unknown",
+]);
+export type AgentSessionWorktreeState = z.infer<typeof agentSessionWorktreeStateSchema>;
+
+export const agentSessionListProjectionSchema = z
+  .object({
+    session: agentSessionRecordSchema,
+    executionHealth: agentSessionExecutionHealthSchema,
+    resume: agentSessionResumeStateSchema,
+    resumeReason: agentSessionResumeReasonSchema,
+    worktreeState: agentSessionWorktreeStateSchema,
+    visibleByDefault: z.boolean(),
+  })
+  .strict();
+export type AgentSessionListProjection = z.infer<typeof agentSessionListProjectionSchema>;
+
+export const agentSessionListResponseSchema = z
+  .object({
+    allViews: z.array(agentSessionListProjectionSchema),
+    views: z.array(agentSessionListProjectionSchema),
+  })
+  .strict();
+export type AgentSessionListResponse = z.infer<typeof agentSessionListResponseSchema>;
+
+export const runAgentSessionResponseSchema = z
+  .object({
+    process: processResultSchema,
+    session: agentSessionRecordSchema,
+    cleanup: runCleanupResultSchema,
+  })
+  .strict();
+export type RunAgentSessionResponse = z.infer<typeof runAgentSessionResponseSchema>;
+
+export const resumeAgentSessionResponseSchema = z
+  .object({
+    process: processResultSchema,
+    session: agentSessionRecordSchema,
+  })
+  .strict();
+export type ResumeAgentSessionResponse = z.infer<typeof resumeAgentSessionResponseSchema>;
+
+export const cleanupAgentSessionResponseSchema = z
+  .object({
+    session: agentSessionRecordSchema,
+    cleanup: cleanupResultSchema,
+  })
+  .strict();
+export type CleanupAgentSessionResponse = z.infer<typeof cleanupAgentSessionResponseSchema>;
 
 const dimensionsSchema = z
   .object({

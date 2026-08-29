@@ -1,4 +1,4 @@
-import type { TerminalEndpoint } from "@muximo/contract";
+import type { TerminalEndpoint } from "@muximo/contract/api";
 import { ConnectionFlowLayout, FlowIntro } from "./-connection-flow-layout";
 import type { TerminalsViewModel } from "./-terminals-viewmodel";
 

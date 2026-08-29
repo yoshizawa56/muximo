@@ -6,7 +6,6 @@ export type DaemonOptions = {
   port: number;
   pidFile: string;
   controlSocket?: string;
-  muximodBaseUrl?: string;
   logLevel?: "error" | "warn" | "info" | "debug";
   logFile?: string;
   refreshServers?: boolean;
@@ -74,8 +73,10 @@ export type DaemonStartResult =
 /** OS process/filesystem/health capabilities supplied by infrastructure. */
 export interface DaemonRuntimePort {
   runForeground(options: DaemonOptions): Promise<ProcessResult>;
-  spawn(options: DaemonOptions): DaemonProcessHandle;
-  isHealthy(host: string, port: number): Promise<boolean>;
+  spawn(options: DaemonOptions): Promise<DaemonProcessHandle>;
+  isHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean>;
+  /** Checks ownership without requiring the process to match a new config. */
+  isProcessHealthy(options: Pick<DaemonOptions, "host" | "port">, expectedPid: number): Promise<boolean>;
   isAlive(pid: number): Promise<boolean>;
   signal(pid: number, signal: "SIGTERM"): void;
   readPidRecord(path: string): DaemonPidRecord | undefined;

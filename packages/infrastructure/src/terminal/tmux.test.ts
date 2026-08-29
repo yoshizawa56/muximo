@@ -358,7 +358,7 @@ const sessionEnvironmentTable: OperationTable<RecordingFixture, "default", {}, s
 };
 
 type ResolveInput = { environment: NodeJS.ProcessEnv; runtime: { argv: string[]; execPath: string } };
-const compiledEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../scripts/dev.mjs");
+const compiledEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../scripts/build-muximo.mjs");
 const sourceAgentEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../apps/muximo-cli/src/index.ts");
 const resolveCases = [
   {

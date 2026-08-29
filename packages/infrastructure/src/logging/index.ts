@@ -199,6 +199,8 @@ export function defaultLogFile(environment: NodeJS.ProcessEnv = process.env): st
   );
 }
 
+export * from "./daemon-log.js";
+
 export function errorFields(error: unknown): LogContext {
   let normalized: LogValue = "[UNAVAILABLE]";
   try {
@@ -231,7 +233,7 @@ export function errorName(error: unknown): string {
 }
 
 export function formatHumanRecord(record: LogRecord, showStack = false): string {
-  const prefix = `${record.timestamp} ${record.level.toUpperCase()} ${record.service}[${record.pid}] ${record.event}`;
+  const prefix = `${record.timestamp} ${record.level.toUpperCase()} [${record.service}] [pid=${record.pid}] ${record.event}`;
   const allFields = { ...record.context, ...record.fields };
   const message = typeof allFields.message === "string" ? allFields.message : undefined;
   delete allFields.message;

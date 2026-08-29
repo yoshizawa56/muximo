@@ -1,5 +1,4 @@
 import { Writable } from "node:stream";
-import { createMigrationSchemaSynchronizer } from "@muximo/infrastructure";
 import {
   hasObserved,
   type OperationCase,
@@ -21,7 +20,7 @@ class CaptureOutput extends Writable {
 }
 
 type Fixture = { out: CaptureOutput; err: CaptureOutput };
-type Input = { args: readonly string[]; includeDevelopmentCommands: boolean };
+type Input = { args: readonly string[] };
 type Context = Fixture & { output: string; error: string };
 
 function createFixture() {
@@ -49,22 +48,22 @@ function excludesOutput(key: "output" | "error", value: string) {
 const cases = [
   {
     name: "prints root help without constructing the infrastructure composition",
-    input: { args: [], includeDevelopmentCommands: false },
+    input: { args: [] },
     assert: [
       returns<Context, number>(2),
       containsOutput("output", "Usage: muximo"),
-      containsOutput("output", "MUXIMOD_INSTANCE_DIR"),
+      containsOutput("output", "MUXIMO_ENV"),
       excludesOutput("output", "  dev "),
     ],
   },
   {
-    name: "includes development commands in the source development entrypoint",
-    input: { args: [], includeDevelopmentCommands: true },
-    assert: [returns<Context, number>(2), containsOutput("output", "  dev ")],
+    name: "does not expose a development supervisor command",
+    input: { args: [] },
+    assert: [returns<Context, number>(2), excludesOutput("output", "  dev ")],
   },
   {
     name: "generates zsh completion at the process boundary",
-    input: { args: ["completion", "zsh"], includeDevelopmentCommands: false },
+    input: { args: ["completion", "zsh"] },
     assert: [
       returns<Context, number>(0),
       containsOutput("output", "#compdef muximo"),
@@ -73,11 +72,10 @@ const cases = [
   },
   {
     name: "prints command help without opening the database",
-    input: { args: ["serve", "tailscale", "--help"], includeDevelopmentCommands: false },
+    input: { args: ["serve", "tailscale", "--help"] },
     assert: [
       returns<Context, number>(0),
       containsOutput("output", "Usage: muximo serve tailscale"),
-      containsOutput("output", "Environment: MUXIMO_SERVE_PORT"),
       hasObserved<Context, number>("error", ""),
     ],
   },
@@ -88,8 +86,6 @@ const table: OperationTable<Fixture, "default", Input, number, Context> = {
   cases,
   execute: (fixture, input) =>
     runMuximoCli(input.args, {
-      schemaSynchronizer: createMigrationSchemaSynchronizer(),
-      includeDevelopmentCommands: input.includeDevelopmentCommands,
       env: {},
       out: fixture.out,
       err: fixture.err,

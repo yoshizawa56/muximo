@@ -1,4 +1,4 @@
-import type { DoctorReport } from "@muximo/infrastructure";
+import type { DoctorReport } from "@muximo/infrastructure/cli-client";
 import type { CliIo } from "../commands/types.js";
 
 export function presentDoctorReport(report: DoctorReport, io: CliIo): number {
@@ -22,7 +22,6 @@ export function presentDoctorReport(report: DoctorReport, io: CliIo): number {
     report.mise.path ? `mise: ${report.mise.path}\n` : "mise: unavailable (not required for workspace hooks)\n",
   );
   if (report.details) {
-    io.out.write(`database: ${report.details.databaseFile}\n`);
     io.out.write(`codex remote: ${report.details.defaultRemote || "native local mode"}\n`);
     io.out.write(`worktree root pattern: ${report.details.worktreeRootPattern}\n`);
   }

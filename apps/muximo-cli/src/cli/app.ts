@@ -16,9 +16,9 @@ export function createCliApp(deps: CliAppDeps): CliApp {
         io: deps.io,
         cwd: deps.cwd,
         args,
-        environment: deps.environment ?? process.env,
+        environment: deps.environment,
+        runtime: deps.runtime,
         rootCommand,
-        includeDevelopmentCommands: deps.includeDevelopmentCommands ?? true,
         report: (value) => {
           status = value;
         },

@@ -1,4 +1,4 @@
-import { muximodEventSchema } from "@muximo/contract";
+import { muximodEventSchema } from "@muximo/contract/api";
 import {
   type FixtureHandle,
   type OperationCase,
@@ -60,6 +60,7 @@ const cases = [
       returns<Context, Result>([
         [["muximod", "serve:http://muximod.local", "sessions"], { type: "query" }],
         [["muximod", "serve:http://muximod.local", "panes"], { type: "query" }],
+        [["muximod", "serve:http://muximod.local", "agentSessions"], { type: "query" }],
       ]),
     ],
   },

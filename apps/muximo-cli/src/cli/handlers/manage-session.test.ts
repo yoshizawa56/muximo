@@ -26,7 +26,7 @@ const cases = [
     input: { name: "desktop" },
     assert: [
       returns<Context, number>(0),
-      hasObserved<Context, number>("output", "muximo: managed existing tmux session 'desktop'\n"),
+      hasObserved<Context, number>("output", "[muximo-cli] managed existing tmux session 'desktop'\n"),
     ],
   },
   {
@@ -35,7 +35,7 @@ const cases = [
     input: { name: "desktop" },
     assert: [
       returns<Context, number>(0),
-      hasObserved<Context, number>("output", "muximo: tmux session 'desktop' is already managed\n"),
+      hasObserved<Context, number>("output", "[muximo-cli] tmux session 'desktop' is already managed\n"),
     ],
   },
 ] satisfies readonly OperationCase<FixtureKey, CliTmuxManageSessionInput, number, Context>[];

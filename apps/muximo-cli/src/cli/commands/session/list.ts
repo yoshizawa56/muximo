@@ -53,7 +53,7 @@ export const sessionListSchema = z
   });
 
 export type SessionListCommandOptions = {
-  commandName: "list";
+  commandName: "list" | "ls";
   commandPath: readonly string[];
 };
 
@@ -89,5 +89,19 @@ export function registerNestedSessionListCommand(
   return registerSessionListCommand(parent, handlers, context, {
     commandName: "list",
     commandPath: ["session", "list"],
+  });
+}
+
+export function registerRootListCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
+  return registerSessionListCommand(parent, handlers, context, {
+    commandName: "list",
+    commandPath: ["list"],
+  });
+}
+
+export function registerRootLsCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
+  return registerSessionListCommand(parent, handlers, context, {
+    commandName: "ls",
+    commandPath: ["ls"],
   });
 }

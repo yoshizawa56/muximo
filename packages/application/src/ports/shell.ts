@@ -1,5 +1,5 @@
-import type { WorkspaceRecord } from "@muximo/domain";
-import type { ProcessResult, WorkspaceResolverPort } from "./agent-sessions.js";
+import type { WorkspaceDirectoryOption, WorkspaceRecord } from "@muximo/domain";
+import type { ProcessResult } from "./agent-sessions.js";
 
 export type RunShellInput = {
   shell?: string;
@@ -33,7 +33,7 @@ export type ShellWorktree = {
 
 export interface ShellWorktreePort {
   create(
-    workspace: WorkspaceRecord,
+    workspace: WorkspaceDirectoryOption,
     name: string,
   ): Promise<{
     worktreeRoot?: string;
@@ -65,6 +65,11 @@ export interface ShellPanePort {
   restoreShell(): void;
 }
 
+/** Resolves host shell context from daemon contract data and local host inputs. */
+export interface ShellWorkspaceResolverPort {
+  resolveCurrent(): Promise<WorkspaceDirectoryOption>;
+}
+
 export interface SessionWorktreeLookupPort {
   findWorktreePath(workspaceId: WorkspaceRecord["id"], sessionName: string, fallbackCwd: string): Promise<string>;
 }
@@ -72,7 +77,7 @@ export interface SessionWorktreeLookupPort {
 export type RunShellDependencies = {
   cwd: string;
   paneName: string;
-  workspace: WorkspaceResolverPort;
+  workspace: ShellWorkspaceResolverPort;
   sessions: SessionWorktreeLookupPort;
   process: ShellProcessPort;
   worktrees: ShellWorktreePort;

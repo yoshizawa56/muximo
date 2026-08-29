@@ -12,6 +12,7 @@ const self = path
   .split(path.sep)
   .join("/");
 const maximumFileBytes = 10 * 1024 * 1024;
+const publicEnvironmentProfiles = new Set([".env.local", ".env.stg"]);
 
 function gitFiles(args) {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean);
@@ -63,7 +64,7 @@ for (const relativeFile of files) {
   const normalizedFile = relativeFile.split(path.sep).join("/");
 
   for (const { label, pattern } of forbiddenFilePatterns) {
-    if (pattern.test(normalizedFile)) {
+    if (pattern.test(normalizedFile) && !publicEnvironmentProfiles.has(normalizedFile)) {
       failures.push(`${normalizedFile}: forbidden ${label}`);
     }
   }

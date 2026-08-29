@@ -66,7 +66,6 @@ const table: OperationTable<DoctorFixture, DoctorFixtureKey, DoctorInput, Doctor
   execute: (fixture, input) => {
     const report = runDoctor(input, {
       environment: fixture.environment,
-      databaseFile: join(fixture.root, "muximod.sqlite"),
       defaultRemote: "unix://",
       logger: { child: () => ({ debug: () => undefined }) },
     });

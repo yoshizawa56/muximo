@@ -8,7 +8,7 @@ export class StopDaemon {
     const healthCheckStartedAt = this.dependencies.clock.now();
     const record = this.dependencies.runtime.readPidRecord(options.pidFile);
     if (!record) {
-      if (await this.dependencies.runtime.isHealthy(options.host, options.port)) {
+      if (await this.dependencies.runtime.isHealthy(options)) {
         throw new DaemonHealthError("healthy_without_pid", options, { startedAt: healthCheckStartedAt });
       }
       return { state: "already-stopped", reason: "missing-pid" };
@@ -20,7 +20,11 @@ export class StopDaemon {
     }
 
     const recordOptions = { ...options, host: record.host, port: record.port };
-    if (!(await this.dependencies.runtime.isHealthy(recordOptions.host, recordOptions.port))) {
+    const isCurrentConfigurationHealthy = await this.dependencies.runtime.isHealthy(recordOptions, record.pid);
+    const isOwnedProcessHealthy = isCurrentConfigurationHealthy
+      ? true
+      : await this.dependencies.runtime.isProcessHealthy(recordOptions, record.pid);
+    if (!isOwnedProcessHealthy) {
       throw new DaemonHealthError("pid_unhealthy", options, { startedAt: healthCheckStartedAt, pid: record.pid });
     }
 
