@@ -175,6 +175,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     cwd: options.workingDirectory,
     environment,
     workspaces: workspaceRepository,
+    directory: workspaceCatalog,
   });
   const worktrees = new GitWorktreeAdapter({ environment, logger });
   const hooks = new WorkspaceHookAdapter({

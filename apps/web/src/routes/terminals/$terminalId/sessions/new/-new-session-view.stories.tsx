@@ -19,7 +19,6 @@ function buildWorkspacePicker(overrides: Partial<WorkspacePickerViewModel> = {})
     registrationDirectory: "",
     setupScriptPath: "",
     cleanupScriptPath: "",
-    worktreeCopyPatterns: "",
     isRegisteringWorkspace: false,
     registrationError: null,
     errorMessage: null,
@@ -32,7 +31,6 @@ function buildWorkspacePicker(overrides: Partial<WorkspacePickerViewModel> = {})
     onRegistrationDirectoryChange: fn(),
     onSetupScriptPathChange: fn(),
     onCleanupScriptPathChange: fn(),
-    onWorktreeCopyPatternsChange: fn(),
     onRegisterWorkspace: fn(),
     ...overrides,
   };

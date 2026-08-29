@@ -16,6 +16,7 @@ export {
   gitStatus,
   gitStatusCode,
   gitWorkspaceRoot,
+  listIgnoredFiles,
   listUnmanagedFiles,
 } from "./cli/git.js";
 export * from "./cli/hooks.js";

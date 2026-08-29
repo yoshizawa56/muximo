@@ -176,7 +176,6 @@ function toApplicationRegisterWorkspace(input: RegisterWorkspaceRequest): Regist
     ...(input.cleanupScriptPath === undefined
       ? {}
       : { cleanupScriptPath: toApplicationPatch(input.cleanupScriptPath) }),
-    ...(input.worktreeCopyPatterns === undefined ? {} : { worktreeCopyPatterns: input.worktreeCopyPatterns }),
   };
 }
 
@@ -187,13 +186,6 @@ function toApplicationUpdateWorkspace(input: UpdateWorkspaceRequest): UpdateWork
     ...(input.cleanupScriptPath === undefined
       ? {}
       : { cleanupScriptPath: toApplicationPatch(input.cleanupScriptPath) }),
-    ...(input.worktreeCopyPatterns === undefined ? {} : { worktreeCopyPatterns: input.worktreeCopyPatterns }),
-    ...(input.appendWorktreeCopyPatterns === undefined
-      ? {}
-      : { appendWorktreeCopyPatterns: input.appendWorktreeCopyPatterns }),
-    ...(input.clearWorktreeCopyPatterns === undefined
-      ? {}
-      : { clearWorktreeCopyPatterns: input.clearWorktreeCopyPatterns }),
   };
 }
 

@@ -200,74 +200,134 @@ const lifecycleTable: ScenarioTable<
   },
 };
 
-type CopyInput = {
-  patterns: readonly string[];
-};
+type CopyInput = undefined;
+type CopyFixtureKey =
+  | "single"
+  | "all"
+  | "negated"
+  | "symlink"
+  | "special-global"
+  | "special-vendor"
+  | "special-file-ignore";
 
 type CopyContext = {
   result: boolean | undefined;
-  copiedPath: string | undefined;
-  outsidePath: string;
+  copiedPaths: readonly string[];
+  discoveryCommands: readonly string[];
   diagnosticEvents: readonly string[];
 };
 
 const copyCases = [
   {
-    name: "copies an unmanaged file into a registered worktree",
-    input: { patterns: [".env"] },
+    name: "copies an ignored file selected by .worktreeinclude",
+    fixture: "single",
+    input: undefined,
     assert: [
       returns<CopyContext, boolean>(true),
       hasObserved<CopyContext, boolean>("result", true),
-      hasObserved<CopyContext, boolean>("copiedPath", "copied"),
+      hasObserved<CopyContext, boolean>("copiedPaths", [".env"]),
+      {
+        name: "limits ignored-file discovery to include pathspecs",
+        check: (context: CopyContext) =>
+          expect(context.discoveryCommands.some((command) => command.includes("-- :(glob).env"))).toBe(true),
+      },
       hasObserved<CopyContext, boolean>("diagnosticEvents", []),
     ],
   },
   {
-    name: "refuses a parent traversal copy pattern",
-    input: { patterns: ["../outside"] },
+    name: "does not copy an untracked file unless Git also marks it ignored",
+    fixture: "all",
+    input: undefined,
     assert: [
-      returns<CopyContext, boolean>(false),
-      hasObserved<CopyContext, boolean>("result", false),
-      hasObserved<CopyContext, boolean>("copiedPath", undefined),
-      hasObserved<CopyContext, boolean>("diagnosticEvents", ["worktree.copy_pattern_invalid"]),
+      returns<CopyContext, boolean>(true),
+      hasObserved<CopyContext, boolean>("copiedPaths", [".env", ".env.local"]),
+      hasObserved<CopyContext, boolean>("diagnosticEvents", []),
+    ],
+  },
+  {
+    name: "applies Gitignore negation rules when selecting ignored files",
+    fixture: "negated",
+    input: undefined,
+    assert: [
+      returns<CopyContext, boolean>(true),
+      hasObserved<CopyContext, boolean>("copiedPaths", [".env"]),
+      hasObserved<CopyContext, boolean>("diagnosticEvents", []),
     ],
   },
   {
     name: "refuses to copy through a worktree symlink",
     fixture: "symlink",
-    input: { patterns: ["nested/secret.txt"] },
+    input: undefined,
     assert: [
       returns<CopyContext, boolean>(false),
       hasObserved<CopyContext, boolean>("result", false),
-      hasObserved<CopyContext, boolean>("copiedPath", undefined),
+      hasObserved<CopyContext, boolean>("copiedPaths", []),
       {
         name: "reports the containment refusal",
         check: (context: CopyContext) => expect(context.diagnosticEvents).toContain("worktree.copy_refused"),
       },
     ],
   },
-] satisfies readonly OperationCase<"default" | "symlink", CopyInput, boolean, CopyContext>[];
+  {
+    name: "does not traverse a wholly ignored directory for an unrestricted ** slash pattern",
+    fixture: "special-global",
+    input: undefined,
+    assert: [
+      returns<CopyContext, boolean>(true),
+      hasObserved<CopyContext, boolean>("copiedPaths", []),
+      hasObserved<CopyContext, boolean>("diagnosticEvents", []),
+    ],
+  },
+  {
+    name: "traverses a wholly ignored directory named by the pattern",
+    fixture: "special-vendor",
+    input: undefined,
+    assert: [
+      returns<CopyContext, boolean>(true),
+      hasObserved<CopyContext, boolean>("copiedPaths", ["vendor/config.json", "vendor/nested/config.json"]),
+      hasObserved<CopyContext, boolean>("diagnosticEvents", []),
+    ],
+  },
+  {
+    name: "does not treat a directory collapsed by a file ignore rule as wholly ignored",
+    fixture: "special-file-ignore",
+    input: undefined,
+    assert: [
+      returns<CopyContext, boolean>(true),
+      hasObserved<CopyContext, boolean>("copiedPaths", ["vendor/config.json"]),
+      hasObserved<CopyContext, boolean>("diagnosticEvents", []),
+    ],
+  },
+] satisfies readonly OperationCase<CopyFixtureKey, CopyInput, boolean, CopyContext>[];
 
-const copyTable: OperationTable<WorktreeFixture, "default" | "symlink", CopyInput, boolean, CopyContext> = {
+const copyTable: OperationTable<WorktreeFixture, CopyFixtureKey, CopyInput, boolean, CopyContext> = {
   defaultFixture: createCopyFixture,
-  fixtures: { default: createCopyFixture, symlink: createSymlinkFixture },
+  fixtures: {
+    single: createCopyFixture,
+    all: createCopyAllFixture,
+    negated: createCopyNegatedFixture,
+    symlink: createSymlinkFixture,
+    "special-global": createSpecialGlobalFixture,
+    "special-vendor": createSpecialVendorFixture,
+    "special-file-ignore": createSpecialFileIgnoreFixture,
+  },
   cases: copyCases,
-  execute: async (fixture, input) => {
+  execute: async (fixture) => {
     if (!fixture.created?.worktreePath) throw new Error("copy fixture worktree is missing");
-    fixture.copyResult = await fixture.adapter.copyFiles(
-      { workspaceRoot: fixture.workspaceRoot, worktreePath: fixture.created.worktreePath },
-      input.patterns,
-    );
+    fixture.copyResult = await fixture.adapter.copyFiles({
+      workspaceRoot: fixture.workspaceRoot,
+      worktreePath: fixture.created.worktreePath,
+    });
     return fixture.copyResult;
   },
   observe: (fixture) => ({
     result: fixture.copyResult,
-    copiedPath: fixture.created?.worktreePath
-      ? existsSync(join(fixture.created.worktreePath, ".env"))
-        ? "copied"
-        : undefined
-      : undefined,
-    outsidePath: join(fixture.root, "outside", "secret.txt"),
+    copiedPaths: fixture.created?.worktreePath
+      ? [".env", ".env.local", "untracked.txt", "vendor/config.json", "vendor/nested/config.json"].filter((path) =>
+          existsSync(join(fixture.created!.worktreePath!, path)),
+        )
+      : [],
+    discoveryCommands: gitCommands(fixture).filter((command) => command.includes("ls-files --others --ignored")),
     diagnosticEvents: fixture.diagnostics.map((record) => record.event),
   }),
 };
@@ -300,9 +360,28 @@ function createPartialCreationFixture(registerCleanup?: (cleanup: () => void) =>
 }
 
 function createCopyFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createCopyFixtureWithInclude(".env\n", registerCleanup);
+}
+
+function createCopyAllFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createCopyFixtureWithInclude("**\n", registerCleanup);
+}
+
+function createCopyNegatedFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createCopyFixtureWithInclude("**\n!.env.local\n", registerCleanup);
+}
+
+function createCopyFixtureWithInclude(
+  includeContents: string,
+  registerCleanup?: (cleanup: () => void) => void,
+): { fixture: WorktreeFixture } {
   const fixture = createGitFixture();
   arrangeRawWorktree(fixture, "copy");
+  writeFileSync(join(fixture.workspaceRoot, ".gitignore"), ".env*\n");
   writeFileSync(join(fixture.workspaceRoot, ".env"), "secret\n");
+  writeFileSync(join(fixture.workspaceRoot, ".env.local"), "local secret\n");
+  writeFileSync(join(fixture.workspaceRoot, "untracked.txt"), "not ignored\n");
+  writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), includeContents);
   registerFixtureCleanup(fixture, registerCleanup);
   return { fixture };
 }
@@ -313,9 +392,45 @@ function createSymlinkFixture(registerCleanup?: (cleanup: () => void) => void): 
   const source = join(fixture.workspaceRoot, "nested", "secret.txt");
   mkdirSync(resolve(source, ".."), { recursive: true });
   writeFileSync(source, "secret\n");
+  writeFileSync(join(fixture.workspaceRoot, ".gitignore"), "nested/\n");
+  writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), "nested/**\n");
   const outside = join(fixture.root, "outside");
   mkdirSync(outside, { recursive: true });
   symlinkSync(outside, join(fixture.created?.worktreePath ?? join(fixture.worktreeRoot, "symlink"), "nested"));
+  registerFixtureCleanup(fixture, registerCleanup);
+  return { fixture };
+}
+
+function createSpecialGlobalFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createSpecialIncludeFixture("**/config.json\n", registerCleanup);
+}
+
+function createSpecialVendorFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createSpecialIncludeFixture("vendor/**/config.json\n", registerCleanup);
+}
+
+function createSpecialFileIgnoreFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  const fixture = createGitFixture();
+  arrangeRawWorktree(fixture, "special-file-ignore");
+  writeFileSync(join(fixture.workspaceRoot, ".gitignore"), "*.json\n");
+  mkdirSync(join(fixture.workspaceRoot, "vendor"), { recursive: true });
+  writeFileSync(join(fixture.workspaceRoot, "vendor", "config.json"), "secret\n");
+  writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), "**/config.json\n");
+  registerFixtureCleanup(fixture, registerCleanup);
+  return { fixture };
+}
+
+function createSpecialIncludeFixture(
+  includeContents: string,
+  registerCleanup?: (cleanup: () => void) => void,
+): { fixture: WorktreeFixture } {
+  const fixture = createGitFixture();
+  arrangeRawWorktree(fixture, "special");
+  writeFileSync(join(fixture.workspaceRoot, ".gitignore"), "vendor/\n");
+  mkdirSync(join(fixture.workspaceRoot, "vendor", "nested"), { recursive: true });
+  writeFileSync(join(fixture.workspaceRoot, "vendor", "config.json"), "secret\n");
+  writeFileSync(join(fixture.workspaceRoot, "vendor", "nested", "config.json"), "nested secret\n");
+  writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), includeContents);
   registerFixtureCleanup(fixture, registerCleanup);
   return { fixture };
 }
@@ -374,7 +489,6 @@ exec ${shellQuote(realGit)} "$@"
     rootPath: workspaceRoot,
     name: "workspace",
     isGit: true,
-    worktreeCopyPatterns: [],
     createdAt: "2026-08-23T00:00:00.000Z",
     updatedAt: "2026-08-23T00:00:00.000Z",
   });

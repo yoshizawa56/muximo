@@ -207,9 +207,6 @@ async function resolveWorkspaceSelector(
   cwd = process.cwd(),
 ): Promise<WorkspaceDirectory> {
   const workspaces = (await listWorkspaces()).workspaces;
-  const exactId = workspaces.find((workspace) => workspace.id === selector);
-  if (exactId) return exactId;
-
   const matches = workspaces.filter(
     (workspace) => workspace.name === selector || sameWorkspaceDirectory(workspace, selector, cwd),
   );
@@ -217,7 +214,7 @@ async function resolveWorkspaceSelector(
     const [match] = matches;
     if (match) return match;
   }
-  if (matches.length > 1) throw new Error(`workspace name is ambiguous; use its ID: ${selector}`);
+  if (matches.length > 1) throw new Error(`workspace name is ambiguous; select its path: ${selector}`);
   throw new Error(`workspace not found: ${selector}`);
 }
 

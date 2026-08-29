@@ -5,11 +5,7 @@ import { invalidateWorkspaceData } from "../../../app/api/invalidation";
 import { muximodErrorMessage } from "../../../app/api/muximod-error.js";
 import { useMuximodEvents } from "../../../app/api/muximod-events";
 import { useMuximodConnection } from "../../../app/api/use-muximod-connection";
-import {
-  parseWorktreeCopyPatterns,
-  type WorkspaceDetailViewModel,
-  workspaceDetailCanSave,
-} from "../-workspaces-viewmodel";
+import { type WorkspaceDetailViewModel, workspaceDetailCanSave } from "../-workspaces-viewmodel";
 
 export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetailViewModel {
   const navigate = useNavigate();
@@ -33,7 +29,6 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
   const [name, setName] = useState("");
   const [setupScriptPath, setSetupScriptPath] = useState("");
   const [cleanupScriptPath, setCleanupScriptPath] = useState("");
-  const [worktreeCopyPatterns, setWorktreeCopyPatterns] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,7 +36,6 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
     setName(workspace.name);
     setSetupScriptPath(workspace.setupScriptPath ?? "");
     setCleanupScriptPath(workspace.cleanupScriptPath ?? "");
-    setWorktreeCopyPatterns((workspace.worktreeCopyPatterns ?? []).join("\n"));
     setSaveError(null);
   }, [workspace]);
 
@@ -55,7 +49,6 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
             name: name.trim() || undefined,
             setupScriptPath: setupScriptPath.trim() ? setupScriptPath.trim() : null,
             cleanupScriptPath: cleanupScriptPath.trim() ? cleanupScriptPath.trim() : null,
-            worktreeCopyPatterns: parseWorktreeCopyPatterns(worktreeCopyPatterns),
           },
         },
         {},
@@ -105,7 +98,6 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
     name,
     setupScriptPath,
     cleanupScriptPath,
-    worktreeCopyPatterns,
     isSaving: updateMutation.isPending,
     isDeleting: deleteMutation.isPending,
     errorMessage: workspacesQuery.error ? muximodErrorMessage(workspacesQuery.error) : null,
@@ -114,7 +106,6 @@ export function useWorkspaceDetailViewModel(workspaceId: string): WorkspaceDetai
     onNameChange: setName,
     onSetupScriptPathChange: setSetupScriptPath,
     onCleanupScriptPathChange: setCleanupScriptPath,
-    onWorktreeCopyPatternsChange: setWorktreeCopyPatterns,
     onSave,
     onDelete,
     onBack,

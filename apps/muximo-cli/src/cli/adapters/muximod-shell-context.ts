@@ -74,7 +74,6 @@ function toWorkspaceDirectoryOption(value: WorkspaceDirectory, cwd: string): Wor
     ...(value.cleanupScriptPath === null
       ? {}
       : { cleanupScriptPath: resolveDisplayPath(value.cleanupScriptPath, cwd) }),
-    worktreeCopyPatterns: [...value.worktreeCopyPatterns],
   };
 }
 
@@ -100,7 +99,6 @@ function createDerivedWorkspace(
     rootPath,
     name: basename(rootPath),
     isGit,
-    worktreeCopyPatterns: [],
   };
 }
 

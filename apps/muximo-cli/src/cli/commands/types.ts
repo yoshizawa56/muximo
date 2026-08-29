@@ -11,6 +11,7 @@ export type CliIo = {
 export type CliRunInput = {
   backend: AgentBackend;
   name?: string;
+  workspace?: string;
   useWorktree: boolean;
   worktreeRoot?: string;
   setupHook?: string;
@@ -93,10 +94,6 @@ export type CliWorkspaceMutationInput = {
   setupHookExplicit: boolean;
   cleanupHook?: string | null;
   cleanupHookExplicit: boolean;
-  copyPatterns: string[];
-  copyPatternsExplicit: boolean;
-  appendCopyPatterns: string[];
-  clearCopyPatterns: boolean;
 };
 
 export type CliWorkspaceAddInput = CliWorkspaceMutationInput & {

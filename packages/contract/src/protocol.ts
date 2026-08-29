@@ -442,8 +442,6 @@ export type WorkspaceSelectionMode = z.infer<typeof workspaceSelectionModeSchema
 const workspaceScriptPathSchema = Workspace.schema.shape.setupScriptPath.unwrap();
 const workspaceScriptPatchSchema = workspaceScriptPathSchema.trim().min(1).max(4_096).nullable().optional();
 const workspaceNameInputSchema = Workspace.schema.shape.name.trim().min(1).optional();
-const worktreeCopyPatternSchema = Workspace.schema.shape.worktreeCopyPatterns.element;
-const worktreeCopyPatternsInputSchema = z.array(worktreeCopyPatternSchema).max(100).optional();
 const workspaceIdWireSchema = WorkspaceId.valueSchema;
 const paneIdWireSchema = PaneId.valueSchema;
 
@@ -455,7 +453,6 @@ export const workspaceDirectorySchema = z
     isGit: Workspace.schema.shape.isGit,
     setupScriptPath: workspaceScriptPathSchema.nullable(),
     cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().nullable(),
-    worktreeCopyPatterns: Workspace.schema.shape.worktreeCopyPatterns,
   })
   .strict();
 export type WorkspaceDirectory = z.infer<typeof workspaceDirectorySchema>;
@@ -470,7 +467,6 @@ export const registerWorkspaceRequestSchema = z
     name: workspaceNameInputSchema,
     setupScriptPath: workspaceScriptPatchSchema,
     cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().trim().min(1).max(4_096).nullable().optional(),
-    worktreeCopyPatterns: worktreeCopyPatternsInputSchema,
   })
   .strict();
 export type RegisterWorkspaceRequest = z.infer<typeof registerWorkspaceRequestSchema>;
@@ -480,9 +476,6 @@ export const updateWorkspaceRequestSchema = z
     name: workspaceNameInputSchema,
     setupScriptPath: workspaceScriptPatchSchema,
     cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().trim().min(1).max(4_096).nullable().optional(),
-    worktreeCopyPatterns: worktreeCopyPatternsInputSchema,
-    appendWorktreeCopyPatterns: worktreeCopyPatternsInputSchema,
-    clearWorktreeCopyPatterns: z.boolean().optional(),
   })
   .strict();
 export type UpdateWorkspaceRequest = z.infer<typeof updateWorkspaceRequestSchema>;
@@ -506,6 +499,8 @@ export const runAgentSessionRequestSchema = z
   .object({
     backend: agentBackendSchema,
     name: AgentSession.schema.shape.name.optional(),
+    workspace: z.string().trim().min(1).max(4_096).optional(),
+    cwd: z.string().trim().min(1).max(4_096).optional(),
     useWorktree: z.boolean(),
     worktreeRoot: z.string().trim().min(1).max(4_096).optional(),
     setupHook: z.string().trim().min(1).max(4_096).optional(),

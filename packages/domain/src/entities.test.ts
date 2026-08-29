@@ -31,7 +31,6 @@ const workspaceInput: WorkspaceCreateInput = {
   isGit: true,
   setupScriptPath: "/config/setup",
   cleanupScriptPath: "/config/cleanup",
-  worktreeCopyPatterns: [" .env ", ".env", "config/*.local.json"],
   createdAt: "2026-08-15T00:00:00.000Z",
   updatedAt: "2026-08-15T00:00:00.000Z",
 };
@@ -43,7 +42,6 @@ const workspace: WorkspaceRecord = Workspace.create({
   isGit: true,
   setupScriptPath: "/config/setup",
   cleanupScriptPath: "/config/cleanup",
-  worktreeCopyPatterns: [".env", "config/*.local.json"],
   createdAt: "2026-08-15T00:00:00.000Z",
   updatedAt: "2026-08-15T00:00:00.000Z",
 });
@@ -93,7 +91,6 @@ const workspaceCases = [
       returns<EmptyContext, WorkspaceRecord>({
         ...workspace,
         name: "Project",
-        worktreeCopyPatterns: [".env", "config/*.local.json"],
       }),
     ],
   },

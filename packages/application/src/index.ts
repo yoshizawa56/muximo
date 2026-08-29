@@ -1,4 +1,4 @@
-export { InvalidWorkspaceCopyPatternError, InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
+export { InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
 export type {
   AgentBackendResumeState,
   AgentObservationPort,
@@ -43,6 +43,7 @@ export type {
   SessionObservationPort,
   SessionResourcePort,
   StartAgentSessionInput,
+  WorkspaceResolutionInput,
   WorkspaceResolverPort,
   WorkspaceScope,
   WorktreePort,

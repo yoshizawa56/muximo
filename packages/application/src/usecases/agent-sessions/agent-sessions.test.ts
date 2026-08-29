@@ -30,6 +30,7 @@ import {
   RunAgentSession,
   type RunAgentSessionResult,
   type SessionIdentityUpdate,
+  type WorkspaceResolutionInput,
 } from "../../index.js";
 
 type LifecycleFixture = {
@@ -55,6 +56,8 @@ type LifecycleFixture = {
   restoreCount: number;
   deleted: boolean;
   providerUpdates: SessionIdentityUpdate[];
+  runWorkspaceInput?: WorkspaceResolutionInput;
+  resolvedWorkspaceInput: WorkspaceResolutionInput | undefined;
   claim?: ClaimExecutionInput;
 };
 
@@ -69,6 +72,7 @@ type RunContext = {
   worktreeRemoveCount: number;
   cleanupHookCount: number;
   providerUpdates: readonly SessionIdentityUpdate[];
+  resolvedWorkspaceInput: WorkspaceResolutionInput | undefined;
 };
 
 type ResumeContext = {
@@ -91,7 +95,6 @@ const workspace: WorkspaceRecord = {
   rootPath: "/workspace",
   name: "workspace",
   isGit: false,
-  worktreeCopyPatterns: [],
   createdAt: "2026-08-23T00:00:00.000Z",
   updatedAt: "2026-08-23T00:00:00.000Z",
 };
@@ -127,6 +130,7 @@ function createFixture(
     confirmCleanup?: boolean;
     processAlive?: boolean;
     dirty?: boolean;
+    runWorkspaceInput?: WorkspaceResolutionInput;
   } = {},
 ): LifecycleFixture {
   const sessions = new Map<string, AgentSessionRecord>();
@@ -154,6 +158,8 @@ function createFixture(
     restoreCount: 0,
     deleted: false,
     providerUpdates: [],
+    runWorkspaceInput: options.runWorkspaceInput,
+    resolvedWorkspaceInput: undefined,
   };
 }
 
@@ -225,7 +231,12 @@ function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
   };
   return new RunAgentSession({
     sessions,
-    workspace: { resolveCurrent: async () => fixture.workspace },
+    workspace: {
+      resolveCurrent: async (input) => {
+        fixture.resolvedWorkspaceInput = input;
+        return fixture.workspace;
+      },
+    },
     naming: { resolveName: async (_workspaceId, requestedName) => requestedName ?? "session" },
     hooks: {
       resolveHook: async (value) => value,
@@ -365,7 +376,7 @@ const runInput = {
   backendArgs: [] as readonly string[],
 };
 
-type RunKey = "success" | "failed" | "startup-failed" | "prepare-failed" | "post-execution-failed";
+type RunKey = "success" | "failed" | "startup-failed" | "prepare-failed" | "post-execution-failed" | "resolution-input";
 type RunStep = { operation: "run" };
 const runCases = [
   {
@@ -384,6 +395,17 @@ const runCases = [
       hasObserved<RunContext, RunAgentSessionResult>("adoptCount", 1),
       hasObserved<RunContext, RunAgentSessionResult>("releaseCount", 1),
       hasObserved<RunContext, RunAgentSessionResult>("providerUpdates", [{ backendSessionId: "backend-session" }]),
+    ],
+  },
+  {
+    name: "forwards workspace selection and cwd to the workspace resolver",
+    fixture: "resolution-input",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasObserved<RunContext, RunAgentSessionResult>("resolvedWorkspaceInput", {
+        workspace: "selected",
+        cwd: "/caller/worktree",
+      }),
     ],
   },
   {
@@ -459,11 +481,20 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
         hasChangesError: new Error("post-execution observation failed"),
       }),
     }),
+    "resolution-input": () => ({
+      fixture: createFixture({
+        runWorkspaceInput: { workspace: "selected", cwd: "/caller/worktree" },
+      }),
+    }),
   },
   cases: runCases,
   execute: async (fixture, steps) => {
     if (steps[0]?.operation !== "run") throw new Error("run scenario has no run step");
-    return createRunUseCase(fixture).execute({ ...runInput, useWorktree: fixture.useWorktree });
+    return createRunUseCase(fixture).execute({
+      ...runInput,
+      ...(fixture.runWorkspaceInput ?? {}),
+      useWorktree: fixture.useWorktree,
+    });
   },
   observe: (fixture, result) => {
     const session = [...fixture.sessions.values()][0];
@@ -478,6 +509,7 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
       worktreeRemoveCount: fixture.worktreeRemoveCount,
       cleanupHookCount: fixture.cleanupHookCount,
       providerUpdates: fixture.providerUpdates,
+      resolvedWorkspaceInput: fixture.resolvedWorkspaceInput,
     };
   },
 };

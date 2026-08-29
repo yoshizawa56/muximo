@@ -19,7 +19,6 @@ const workspaces = [
     isGit: true,
     setupScriptPath: null,
     cleanupScriptPath: null,
-    worktreeCopyPatterns: [],
   },
   {
     id: "workspace-2",
@@ -28,7 +27,6 @@ const workspaces = [
     isGit: false,
     setupScriptPath: null,
     cleanupScriptPath: null,
-    worktreeCopyPatterns: [],
   },
 ];
 
@@ -40,7 +38,6 @@ const baseInput: Omit<WorkspacePickerInput, "workspaces" | "workspaceId" | "mode
   registrationDirectory: "",
   setupScriptPath: "",
   cleanupScriptPath: "",
-  worktreeCopyPatterns: "",
   isRegisteringWorkspace: false,
   registrationError: null,
   errorMessage: null,

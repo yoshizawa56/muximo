@@ -4,7 +4,7 @@ import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
 import { WorkspaceNotFoundError, WorkspaceUseCaseError } from "./workspace-errors.js";
 
 /**
- * Resolves a workspace by ID, registered path, or unique name. Shared by the
+ * Resolves a workspace by registered path or unique name. Shared by the
  * workspace mutations that accept free-form selectors.
  */
 export async function findWorkspace(
@@ -15,8 +15,6 @@ export async function findWorkspace(
   const reference = selector.trim();
   if (!reference) throw new WorkspaceNotFoundError(selector);
   const records = await workspaces.list();
-  const byId = records.find((workspace) => workspace.id === reference);
-  if (byId) return byId;
 
   let resolved: Awaited<ReturnType<WorkspaceDirectoryPort["resolveDirectory"]>> | undefined;
   try {
@@ -40,7 +38,7 @@ export async function findWorkspace(
   if (byName.length > 1) {
     throw new WorkspaceUseCaseError(
       "workspace_name_ambiguous",
-      `workspace name is ambiguous; use its ID: ${reference}`,
+      `workspace name is ambiguous; select its path: ${reference}`,
       { selector: reference },
     );
   }

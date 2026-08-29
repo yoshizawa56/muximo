@@ -48,7 +48,7 @@ export class RunAgentSession {
       backendArgumentCount: input.backendArgs.length,
     });
 
-    const workspace = await this.deps.workspace.resolveCurrent();
+    const workspace = await this.deps.workspace.resolveCurrent({ workspace: input.workspace, cwd: input.cwd });
     const name = AgentSession.normalizeName(
       await this.deps.naming.resolveName(workspace.id, input.name, input.backend),
     );
@@ -108,7 +108,7 @@ export class RunAgentSession {
       });
 
       session = await this.persist(session, { status: "setup" });
-      if (!(await this.deps.worktrees.copyFiles(session, workspace.worktreeCopyPatterns))) {
+      if (!(await this.deps.worktrees.copyFiles(session))) {
         await this.markSetupFailed(session);
         throw new Error("worktree file copy failed");
       }

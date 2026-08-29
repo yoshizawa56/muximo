@@ -43,7 +43,6 @@ export const storyWorkspaces: WorkspaceDirectory[] = [
     isGit: true,
     setupScriptPath: "~/.config/muximo/setup",
     cleanupScriptPath: "~/.config/muximo/cleanup",
-    worktreeCopyPatterns: [".env", ".env.local"],
   },
   {
     id: "workspace-scratch",
@@ -52,7 +51,6 @@ export const storyWorkspaces: WorkspaceDirectory[] = [
     isGit: false,
     setupScriptPath: null,
     cleanupScriptPath: null,
-    worktreeCopyPatterns: [],
   },
 ];
 

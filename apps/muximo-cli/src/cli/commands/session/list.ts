@@ -89,7 +89,7 @@ export function registerNestedSessionListCommand(
   return registerSessionListCommand(parent, handlers, context, {
     commandName: "list",
     commandPath: ["session", "list"],
-  });
+  }).alias("ls");
 }
 
 export function registerRootListCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
