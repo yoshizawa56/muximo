@@ -28,7 +28,10 @@ type BackendFixture = {
   prepareInput?: { name?: string; cwd: string; resumeSessionId?: string | null };
   runCount: number;
   sessionUpdate?: string;
+  processKeys: string[];
   sameProcessResult?: boolean;
+  failureDiagnostic?: string;
+  processCode?: number;
   adapter: AgentBackendAdapter;
   session: AgentSessionRecord;
 };
@@ -38,15 +41,20 @@ type BackendResult = {
   disposeCount: number;
   observations: readonly { state: string; recentOutput?: string }[];
   sessionUpdate: string | undefined;
+  processKeys: readonly string[];
   sameProcessResult: boolean;
   preparedCwd: string | undefined;
+  processCode: number;
+  failureDiagnostic: string | undefined;
 };
 
+type FixtureKey = "success" | "failure";
 type Input = {};
 
 const cases = [
   {
-    name: "returns provider session metadata and executes a launch plan once",
+    name: "returns provider session metadata and executes a successful launch plan once",
+    fixture: "success" as const,
     input: {},
     assert: [
       hasObserved<BackendResult, BackendResult>("sessionUpdate", "provider-session"),
@@ -56,16 +64,39 @@ const cases = [
         { state: "waiting_input", recentOutput: "Need input" },
       ]),
       hasObserved<BackendResult, BackendResult>("sameProcessResult", true),
+      hasObserved<BackendResult, BackendResult>("processKeys", ["started", "code", "interrupted", "signal"]),
+      hasObserved<BackendResult, BackendResult>("processCode", 0),
+      hasObserved<BackendResult, BackendResult>("failureDiagnostic", undefined),
       {
         name: "passes the session working directory to the provider",
         check: (context: BackendResult) => expect(context.preparedCwd).toContain("backend-adapter-"),
       },
     ],
   },
-] satisfies readonly OperationCase<"default", Input, BackendResult, BackendResult>[];
+  {
+    name: "returns a sanitized diagnostic from a failed backend process",
+    fixture: "failure" as const,
+    input: {},
+    assert: [
+      hasObserved<BackendResult, BackendResult>("processCode", 1),
+      hasObserved<BackendResult, BackendResult>("failureDiagnostic", "backend failed: stdin is not a terminal"),
+      hasObserved<BackendResult, BackendResult>("processKeys", [
+        "started",
+        "code",
+        "interrupted",
+        "signal",
+        "failureDiagnostic",
+      ]),
+    ],
+  },
+] satisfies readonly OperationCase<FixtureKey, Input, BackendResult, BackendResult>[];
 
-const table: OperationTable<BackendFixture, "default", Input, BackendResult, BackendResult> = {
-  defaultFixture: createBackendFixture,
+const table: OperationTable<BackendFixture, FixtureKey, Input, BackendResult, BackendResult> = {
+  defaultFixture: (registerCleanup) => createBackendFixture("success", registerCleanup),
+  fixtures: {
+    success: (registerCleanup) => createBackendFixture("success", registerCleanup),
+    failure: (registerCleanup) => createBackendFixture("failure", registerCleanup),
+  },
   cases,
   execute: async (fixture) => {
     const preparation = await fixture.adapter.prepareLaunch(fixture.session, ["--opaque"], false);
@@ -73,17 +104,23 @@ const table: OperationTable<BackendFixture, "default", Input, BackendResult, Bac
     fixture.sessionUpdate = typeof backendSessionId === "string" ? backendSessionId : undefined;
     const first = await preparation.plan.run();
     const second = await preparation.plan.run();
+    fixture.processKeys = Object.keys(first.process);
     fixture.sameProcessResult = first === second;
     await preparation.plan.dispose();
     await preparation.plan.dispose();
     fixture.runCount = readInvocationCount(fixture.log);
+    fixture.processCode = first.process.code;
+    fixture.failureDiagnostic = first.process.failureDiagnostic;
     return {
       runCount: fixture.runCount,
       disposeCount: fixture.disposeCount,
       observations: fixture.observations,
       sessionUpdate: fixture.sessionUpdate,
+      processKeys: fixture.processKeys,
       sameProcessResult: fixture.sameProcessResult,
       preparedCwd: fixture.prepareInput?.cwd,
+      processCode: fixture.processCode,
+      failureDiagnostic: fixture.failureDiagnostic,
     };
   },
   observe: (fixture) => ({
@@ -91,16 +128,26 @@ const table: OperationTable<BackendFixture, "default", Input, BackendResult, Bac
     disposeCount: fixture.disposeCount,
     observations: fixture.observations,
     sessionUpdate: fixture.sessionUpdate,
+    processKeys: fixture.processKeys,
     sameProcessResult: fixture.sameProcessResult ?? false,
     preparedCwd: fixture.prepareInput?.cwd,
+    processCode: fixture.processCode ?? -1,
+    failureDiagnostic: fixture.failureDiagnostic,
   }),
 };
 
-function createBackendFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: BackendFixture } {
+function createBackendFixture(
+  key: FixtureKey,
+  registerCleanup?: (cleanup: () => void) => void,
+): { fixture: BackendFixture } {
   const root = mkdtempSync(join(tmpdir(), "muximo-backend-adapter-"));
   const executable = join(root, "provider");
   const log = join(root, "provider.log");
-  writeFileSync(executable, "#!/bin/sh\nprintf 'run\\n' >>\"$MUXIMO_BACKEND_TEST_LOG\"\nexit 0\n", { mode: 0o700 });
+  const script =
+    key === "failure"
+      ? "#!/bin/sh\nprintf 'backend failed: stdin is not a terminal\\n' >&2\nprintf 'run\\n' >>\"$MUXIMO_BACKEND_TEST_LOG\"\nexit 1\n"
+      : "#!/bin/sh\nprintf 'run\\n' >>\"$MUXIMO_BACKEND_TEST_LOG\"\nexit 0\n";
+  writeFileSync(executable, script, { mode: 0o700 });
   chmodSync(executable, 0o700);
   const session = AgentSession.create({
     id: AgentSessionId.create("agent-session-id"),
@@ -130,6 +177,7 @@ function createBackendFixture(registerCleanup?: (cleanup: () => void) => void): 
     observations: [],
     disposeCount,
     runCount: 0,
+    processKeys: [],
     adapter: undefined as unknown as AgentBackendAdapter,
     session,
   };

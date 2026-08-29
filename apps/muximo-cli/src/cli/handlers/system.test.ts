@@ -7,6 +7,7 @@ import type {
   DaemonStopResult,
   StartDaemonInput,
 } from "@muximo/application";
+import { DaemonHealthError } from "@muximo/application";
 import type { MuximodControlLogResult } from "@muximo/contract/control";
 import type { DoctorReport, ServeRouteState, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
 import { type OperationCase, type OperationTable, runOperationTable, type TestRegistrar } from "@muximo/test-support";
@@ -20,6 +21,7 @@ type SystemInput =
   | { kind: "serve"; input: CliServeInput };
 
 type SystemResult = { status: number; out: string; err: string; calls: readonly string[] };
+type SystemFixtureKey = "default" | "startup-failed" | "pid-unhealthy";
 type SystemFixture = {
   out: string[];
   err: string[];
@@ -123,11 +125,41 @@ const cases = [
       containsText("presents stop", "out", "Serve stopped"),
     ] as const,
   },
-] satisfies readonly OperationCase<"default", SystemInput, SystemResult, SystemResult>[];
+] satisfies readonly OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>[];
 
-const table: OperationTable<SystemFixture, "default", SystemInput, SystemResult, SystemResult> = {
-  defaultFixture: () => ({ fixture: createFixture() }),
-  cases,
+const startupFailureCase = {
+  name: "presents a daemon startup exit with its log path",
+  fixture: "startup-failed" as const,
+  input: { kind: "daemon", input: { command: "start", foreground: false, refreshServers: false } },
+  assert: [
+    hasValue("returns a failure status", "status", 1),
+    containsText("presents the startup exit", "err", "muximod exited during startup with exit code 1"),
+    containsText("presents the startup diagnostic", "err", "configuration could not be loaded"),
+    containsText("presents the daemon log path", "err", "muximod log: /tmp/muximod.log"),
+  ] as const,
+} satisfies OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>;
+
+const pidUnhealthyCase = {
+  name: "recommends restarting a daemon that does not match the selected environment",
+  fixture: "pid-unhealthy" as const,
+  input: { kind: "daemon", input: { command: "ensure", foreground: false, refreshServers: false } },
+  assert: [
+    hasValue("returns a failure status", "status", 1),
+    containsText("presents the process ownership failure", "err", "is not owned by the selected environment"),
+    containsText("recommends applying the selected configuration", "err", 'run "muximo daemon restart"'),
+  ] as const,
+} satisfies OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>;
+
+const allCases = [...cases, startupFailureCase, pidUnhealthyCase] as const;
+
+const table: OperationTable<SystemFixture, SystemFixtureKey, SystemInput, SystemResult, SystemResult> = {
+  defaultFixture: () => ({ fixture: createFixture("default") }),
+  fixtures: {
+    default: () => ({ fixture: createFixture("default") }),
+    "startup-failed": () => ({ fixture: createFixture("startup-failed") }),
+    "pid-unhealthy": () => ({ fixture: createFixture("pid-unhealthy") }),
+  },
+  cases: allCases,
   execute: async (fixture, input) => {
     const status =
       input.kind === "doctor"
@@ -145,7 +177,7 @@ const table: OperationTable<SystemFixture, "default", SystemInput, SystemResult,
   }),
 };
 
-function createFixture(): SystemFixture {
+function createFixture(key: SystemFixtureKey): SystemFixture {
   const out: string[] = [];
   const err: string[] = [];
   const calls: string[] = [];
@@ -174,6 +206,23 @@ function createFixture(): SystemFixture {
     start: {
       execute: async (input: StartDaemonInput): Promise<DaemonStartResult> => {
         calls.push("daemon:start");
+        if (key === "startup-failed") {
+          throw new DaemonHealthError(
+            "startup_failed",
+            { logFile: "/tmp/muximod.log" },
+            {
+              startedAt: 0,
+              pid: 402,
+              process: {
+                started: false,
+                code: 1,
+                interrupted: false,
+                signal: null,
+                failureDiagnostic: "configuration could not be loaded",
+              },
+            },
+          );
+        }
         return { kind: "background", result: { state: "started", host: input.options.host, port: input.options.port } };
       },
     },
@@ -198,6 +247,9 @@ function createFixture(): SystemFixture {
     ensure: {
       execute: async (input: DaemonOptions): Promise<DaemonEnsureResult> => {
         calls.push("daemon:ensure");
+        if (key === "pid-unhealthy") {
+          throw new DaemonHealthError("pid_unhealthy", { logFile: "/tmp/muximod.log" }, { startedAt: 0, pid: 402 });
+        }
         return { state: "started", host: input.host, port: input.port };
       },
     },

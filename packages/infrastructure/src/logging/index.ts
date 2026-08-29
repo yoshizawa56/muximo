@@ -81,7 +81,7 @@ const levelWeights: Record<LogLevel, number> = {
 const sensitiveKeyPattern =
   /(?:password|passphrase|secret|token|api[-_]?key|authorization|cookie|prompt|headers?|argv|args|environment|env|stdin|stdout|stderr|body|content)/i;
 const diagnosticSecretPattern =
-  /\b(authorization|cookie|password|passphrase|secret|token|api[-_]?key)\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi;
+  /\b(authorization|cookie|password|passphrase|secret|token|api[-_]?key)\s*[:=]\s*("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/gi;
 const maxValueDepth = 6;
 const maxStringLength = 4_096;
 
@@ -427,7 +427,10 @@ function safeErrorProperty(error: Error, property: string, fallback: string | nu
 function redactDiagnosticText(value: string): string {
   return value
     .replace(/\bCommand failed:[\s\S]*/gi, "Command failed: [REDACTED]")
-    .replace(/(--(?:prompt|token|secret|password|api[-_]?key))(?:=|\s+)("[^"]*"|'[^']*'|\S+)/gi, "$1=[REDACTED]")
+    .replace(
+      /(--(?:prompt|token|secret|password|api[-_]?key))(?:=|\s+)("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/gi,
+      "$1=[REDACTED]",
+    )
     .replace(diagnosticSecretPattern, "$1=[REDACTED]")
     .replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]");
 }

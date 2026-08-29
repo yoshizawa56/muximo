@@ -499,6 +499,7 @@ export const runAgentSessionRequestSchema = z
   .object({
     backend: agentBackendSchema,
     name: AgentSession.schema.shape.name.optional(),
+    hostPaneId: hostPaneIdWireSchema.optional(),
     workspace: z.string().trim().min(1).max(4_096).optional(),
     cwd: z.string().trim().min(1).max(4_096).optional(),
     useWorktree: z.boolean(),
@@ -516,6 +517,7 @@ export const resumeAgentSessionRequestSchema = z
   .object({
     workspaceScope: agentSessionWorkspaceScopeSchema,
     reference: z.string().trim().min(1).max(256),
+    hostPaneId: hostPaneIdWireSchema.optional(),
     backendArgs: z.array(agentSessionArgumentSchema).max(256),
   })
   .strict();
@@ -540,9 +542,11 @@ export type ListAgentSessionsRequest = z.infer<typeof listAgentSessionsRequestSc
 
 export const processResultSchema = z
   .object({
+    started: z.boolean(),
     code: z.number().int(),
     interrupted: z.boolean(),
     signal: z.string().nullable().optional(),
+    failureDiagnostic: z.string().trim().min(1).max(4_096).optional(),
   })
   .strict();
 export type ProcessResult = z.infer<typeof processResultSchema>;

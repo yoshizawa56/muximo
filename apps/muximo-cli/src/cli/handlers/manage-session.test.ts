@@ -61,7 +61,7 @@ function createFixture(result: ManageSessionResult): FixtureHandle<Fixture> {
     fixture: {
       output,
       handlers: createInteractiveHandlers({
-        shell: { execute: async () => ({ process: { code: 0, interrupted: false } }) },
+        shell: { execute: async () => ({ process: { started: true, code: 0, interrupted: false } }) },
         tmux: {
           execute: async () => ({
             created: { name: "desktop", managedSessionId: "managed-session-1" },

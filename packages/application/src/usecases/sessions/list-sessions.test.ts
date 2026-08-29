@@ -157,7 +157,6 @@ function createHost(snapshot: TerminalHostSnapshot): MuximodHostPort {
     isProcessAlive: async () => false,
     classifyCommand: async () => ({ kind: "shell", agentId: "shell" }),
     observeUnmanagedAgent: async (_paneId, fallbackState) => ({ state: fallbackState }),
-    isManagedAgentExecution: async () => false,
   };
 }
 

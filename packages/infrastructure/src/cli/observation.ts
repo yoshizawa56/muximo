@@ -28,7 +28,7 @@ export class AgentSessionObservationAdapter implements SessionObservationPort {
   public async observeSession(session: AgentSessionRecord, now: number): Promise<AgentSessionListObservation> {
     const processAlive =
       (session.status === "running" || session.status === "resuming") && session.executionPid !== undefined
-        ? isProcessAlive(session.executionPid)
+        ? isProcessAlive(session.executionPid, session.executionStartedAt)
         : undefined;
     return {
       now,
@@ -68,7 +68,7 @@ export class AgentSessionObservationAdapter implements SessionObservationPort {
 }
 
 export class ProcessObservationAdapter implements ProcessObservationPort {
-  public isAlive(pid: number): Promise<boolean> {
-    return Promise.resolve(isProcessAlive(pid));
+  public isAlive(pid: number, expectedStartedAt?: string): Promise<boolean> {
+    return Promise.resolve(isProcessAlive(pid, expectedStartedAt));
   }
 }

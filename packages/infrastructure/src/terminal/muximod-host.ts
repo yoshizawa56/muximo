@@ -10,8 +10,9 @@ import {
   type MuximodPaneObservation,
   type TerminalHostSnapshot,
 } from "@muximo/application";
-import type { AgentBackend, WorkspaceRecord } from "@muximo/domain";
-import { classifyTerminalCommand, classifyUnmanagedAgentOutput, executableName } from "./observation.js";
+import type { WorkspaceRecord } from "@muximo/domain";
+import { isProcessAlive } from "../process/process.js";
+import { classifyTerminalCommand, classifyUnmanagedAgentOutput } from "./observation.js";
 import {
   buildMuximoCommand,
   buildMuximoShellCommand,
@@ -167,26 +168,8 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     this.adapter.resetAgentPaneMetadata(paneId);
   }
 
-  public async isManagedAgentExecution(command: string, backend: AgentBackend): Promise<boolean> {
-    const executable = executableName(command);
-    const configuredMuximo = executableName(this.environment.MUXIMOD_MUXIMO_COMMAND ?? "muximo");
-    const resolvedMuximo = executableName(resolveMuximoCommand(this.environment));
-    return (
-      executable === "muximo" ||
-      executable === configuredMuximo ||
-      executable === resolvedMuximo ||
-      executable === backend ||
-      (resolveMuximoCommand(this.environment).endsWith(".ts") && executable === "bun")
-    );
-  }
-
-  public async isProcessAlive(pid: number): Promise<boolean> {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return error instanceof Error && "code" in error && error.code === "EPERM";
-    }
+  public async isProcessAlive(pid: number, expectedStartedAt?: string): Promise<boolean> {
+    return isProcessAlive(pid, expectedStartedAt);
   }
 
   private buildAgentCommand(input: CreatePaneInput, workspace: WorkspaceRecord | undefined): string {

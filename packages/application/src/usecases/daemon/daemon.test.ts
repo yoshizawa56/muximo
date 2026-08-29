@@ -17,6 +17,7 @@ import {
   type DaemonStatusResult,
   type DaemonStopResult,
   EnsureDaemon,
+  type ProcessResult,
   RestartDaemon,
   StartDaemon,
   StatusDaemon,
@@ -37,6 +38,20 @@ type LifecycleInput =
   | { operation: "start-foreground" }
   | { operation: "status" }
   | { operation: "stop" };
+
+type LifecycleFixtureKey =
+  | "running"
+  | "dynamic-port"
+  | "startable"
+  | "startup-failed"
+  | "startup-wait-error"
+  | "timeout"
+  | "stale"
+  | "foreground"
+  | "restartable"
+  | "restart-startup-failed"
+  | "service-manager"
+  | "stop-timeout";
 
 type LifecycleFixture = {
   healthy: boolean;
@@ -70,6 +85,7 @@ type LifecycleContext = {
   terminateCount: number;
   removePidCount: number;
   markerWrites: readonly boolean[];
+  startupProcess: ProcessResult | undefined;
   sleeps: readonly number[];
 };
 
@@ -108,6 +124,39 @@ const cases = [
       hasObserved<LifecycleContext, LifecycleResult>("outcomeState", "started"),
       hasObserved<LifecycleContext, LifecycleResult>("spawnCount", 1),
       hasObserved<LifecycleContext, LifecycleResult>("sleeps", []),
+    ],
+  },
+  {
+    name: "ensure reports a child exit instead of waiting for a startup timeout",
+    fixture: "startup-failed",
+    input: { operation: "ensure" },
+    assert: [
+      hasError<LifecycleContext, LifecycleResult>({ name: "DaemonHealthError", message: "startup_failed" }),
+      hasObserved<LifecycleContext, LifecycleResult>("errorReason", "startup_failed"),
+      hasObserved<LifecycleContext, LifecycleResult>("startupProcess", {
+        started: true,
+        code: 1,
+        interrupted: false,
+        signal: null,
+      }),
+      hasObserved<LifecycleContext, LifecycleResult>("terminateCount", 0),
+      hasObserved<LifecycleContext, LifecycleResult>("sleeps", []),
+    ],
+  },
+  {
+    name: "ensure converts a rejected child wait into a typed startup failure",
+    fixture: "startup-wait-error",
+    input: { operation: "ensure" },
+    assert: [
+      hasError<LifecycleContext, LifecycleResult>({ name: "DaemonHealthError", message: "startup_failed" }),
+      hasObserved<LifecycleContext, LifecycleResult>("startupProcess", {
+        started: false,
+        code: 127,
+        interrupted: false,
+        signal: null,
+        failureDiagnostic: "muximod process exit status was unavailable",
+      }),
+      hasObserved<LifecycleContext, LifecycleResult>("terminateCount", 0),
     ],
   },
   {
@@ -181,6 +230,26 @@ const cases = [
     ],
   },
   {
+    name: "restart reports a replacement child exit instead of waiting for a startup timeout",
+    fixture: "restart-startup-failed",
+    input: { operation: "restart", refreshServers: false },
+    assert: [
+      hasError<LifecycleContext, LifecycleResult>({ name: "DaemonHealthError", message: "startup_failed" }),
+      hasObserved<LifecycleContext, LifecycleResult>("errorReason", "startup_failed"),
+      hasObserved<LifecycleContext, LifecycleResult>("startupProcess", {
+        started: true,
+        code: 1,
+        interrupted: false,
+        signal: null,
+      }),
+      hasObserved<LifecycleContext, LifecycleResult>("terminateCount", 0),
+      hasObserved<LifecycleContext, LifecycleResult>(
+        "sleeps",
+        [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50],
+      ),
+    ],
+  },
+  {
     name: "restart records intent and starts a replacement when the service manager does not recover it",
     fixture: "restartable",
     input: { operation: "restart", refreshServers: true },
@@ -200,60 +269,69 @@ const cases = [
       hasObserved<LifecycleContext, LifecycleResult>("spawnCount", 0),
     ],
   },
-] satisfies readonly OperationCase<string, LifecycleInput, LifecycleResult, LifecycleContext>[];
+] satisfies readonly OperationCase<LifecycleFixtureKey, LifecycleInput, LifecycleResult, LifecycleContext>[];
 
-const table: OperationTable<LifecycleFixture, string, LifecycleInput, LifecycleResult, LifecycleContext> = {
-  defaultFixture: () => ({ fixture: createFixture("running") }),
-  fixtures: {
-    running: () => ({ fixture: createFixture("running") }),
-    "dynamic-port": () => ({ fixture: createFixture("dynamic-port") }),
-    startable: () => ({ fixture: createFixture("startable") }),
-    timeout: () => ({ fixture: createFixture("timeout") }),
-    stale: () => ({ fixture: createFixture("stale") }),
-    foreground: () => ({ fixture: createFixture("foreground") }),
-    restartable: () => ({ fixture: createFixture("restartable") }),
-    "service-manager": () => ({ fixture: createFixture("service-manager") }),
-    "stop-timeout": () => ({ fixture: createFixture("stop-timeout") }),
-  },
-  cases,
-  execute: (fixture, input) => {
-    switch (input.operation) {
-      case "ensure":
-      case "ensure-dynamic-port":
-        return fixture.service.ensure.execute(options);
-      case "restart":
-        return fixture.service.restart.execute({ ...options, refreshServers: input.refreshServers });
-      case "start-background":
-        return fixture.service.start.execute({ options, foreground: false });
-      case "start-foreground":
-        return fixture.service.start.execute({ options, foreground: true });
-      case "status":
-        return fixture.service.status.execute(options);
-      case "stop":
-        return fixture.service.stop.execute(options);
-    }
-  },
-  observe: (fixture, result) => {
-    const value = result.ok ? result.value : undefined;
-    return {
-      outcomeState:
-        value && "state" in value ? value.state : value && "result" in value ? value.result.state : undefined,
-      outcomeKind: value && "kind" in value ? value.kind : undefined,
-      outcomeEndpoint: readEndpoint(value),
-      errorReason: result.ok
-        ? undefined
-        : result.error instanceof DaemonHealthError
-          ? result.error.details.reason
-          : undefined,
-      spawnCount: fixture.spawnCount,
-      signalCount: fixture.signalCount,
-      terminateCount: fixture.terminateCount,
-      removePidCount: fixture.removePidCount,
-      markerWrites: fixture.markerWrites,
-      sleeps: fixture.sleeps,
-    };
-  },
-};
+const table: OperationTable<LifecycleFixture, LifecycleFixtureKey, LifecycleInput, LifecycleResult, LifecycleContext> =
+  {
+    defaultFixture: () => ({ fixture: createFixture("running") }),
+    fixtures: {
+      running: () => ({ fixture: createFixture("running") }),
+      "dynamic-port": () => ({ fixture: createFixture("dynamic-port") }),
+      startable: () => ({ fixture: createFixture("startable") }),
+      "startup-failed": () => ({ fixture: createFixture("startup-failed") }),
+      "startup-wait-error": () => ({ fixture: createFixture("startup-wait-error") }),
+      timeout: () => ({ fixture: createFixture("timeout") }),
+      stale: () => ({ fixture: createFixture("stale") }),
+      foreground: () => ({ fixture: createFixture("foreground") }),
+      restartable: () => ({ fixture: createFixture("restartable") }),
+      "restart-startup-failed": () => ({ fixture: createFixture("restart-startup-failed") }),
+      "service-manager": () => ({ fixture: createFixture("service-manager") }),
+      "stop-timeout": () => ({ fixture: createFixture("stop-timeout") }),
+    },
+    cases,
+    execute: (fixture, input) => {
+      switch (input.operation) {
+        case "ensure":
+        case "ensure-dynamic-port":
+          return fixture.service.ensure.execute(options);
+        case "restart":
+          return fixture.service.restart.execute({ ...options, refreshServers: input.refreshServers });
+        case "start-background":
+          return fixture.service.start.execute({ options, foreground: false });
+        case "start-foreground":
+          return fixture.service.start.execute({ options, foreground: true });
+        case "status":
+          return fixture.service.status.execute(options);
+        case "stop":
+          return fixture.service.stop.execute(options);
+      }
+    },
+    observe: (fixture, result) => {
+      const value = result.ok ? result.value : undefined;
+      return {
+        outcomeState:
+          value && "state" in value ? value.state : value && "result" in value ? value.result.state : undefined,
+        outcomeKind: value && "kind" in value ? value.kind : undefined,
+        outcomeEndpoint: readEndpoint(value),
+        errorReason: result.ok
+          ? undefined
+          : result.error instanceof DaemonHealthError
+            ? result.error.details.reason
+            : undefined,
+        spawnCount: fixture.spawnCount,
+        signalCount: fixture.signalCount,
+        terminateCount: fixture.terminateCount,
+        removePidCount: fixture.removePidCount,
+        markerWrites: fixture.markerWrites,
+        startupProcess: result.ok
+          ? undefined
+          : result.error instanceof DaemonHealthError
+            ? result.error.details.context.process
+            : undefined,
+        sleeps: fixture.sleeps,
+      };
+    },
+  };
 
 function readEndpoint(value: LifecycleResult | undefined): string | undefined {
   if (!value) return undefined;
@@ -264,12 +342,13 @@ function readEndpoint(value: LifecycleResult | undefined): string | undefined {
   return undefined;
 }
 
-function createFixture(key: string): LifecycleFixture {
+function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
   const fixture: LifecycleFixture = {
     healthy:
       key === "running" ||
       key === "dynamic-port" ||
       key === "restartable" ||
+      key === "restart-startup-failed" ||
       key === "service-manager" ||
       key === "stop-timeout",
     healthyAfterSpawn: key === "startable" || key === "foreground" || key === "restartable",
@@ -280,6 +359,7 @@ function createFixture(key: string): LifecycleFixture {
       key === "running" ||
       key === "dynamic-port" ||
       key === "restartable" ||
+      key === "restart-startup-failed" ||
       key === "service-manager" ||
       key === "stop-timeout"
         ? {
@@ -300,13 +380,19 @@ function createFixture(key: string): LifecycleFixture {
   };
 
   const runtime: DaemonRuntimePort = {
-    runForeground: async () => ({ code: 0, interrupted: false }),
+    runForeground: async () => ({ started: true, code: 0, interrupted: false }),
     spawn: async () => {
       fixture.spawnCount += 1;
       fixture.alive = true;
       if (fixture.healthyAfterSpawn) fixture.healthy = true;
       return {
         pid: 402,
+        wait: () =>
+          key === "startup-failed" || key === "restart-startup-failed"
+            ? Promise.resolve({ started: true, code: 1, interrupted: false, signal: null })
+            : key === "startup-wait-error"
+              ? Promise.reject(new Error("wait failed"))
+              : new Promise<ProcessResult>(() => undefined),
         terminate: () => {
           fixture.terminateCount += 1;
           fixture.alive = false;

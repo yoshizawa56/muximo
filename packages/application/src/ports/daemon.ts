@@ -19,11 +19,17 @@ export type DaemonPidRecord = {
   startedAt: string;
 };
 
-export type DaemonHealthFailureReason = "healthy_without_pid" | "pid_unhealthy" | "startup_timeout" | "stop_timeout";
+export type DaemonHealthFailureReason =
+  | "healthy_without_pid"
+  | "pid_unhealthy"
+  | "startup_failed"
+  | "startup_timeout"
+  | "stop_timeout";
 
 export type DaemonHealthFailureContext = {
   startedAt: number;
   pid?: number;
+  process?: ProcessResult;
 };
 
 export class DaemonHealthError extends Error {
@@ -90,6 +96,7 @@ export interface DaemonRuntimePort {
 
 export type DaemonProcessHandle = {
   pid?: number;
+  wait(): Promise<ProcessResult>;
   terminate(signal: "SIGTERM"): void;
 };
 

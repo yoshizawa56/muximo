@@ -38,7 +38,10 @@ export class ResumeAgentSession {
       throw new Error(`session '${session.name}' has a failed setup; clean it up before retrying`);
     if (session.status === "starting" || session.status === "setup" || session.status === "ready")
       throw new Error(`session '${session.name}' has not started its backend; rerun it instead of resuming`);
-    if (session.executionPid !== undefined && (await this.deps.process.isAlive(session.executionPid)))
+    if (
+      session.executionPid !== undefined &&
+      (await this.deps.process.isAlive(session.executionPid, session.executionStartedAt))
+    )
       throw new Error(`session '${session.name}' is already running (pid ${session.executionPid})`);
 
     const executionId = this.deps.clock.id();
@@ -68,12 +71,13 @@ export class ResumeAgentSession {
 
     let execution: LaunchExecution;
     try {
-      await this.deps.panes.adopt(session);
-      await this.deps.panes.publish(session, "running");
+      await this.deps.panes.adopt(session, input.hostPaneId);
+      await this.deps.panes.publish(session, "running", input.hostPaneId);
       execution = await preparation.plan.run();
       await this.deps.panes.publish(
         session,
         execution.process.interrupted ? "stopped" : execution.process.code === 0 ? "completed" : "failed",
+        input.hostPaneId,
       );
     } catch (error) {
       await this.deps.sessions
@@ -94,7 +98,7 @@ export class ResumeAgentSession {
       throw error;
     } finally {
       try {
-        await this.deps.panes.release(session);
+        await this.deps.panes.release(session, input.hostPaneId);
       } finally {
         await preparation.plan.dispose();
       }

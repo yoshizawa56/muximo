@@ -35,7 +35,7 @@ const cases = [
     fixture: "success",
     input: {},
     assert: [
-      hasObserved<ShellResult, ShellResult>("process", { code: 0, interrupted: false }),
+      hasObserved<ShellResult, ShellResult>("process", { started: true, code: 0, interrupted: false }),
       hasEvents<ShellResult, ShellResult>("events", [
         "mark-shell",
         "resolve-workspace",
@@ -56,7 +56,7 @@ const cases = [
     fixture: "failure",
     input: {},
     assert: [
-      hasObserved<ShellResult, ShellResult>("process", { code: 3, interrupted: false }),
+      hasObserved<ShellResult, ShellResult>("process", { started: true, code: 3, interrupted: false }),
       hasEvents<ShellResult, ShellResult>("events", [
         "mark-shell",
         "resolve-workspace",
@@ -122,7 +122,7 @@ const table: OperationTable<ShellFixture, ShellFixtureKey, Input, ShellResult, S
     };
   },
   observe: (fixture, result) => ({
-    process: result.ok ? result.value.process : { code: -1, interrupted: false },
+    process: result.ok ? result.value.process : { started: false, code: -1, interrupted: false },
     events: [...fixture.events],
     shell: fixture.shellInputs.find((shellInput) => shellInput.interactive),
   }),
@@ -171,7 +171,7 @@ function createShellFixture(
       run: async (input) => {
         fixture.shellInputs.push({ ...input, args: [...input.args] });
         record("shell");
-        return { code: exitCode, interrupted: false };
+        return { started: true, code: exitCode, interrupted: false };
       },
     },
     worktrees: {

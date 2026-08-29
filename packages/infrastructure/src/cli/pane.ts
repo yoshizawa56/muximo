@@ -35,8 +35,8 @@ export type PaneAdapterOptions = {
 export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObservationPort, ShellPanePort {
   public constructor(private readonly options: PaneAdapterOptions) {}
 
-  public async adopt(session: AgentSessionRecord): Promise<void> {
-    const pane = currentTmuxPane(this.options.environment);
+  public async adopt(session: AgentSessionRecord, hostPaneId?: string): Promise<void> {
+    const pane = resolveTmuxPane(this.options.environment, hostPaneId);
     if (!pane || !session.executionId) return;
     const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
     try {
@@ -55,8 +55,8 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
     }
   }
 
-  public async release(session: AgentSessionRecord): Promise<void> {
-    const pane = currentTmuxPane(this.options.environment);
+  public async release(session: AgentSessionRecord, hostPaneId?: string): Promise<void> {
+    const pane = resolveTmuxPane(this.options.environment, hostPaneId);
     if (!pane || !session.executionId) return;
     const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
     try {
@@ -78,12 +78,21 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
   public async publish(
     session: AgentSessionRecord,
     state: "running" | "completed" | "failed" | "stopped",
+    hostPaneId?: string,
   ): Promise<void> {
-    return this.observe(session, { state });
+    return this.observeAtPane(session, { state }, hostPaneId);
   }
 
   public async observe(session: AgentSessionRecord, observation: AgentStateObservation): Promise<void> {
-    const pane = currentTmuxPane(this.options.environment);
+    return this.observeAtPane(session, observation);
+  }
+
+  private async observeAtPane(
+    session: AgentSessionRecord,
+    observation: AgentStateObservation,
+    hostPaneId?: string,
+  ): Promise<void> {
+    const pane = resolveTmuxPane(this.options.environment, hostPaneId);
     if (!pane || !session.executionId) return;
     try {
       const control = await this.options.connect(this.options.controlSocket);
@@ -146,6 +155,11 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
 function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
   const pane = environment.TMUX && environment.TMUX_PANE ? environment.TMUX_PANE.trim() : "";
   return /^%[0-9]+$/.test(pane) ? pane : undefined;
+}
+
+function resolveTmuxPane(environment: NodeJS.ProcessEnv, requested?: string): string | undefined {
+  const pane = requested === undefined ? currentTmuxPane(environment) : requested.trim();
+  return pane && /^%[0-9]+$/.test(pane) ? pane : undefined;
 }
 
 function setFallbackMetadata(

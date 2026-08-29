@@ -73,6 +73,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const environment = options.environment;
   const runtime = options.runtime;
   const cwd = options.cwd ?? process.cwd();
+  const hostPaneId = currentTmuxPane(environment);
   const logger =
     options.logger ??
     createLogger({
@@ -205,7 +206,11 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const serveStatePath = join(runtime.muximodInstanceDirectory, "serve.json");
   const runAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["run"]>[0]) => {
     const api = await ensureApi();
-    const result = await api.agentSessions.run({ ...input, cwd: input.cwd ?? cwd });
+    const result = await api.agentSessions.run({
+      ...input,
+      ...(input.hostPaneId === undefined && hostPaneId !== undefined ? { hostPaneId } : {}),
+      cwd: input.cwd ?? cwd,
+    });
     if (
       result.cleanup.disposition !== "retained" ||
       result.cleanup.reason !== "cleanup_declined" ||
@@ -332,7 +337,14 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const handlers: CliHandlers = {
     ...createSessionHandlers({
       run: { execute: runAgentSession },
-      resume: { execute: (input) => ensureApi().then((api) => api.agentSessions.resume(input)) },
+      resume: {
+        execute: (input) =>
+          ensureApi().then((api) =>
+            input.hostPaneId === undefined && hostPaneId !== undefined
+              ? api.agentSessions.resume({ ...input, hostPaneId })
+              : api.agentSessions.resume(input),
+          ),
+      },
       cleanup: { execute: cleanupAgentSession },
       list: { execute: (input) => ensureApi().then((api) => api.agentSessions.list(input)) },
       io,
@@ -400,6 +412,11 @@ function normalizeSessionName(value: string): string {
   } catch {
     return value;
   }
+}
+
+function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
+  const pane = environment.TMUX && environment.TMUX_PANE ? environment.TMUX_PANE.trim() : "";
+  return /^%[0-9]+$/u.test(pane) ? pane : undefined;
 }
 
 async function withApiInvalidation<Result>(operation: () => Promise<Result>, invalidate: () => void): Promise<Result> {

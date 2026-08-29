@@ -113,7 +113,7 @@ function createFixture(attachmentState: TmuxNewSessionResult["attachment"]["stat
       output,
       events,
       handlers: createInteractiveHandlers({
-        shell: { execute: async () => ({ process: { code: 0, interrupted: false } }) },
+        shell: { execute: async () => ({ process: { started: true, code: 0, interrupted: false } }) },
         tmux: {
           execute: async (operationInput) => {
             calls.push(operationInput);

@@ -197,6 +197,7 @@ export function reportCodexDiscoveryFailure(
   deps.logger.warn("codex.session_id_missing", {
     sessionName: session.name,
     phase,
+    runDir,
     diagnostics: result.diagnostics,
     formattedDiagnostics: diagnostics,
   });

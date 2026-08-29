@@ -37,7 +37,10 @@ export class CleanupAgentSession {
       reference: input.reference,
       workspaceScope: input.workspaceScope,
     });
-    if (session.executionPid !== undefined && (await this.deps.process.isAlive(session.executionPid)))
+    if (
+      session.executionPid !== undefined &&
+      (await this.deps.process.isAlive(session.executionPid, session.executionStartedAt))
+    )
       throw new Error(`session '${session.name}' is still running (pid ${session.executionPid})`);
     if (session.useWorktree && session.worktreePath && !(await this.deps.worktrees.isRegistered(session))) {
       throw new Error(
@@ -57,7 +60,8 @@ export class CleanupAgentSession {
   }
 
   private async removeResources(session: AgentSessionRecord, force: boolean) {
-    if (!(await this.deps.remote.archive(session))) {
+    const archiveRemote = session.backendSessionId !== undefined;
+    if (archiveRemote && !(await this.deps.remote.archive(session))) {
       return { disposition: "failed" as const, reason: "remote_archive_failed" as const };
     }
 
@@ -65,7 +69,7 @@ export class CleanupAgentSession {
     const updated = hook.sessionUpdate ? updateAgentSession(session, hook.sessionUpdate, this.deps.clock) : session;
     if (hook.sessionUpdate) await this.deps.sessions.update(updated);
     if (!hook.success) {
-      const restored = await this.deps.remote.restore(updated);
+      const restored = !archiveRemote || (await this.deps.remote.restore(updated));
       return {
         disposition: "failed" as const,
         reason: restored ? ("cleanup_hook_failed" as const) : ("remote_restore_failed" as const),
@@ -74,7 +78,7 @@ export class CleanupAgentSession {
 
     const result = await this.deps.worktrees.remove(updated, force);
     if (result.disposition !== "removed") {
-      const restored = await this.deps.remote.restore(updated);
+      const restored = !archiveRemote || (await this.deps.remote.restore(updated));
       return restored ? result : { disposition: "failed" as const, reason: "remote_restore_failed" as const };
     }
 

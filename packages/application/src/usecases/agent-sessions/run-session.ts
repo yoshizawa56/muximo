@@ -137,7 +137,7 @@ export class RunAgentSession {
       session = await this.persistIdentityUpdate(session, preparation.sessionUpdate);
 
       launchPlanStarted = true;
-      const execution = await this.executePlan(session, preparation.plan);
+      const execution = await this.executePlan(session, preparation.plan, input.hostPaneId);
       executionCompleted = true;
       launchPlan = undefined;
       session = await this.persistIdentityUpdate(session, execution.sessionUpdate);
@@ -152,14 +152,19 @@ export class RunAgentSession {
     }
   }
 
-  private async executePlan(session: AgentSessionRecord, plan: LaunchPlan): Promise<LaunchExecution> {
+  private async executePlan(
+    session: AgentSessionRecord,
+    plan: LaunchPlan,
+    hostPaneId: string | undefined,
+  ): Promise<LaunchExecution> {
     try {
-      await this.deps.panes.adopt(session);
-      await this.deps.panes.publish(session, "running");
+      await this.deps.panes.adopt(session, hostPaneId);
+      await this.deps.panes.publish(session, "running", hostPaneId);
       const execution = await plan.run();
       await this.deps.panes.publish(
         session,
         execution.process.interrupted ? "stopped" : execution.process.code === 0 ? "completed" : "failed",
+        hostPaneId,
       );
       return execution;
     } catch (error) {
@@ -181,7 +186,7 @@ export class RunAgentSession {
       throw error;
     } finally {
       try {
-        await this.deps.panes.release(session);
+        await this.deps.panes.release(session, hostPaneId);
       } finally {
         await plan.dispose();
       }
@@ -201,6 +206,10 @@ export class RunAgentSession {
     });
     if (next.status === "interrupted") {
       return { process, session: next, cleanup: { disposition: "not_requested", reason: "interrupted" } };
+    }
+    if (isStartupFailure(process)) {
+      const cleanup = await this.removeResources(next, true, Boolean(next.backendSessionId));
+      return { process, session: next, cleanup };
     }
     if (!next.useWorktree) {
       return { process, session: next, cleanup: { disposition: "not_requested", reason: "no_worktree" } };
@@ -303,4 +312,8 @@ export class RunAgentSession {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isStartupFailure(process: LaunchExecution["process"]): boolean {
+  return !process.interrupted && !process.started && process.code !== 0;
 }
