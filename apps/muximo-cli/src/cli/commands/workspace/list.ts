@@ -22,7 +22,7 @@ export function registerWorkspaceListCommand(
   context: CliCommandContext,
 ): Command {
   const command = parent.command("list").description("List registered workspaces");
-  registerOptions(command, workspaceListOptionSpecs);
+  registerOptions(command, workspaceListOptionSpecs, context.buildMode);
   command.action(async (options) => {
     const resolved = resolveCommandOptions(options, workspaceListOptionSpecs, context);
     context.report(

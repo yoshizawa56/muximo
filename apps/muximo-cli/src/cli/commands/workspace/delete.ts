@@ -31,7 +31,7 @@ export function registerWorkspaceDeleteCommand(
   context: CliCommandContext,
 ): Command {
   const command = parent.command("delete <selector>").description("Unregister a workspace");
-  registerOptions(command, workspaceDeleteOptionSpecs);
+  registerOptions(command, workspaceDeleteOptionSpecs, context.buildMode);
   command.action(async (selector, _options) => {
     context.report(
       await invokeCliHandler({

@@ -53,7 +53,7 @@ export function registerTmuxCommands(parent: Command, handlers: CliHandlers, con
   });
 
   const newSession = command.command("new-session").description("Create a managed tmux session");
-  registerOptions(newSession, tmuxNewSessionOptionSpecs);
+  registerOptions(newSession, tmuxNewSessionOptionSpecs, context.buildMode);
   newSession.action(async (options) => {
     const resolved = resolveCommandOptions(options, tmuxNewSessionOptionSpecs, context);
     context.report(
@@ -72,7 +72,7 @@ export function registerTmuxCommands(parent: Command, handlers: CliHandlers, con
   });
 
   const manageSession = command.command("manage-session").description("Adopt an existing tmux session into muximo");
-  registerOptions(manageSession, tmuxManageSessionOptionSpecs);
+  registerOptions(manageSession, tmuxManageSessionOptionSpecs, context.buildMode);
   manageSession.action(async (options) => {
     const resolved = resolveCommandOptions(options, tmuxManageSessionOptionSpecs, context);
     context.report(

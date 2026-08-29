@@ -30,12 +30,19 @@ and verification.
 
 ## Environment profiles
 
-The global `--env <name>` option selects an arbitrary profile for the relevant
-client application. Each application entrypoint parses the option, reads the
-ambient `process.env`, and resolves the source repository root from its own
-module location; the shared `@muximo/profile` package then loads
-`.env.<name>` from that root and returns raw values. It does not interpret
-component-specific variables. Without `--env`, no profile file is loaded.
+The source/development entrypoints expose a global `--env <name>` option that
+selects an arbitrary profile for the relevant client application. Each source
+entrypoint parses the option, reads the ambient `process.env`, and resolves the
+source repository root from its own module location; the shared
+`@muximo/profile` package then loads `.env.<name>` from that root and returns
+raw values. It does not interpret component-specific variables. Without
+`--env`, no profile file is loaded.
+
+The standalone production CLI is built from a production entrypoint with a
+fixed `prod` runtime environment. It does not expose `--env`, does not treat
+`MUXIMO_ENV` as a profile selector, and does not load source repository profile
+files. Development-only options and commands are filtered from its Commander
+surface and shell completion.
 
 Profile resolution is:
 
@@ -116,7 +123,7 @@ selected worktree.
 The muximod application remains responsible for its own runtime and database.
 The CLI invokes the typed lifecycle API exposed by `@muximo/muximod/client`.
 
-Conceptual commands are:
+The source/development CLI supports these conceptual commands:
 
 ```text
 muximo --env <name> daemon start
@@ -218,8 +225,10 @@ Web:     http://127.0.0.1:5227 -> https://<hostname>:8449/
 muximod: http://127.0.0.1:4317 -> https://<hostname>:8444/
 ```
 
-The exact staging and production values come from their profiles. External
-ports must not overlap when multiple environments share a Tailscale node.
+For source/development runs, the exact staging and production values come from
+their profiles. The standalone production CLI uses the fixed `prod` values and
+does not select a source profile. External ports must not overlap when multiple
+environments share a Tailscale node.
 
 With Tailscale Serve background mode, the route is persistent after the
 command exits. The CLI command therefore configures or verifies a route and

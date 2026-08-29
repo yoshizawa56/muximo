@@ -8,12 +8,14 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
+import type { CliBuildMode } from "./build-mode.js";
 import { resolveMuximoCliRuntimeOptions } from "./runtime.js";
 
 type RuntimeInput = {
   raw?: Record<string, unknown>;
   args?: readonly string[];
   environment?: NodeJS.ProcessEnv;
+  buildMode?: CliBuildMode;
 };
 type RuntimeResult = ReturnType<typeof resolveMuximoCliRuntimeOptions>;
 type RuntimeContext = {
@@ -63,6 +65,17 @@ const cases = [
     assert: [hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate")],
   },
   {
+    name: "keeps the production runtime on prod without a selected profile",
+    input: {
+      buildMode: "production",
+      environment: { MUXIMO_ENV: "dev", MUXIMO_MUXIMOD_PORT: "4327" },
+    },
+    assert: [
+      hasObserved<RuntimeContext, RuntimeResult>("environmentName", "prod"),
+      hasObserved<RuntimeContext, RuntimeResult>("port", 4327),
+    ],
+  },
+  {
     name: "accepts push only when the profile explicitly requests it",
     input: { environment: { MUXIMO_ENV: "any-name", MUXIMO_SCHEMA_MODE: "push" } },
     assert: [hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "push")],
@@ -95,6 +108,7 @@ const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, R
       args: input.args ?? [],
       environment: input.environment ?? {},
       cwd: "/workspace",
+      buildMode: input.buildMode,
     }),
   observe: (_fixture, result) =>
     result.ok

@@ -48,7 +48,7 @@ export function registerDaemonCommands(parent: Command, handlers: CliHandlers, c
   daemon.action(() => context.report(2));
   for (const command of ["start", "status", "stop", "restart", "ensure"] as const) {
     const child = daemon.command(command).description(`${command} muximod`);
-    registerOptions(child, daemonOptionSpecs);
+    registerOptions(child, daemonOptionSpecs, context.buildMode);
     child.action(async (options) => {
       const resolved = resolveCommandOptions(options, daemonOptionSpecs, context);
       context.report(
@@ -63,7 +63,7 @@ export function registerDaemonCommands(parent: Command, handlers: CliHandlers, c
     });
   }
   const log = daemon.command("log").description("Show recent muximod log lines");
-  registerOptions(log, daemonLogOptionSpecs);
+  registerOptions(log, daemonLogOptionSpecs, context.buildMode);
   log.action(async (options) => {
     const resolved = resolveCommandOptions(options, daemonLogOptionSpecs, context);
     context.report(

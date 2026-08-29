@@ -8,6 +8,7 @@ export const globalOptionSpecs = defineOptions(
     flags: ["--env <profile>"],
     description: "Select the runtime environment profile.",
     exposure: "both",
+    availableIn: ["development"],
     environment: {
       name: "MUXIMO_ENV",
       description: "Runtime environment profile.",

@@ -32,7 +32,7 @@ export function registerSessionResumeCommand(
   const command = parent
     .command(`${options.commandName} <reference> [backendArgs...]`)
     .description("Resume a managed session");
-  registerOptions(command, sessionResumeOptionSpecs);
+  registerOptions(command, sessionResumeOptionSpecs, context.buildMode);
   command.allowUnknownOption(true);
 
   command.action(async (reference, backendArgs, commandOptions) => {

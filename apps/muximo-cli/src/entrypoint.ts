@@ -5,16 +5,18 @@ import { DaemonHealthError } from "@muximo/application";
 import { defaultLogFile } from "@muximo/infrastructure/cli-client";
 import { getProfile, resolveProfileName } from "@muximo/profile";
 import { createCliApp } from "./cli/app.js";
+import type { CliBuildMode } from "./cli/build-mode.js";
 import { globalOptionSpecs } from "./cli/commands/global.js";
 import type { CliHandlers } from "./cli/commands/types.js";
 import { createCliComposition } from "./cli/compose.js";
-import { readOptionValues, scanRootOptions } from "./cli/options/index.js";
+import { assertAvailableOptions, readOptionValues, scanRootOptions } from "./cli/options/index.js";
 import { presentDaemonError } from "./cli/presenters/daemon.js";
 import { resolveMuximoCliRuntimeOptions } from "./cli/runtime.js";
 
 const sourceRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 export type CliEntrypointOptions = {
+  buildMode?: CliBuildMode;
   env?: NodeJS.ProcessEnv;
   input?: Readable;
   out?: Writable;
@@ -28,28 +30,30 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
     err: options.err ?? process.stderr,
   };
   const inputEnvironment = { ...process.env, ...options.env };
-
-  if (isParserOnlyInvocation(args)) {
-    const app = createCliApp({
-      io,
-      cwd: process.cwd(),
-      environment: inputEnvironment,
-      handlers: createNoopHandlers(),
-    });
-    try {
-      return await app.execute(args);
-    } catch (error) {
-      return reportEntrypointError(io.err, error, inputEnvironment);
-    }
-  }
-
+  const buildMode = options.buildMode ?? "development";
   let environment = inputEnvironment;
   let composition: ReturnType<typeof createCliComposition> | undefined;
+
   try {
-    const rootOptions = scanRootOptions(args, globalOptionSpecs);
-    const rawGlobalOptions = readOptionValues(rootOptions.options, globalOptionSpecs);
+    assertAvailableOptions(args, globalOptionSpecs, buildMode);
+    if (isParserOnlyInvocation(args, buildMode)) {
+      const app = createCliApp({
+        io,
+        cwd: process.cwd(),
+        environment: inputEnvironment,
+        buildMode,
+        handlers: createNoopHandlers(),
+      });
+      return await app.execute(args);
+    }
+
+    const rootOptions = scanRootOptions(args, globalOptionSpecs, buildMode);
+    const rawGlobalOptions = readOptionValues(rootOptions.options, globalOptionSpecs, buildMode);
     const profile = getProfile({
-      name: resolveProfileName(rawGlobalOptions.environment ?? inputEnvironment.MUXIMO_ENV),
+      name:
+        buildMode === "development"
+          ? resolveProfileName(rawGlobalOptions.environment ?? inputEnvironment.MUXIMO_ENV)
+          : undefined,
       repositoryRoot: sourceRepositoryRoot,
       baseEnvironment: inputEnvironment,
     });
@@ -58,6 +62,7 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
       args: rootOptions.options,
       environment: profile.environment,
       cwd: process.cwd(),
+      buildMode,
     });
     environment = runtimeResolution.environment;
     composition = createCliComposition({
@@ -74,25 +79,25 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
   }
 }
 
-function isCompletionInvocation(args: readonly string[]): boolean {
-  const commandIndex = firstCommandIndex(args);
+function isCompletionInvocation(args: readonly string[], buildMode: CliBuildMode): boolean {
+  const commandIndex = firstCommandIndex(args, buildMode);
   return commandIndex >= 0 && args[commandIndex] === "completion";
 }
 
-function isParserOnlyInvocation(args: readonly string[]): boolean {
-  const commandIndex = firstCommandIndex(args);
+function isParserOnlyInvocation(args: readonly string[], buildMode: CliBuildMode): boolean {
+  const commandIndex = firstCommandIndex(args, buildMode);
   const parserArguments = commandIndex < 0 ? args : args.slice(0, commandIndex);
   const hasCommand = commandIndex >= 0;
   return (
     args.length === 0 ||
     !hasCommand ||
-    isCompletionInvocation(args) ||
+    isCompletionInvocation(args, buildMode) ||
     parserArguments.some((argument) => argument === "-h" || argument === "--help")
   );
 }
 
-function firstCommandIndex(args: readonly string[]): number {
-  return scanRootOptions(args, globalOptionSpecs).commandIndex;
+function firstCommandIndex(args: readonly string[], buildMode: CliBuildMode): number {
+  return scanRootOptions(args, globalOptionSpecs, buildMode).commandIndex;
 }
 
 function reportEntrypointError(err: Writable, error: unknown, environment?: NodeJS.ProcessEnv): number {

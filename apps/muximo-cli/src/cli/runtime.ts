@@ -3,8 +3,9 @@ import { isAbsolute, join, resolve } from "node:path";
 import { normalizeAllowedOrigins } from "@muximo/infrastructure/cli-client";
 import { isLoopbackOrPrivateBindHost } from "@muximo/profile";
 import { z } from "zod";
+import type { CliBuildMode } from "./build-mode.js";
 import { globalOptionSpecs } from "./commands/global.js";
-import { type CliOptionResolution, resolveOptionValues } from "./options/index.js";
+import { type CliOptionResolution, getAvailableOptionSpecs, resolveOptionValues } from "./options/index.js";
 import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 const cliRuntimeSchema = z.object({
@@ -26,6 +27,7 @@ export type ResolveMuximoCliRuntimeOptions = {
   args: readonly string[];
   environment: NodeJS.ProcessEnv;
   cwd: string;
+  buildMode?: CliBuildMode;
 };
 
 export type MuximoCliRuntimeResolution = {
@@ -35,11 +37,18 @@ export type MuximoCliRuntimeResolution = {
 };
 
 export function resolveMuximoCliRuntimeOptions(input: ResolveMuximoCliRuntimeOptions): MuximoCliRuntimeResolution {
-  const resolution = resolveOptionValues(input.raw, globalOptionSpecs, {
+  const buildMode = input.buildMode ?? "development";
+  const optionSpecs = getAvailableOptionSpecs(globalOptionSpecs, buildMode);
+  const resolution = resolveOptionValues(input.raw, optionSpecs, {
     args: input.args,
     environment: input.environment,
+    buildMode,
   });
-  const parsed = cliRuntimeSchema.safeParse(resolution.values);
+  const runtimeValues = {
+    ...resolution.values,
+    ...(buildMode === "production" ? { environment: "prod" } : {}),
+  };
+  const parsed = cliRuntimeSchema.safeParse(runtimeValues);
   if (!parsed.success) {
     throw new Error(`Invalid CLI runtime options:\n${z.prettifyError(parsed.error)}`);
   }
@@ -69,7 +78,7 @@ export function resolveMuximoCliRuntimeOptions(input: ResolveMuximoCliRuntimeOpt
     verbose: parsed.data.verbose,
   };
   return {
-    values: resolution.values,
+    values: runtimeValues,
     environment: applyRuntimeEnvironment(input.environment, runtime),
     runtime,
   };

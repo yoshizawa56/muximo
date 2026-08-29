@@ -38,8 +38,9 @@ CLI presenter owns the user-facing serve sentence. `apps/muximod` does not exist
 `packages/muximod` contains the private runtime bootstrap without a public CLI;
 daemon parsing remains in `apps/muximo-cli`.
 
-The CLI resolves the selected `--env <name>` profile, then uses the muximod API over local HTTP
-for workspace and agent-session operations, minting a short-lived local API token through
+The source/development CLI resolves the selected `--env <name>` profile, then uses the
+muximod API over local HTTP for workspace and agent-session operations, minting a short-lived
+local API token through
 the private control socket. Pairing, pane control, and daemon diagnostics use the typed
 private control contract. The CLI never opens the daemon database or reads daemon-owned
 files. Every profile defaults to migrations; `MUXIMO_SCHEMA_MODE=push` explicitly
