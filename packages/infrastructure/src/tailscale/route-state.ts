@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSy
 import { dirname } from "node:path";
 
 export type ServeRouteState = {
-  schemaVersion: 1;
-  environment: string;
+  schemaVersion: 2;
+  environment?: string;
   component: string;
   provider: "tailscale";
   hostname: string;
@@ -70,12 +70,16 @@ export function removeServeRouteState(path: string): void {
 
 function isServeRouteState(value: unknown): value is ServeRouteState {
   if (!isRecord(value)) return false;
+  const keys = Object.keys(value).sort().join(",");
+  const hasEnvironment = typeof value.environment === "string" && value.environment.length > 0;
   return (
-    Object.keys(value).sort().join(",") ===
+    ((keys ===
       "component,environment,externalPort,hostname,localTarget,path,provider,publicUrl,routeFingerprint,schemaVersion,updatedAt" &&
-    value.schemaVersion === 1 &&
-    typeof value.environment === "string" &&
-    value.environment.length > 0 &&
+      hasEnvironment) ||
+      (keys ===
+        "component,externalPort,hostname,localTarget,path,provider,publicUrl,routeFingerprint,schemaVersion,updatedAt" &&
+        value.environment === undefined)) &&
+    value.schemaVersion === 2 &&
     typeof value.component === "string" &&
     value.component.length > 0 &&
     value.provider === "tailscale" &&

@@ -28,7 +28,7 @@ type PairFixture = {
 type PairContext = { url: string | null; fetchedUrl: string | null };
 
 const routeState: ServeRouteState = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   environment: "local",
   component: "muximod",
   provider: "tailscale",

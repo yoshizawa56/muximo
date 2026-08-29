@@ -20,6 +20,7 @@ type RuntimeInput = {
 type RuntimeResult = ReturnType<typeof resolveMuximoCliRuntimeOptions>;
 type RuntimeContext = {
   environmentName: string | null;
+  muximoEnvironment: string | null;
   schemaMode: string | null;
   host: string | null;
   port: number | null;
@@ -30,12 +31,14 @@ type RuntimeContext = {
 const cases = [
   {
     name: "uses migrate as the schema default without a selected profile",
-    input: {},
+    input: { environment: { HOME: "/home/test" } },
     assert: [
-      hasObserved<RuntimeContext, RuntimeResult>("environmentName", "prod"),
+      hasObserved<RuntimeContext, RuntimeResult>("environmentName", null),
+      hasObserved<RuntimeContext, RuntimeResult>("muximoEnvironment", null),
       hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate"),
       hasObserved<RuntimeContext, RuntimeResult>("host", "127.0.0.1"),
       hasObserved<RuntimeContext, RuntimeResult>("port", 4317),
+      hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "<home>/.local/state/muximo/muximod"),
     ],
   },
   {
@@ -52,6 +55,7 @@ const cases = [
     },
     assert: [
       hasObserved<RuntimeContext, RuntimeResult>("environmentName", "dev"),
+      hasObserved<RuntimeContext, RuntimeResult>("muximoEnvironment", "dev"),
       hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate"),
       hasObserved<RuntimeContext, RuntimeResult>("host", "192.168.50.10"),
       hasObserved<RuntimeContext, RuntimeResult>("port", 4327),
@@ -65,14 +69,16 @@ const cases = [
     assert: [hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate")],
   },
   {
-    name: "keeps the production runtime on prod without a selected profile",
+    name: "keeps the production runtime unscoped without a selected profile",
     input: {
       buildMode: "production",
-      environment: { MUXIMO_ENV: "dev", MUXIMO_MUXIMOD_PORT: "4327" },
+      environment: { HOME: "/home/test", MUXIMO_ENV: "dev", MUXIMO_MUXIMOD_PORT: "4327" },
     },
     assert: [
-      hasObserved<RuntimeContext, RuntimeResult>("environmentName", "prod"),
+      hasObserved<RuntimeContext, RuntimeResult>("environmentName", null),
+      hasObserved<RuntimeContext, RuntimeResult>("muximoEnvironment", null),
       hasObserved<RuntimeContext, RuntimeResult>("port", 4327),
+      hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "<home>/.local/state/muximo/muximod"),
     ],
   },
   {
@@ -113,14 +119,23 @@ const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, R
   observe: (_fixture, result) =>
     result.ok
       ? {
-          environmentName: result.value.runtime.environmentName,
+          environmentName: result.value.runtime.environmentName ?? null,
+          muximoEnvironment: result.value.environment.MUXIMO_ENV ?? null,
           schemaMode: result.value.runtime.schemaMode,
           host: result.value.runtime.muximodHost,
           port: result.value.runtime.muximodPort,
           instanceDirectory: result.value.runtime.muximodInstanceDirectory.replace("/home/test", "<home>"),
           webPort: result.value.environment.MUXIMO_WEB_PORT ?? null,
         }
-      : { environmentName: null, schemaMode: null, host: null, port: null, instanceDirectory: null, webPort: null },
+      : {
+          environmentName: null,
+          muximoEnvironment: null,
+          schemaMode: null,
+          host: null,
+          port: null,
+          instanceDirectory: null,
+          webPort: null,
+        },
 };
 
 describe("muximo CLI runtime options", () => {

@@ -13,7 +13,6 @@ export const globalOptionSpecs = defineOptions(
       name: "MUXIMO_ENV",
       description: "Runtime environment profile.",
     },
-    defaultValue: "prod",
   },
   {
     key: "stateRoot",

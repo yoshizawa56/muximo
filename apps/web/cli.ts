@@ -104,7 +104,11 @@ function isHelpInvocation(command: readonly string[]): boolean {
 async function applyTailscaleRoute(context: WebCliContext): Promise<number> {
   const daemon = await context.webManager.status();
   if (daemon.state !== "running") {
-    throw new Error(`Web daemon is not running; run "web --env ${context.options.environmentName} daemon start" first`);
+    const startCommand =
+      context.options.environmentName === undefined
+        ? "web daemon start"
+        : `web --env ${context.options.environmentName} daemon start`;
+    throw new Error(`Web daemon is not running; run "${startCommand}" first`);
   }
   const result = await context.tailscale.applyRoute({
     localHost: context.options.host,
@@ -148,8 +152,8 @@ async function stopServeRoute(context: WebCliContext): Promise<number> {
 
 function writeRouteState(context: WebCliContext, route: TailscaleServeRoute): void {
   const state: ServeRouteState = {
-    schemaVersion: 1,
-    environment: context.options.environmentName,
+    schemaVersion: 2,
+    ...(context.options.environmentName === undefined ? {} : { environment: context.options.environmentName }),
     component: "web",
     provider: "tailscale",
     hostname: route.hostname,

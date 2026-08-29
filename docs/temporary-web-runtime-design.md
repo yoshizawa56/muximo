@@ -38,8 +38,8 @@ source repository root from its own module location; the shared
 raw values. It does not interpret component-specific variables. Without
 `--env`, no profile file is loaded.
 
-The standalone production CLI is built from a production entrypoint with a
-fixed `prod` runtime environment. It does not expose `--env`, does not treat
+The standalone production CLI is built from a production entrypoint with the
+unnamed default profile. It does not expose `--env`, does not treat
 `MUXIMO_ENV` as a profile selector, and does not load source repository profile
 files. Development-only options and commands are filtered from its Commander
 surface and shell completion.
@@ -92,22 +92,35 @@ and `apps/web` then resolve their own typed options independently. They do not
 share component defaults or derived paths. An unused variable is simply ignored
 by the application that does not need it.
 
-The preferred state layout is derived from the selected environment and cannot
-be overridden independently for individual PID, socket, database, or log
-files:
+The preferred state layout is derived from the selected profile and cannot be
+overridden independently for individual PID, socket, database, or log files.
+The unnamed default profile uses the state root directly; named profiles add
+their name as one path segment:
 
 The default state root is `~/.local/state/muximo`; `MUXIMO_STATE_ROOT` may
 replace that root as one deliberate global override. The derived layout is:
 
 ```text
-<state-root>/<environment>/muximod/
+<state-root>/muximod/
   muximod.sqlite
   muximod.pid
   muximod.sock
   muximod.log
   serve.json
 
-<state-root>/<environment>/web/
+<state-root>/<profile>/muximod/
+  muximod.sqlite
+  muximod.pid
+  muximod.sock
+  muximod.log
+  serve.json
+
+<state-root>/web/
+  web.pid
+  web.log
+  serve.json
+
+<state-root>/<profile>/web/
   web.pid
   web.log
   serve.json
@@ -225,10 +238,10 @@ Web:     http://127.0.0.1:5227 -> https://<hostname>:8449/
 muximod: http://127.0.0.1:4317 -> https://<hostname>:8444/
 ```
 
-For source/development runs, the exact staging and production values come from
-their profiles. The standalone production CLI uses the fixed `prod` values and
-does not select a source profile. External ports must not overlap when multiple
-environments share a Tailscale node.
+For source/development runs, named profile values come from the selected profile;
+the unnamed default profile uses built-in defaults. The standalone production CLI
+uses those built-in defaults and does not select a source profile. External ports
+must not overlap when multiple profiles share a Tailscale node.
 
 With Tailscale Serve background mode, the route is persistent after the
 command exits. The CLI command therefore configures or verifies a route and

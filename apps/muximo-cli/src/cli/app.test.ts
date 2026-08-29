@@ -40,15 +40,15 @@ function contains<ContextType>(key: keyof ContextType, value: string) {
 }
 
 const defaultRuntime: MuximoCliRuntimeOptions = {
-  environmentName: "prod",
+  environmentName: undefined,
   stateRoot: "/workspace/.state",
-  muximodInstanceDirectory: "/workspace/.state/prod/muximod",
+  muximodInstanceDirectory: "/workspace/.state/muximod",
   muximodHost: "127.0.0.1",
   muximodPort: 4317,
   muximodServePort: 8444,
   schemaMode: "migrate",
   logLevel: "info",
-  logFile: "/workspace/.state/prod/muximod/muximod.log",
+  logFile: "/workspace/.state/muximod/muximod.log",
   allowedOrigins: [],
   codexRemote: "unix://",
   verbose: false,

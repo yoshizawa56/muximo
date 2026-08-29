@@ -12,23 +12,26 @@ import { resolveWebOptions } from "./options.js";
 type WebInput = { name?: string; environment?: NodeJS.ProcessEnv };
 type WebResult = ReturnType<typeof resolveWebOptions>;
 type WebContext = {
-  environmentName: string;
+  environmentName: string | null;
   host: string;
   port: number;
   externalPort: number;
   instanceDirectory: string;
   muximodPort: string | null;
+  muximoEnvironment: string | null;
 };
 
 const cases = [
   {
-    name: "uses Web defaults without treating the default name specially",
+    name: "uses Web defaults without selecting an environment profile",
     input: {},
     assert: [
-      hasObserved<WebContext, WebResult>("environmentName", "prod"),
+      hasObserved<WebContext, WebResult>("environmentName", null),
       hasObserved<WebContext, WebResult>("host", "127.0.0.1"),
       hasObserved<WebContext, WebResult>("port", 5227),
       hasObserved<WebContext, WebResult>("externalPort", 8449),
+      hasObserved<WebContext, WebResult>("instanceDirectory", "<home>/.local/state/muximo/web"),
+      hasObserved<WebContext, WebResult>("muximoEnvironment", null),
     ],
   },
   {
@@ -50,6 +53,7 @@ const cases = [
       hasObserved<WebContext, WebResult>("externalPort", 9449),
       hasObserved<WebContext, WebResult>("instanceDirectory", "<home>/.local/state/muximo/dev/web"),
       hasObserved<WebContext, WebResult>("muximodPort", "not-a-port"),
+      hasObserved<WebContext, WebResult>("muximoEnvironment", "dev"),
     ],
   },
 ] satisfies readonly OperationCase<"default", WebInput, WebResult, WebContext>[];
@@ -69,14 +73,23 @@ const table: OperationTable<undefined, "default", WebInput, WebResult, WebContex
   observe: (_fixture, result) =>
     result.ok
       ? {
-          environmentName: result.value.environmentName,
+          environmentName: result.value.environmentName ?? null,
           host: result.value.host,
           port: result.value.port,
           externalPort: result.value.externalPort,
           instanceDirectory: result.value.webInstanceDirectory.replace("/home/test", "<home>"),
           muximodPort: result.value.environment.MUXIMO_MUXIMOD_PORT ?? null,
+          muximoEnvironment: result.value.environment.MUXIMO_ENV ?? null,
         }
-      : { environmentName: "", host: "", port: 0, externalPort: 0, instanceDirectory: "", muximodPort: null },
+      : {
+          environmentName: null,
+          host: "",
+          port: 0,
+          externalPort: 0,
+          instanceDirectory: "",
+          muximodPort: null,
+          muximoEnvironment: null,
+        },
 };
 
 describe("Web runtime options", () => {

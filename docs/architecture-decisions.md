@@ -287,10 +287,12 @@ separate runtime process; it is an internal package implementation detail, not
 a hidden or public CLI command.
 
 The CLI resolves all Muximo configuration before calling that lifecycle API. The
-source/development CLI's `--env <name>` profile selects one state root and its
-configured ports. The standalone production CLI uses the fixed `prod` environment
-and does not load source repository profiles. Every selected profile defaults to
-`migrate`; `push` is selected only by an explicit `MUXIMO_SCHEMA_MODE=push` value.
+source/development CLI's selected `--env <name>` profile determines the shared
+profile state directory and its configured ports. Without a selected profile, the
+CLI uses the state root directly and applies built-in defaults. The standalone
+production CLI uses the same unnamed default profile and does not load source
+repository profiles. Every selected profile defaults to `migrate`; `push` is
+selected only by an explicit `MUXIMO_SCHEMA_MODE=push` value.
 Worktrees do not derive state directories and no snapshot, seeding, or
 base-instance copy is performed.
 

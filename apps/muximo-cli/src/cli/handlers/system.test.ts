@@ -49,7 +49,7 @@ const daemonInputs: readonly CliDaemonInput[] = [
 ];
 
 const routeState: ServeRouteState = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   environment: "local",
   component: "muximod",
   provider: "tailscale",

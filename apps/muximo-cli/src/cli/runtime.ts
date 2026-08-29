@@ -9,7 +9,7 @@ import { type CliOptionResolution, getAvailableOptionSpecs, resolveOptionValues 
 import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 const cliRuntimeSchema = z.object({
-  environment: z.string().min(1),
+  environment: z.string().min(1).optional(),
   stateRoot: z.string().min(1),
   muximodHost: z.string().min(1),
   muximodPort: z.coerce.number().int().min(1).max(65_535),
@@ -46,7 +46,6 @@ export function resolveMuximoCliRuntimeOptions(input: ResolveMuximoCliRuntimeOpt
   });
   const runtimeValues = {
     ...resolution.values,
-    ...(buildMode === "production" ? { environment: "prod" } : {}),
   };
   const parsed = cliRuntimeSchema.safeParse(runtimeValues);
   if (!parsed.success) {
@@ -55,7 +54,11 @@ export function resolveMuximoCliRuntimeOptions(input: ResolveMuximoCliRuntimeOpt
 
   const homeDirectory = input.environment.HOME ?? homedir();
   const stateRoot = resolveConfiguredPath(parsed.data.stateRoot, input.cwd, homeDirectory);
-  const muximodInstanceDirectory = join(stateRoot, parsed.data.environment, "muximod");
+  const muximodInstanceDirectory = join(
+    stateRoot,
+    ...(parsed.data.environment === undefined ? [] : [parsed.data.environment]),
+    "muximod",
+  );
   const muximodHost = readBindHost(parsed.data.muximodHost);
   const logFile = resolveConfiguredPath(
     parsed.data.logFile ?? join(muximodInstanceDirectory, "muximod.log"),
@@ -87,7 +90,6 @@ export function resolveMuximoCliRuntimeOptions(input: ResolveMuximoCliRuntimeOpt
 function applyRuntimeEnvironment(environment: NodeJS.ProcessEnv, runtime: MuximoCliRuntimeOptions): NodeJS.ProcessEnv {
   const resolved: NodeJS.ProcessEnv = {
     ...environment,
-    MUXIMO_ENV: runtime.environmentName,
     MUXIMOD_INSTANCE_DIR: runtime.muximodInstanceDirectory,
     MUXIMOD_HOST: runtime.muximodHost,
     MUXIMOD_PORT: String(runtime.muximodPort),
@@ -98,6 +100,9 @@ function applyRuntimeEnvironment(environment: NodeJS.ProcessEnv, runtime: Muximo
     MUXIMOD_ALLOWED_ORIGINS: runtime.allowedOrigins.join(","),
     MUXIMO_CODEX_REMOTE: runtime.codexRemote,
   };
+
+  if (runtime.environmentName === undefined) delete resolved.MUXIMO_ENV;
+  else resolved.MUXIMO_ENV = runtime.environmentName;
 
   delete resolved.MUXIMO_DEV_STATE_ROOT;
   delete resolved.BASE_MUXIMOD_INSTANCE_DIR;

@@ -145,10 +145,12 @@ contract is extended and the implementation remains in muximod; a local persiste
 shortcut is not permitted.
 
 The source/development CLI's selected `--env <name>` profile determines the shared
-environment state directory and its configured local/external ports. The standalone
-production CLI uses the fixed `prod` environment and does not load source repository
-profiles. No profile name has special behavior: the CLI schema mode defaults to
-`migrate`, and a profile must explicitly set `MUXIMO_SCHEMA_MODE=push` to select push.
+profile state directory and its configured local/external ports. Without a selected
+profile, the CLI uses the state root directly and applies built-in defaults. The
+standalone production CLI uses the same unnamed default profile and does not load
+source repository profiles. No profile name has special behavior: the CLI schema
+mode defaults to `migrate`, and a profile must explicitly set
+`MUXIMO_SCHEMA_MODE=push` to select push.
 No worktree-specific database, snapshot, seeding, or Portless URL is used.
 `apps/web/cli.ts` independently manages one Vite process
 and its Web Serve route; it does not import or invoke muximod. Muximod Serve is a separate
