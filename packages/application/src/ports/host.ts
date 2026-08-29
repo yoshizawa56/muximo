@@ -94,7 +94,7 @@ export interface MuximodHostPort extends MuximodTerminalObservationPort {
   setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): Promise<void>;
   clearAgentExecutionMetadata(paneId: string, expectedExecutionId?: string): Promise<boolean>;
   resetAgentPaneMetadata(paneId: string): Promise<void>;
-  isProcessAlive(pid: number): Promise<boolean>;
+  isProcessAlive(pid: number, expectedStartedAt?: string): Promise<boolean>;
 }
 
 export interface MuximodViewportPort {

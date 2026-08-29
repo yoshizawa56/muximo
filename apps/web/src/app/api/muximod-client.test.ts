@@ -375,12 +375,12 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
       },
       agentSessions: {
         run: os.agentSessions.run.handler(() => ({
-          process: { code: 0, interrupted: false },
+          process: { started: true, code: 0, interrupted: false },
           session: agentSession,
           cleanup: { disposition: "not_requested", reason: "no_worktree" },
         })),
         resume: os.agentSessions.resume.handler(() => ({
-          process: { code: 0, interrupted: false },
+          process: { started: true, code: 0, interrupted: false },
           session: agentSession,
         })),
         cleanup: os.agentSessions.cleanup.handler(() => ({

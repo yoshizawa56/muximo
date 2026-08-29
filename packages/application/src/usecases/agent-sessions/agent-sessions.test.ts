@@ -149,7 +149,7 @@ function createFixture(
   return {
     sessions,
     workspace,
-    processResult: options.processResult ?? { code: 0, interrupted: false },
+    processResult: options.processResult ?? { started: true, code: 0, interrupted: false },
     processError: options.processError,
     prepareError: options.prepareError,
     hasChangesError: options.hasChangesError,
@@ -481,7 +481,7 @@ const runCases = [
     ],
   },
   {
-    name: "retains a worktree after a non-zero exit when a backend session exists",
+    name: "retains a worktree after a non-zero exit from a started process without a backend session id",
     fixture: "started-exit",
     steps: [{ operation: "run" }],
     assert: [
@@ -523,7 +523,7 @@ const runCases = [
 const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSessionResult, RunContext> = {
   defaultFixture: () => ({ fixture: createFixture() }),
   fixtures: {
-    success: () => ({ fixture: createFixture({ processResult: { code: 0, interrupted: false } }) }),
+    success: () => ({ fixture: createFixture({ processResult: { started: true, code: 0, interrupted: false } }) }),
     failed: () => ({ fixture: createFixture({ processError: new Error("backend process failed") }) }),
     "startup-failed": () => ({
       fixture: createFixture({
@@ -535,14 +535,20 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
       fixture: createFixture({
         useWorktree: true,
         provideBackendSessionId: false,
-        processResult: { code: 1, interrupted: false, failureDiagnostic: "backend failed to initialize" },
+        processResult: {
+          started: false,
+          code: 1,
+          interrupted: false,
+          failureDiagnostic: "backend failed to initialize",
+        },
       }),
     }),
     "started-exit": () => ({
       fixture: createFixture({
         useWorktree: true,
         confirmCleanup: false,
-        processResult: { code: 1, interrupted: false, failureDiagnostic: "agent task failed" },
+        provideBackendSessionId: false,
+        processResult: { started: true, code: 1, interrupted: false, failureDiagnostic: "agent task failed" },
       }),
     }),
     "prepare-failed": () => ({

@@ -35,6 +35,7 @@ import {
   StopDaemon,
 } from "@muximo/application";
 import { muximodHealthSchema } from "@muximo/contract/api";
+import { sanitizeProcessDiagnostic } from "@muximo/infrastructure/runtime";
 import { isLoopbackOrPrivateBindHost } from "@muximo/profile";
 import { z } from "zod";
 import {
@@ -207,11 +208,32 @@ export async function spawnMuximod(
   if (processOptions.detached) child.unref();
 
   let exited = false;
-  const waitForExit = new Promise<MuximodProcessResult>((resolvePromise, reject) => {
-    child.once("error", reject);
+  let processStarted = false;
+  const waitForExit = new Promise<MuximodProcessResult>((resolvePromise) => {
+    child.once("spawn", () => {
+      processStarted = true;
+    });
+    child.once("error", (error) => {
+      exited = true;
+      const failureDiagnostic = sanitizeProcessDiagnostic(error instanceof Error ? error.message : String(error));
+      resolvePromise({
+        started: false,
+        code: 127,
+        interrupted: false,
+        signal: null,
+        pid: child.pid,
+        ...(failureDiagnostic === undefined ? {} : { failureDiagnostic }),
+      });
+    });
     child.once("close", (code, signal) => {
       exited = true;
-      resolvePromise({ code: code ?? signalExitCode(signal), interrupted: false, signal, pid: child.pid });
+      resolvePromise({
+        started: processStarted,
+        code: code ?? signalExitCode(signal),
+        interrupted: false,
+        signal,
+        pid: child.pid,
+      });
     });
   });
   if (processOptions.detached) {

@@ -37,7 +37,10 @@ export class CleanupAgentSession {
       reference: input.reference,
       workspaceScope: input.workspaceScope,
     });
-    if (session.executionPid !== undefined && (await this.deps.process.isAlive(session.executionPid)))
+    if (
+      session.executionPid !== undefined &&
+      (await this.deps.process.isAlive(session.executionPid, session.executionStartedAt))
+    )
       throw new Error(`session '${session.name}' is still running (pid ${session.executionPid})`);
     if (session.useWorktree && session.worktreePath && !(await this.deps.worktrees.isRegistered(session))) {
       throw new Error(

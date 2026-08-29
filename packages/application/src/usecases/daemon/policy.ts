@@ -38,10 +38,24 @@ export async function waitForHealthyOrExit(
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("daemon wait timeout must be non-negative");
 
   const deadline = timing.clock.now() + timeoutMs;
-  const exit = Promise.resolve()
-    .then(() => child.wait())
-    .then((process) => ({ kind: "exited" as const, process }));
-  void exit.catch(() => undefined);
+  let childWait: Promise<ProcessResult>;
+  try {
+    childWait = child.wait();
+  } catch {
+    childWait = Promise.reject(new Error("muximod process exit status was unavailable"));
+  }
+  const exit = childWait
+    .then((process) => ({ kind: "exited" as const, process }))
+    .catch(() => ({
+      kind: "exited" as const,
+      process: {
+        started: false,
+        code: 127,
+        interrupted: false,
+        signal: null,
+        failureDiagnostic: "muximod process exit status was unavailable",
+      },
+    }));
 
   while (true) {
     const remainingMs = deadline - timing.clock.now();

@@ -207,7 +207,7 @@ export class RunAgentSession {
     if (next.status === "interrupted") {
       return { process, session: next, cleanup: { disposition: "not_requested", reason: "interrupted" } };
     }
-    if (isStartupFailure(next, process)) {
+    if (isStartupFailure(process)) {
       const cleanup = await this.removeResources(next, true, Boolean(next.backendSessionId));
       return { process, session: next, cleanup };
     }
@@ -314,6 +314,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isStartupFailure(session: AgentSessionRecord, process: LaunchExecution["process"]): boolean {
-  return !process.interrupted && process.code !== 0 && session.backendSessionId === undefined;
+function isStartupFailure(process: LaunchExecution["process"]): boolean {
+  return !process.interrupted && !process.started && process.code !== 0;
 }

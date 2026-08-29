@@ -64,7 +64,7 @@ const cases = [
         { state: "waiting_input", recentOutput: "Need input" },
       ]),
       hasObserved<BackendResult, BackendResult>("sameProcessResult", true),
-      hasObserved<BackendResult, BackendResult>("processKeys", ["code", "interrupted", "signal"]),
+      hasObserved<BackendResult, BackendResult>("processKeys", ["started", "code", "interrupted", "signal"]),
       hasObserved<BackendResult, BackendResult>("processCode", 0),
       hasObserved<BackendResult, BackendResult>("failureDiagnostic", undefined),
       {
@@ -80,7 +80,13 @@ const cases = [
     assert: [
       hasObserved<BackendResult, BackendResult>("processCode", 1),
       hasObserved<BackendResult, BackendResult>("failureDiagnostic", "backend failed: stdin is not a terminal"),
-      hasObserved<BackendResult, BackendResult>("processKeys", ["code", "interrupted", "signal", "failureDiagnostic"]),
+      hasObserved<BackendResult, BackendResult>("processKeys", [
+        "started",
+        "code",
+        "interrupted",
+        "signal",
+        "failureDiagnostic",
+      ]),
     ],
   },
 ] satisfies readonly OperationCase<FixtureKey, Input, BackendResult, BackendResult>[];

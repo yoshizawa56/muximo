@@ -213,9 +213,9 @@ function resolvePaneKind(
 
 async function isLiveAgentExecution(
   host: MuximodHostPort,
-  session: Pick<AgentSessionRecord, "status" | "executionPid">,
+  session: Pick<AgentSessionRecord, "status" | "executionPid" | "executionStartedAt">,
 ): Promise<boolean> {
   if (session.status !== "running" && session.status !== "resuming") return false;
-  if (session.executionPid === undefined) return false;
-  return await host.isProcessAlive(session.executionPid);
+  if (session.executionPid === undefined || session.executionStartedAt === undefined) return false;
+  return await host.isProcessAlive(session.executionPid, session.executionStartedAt);
 }

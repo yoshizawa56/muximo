@@ -44,6 +44,7 @@ type LifecycleFixtureKey =
   | "dynamic-port"
   | "startable"
   | "startup-failed"
+  | "startup-wait-error"
   | "timeout"
   | "stale"
   | "foreground"
@@ -133,12 +134,29 @@ const cases = [
       hasError<LifecycleContext, LifecycleResult>({ name: "DaemonHealthError", message: "startup_failed" }),
       hasObserved<LifecycleContext, LifecycleResult>("errorReason", "startup_failed"),
       hasObserved<LifecycleContext, LifecycleResult>("startupProcess", {
+        started: true,
         code: 1,
         interrupted: false,
         signal: null,
       }),
       hasObserved<LifecycleContext, LifecycleResult>("terminateCount", 0),
       hasObserved<LifecycleContext, LifecycleResult>("sleeps", []),
+    ],
+  },
+  {
+    name: "ensure converts a rejected child wait into a typed startup failure",
+    fixture: "startup-wait-error",
+    input: { operation: "ensure" },
+    assert: [
+      hasError<LifecycleContext, LifecycleResult>({ name: "DaemonHealthError", message: "startup_failed" }),
+      hasObserved<LifecycleContext, LifecycleResult>("startupProcess", {
+        started: false,
+        code: 127,
+        interrupted: false,
+        signal: null,
+        failureDiagnostic: "muximod process exit status was unavailable",
+      }),
+      hasObserved<LifecycleContext, LifecycleResult>("terminateCount", 0),
     ],
   },
   {
@@ -219,6 +237,7 @@ const cases = [
       hasError<LifecycleContext, LifecycleResult>({ name: "DaemonHealthError", message: "startup_failed" }),
       hasObserved<LifecycleContext, LifecycleResult>("errorReason", "startup_failed"),
       hasObserved<LifecycleContext, LifecycleResult>("startupProcess", {
+        started: true,
         code: 1,
         interrupted: false,
         signal: null,
@@ -260,6 +279,7 @@ const table: OperationTable<LifecycleFixture, LifecycleFixtureKey, LifecycleInpu
       "dynamic-port": () => ({ fixture: createFixture("dynamic-port") }),
       startable: () => ({ fixture: createFixture("startable") }),
       "startup-failed": () => ({ fixture: createFixture("startup-failed") }),
+      "startup-wait-error": () => ({ fixture: createFixture("startup-wait-error") }),
       timeout: () => ({ fixture: createFixture("timeout") }),
       stale: () => ({ fixture: createFixture("stale") }),
       foreground: () => ({ fixture: createFixture("foreground") }),
@@ -360,7 +380,7 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
   };
 
   const runtime: DaemonRuntimePort = {
-    runForeground: async () => ({ code: 0, interrupted: false }),
+    runForeground: async () => ({ started: true, code: 0, interrupted: false }),
     spawn: async () => {
       fixture.spawnCount += 1;
       fixture.alive = true;
@@ -369,8 +389,10 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
         pid: 402,
         wait: () =>
           key === "startup-failed" || key === "restart-startup-failed"
-            ? Promise.resolve({ code: 1, interrupted: false, signal: null })
-            : new Promise<ProcessResult>(() => undefined),
+            ? Promise.resolve({ started: true, code: 1, interrupted: false, signal: null })
+            : key === "startup-wait-error"
+              ? Promise.reject(new Error("wait failed"))
+              : new Promise<ProcessResult>(() => undefined),
         terminate: () => {
           fixture.terminateCount += 1;
           fixture.alive = false;

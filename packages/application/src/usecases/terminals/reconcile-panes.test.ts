@@ -26,6 +26,7 @@ type Input = {
   execution: "adopted" | "manual";
   marker: "shell" | "none";
   command: "codex" | "shell";
+  identity?: "valid" | "missing";
   existingState?: PaneState;
 };
 
@@ -95,6 +96,15 @@ const cases = [
       },
     ],
   },
+  {
+    name: "does not adopt metadata when the execution owner timestamp is missing",
+    input: { execution: "adopted", marker: "shell", command: "codex", identity: "missing" },
+    assert: [
+      returns<ReconcileContext, ReconcileResult>("shell"),
+      hasObserved<ReconcileContext, ReconcileResult>("kind", "shell"),
+      hasObserved<ReconcileContext, ReconcileResult>("agentSessionId", undefined),
+    ],
+  },
 ] satisfies readonly OperationCase<"default", Input, ReconcileResult, ReconcileContext>[];
 
 const table: OperationTable<ReconcileFixture, "default", Input, ReconcileResult, ReconcileContext> = {
@@ -151,6 +161,7 @@ const table: OperationTable<ReconcileFixture, "default", Input, ReconcileResult,
         },
       ],
     };
+    if (input.identity === "missing") fixture.session = { ...fixture.session, executionStartedAt: undefined };
     fixture.host = createHost(snapshot);
     const [record] = await reconcilePanes(
       fixture.host,
@@ -190,6 +201,7 @@ function createFixture(): { fixture: ReconcileFixture } {
     resuming: false,
     executionId: "execution-id-123456",
     executionPid: 1234,
+    executionStartedAt: "2026-08-23T00:00:00.000Z",
     createdAt: "2026-08-23T00:00:00.000Z",
     updatedAt: "2026-08-23T00:00:00.000Z",
   });
@@ -220,7 +232,7 @@ function createFixture(): { fixture: ReconcileFixture } {
     pruneStalePanes: async () => 0,
   };
   const sessionRepository: AgentSessionRepository = {
-    findById: async (id) => sessions.get(id),
+    findById: async (id) => (id === fixture.session.id ? fixture.session : sessions.get(id)),
     findByName: async () => undefined,
     list: async () => [...sessions.values()],
     insert: async (record) => {

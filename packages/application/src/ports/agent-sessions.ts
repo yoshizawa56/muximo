@@ -106,6 +106,7 @@ export type CleanupResult =
   | { disposition: "failed"; reason: CleanupReason };
 
 export type ProcessResult = {
+  started: boolean;
   code: number;
   interrupted: boolean;
   signal?: string | null;
@@ -236,7 +237,7 @@ export interface PanePublicationPort {
 }
 
 export interface ProcessObservationPort {
-  isAlive(pid: number): Promise<boolean>;
+  isAlive(pid: number, expectedStartedAt?: string): Promise<boolean>;
 }
 
 /** Concrete observations used by the application-owned session list policy. */

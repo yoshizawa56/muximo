@@ -79,6 +79,7 @@ function createFixture(key: "failure" | "cleanup-failed"): Fixture {
   return {
     result: {
       process: {
+        started: true,
         code: 1,
         interrupted: false,
         failureDiagnostic: "stdin is not a terminal",

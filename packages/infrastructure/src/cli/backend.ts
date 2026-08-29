@@ -140,6 +140,7 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
       const finishedFields = {
         kind: "backend",
         pid: result.pid,
+        started: result.started,
         exitCode: result.code,
         signal: result.signal,
         interrupted: result.interrupted,
@@ -149,6 +150,7 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
       if (result.code === 0) logger.debug("subprocess.finished", finishedFields);
       else logger.warn("subprocess.failed", finishedFields);
       return {
+        started: result.started,
         code: result.code,
         interrupted: result.interrupted,
         signal: result.signal,

@@ -547,6 +547,7 @@ export type ListAgentSessionsRequest = z.infer<typeof listAgentSessionsRequestSc
 
 export const processResultSchema = z
   .object({
+    started: z.boolean(),
     code: z.number().int(),
     interrupted: z.boolean(),
     signal: z.string().nullable().optional(),

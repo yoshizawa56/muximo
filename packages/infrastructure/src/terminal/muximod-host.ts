@@ -11,6 +11,7 @@ import {
   type TerminalHostSnapshot,
 } from "@muximo/application";
 import type { WorkspaceRecord } from "@muximo/domain";
+import { isProcessAlive } from "../process/process.js";
 import { classifyTerminalCommand, classifyUnmanagedAgentOutput } from "./observation.js";
 import {
   buildMuximoCommand,
@@ -167,13 +168,8 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     this.adapter.resetAgentPaneMetadata(paneId);
   }
 
-  public async isProcessAlive(pid: number): Promise<boolean> {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      return error instanceof Error && "code" in error && error.code === "EPERM";
-    }
+  public async isProcessAlive(pid: number, expectedStartedAt?: string): Promise<boolean> {
+    return isProcessAlive(pid, expectedStartedAt);
   }
 
   private buildAgentCommand(input: CreatePaneInput, workspace: WorkspaceRecord | undefined): string {

@@ -134,6 +134,7 @@ const startupFailureCase = {
   assert: [
     hasValue("returns a failure status", "status", 1),
     containsText("presents the startup exit", "err", "muximod exited during startup with exit code 1"),
+    containsText("presents the startup diagnostic", "err", "configuration could not be loaded"),
     containsText("presents the daemon log path", "err", "muximod log: /tmp/muximod.log"),
   ] as const,
 } satisfies OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>;
@@ -209,7 +210,17 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
           throw new DaemonHealthError(
             "startup_failed",
             { logFile: "/tmp/muximod.log" },
-            { startedAt: 0, pid: 402, process: { code: 1, interrupted: false, signal: null } },
+            {
+              startedAt: 0,
+              pid: 402,
+              process: {
+                started: false,
+                code: 1,
+                interrupted: false,
+                signal: null,
+                failureDiagnostic: "configuration could not be loaded",
+              },
+            },
           );
         }
         return { kind: "background", result: { state: "started", host: input.options.host, port: input.options.port } };
