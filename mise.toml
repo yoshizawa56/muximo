@@ -27,5 +27,5 @@ raw_args = true
 run = "bun run --filter @muximo/muximo-cli dev --"
 
 [tasks.check]
-description = "Run the public-repository audit and project checks"
-run = "bun run audit:public && bun run typecheck && bun run test && bun run build"
+description = "Run the complete repository verification"
+run = "bun run verify"
