@@ -22,7 +22,7 @@
     "bun": ">=1.3.14"
   },
   "scripts": {
-    "build": "node node_modules/turbo/bin/turbo run build",
+    "build": "node scripts/run-turbo.mjs run build",
     "build:muximo": "bun scripts/build-muximo.mjs",
     "muximo:install": "bun scripts/install-muximo.mjs",
     "profile": "bun --no-env-file scripts/profile.ts",
@@ -33,9 +33,9 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "test:table": "node scripts/check-table-tests.mjs",
-    "test": "bun run check:architecture && bun run test:table && bun test scripts/build-muximo.test.ts scripts/profile.test.ts && node node_modules/turbo/bin/turbo run test",
+    "test": "bun run check:architecture && bun run test:table && bun test scripts/build-muximo.test.ts scripts/profile.test.ts && node scripts/run-turbo.mjs run test",
     "test:local": "bun test packages/domain/src packages/application/src packages/contract/src packages/test-support/src packages/infrastructure/src packages/muximod/src apps/muximo-cli/src apps/web/src scripts/build-muximo.test.ts scripts/profile.test.ts",
-    "typecheck": "bun run check:architecture && node node_modules/turbo/bin/turbo run typecheck",
+    "typecheck": "bun run check:architecture && node scripts/run-turbo.mjs run typecheck",
     "verify": "bun run audit:public && bun run lint && bun run typecheck && bun run test && bun run build",
     "prepare": "lefthook install"
   },
