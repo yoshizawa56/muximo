@@ -196,10 +196,20 @@ For the Capacitor iOS workflow, use `mise ios` to build, sync, and open the nati
 Useful repository checks are:
 
 ```sh
+bun run verify
 bun run typecheck
 bun run test
 bun run build
 ```
+
+`bun run verify` runs the public-repository audit, lint, typecheck, tests, and
+build together.
+
+`bun run verify` is the complete repository check used by the pre-push hook and
+CI. It runs the public-repository audit, lint, typecheck, tests, and build.
+Use `bun run lint:fix` or `bun run format` when a check reports a fixable issue.
+The pre-commit hook applies Biome fixes to staged JavaScript and TypeScript files
+and then runs the repository typecheck.
 
 The iOS shell workflow is documented in [docs/mobile-capacitor.md](docs/mobile-capacitor.md). Worktree setup and cleanup examples are documented in [examples/hooks](examples/hooks/README.md).
 

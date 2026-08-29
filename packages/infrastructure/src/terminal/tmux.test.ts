@@ -1,6 +1,8 @@
 // Tests for the terminal adapter stay co-located with its implementation.
 import { createHash } from "node:crypto";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type Assertion,
@@ -13,7 +15,15 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
-import { resolveMuximoCommand, TmuxAdapter, type TmuxClient, type TmuxLiveSnapshot, type TmuxPane } from "./tmux.js";
+import {
+  buildMuximoCommand,
+  buildMuximoShellCommand,
+  resolveMuximoCommand,
+  TmuxAdapter,
+  type TmuxClient,
+  type TmuxLiveSnapshot,
+  type TmuxPane,
+} from "./tmux.js";
 
 type EmptyContext = {};
 type RecordingFixture = { adapter: RecordingTmuxAdapter };
@@ -357,9 +367,28 @@ const sessionEnvironmentTable: OperationTable<RecordingFixture, "default", {}, s
   observe: () => ({}),
 };
 
-type ResolveInput = { environment: NodeJS.ProcessEnv; runtime: { argv: string[]; execPath: string } };
+type ResolveInput = { environment: NodeJS.ProcessEnv; runtime?: { argv: string[]; execPath: string } };
+type ResolveFixture = { compiledMuximod?: string };
 const compiledEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../scripts/build-muximo.mjs");
+const sourceInfrastructureEntry = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../../packages/infrastructure/src/terminal/tmux.ts",
+);
 const sourceAgentEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../apps/muximo-cli/src/index.ts");
+const muximodSourceEntry = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../../packages/muximod/src/process-entrypoint.ts",
+);
+const resolveFixture = (): FixtureHandle<ResolveFixture> => ({ fixture: {} });
+const compiledMuximodFixture = (): FixtureHandle<ResolveFixture> => {
+  const root = mkdtempSync(join(tmpdir(), "muximo-command-resolution-"));
+  const muximod = join(root, "muximod");
+  writeFileSync(join(root, "muximo"), "", { mode: 0o755 });
+  return {
+    fixture: { compiledMuximod: muximod },
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+};
 const resolveCases = [
   {
     name: "uses the explicit launcher override",
@@ -381,14 +410,74 @@ const resolveCases = [
   },
   {
     name: "uses the current checkout source launcher",
-    input: { environment: {}, runtime: { argv: ["/opt/bun", fileURLToPath(import.meta.url)], execPath: "/opt/bun" } },
+    input: { environment: {}, runtime: { argv: ["/opt/bun", sourceInfrastructureEntry], execPath: "/opt/bun" } },
     assert: [returns<EmptyContext, string>(sourceAgentEntry)],
   },
-] satisfies readonly OperationCase<"default", ResolveInput, string, EmptyContext>[];
-const resolveTable: OperationTable<undefined, "default", ResolveInput, string, EmptyContext> = {
-  defaultFixture: () => ({ fixture: undefined }),
+  {
+    name: "uses the current checkout source launcher from the muximod package entrypoint",
+    input: { environment: {}, runtime: { argv: ["/opt/bun", muximodSourceEntry], execPath: "/opt/bun" } },
+    assert: [returns<EmptyContext, string>(sourceAgentEntry)],
+  },
+  {
+    name: "resolves the adjacent muximo for a compiled muximod",
+    fixture: "compiled-muximod",
+    input: { environment: {} },
+    assert: [
+      {
+        name: "returns the adjacent muximo executable",
+        check: (_context, result) => {
+          expect(result).toEqual({ ok: true, value: expect.stringMatching(/\/muximo$/u) });
+        },
+      },
+    ],
+  },
+  {
+    name: "uses the muximo command name when a compiled muximod has no adjacent binary",
+    input: { environment: {}, runtime: { argv: [], execPath: "/opt/muximod/muximod" } },
+    assert: [returns<EmptyContext, string>("muximo")],
+  },
+] satisfies readonly OperationCase<"compiled-muximod", ResolveInput, string, EmptyContext>[];
+const resolveTable: OperationTable<ResolveFixture, "compiled-muximod", ResolveInput, string, EmptyContext> = {
+  defaultFixture: resolveFixture,
+  fixtures: { "compiled-muximod": compiledMuximodFixture },
   cases: resolveCases,
-  execute: (_fixture, input) => resolveMuximoCommand(input.environment, input.runtime),
+  execute: (fixture, input) =>
+    resolveMuximoCommand(
+      input.environment,
+      input.runtime ?? { argv: [], execPath: fixture.compiledMuximod ?? "/opt/muximod/muximod" },
+    ),
+  observe: () => ({}),
+};
+
+type ShellCommandInput = { binary: string; subcommand: string; args?: readonly string[] };
+const shellCommandCases = [
+  {
+    name: "runs a source launcher through the current runtime",
+    input: { binary: sourceAgentEntry, subcommand: "shell" },
+    assert: [returns<EmptyContext, string>(`${shellQuote(process.execPath)} ${shellQuote(sourceAgentEntry)} shell`)],
+  },
+  {
+    name: "runs a compiled launcher without a runtime prefix",
+    input: { binary: "/opt/muximo", subcommand: "shell" },
+    assert: [returns<EmptyContext, string>("'/opt/muximo' shell")],
+  },
+  {
+    name: "runs a source agent command through the current runtime",
+    input: { binary: sourceAgentEntry, subcommand: "run", args: ["codex", "--no-worktree", "--name", "work"] },
+    assert: [
+      returns<EmptyContext, string>(
+        `${shellQuote(process.execPath)} ${shellQuote(sourceAgentEntry)} run 'codex' '--no-worktree' '--name' 'work'`,
+      ),
+    ],
+  },
+] satisfies readonly OperationCase<"default", ShellCommandInput, string, EmptyContext>[];
+const shellCommandTable: OperationTable<undefined, "default", ShellCommandInput, string, EmptyContext> = {
+  defaultFixture: () => ({ fixture: undefined }),
+  cases: shellCommandCases,
+  execute: (_fixture, input) =>
+    input.subcommand === "shell"
+      ? buildMuximoShellCommand(input.binary)
+      : buildMuximoCommand(input.binary, input.subcommand, input.args),
   observe: () => ({}),
 };
 
@@ -708,6 +797,7 @@ describe("tmux adapter", () => {
   runOperationTable(register, orphanCleanupTable);
   runOperationTable(register, sessionEnvironmentTable);
   runOperationTable(register, resolveTable);
+  runOperationTable(register, shellCommandTable);
   runOperationTable(register, attachTable);
   runOperationTable(register, tmuxActionTable);
   runOperationTable(register, refreshTable);
@@ -717,6 +807,10 @@ describe("tmux adapter", () => {
   runOperationTable(register, metadataWriteTable);
   runOperationTable(register, metadataClearTable);
 });
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
 
 class RecordingTmuxAdapter extends TmuxAdapter {
   public lastArgs: string[] = [];

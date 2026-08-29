@@ -1,11 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { type ComponentProps, useCallback, useState } from "react";
-import { expect, userEvent, within } from "storybook/test";
-import type { ShellViewModel } from "../-shell/view";
-import { ShellView } from "../-shell/view";
-import { DirectionalFlickIcon } from "./view";
+import { type ReactNode, useCallback, useState } from "react";
+import { expect, fireEvent, userEvent, within } from "storybook/test";
+import { applyCustomKeyboardDrop, selectedButtonsFromIds } from "./policy";
+import { CustomKeyboardSettingsView, CustomKeyboardView, DirectionalFlickIcon } from "./view";
 import {
-  applyCustomKeyboardDrop,
   type CustomKeyboardButton,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
@@ -21,7 +19,6 @@ import {
   customKeyboardSpecialKeyOptions,
   customKeyboardSpecialModifierOptions,
   defaultCustomKeyboardButtons,
-  selectedButtonsFromIds,
 } from "./viewmodel";
 
 const alphabetButtonLibrary: readonly CustomKeyboardButton[] = [..."qwertyuiopasdfghjklzxcvbnm"].map((key) => ({
@@ -218,28 +215,37 @@ const buttonLibrary: readonly CustomKeyboardButton[] = [
   },
 ];
 
+type StoryKeyboardState = {
+  libraryButtons: CustomKeyboardButton[];
+  selectedButtonIds: string[];
+  shortcutButtonIds: string[];
+  repeatStartDelayMs: number;
+  repeatIntervalMs: number;
+};
+
 function InteractiveShellStory({
   startInSettings = false,
   initialButtons = defaultCustomKeyboardButtons,
+  initialActiveModifiers = [],
 }: {
   startInSettings?: boolean;
   initialButtons?: readonly CustomKeyboardButton[];
+  initialActiveModifiers?: CustomKeyboardViewModel["activeModifiers"];
 }) {
-  const [libraryButtons, setLibraryButtons] = useState<CustomKeyboardButton[]>(() =>
-    uniqueStoryButtons([...buttonLibrary, ...initialButtons]),
-  );
-  const [selectedButtonIds, setSelectedButtonIds] = useState<string[]>(() => initialButtons.map((button) => button.id));
-  const [shortcutButtonIds, setShortcutButtonIds] = useState<string[]>(() =>
-    [
+  const [keyboardState, setKeyboardState] = useState<StoryKeyboardState>(() => ({
+    libraryButtons: uniqueStoryButtons([...buttonLibrary, ...initialButtons]),
+    selectedButtonIds: initialButtons.map((button) => button.id),
+    shortcutButtonIds: [
       ...defaultCustomKeyboardButtons.filter((button) => button.kind === "shortcut"),
       ...buttonLibrary.filter((button) => button.kind === "shortcut"),
     ].map((button) => button.id),
-  );
-  const [activeModifiers, setActiveModifiers] = useState<CustomKeyboardViewModel["activeModifiers"]>([]);
+    repeatStartDelayMs: 420,
+    repeatIntervalMs: 180,
+  }));
+  const [activeModifiers, setActiveModifiers] = useState<CustomKeyboardViewModel["activeModifiers"]>(() => [
+    ...initialActiveModifiers,
+  ]);
   const [nativeKeyboardVisible, setNativeKeyboardVisible] = useState(false);
-  const [repeatStartDelayMs, setRepeatStartDelayMs] = useState(420);
-  const [repeatIntervalMs, setRepeatIntervalMs] = useState(180);
-  const [settingsOpen, setSettingsOpen] = useState(startInSettings);
   const [lastAction, setLastAction] = useState("Tap a custom key to preview its action.");
 
   const onButtonPress = useCallback(
@@ -299,38 +305,35 @@ function InteractiveShellStory({
     setLastAction(nextVisible ? "Standard keyboard shown" : "Standard keyboard hidden");
   }, [nativeKeyboardVisible]);
 
-  const onOpenSettings = useCallback(() => {
-    setSettingsOpen(true);
-  }, []);
-
-  const onDrop = useCallback(
-    (source: CustomKeyboardDragSource, target: CustomKeyboardDropTarget) => {
-      if (target.type === "keyboard") {
-        setSelectedButtonIds(
-          (current) =>
-            applyCustomKeyboardDrop({ selectedButtonIds: current, shortcutButtonIds }, source, target)
-              .selectedButtonIds as string[],
-        );
-        return;
-      }
-
-      setShortcutButtonIds(
-        (current) =>
-          applyCustomKeyboardDrop({ selectedButtonIds, shortcutButtonIds: current }, source, target)
-            .shortcutButtonIds as string[],
+  const onDrop = useCallback((source: CustomKeyboardDragSource, target: CustomKeyboardDropTarget) => {
+    setKeyboardState((current) => {
+      const next = applyCustomKeyboardDrop(
+        {
+          selectedButtonIds: current.selectedButtonIds,
+          shortcutButtonIds: current.shortcutButtonIds,
+        },
+        source,
+        target,
       );
-    },
-    [selectedButtonIds, shortcutButtonIds],
-  );
+      return {
+        ...current,
+        selectedButtonIds: [...next.selectedButtonIds],
+        shortcutButtonIds: [...next.shortcutButtonIds],
+      };
+    });
+  }, []);
 
   const onRemoveButton = useCallback((buttonId: string) => {
-    setSelectedButtonIds((current) => current.filter((id) => id !== buttonId));
+    setKeyboardState((current) => ({
+      ...current,
+      selectedButtonIds: current.selectedButtonIds.filter((id) => id !== buttonId),
+    }));
   }, []);
 
-  const onRegisterShortcut = useCallback(
-    (draft: CustomKeyboardShortcutDraft) => {
-      const draftId = `shortcut-draft-${libraryButtons.filter((button) => button.category === "shortcuts").length + 1}`;
-      const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
+  const onRegisterShortcut = useCallback((draft: CustomKeyboardShortcutDraft) => {
+    const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
+    setKeyboardState((current) => {
+      const draftId = `shortcut-draft-${current.libraryButtons.filter((button) => button.category === "shortcuts").length + 1}`;
       const shortcut: CustomKeyboardButton = {
         id: draftId,
         kind: "shortcut",
@@ -338,13 +341,17 @@ function InteractiveShellStory({
         accessibleLabel: `${iconLabel} shortcut`,
         ...draft,
       };
-      setLibraryButtons((current) =>
-        current.some((button) => button.id === draftId) ? current : [...current, shortcut],
-      );
-      setShortcutButtonIds((current) => (current.includes(draftId) ? current : [...current, draftId]));
-    },
-    [libraryButtons],
-  );
+      return {
+        ...current,
+        libraryButtons: current.libraryButtons.some((button) => button.id === draftId)
+          ? current.libraryButtons
+          : [...current.libraryButtons, shortcut],
+        shortcutButtonIds: current.shortcutButtonIds.includes(draftId)
+          ? current.shortcutButtonIds
+          : [...current.shortcutButtonIds, draftId],
+      };
+    });
+  }, []);
 
   const onUpdateShortcut = useCallback((buttonId: string, draft: CustomKeyboardShortcutDraft) => {
     const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
@@ -352,24 +359,32 @@ function InteractiveShellStory({
       button.id === buttonId
         ? { ...button, icon: draft.icon, sequence: draft.sequence, accessibleLabel: `${iconLabel} shortcut` }
         : button;
-    setLibraryButtons((current) => current.map(update));
+    setKeyboardState((current) => ({
+      ...current,
+      libraryButtons: current.libraryButtons.map(update),
+    }));
   }, []);
 
   const onDeleteShortcut = useCallback((buttonId: string) => {
-    setSelectedButtonIds((current) => current.filter((id) => id !== buttonId));
-    setLibraryButtons((current) => current.filter((button) => button.id !== buttonId));
-    setShortcutButtonIds((current) => current.filter((id) => id !== buttonId));
+    setKeyboardState((current) => ({
+      ...current,
+      selectedButtonIds: current.selectedButtonIds.filter((id) => id !== buttonId),
+      libraryButtons: current.libraryButtons.filter((button) => button.id !== buttonId),
+      shortcutButtonIds: current.shortcutButtonIds.filter((id) => id !== buttonId),
+    }));
   }, []);
 
-  const buttons = selectedButtonsFromIds(selectedButtonIds, libraryButtons);
-  const shortcutButtons = selectedButtonsFromIds(shortcutButtonIds, libraryButtons);
-  const availableButtons = libraryButtons.filter((candidate) => !selectedButtonIds.includes(candidate.id));
+  const buttons = selectedButtonsFromIds(keyboardState.selectedButtonIds, keyboardState.libraryButtons);
+  const shortcutButtons = selectedButtonsFromIds(keyboardState.shortcutButtonIds, keyboardState.libraryButtons);
+  const availableButtons = keyboardState.libraryButtons.filter(
+    (candidate) => !keyboardState.selectedButtonIds.includes(candidate.id),
+  );
   const keyboardViewModel: CustomKeyboardViewModel = {
     buttons,
     activeModifiers,
     nativeKeyboardVisible,
-    repeatStartDelayMs,
-    repeatIntervalMs,
+    repeatStartDelayMs: keyboardState.repeatStartDelayMs,
+    repeatIntervalMs: keyboardState.repeatIntervalMs,
     onButtonPress,
     onDirectionalFlick,
     onNativeAction,
@@ -377,91 +392,88 @@ function InteractiveShellStory({
     onNativeFileSelected,
     onKeepNativeKeyboardOpen: () => undefined,
     onToggleNativeKeyboard,
-    onOpenSettings,
   };
 
   const settingsViewModel: CustomKeyboardSettingsViewModel = {
     buttons,
     availableButtons,
     shortcutButtons,
-    selectedButtonIds,
-    repeatStartDelayMs,
-    repeatIntervalMs,
+    selectedButtonIds: keyboardState.selectedButtonIds,
+    repeatStartDelayMs: keyboardState.repeatStartDelayMs,
+    repeatIntervalMs: keyboardState.repeatIntervalMs,
     onDrop,
     onRemoveButton,
     onRegisterShortcut,
     onUpdateShortcut,
     onDeleteShortcut,
     onRepeatStartDelayChange: (startDelayMs) => {
-      setRepeatStartDelayMs(startDelayMs);
+      setKeyboardState((current) => ({ ...current, repeatStartDelayMs: startDelayMs }));
     },
     onRepeatIntervalChange: (intervalMs) => {
-      setRepeatIntervalMs(intervalMs);
+      setKeyboardState((current) => ({ ...current, repeatIntervalMs: intervalMs }));
     },
-    onClose: () => setSettingsOpen(false),
-    onSave: () => {
-      setSettingsOpen(false);
-      setLastAction("Settings saved in the Storybook mock");
-    },
-  };
-
-  const shellViewModel: ShellViewModel = {
-    keyboard: keyboardViewModel,
-    keyboardSettings: settingsViewModel,
-    settingsOpen,
   };
 
   return (
-    <ShellView
-      viewModel={shellViewModel}
+    <StoryShell
+      keyboardViewModel={keyboardViewModel}
+      settingsViewModel={settingsViewModel}
+      initialSettingsOpen={startInSettings}
       nativeKeyboard={<MockStandardKeyboard />}
       terminalSurface={<MockTerminalSurface lastAction={lastAction} nativeKeyboardVisible={nativeKeyboardVisible} />}
     />
   );
 }
 
-const storyArgs = {
-  viewModel: {
-    keyboard: {
-      buttons: defaultCustomKeyboardButtons,
-      activeModifiers: [],
-      nativeKeyboardVisible: false,
-      repeatStartDelayMs: 420,
-      repeatIntervalMs: 180,
-      onButtonPress: () => undefined,
-      onDirectionalFlick: () => undefined,
-      onNativeAction: () => undefined,
-      onTerminalAction: () => undefined,
-      onNativeFileSelected: () => undefined,
-      onKeepNativeKeyboardOpen: () => undefined,
-      onToggleNativeKeyboard: () => undefined,
-      onOpenSettings: () => undefined,
-    },
-    keyboardSettings: {
-      buttons: defaultCustomKeyboardButtons,
-      availableButtons: buttonLibrary,
-      shortcutButtons: [
-        ...defaultCustomKeyboardButtons.filter((button) => button.kind === "shortcut"),
-        ...buttonLibrary.filter((button) => button.kind === "shortcut"),
-      ],
-      selectedButtonIds: defaultCustomKeyboardButtons.map((button) => button.id),
-      repeatStartDelayMs: 420,
-      repeatIntervalMs: 180,
-      onDrop: () => undefined,
-      onRemoveButton: () => undefined,
-      onRegisterShortcut: () => undefined,
-      onUpdateShortcut: () => undefined,
-      onDeleteShortcut: () => undefined,
-      onRepeatStartDelayChange: () => undefined,
-      onRepeatIntervalChange: () => undefined,
-      onClose: () => undefined,
-      onSave: () => undefined,
-    },
-    settingsOpen: false,
-  },
-  terminalSurface: null,
-  nativeKeyboard: null,
-} satisfies ComponentProps<typeof ShellView>;
+function StoryShell({
+  keyboardViewModel,
+  settingsViewModel,
+  terminalSurface,
+  nativeKeyboard,
+  initialSettingsOpen = false,
+}: {
+  keyboardViewModel?: CustomKeyboardViewModel;
+  settingsViewModel?: CustomKeyboardSettingsViewModel;
+  terminalSurface?: ReactNode;
+  nativeKeyboard?: ReactNode;
+  initialSettingsOpen?: boolean;
+}) {
+  const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
+
+  if (!keyboardViewModel || !settingsViewModel) return null;
+
+  if (settingsOpen) {
+    return (
+      <div className="h-[var(--app-viewport-height)] min-h-0 overflow-hidden bg-[#061008]">
+        <CustomKeyboardSettingsView
+          viewModel={settingsViewModel}
+          onClose={() => setSettingsOpen(false)}
+          onSave={() => setSettingsOpen(false)}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <main className="h-[var(--app-viewport-height)] min-h-0 bg-[#020503] p-2 pb-1 text-[#d9f4dc] md:p-6">
+      <div className="mx-auto flex h-full max-w-[1100px] flex-col overflow-hidden rounded-[17px] border border-[#1c4b28] bg-[#071108] shadow-[0_25px_80px_rgb(0_0_0_/_46%)]">
+        <header className="flex min-h-[54px] shrink-0 items-center gap-2 border-b border-[#17391f] bg-[rgb(6_15_8_/_95%)] px-3">
+          <span className="size-2 rounded-full bg-[#39d65b] shadow-[0_0_0_4px_rgb(57_214_91_/_11%)]" />
+          <span className="font-mono text-[0.58rem] font-bold uppercase tracking-[0.15em] text-[#6ba875]">
+            Shell / mobile terminal
+          </span>
+        </header>
+        <CustomKeyboardView
+          viewModel={keyboardViewModel}
+          nativeKeyboard={nativeKeyboard}
+          onOpenSettings={() => setSettingsOpen(true)}
+        >
+          {terminalSurface}
+        </CustomKeyboardView>
+      </div>
+    </main>
+  );
+}
 
 function MockTerminalSurface({
   lastAction,
@@ -539,10 +551,9 @@ function MockStandardKeyboard() {
 
 const meta = {
   title: "Pages/Shell",
-  component: ShellView,
-  args: storyArgs,
+  component: StoryShell,
   parameters: { layout: "fullscreen" },
-} satisfies Meta<typeof ShellView>;
+} satisfies Meta<typeof StoryShell>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -563,6 +574,17 @@ export const ShellAndKeyboard: Story = {
       "aria-pressed",
       "true",
     );
+  },
+};
+
+export const ModifierLatched: Story = {
+  render: () => <InteractiveShellStory initialActiveModifiers={["ctrl"]} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const modifier = canvas.getByRole("button", { name: "Control modifier" });
+    await expect(modifier).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(modifier);
+    await expect(modifier).toHaveAttribute("aria-pressed", "false");
   },
 };
 
@@ -606,6 +628,17 @@ export const SettingsEditor: Story = {
   render: () => <InteractiveShellStory startInSettings />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Close custom keyboard settings" }));
+    await expect(canvas.getByText("Shell / mobile terminal")).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Flick repeat" }));
+    await expect(canvas.getByRole("button", { name: "Flick repeat" })).toHaveAttribute("aria-expanded", "true");
+    const shift = canvas.getByRole("button", { name: "Toggle Shift keyboard key" });
+    await userEvent.click(shift);
+    await expect(shift).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(shift);
+    await expect(shift).toHaveAttribute("aria-pressed", "false");
     await userEvent.click(canvas.getByRole("tab", { name: "123" }));
     await expect(canvas.getByRole("button", { name: "Show more symbols" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Show more symbols" }));
@@ -636,6 +669,34 @@ export const SettingsEditor: Story = {
     await expect(canvas.getByRole("heading", { name: "Edit shortcut" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Cancel" }));
     await userEvent.click(canvas.getByRole("button", { name: "Finish editing shortcuts" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Close custom keyboard settings" }));
+    await expect(canvas.getByText("Shell / mobile terminal")).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Save" }));
+    await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
+  },
+};
+
+export const DragAndDrop: Story = {
+  render: () => <InteractiveShellStory startInSettings />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("tab", { name: "123" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Show more symbols" }));
+
+    const source = canvas.getByRole("button", { name: "Add Left bracket" });
+    const target = canvas.getByRole("toolbar", { name: "Custom keyboard preview drop zone" });
+    const transferData = new Map<string, string>();
+    const dataTransfer = {
+      effectAllowed: "none",
+      setData: (type: string, value: string) => transferData.set(type, value),
+      getData: (type: string) => transferData.get(type) ?? "",
+    } as unknown as DataTransfer;
+
+    await fireEvent.dragStart(source, { dataTransfer });
+    await fireEvent.dragOver(target, { dataTransfer });
+    await fireEvent.drop(target, { dataTransfer });
+    await expect(canvas.getByLabelText("Left bracket")).toBeVisible();
   },
 };
 

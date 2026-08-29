@@ -1,5 +1,5 @@
 name: Repository checks
-description: Run the repository audit, typecheck, tests, and package build.
+description: Run the repository audit, lint, typecheck, tests, and package build.
 
 runs:
   using: composite
@@ -17,18 +17,8 @@ runs:
       shell: bash
       run: bun install --frozen-lockfile
 
-    - name: Audit public repository contents
+    - name: Verify repository
       shell: bash
-      run: bun run audit:public
-
-    - name: Typecheck
-      shell: bash
-      run: bun run typecheck
-
-    - name: Test
-      shell: bash
-      run: bun run test
-
-    - name: Build packages
-      shell: bash
-      run: bun run build
+      env:
+        TURBO_TELEMETRY_DISABLED: "1"
+      run: bun run verify

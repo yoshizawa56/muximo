@@ -1,8 +1,18 @@
 pre-commit:
+  parallel: false
   commands:
     biome:
       glob: "*.{js,ts,jsx,tsx,mjs,cjs}"
-      run: node node_modules/@biomejs/biome/bin/biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      run: node node_modules/@biomejs/biome/bin/biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
       stage_fixed: true
-    architecture:
-      run: node scripts/check-architecture.mjs
+    typecheck:
+      env:
+        TURBO_TELEMETRY_DISABLED: "1"
+      run: bun run typecheck
+
+pre-push:
+  commands:
+    verify:
+      env:
+        TURBO_TELEMETRY_DISABLED: "1"
+      run: bun run verify

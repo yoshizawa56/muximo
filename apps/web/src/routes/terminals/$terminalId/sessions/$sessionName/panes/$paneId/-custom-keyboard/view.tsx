@@ -19,6 +19,7 @@ import {
   customKeyboardNumberRows,
   customKeyboardPunctuationRow,
 } from "./layout";
+import { isCustomKeyboardShortcutDraftValid } from "./policy";
 import {
   type CustomKeyboardButton,
   type CustomKeyboardButtonCategory,
@@ -38,7 +39,6 @@ import {
   customKeyboardIconOptions,
   customKeyboardSpecialKeyOptions,
   customKeyboardSpecialModifierOptions,
-  isCustomKeyboardShortcutDraftValid,
 } from "./viewmodel";
 
 type ShortcutDropIndicator = {
@@ -65,10 +65,12 @@ export function CustomKeyboardView({
   viewModel,
   children,
   nativeKeyboard,
+  onOpenSettings,
 }: {
   viewModel: CustomKeyboardViewModel;
   children: ReactNode;
   nativeKeyboard?: ReactNode;
+  onOpenSettings: () => void;
 }) {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -122,7 +124,7 @@ export function CustomKeyboardView({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative flex min-h-0 flex-1 flex-col">{children}</div>
-      <CustomKeyboardBar viewModel={viewModel} onButtonPress={onButtonPress} />
+      <CustomKeyboardBar viewModel={viewModel} onButtonPress={onButtonPress} onOpenSettings={onOpenSettings} />
       {viewModel.nativeKeyboardVisible ? nativeKeyboard : null}
       <input
         ref={photoInputRef}
@@ -151,10 +153,12 @@ export function CustomKeyboardBar({
   viewModel,
   onButtonPress = viewModel.onButtonPress,
   onKeepNativeKeyboardOpen = viewModel.onKeepNativeKeyboardOpen,
+  onOpenSettings,
 }: {
   viewModel: CustomKeyboardViewModel;
   onButtonPress?: (button: CustomKeyboardButton) => void;
   onKeepNativeKeyboardOpen?: () => void;
+  onOpenSettings: () => void;
 }) {
   return (
     <div
@@ -182,7 +186,7 @@ export function CustomKeyboardBar({
         <div className="flex shrink-0 items-stretch gap-0.5 border-l border-[#1c4a28] pl-1">
           <CustomKeyboardActionSurface
             className="grid size-[34px] place-items-center rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1 text-[#91d89b] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
-            onPress={viewModel.onOpenSettings}
+            onPress={onOpenSettings}
             onInteractionStart={onKeepNativeKeyboardOpen}
             preserveNativeKeyboardFocus
             aria-label="Open custom keyboard settings"
@@ -419,7 +423,15 @@ export function DirectionalFlickIcon({
   );
 }
 
-export function CustomKeyboardSettingsView({ viewModel }: { viewModel: CustomKeyboardSettingsViewModel }) {
+export function CustomKeyboardSettingsView({
+  viewModel,
+  onClose,
+  onSave,
+}: {
+  viewModel: CustomKeyboardSettingsViewModel;
+  onClose: () => void;
+  onSave: () => void;
+}) {
   const [draggedButtonId, setDraggedButtonId] = useState<string | null>(null);
   const [pointerDragPosition, setPointerDragPosition] = useState<PointerDragPosition | null>(null);
   const [dropTargetButtonId, setDropTargetButtonId] = useState<string | null>(null);
@@ -645,7 +657,7 @@ export function CustomKeyboardSettingsView({ viewModel }: { viewModel: CustomKey
         <button
           className="grid size-8 shrink-0 place-items-center rounded-[8px] border border-[#2d5d37] bg-[#0b2111] text-[#a9e8b1]"
           type="button"
-          onClick={viewModel.onClose}
+          onClick={onClose}
           aria-label="Close custom keyboard settings"
         >
           <AppIcon name="arrow-left" size={15} />
@@ -659,7 +671,7 @@ export function CustomKeyboardSettingsView({ viewModel }: { viewModel: CustomKey
         <button
           className="rounded-[8px] bg-[#8bff9a] px-2.5 py-1.5 font-mono text-[0.56rem] font-bold uppercase tracking-[0.08em] text-[#061008]"
           type="button"
-          onClick={viewModel.onSave}
+          onClick={onSave}
         >
           Save
         </button>

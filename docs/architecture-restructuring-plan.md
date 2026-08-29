@@ -26,7 +26,8 @@ updating this file in the same change.
   `packages/infrastructure`.
 - `apps/web/src/app/api` is frozen at the current seven files; new concerns
   go to routes or contract.
-- Tooling: Biome (lint=0 gate), lefthook pre-commit (biome + architecture),
+- Tooling: Biome (lint=0 gate), lefthook pre-commit (Biome autofix + typecheck),
+  pre-push and CI run the complete `bun run verify` check,
   `bun run test:local` scans source dirs only (never `packages` broadly;
   stale `dist/**` must never execute).
 
@@ -154,11 +155,11 @@ route-only command, and no combined development supervisor is part of the runtim
 ## Verification per phase
 
 ```
-bun run lint
-node scripts/check-architecture.mjs
-bun run test:local
-per-package typecheck sweep
+bun run verify
 ```
+
+For focused local feedback, `bun run lint`, `node scripts/check-architecture.mjs`,
+`bun run test:local`, and the per-package typecheck sweep remain available.
 
 Known environment note: proxied sandboxes need NO_PROXY for localhost server
 tests; `scripts/test-preload.ts` handles it via bunfig preload.

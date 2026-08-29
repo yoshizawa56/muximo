@@ -31,5 +31,5 @@ raw_args = true
 run = "bun --no-env-file scripts/profile.ts"
 
 [tasks.check]
-description = "Run the public-repository audit and project checks"
-run = "bun run audit:public && bun run typecheck && bun run test && bun run build"
+description = "Run the complete repository verification"
+run = "bun run verify"
