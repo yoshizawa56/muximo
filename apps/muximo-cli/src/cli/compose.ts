@@ -185,6 +185,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const shell = new RunShell({
     cwd,
     paneName: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
+    defaultShell: environment.SHELL ?? "sh",
     workspace: new MuximodShellWorkspaceResolver({ cwd, environment, api: ensureApi }),
     sessions: new MuximodShellSessionWorktreeLookup(ensureApi),
     process: new ShellProcessAdapter({ environment }),
