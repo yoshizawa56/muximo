@@ -11,7 +11,7 @@ export const doctorSchema = z.object({
 
 export function registerDoctorCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
   const command = parent.command("doctor").description("Inspect local muximo state");
-  registerOptions(command, globalOptionSpecs);
+  registerOptions(command, globalOptionSpecs, context.buildMode);
   command.action(async (options) => {
     const resolved = resolveCommandOptions(options, globalOptionSpecs, context);
     context.report(

@@ -30,17 +30,26 @@ and verification.
 
 ## Environment profiles
 
-The global `--env <name>` option selects an arbitrary profile for the relevant
-client application. Each application entrypoint parses the option and reads the
-ambient `process.env`; the shared `@muximo/profile` package then loads
-`.env.<name>` and returns raw values. It does not interpret component-specific
-variables. Without `--env`, no profile file is loaded.
+The source/development entrypoints expose a global `--env <name>` option that
+selects an arbitrary profile for the relevant client application. Each source
+entrypoint parses the option, reads the ambient `process.env`, and resolves the
+source repository root from its own module location; the shared
+`@muximo/profile` package then loads `.env.<name>` from that root and returns
+raw values. It does not interpret component-specific variables. Without
+`--env`, no profile file is loaded.
+
+The standalone production CLI is built from a production entrypoint with the
+unnamed default profile. It does not expose `--env`, does not treat
+`MUXIMO_ENV` as a profile selector, and does not load source repository profile
+files. Development-only options and commands are filtered from its Commander
+surface and shell completion.
 
 Profile resolution is:
 
-1. the application entrypoint supplies the selected name and ambient process
-   environment to the generic loader;
-2. if a name is selected, `.env.<name>` is parsed and overlays the ambient values;
+1. the application entrypoint supplies the source repository root, selected name,
+   and ambient process environment to the generic loader;
+2. if a name is selected, `.env.<name>` is parsed from the source repository
+   root and overlays the ambient values;
 3. the selected name is reflected in the raw environment as `MUXIMO_ENV`;
 4. each application interprets only the values relevant to its own runtime;
 5. each application applies its own name-independent defaults.
@@ -83,22 +92,35 @@ and `apps/web` then resolve their own typed options independently. They do not
 share component defaults or derived paths. An unused variable is simply ignored
 by the application that does not need it.
 
-The preferred state layout is derived from the selected environment and cannot
-be overridden independently for individual PID, socket, database, or log
-files:
+The preferred state layout is derived from the selected profile and cannot be
+overridden independently for individual PID, socket, database, or log files.
+The unnamed default profile uses the state root directly; named profiles add
+their name as one path segment:
 
 The default state root is `~/.local/state/muximo`; `MUXIMO_STATE_ROOT` may
 replace that root as one deliberate global override. The derived layout is:
 
 ```text
-<state-root>/<environment>/muximod/
+<state-root>/muximod/
   muximod.sqlite
   muximod.pid
   muximod.sock
   muximod.log
   serve.json
 
-<state-root>/<environment>/web/
+<state-root>/<profile>/muximod/
+  muximod.sqlite
+  muximod.pid
+  muximod.sock
+  muximod.log
+  serve.json
+
+<state-root>/web/
+  web.pid
+  web.log
+  serve.json
+
+<state-root>/<profile>/web/
   web.pid
   web.log
   serve.json
@@ -114,7 +136,7 @@ selected worktree.
 The muximod application remains responsible for its own runtime and database.
 The CLI invokes the typed lifecycle API exposed by `@muximo/muximod/client`.
 
-Conceptual commands are:
+The source/development CLI supports these conceptual commands:
 
 ```text
 muximo --env <name> daemon start
@@ -216,8 +238,10 @@ Web:     http://127.0.0.1:5227 -> https://<hostname>:8449/
 muximod: http://127.0.0.1:4317 -> https://<hostname>:8444/
 ```
 
-The exact staging and production values come from their profiles. External
-ports must not overlap when multiple environments share a Tailscale node.
+For source/development runs, named profile values come from the selected profile;
+the unnamed default profile uses built-in defaults. The standalone production CLI
+uses those built-in defaults and does not select a source profile. External ports
+must not overlap when multiple profiles share a Tailscale node.
 
 With Tailscale Serve background mode, the route is persistent after the
 command exits. The CLI command therefore configures or verifies a route and

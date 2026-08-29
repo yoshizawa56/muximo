@@ -2,8 +2,6 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { isLoopbackOrPrivateBindHost, type Profile } from "@muximo/profile";
 
-export const defaultWebEnvironmentName = "prod";
-
 const defaultWebOptions = {
   host: "127.0.0.1",
   port: 5227,
@@ -11,7 +9,7 @@ const defaultWebOptions = {
 } as const;
 
 export type WebOptions = {
-  environmentName: string;
+  environmentName?: string;
   stateRoot: string;
   webInstanceDirectory: string;
   host: string;
@@ -22,7 +20,7 @@ export type WebOptions = {
 
 /** Resolves only Web-owned settings from the raw profile environment. */
 export function resolveWebOptions(profile: Profile, cwd: string): WebOptions {
-  const environmentName = profile.name ?? defaultWebEnvironmentName;
+  const environmentName = profile.name;
   const environment = profile.environment;
   const homeDirectory = environment.HOME ?? homedir();
   const stateRoot = resolveConfiguredPath(
@@ -30,7 +28,7 @@ export function resolveWebOptions(profile: Profile, cwd: string): WebOptions {
     cwd,
     homeDirectory,
   );
-  const webInstanceDirectory = join(stateRoot, environmentName, "web");
+  const webInstanceDirectory = join(stateRoot, ...(environmentName === undefined ? [] : [environmentName]), "web");
   const host = readBindHost(readValue(environment.MUXIMO_WEB_HOST, defaultWebOptions.host));
   const port = readPort(environment.MUXIMO_WEB_PORT, defaultWebOptions.port, "MUXIMO_WEB_PORT");
   const externalPort = readPort(
@@ -40,13 +38,14 @@ export function resolveWebOptions(profile: Profile, cwd: string): WebOptions {
   );
   const resolvedEnvironment: NodeJS.ProcessEnv = {
     ...environment,
-    MUXIMO_ENV: environmentName,
     MUXIMO_WEB_INSTANCE_DIR: webInstanceDirectory,
     MUXIMO_WEB_HOST: host,
     VITE_DEV_HOST: host,
     VITE_DEV_PORT: String(port),
     MUXIMO_WEB_SERVE_PORT: String(externalPort),
   };
+  if (environmentName === undefined) delete resolvedEnvironment.MUXIMO_ENV;
+  else resolvedEnvironment.MUXIMO_ENV = environmentName;
 
   return {
     environmentName,

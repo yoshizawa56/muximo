@@ -20,6 +20,7 @@ import {
 type RouteOperation =
   | { kind: "read" }
   | { kind: "write" }
+  | { kind: "write-default" }
   | { kind: "invalid-json" }
   | { kind: "invalid-shape" }
   | { kind: "remove" };
@@ -27,6 +28,7 @@ type RouteOperation =
 type RouteFixture = {
   stateFile: string;
   state: ServeRouteState;
+  defaultState: ServeRouteState;
 };
 
 type RouteContext = {
@@ -65,6 +67,26 @@ const cases = [
     ],
   },
   {
+    name: "writes a default-profile route state without an environment name",
+    input: { kind: "write-default" },
+    assert: [
+      hasObserved<RouteContext, ServeRouteState | undefined>("state", {
+        schemaVersion: 1,
+        component: "web",
+        provider: "tailscale",
+        hostname: "machine.tailnet.ts.net",
+        publicUrl: "https://machine.tailnet.ts.net:8449/",
+        localTarget: "http://127.0.0.1:5227",
+        externalPort: 8449,
+        path: "/",
+        routeFingerprint: "route-fingerprint",
+        updatedAt: "2026-08-29T00:00:00.000Z",
+      }),
+      hasObserved("fileExists", true),
+      hasObserved("fileMode", 0o600),
+    ],
+  },
+  {
     name: "rejects invalid JSON instead of treating it as an absent route",
     input: { kind: "invalid-json" },
     assert: [hasError<RouteContext, ServeRouteState | undefined>({ message: /contains invalid JSON/ })],
@@ -86,6 +108,7 @@ const table: OperationTable<RouteFixture, "default", RouteOperation, ServeRouteS
   cases,
   execute: (fixture, input) => {
     if (input.kind === "write") writeServeRouteState(fixture.stateFile, fixture.state);
+    if (input.kind === "write-default") writeServeRouteState(fixture.stateFile, fixture.defaultState);
     if (input.kind === "invalid-json") writeFileSync(fixture.stateFile, "not json\n");
     if (input.kind === "invalid-shape") {
       writeFileSync(fixture.stateFile, JSON.stringify({ ...fixture.state, path: "relative" }));
@@ -106,8 +129,10 @@ const table: OperationTable<RouteFixture, "default", RouteOperation, ServeRouteS
 function createFixture() {
   const root = mkdtempSync(join(tmpdir(), "muximo-route-state-test-"));
   mkdirSync(join(root, "nested"));
+  const defaultState: ServeRouteState = { ...state };
+  delete defaultState.environment;
   return {
-    fixture: { stateFile: join(root, "nested", "serve.json"), state },
+    fixture: { stateFile: join(root, "nested", "serve.json"), state, defaultState },
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }

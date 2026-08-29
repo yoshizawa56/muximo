@@ -87,7 +87,7 @@ const table: OperationTable<ProfileFixture, FixtureKey, ProfileInput, ProfileRes
   execute: (fixture, input) =>
     getProfile({
       name: input.name,
-      cwd: fixture.repositoryRoot,
+      repositoryRoot: fixture.repositoryRoot,
       baseEnvironment: { HOME: fixture.home, ...input.environment },
     }),
   observe: (fixture, result) =>

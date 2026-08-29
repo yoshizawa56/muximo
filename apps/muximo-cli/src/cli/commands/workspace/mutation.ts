@@ -110,7 +110,7 @@ export function registerWorkspaceAddCommand(
   handlers: CliHandlers,
   context: CliCommandContext,
 ): Command {
-  const command = configureMutationCommand(parent.command("add [directory]"));
+  const command = configureMutationCommand(parent.command("add [directory]"), context);
   command.action(async (directory, options) => {
     const resolved = resolveCommandOptions(options, workspaceMutationOptionSpecs, context);
     context.report(
@@ -131,7 +131,7 @@ export function registerWorkspaceUpdateCommand(
   handlers: CliHandlers,
   context: CliCommandContext,
 ): Command {
-  const command = configureMutationCommand(parent.command("update [selector]"));
+  const command = configureMutationCommand(parent.command("update [selector]"), context);
   command.action(async (selector, options) => {
     const resolved = resolveCommandOptions(options, workspaceMutationOptionSpecs, context);
     context.report(
@@ -147,9 +147,9 @@ export function registerWorkspaceUpdateCommand(
   return command;
 }
 
-function configureMutationCommand(command: Command): Command {
+function configureMutationCommand(command: Command, context: CliCommandContext): Command {
   command.description("Register or update a workspace");
-  registerOptions(command, workspaceMutationOptionSpecs);
+  registerOptions(command, workspaceMutationOptionSpecs, context.buildMode);
   return command.allowUnknownOption(false);
 }
 

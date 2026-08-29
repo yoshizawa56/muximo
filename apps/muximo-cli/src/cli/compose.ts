@@ -278,7 +278,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
           const result = await ensureTailscaleServe(value, { logger }, environment);
           writeServeRouteState(serveStatePath, {
             schemaVersion: 1,
-            environment: runtime.environmentName,
+            ...(runtime.environmentName === undefined ? {} : { environment: runtime.environmentName }),
             component: "muximod",
             provider: "tailscale",
             hostname: result.route.hostname,

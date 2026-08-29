@@ -1,4 +1,5 @@
 import type { Command, OptionValues } from "commander";
+import { type CliBuildMode, isAvailableIn } from "../build-mode.js";
 
 export type CliOptionExposure = "cli" | "environment" | "both";
 
@@ -25,6 +26,7 @@ export type CliOptionSpec<T = unknown> = {
   flagDescriptions?: Readonly<Record<string, string>>;
   description: string;
   exposure: CliOptionExposure;
+  availableIn?: readonly CliBuildMode[];
   environment?: CliEnvironmentBinding;
   defaultValue?: T | ((environment: NodeJS.ProcessEnv) => T);
   repeatable?: boolean;
@@ -45,12 +47,17 @@ export function defineOptions<const T extends readonly CliOptionSpec[]>(...specs
   return specs;
 }
 
-export function registerOptions(command: Command, specs: readonly CliOptionSpec[]): Command {
+export function registerOptions(
+  command: Command,
+  specs: readonly CliOptionSpec[],
+  buildMode: CliBuildMode = "development",
+): Command {
+  const availableSpecs = getAvailableOptionSpecs(specs, buildMode);
   const registered = optionSpecsByCommand.get(command) ?? [];
-  registered.push(...specs);
+  registered.push(...availableSpecs);
   optionSpecsByCommand.set(command, registered);
 
-  for (const spec of specs) {
+  for (const spec of availableSpecs) {
     for (const flags of spec.flags ?? []) {
       const description = formatOptionDescription(spec, flags);
       if (spec.repeatable) {
@@ -60,8 +67,12 @@ export function registerOptions(command: Command, specs: readonly CliOptionSpec[
       }
     }
   }
-  appendEnvironmentOnlyHelp(command, specs);
+  appendEnvironmentOnlyHelp(command, availableSpecs);
   return command;
+}
+
+export function getAvailableOptionSpecs(specs: readonly CliOptionSpec[], buildMode: CliBuildMode): CliOptionSpec[] {
+  return specs.filter((spec) => isAvailableIn(spec.availableIn, buildMode));
 }
 
 export function getRegisteredOptions(command: Command): readonly CliOptionSpec[] {
@@ -69,8 +80,12 @@ export function getRegisteredOptions(command: Command): readonly CliOptionSpec[]
 }
 
 /** Reads values for a command's options before Commander is constructed. */
-export function readOptionValues(args: readonly string[], specs: readonly CliOptionSpec[]): Record<string, unknown> {
-  const definitions = optionDefinitions(specs);
+export function readOptionValues(
+  args: readonly string[],
+  specs: readonly CliOptionSpec[],
+  buildMode: CliBuildMode = "development",
+): Record<string, unknown> {
+  const definitions = optionDefinitions(getAvailableOptionSpecs(specs, buildMode));
   const values: Record<string, unknown> = {};
 
   for (let index = 0; index < args.length; index += 1) {
@@ -118,8 +133,12 @@ export type RootOptionScan = {
 };
 
 /** Splits global options from the first command for the entrypoint bootstrap. */
-export function scanRootOptions(args: readonly string[], specs: readonly CliOptionSpec[]): RootOptionScan {
-  const definitions = optionDefinitions(specs);
+export function scanRootOptions(
+  args: readonly string[],
+  specs: readonly CliOptionSpec[],
+  buildMode: CliBuildMode = "development",
+): RootOptionScan {
+  const definitions = optionDefinitions(getAvailableOptionSpecs(specs, buildMode));
   const options: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -160,11 +179,11 @@ export function scanRootOptions(args: readonly string[], specs: readonly CliOpti
 export function resolveOptionValues(
   raw: OptionValues | Record<string, unknown>,
   specs: readonly CliOptionSpec[],
-  input: { args: readonly string[]; environment: NodeJS.ProcessEnv },
+  input: { args: readonly string[]; environment: NodeJS.ProcessEnv; buildMode?: CliBuildMode },
 ): CliOptionResolution {
   const values: Record<string, unknown> = {};
   const sources: Record<string, CliOptionSource> = {};
-  const uniqueSpecs = uniqueOptionSpecs(specs);
+  const uniqueSpecs = uniqueOptionSpecs(getAvailableOptionSpecs(specs, input.buildMode ?? "development"));
 
   for (const spec of uniqueSpecs) {
     const cliSpecified = isCliOptionSpecified(input.args, spec);
@@ -217,9 +236,42 @@ export function collectOption(value: string, previous?: readonly string[]): stri
 export function resolveCliOptions(
   raw: OptionValues | Record<string, unknown>,
   specs: readonly CliOptionSpec[],
-  input: { args: readonly string[]; environment: NodeJS.ProcessEnv },
+  input: { args: readonly string[]; environment: NodeJS.ProcessEnv; buildMode?: CliBuildMode },
 ): Record<string, unknown> {
   return resolveOptionValues(raw, specs, input).values;
+}
+
+export function assertAvailableOptions(
+  args: readonly string[],
+  specs: readonly CliOptionSpec[],
+  buildMode: CliBuildMode,
+): void {
+  const definitions = optionDefinitions(specs);
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--") return;
+
+    const definition = findOptionDefinition(argument, definitions);
+    if (!definition) {
+      if (argument.startsWith("-")) continue;
+      return;
+    }
+    if (!isAvailableIn(definition.spec.availableIn, buildMode)) {
+      throw new Error(`${definition.name} is not available in ${buildMode} builds`);
+    }
+
+    const inlineValue = readInlineValue(argument, definition.name);
+    if (definition.valueKind === "required" && inlineValue === undefined) {
+      index += 1;
+    } else if (
+      definition.valueKind === "optional" &&
+      inlineValue === undefined &&
+      args[index + 1] !== undefined &&
+      !args[index + 1].startsWith("-")
+    ) {
+      index += 1;
+    }
+  }
 }
 
 function uniqueOptionSpecs(specs: readonly CliOptionSpec[]): CliOptionSpec[] {
