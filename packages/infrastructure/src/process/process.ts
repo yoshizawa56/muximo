@@ -1,12 +1,16 @@
 import { spawn } from "node:child_process";
 import { basename } from "node:path";
 import type { ProcessResult } from "@muximo/application";
-import type { Logger } from "../logging/index.js";
+import { errorMessage, type Logger } from "../logging/index.js";
 
 export type SpawnHooks = {
   onStarted?: (pid: number | undefined) => void | Promise<void>;
   onError?: (error: unknown) => void;
+  captureFailureDiagnostic?: boolean;
 };
+
+const maxFailureDiagnosticBytes = 16_384;
+const maxFailureDiagnosticLength = 4_096;
 
 export async function spawnAttached(
   binary: string,
@@ -16,11 +20,28 @@ export async function spawnAttached(
   hooks: SpawnHooks = {},
 ): Promise<ProcessResult & { pid?: number }> {
   let child: ReturnType<typeof spawn>;
+  const captureFailureDiagnostic = hooks.captureFailureDiagnostic === true;
+  let stderr = Buffer.alloc(0);
   try {
-    child = spawn(binary, args, { cwd, env: environment, stdio: "inherit" });
+    child = spawn(binary, args, {
+      cwd,
+      env: environment,
+      stdio: captureFailureDiagnostic ? ["inherit", "inherit", "pipe"] : "inherit",
+    });
   } catch (error) {
     hooks.onError?.(error);
-    return { code: 127, interrupted: false };
+    const diagnostic = sanitizeProcessDiagnostic(errorMessage(error));
+    return {
+      code: 127,
+      interrupted: false,
+      ...(diagnostic === undefined ? {} : { failureDiagnostic: diagnostic }),
+    };
+  }
+  if (captureFailureDiagnostic) {
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      stderr = Buffer.concat([stderr, bytes]).subarray(-maxFailureDiagnosticBytes);
+    });
   }
   let interrupted = false;
   const onInterrupt = (signal: NodeJS.Signals) => {
@@ -36,10 +57,12 @@ export async function spawnAttached(
   const result = new Promise<ProcessResult & { pid?: number }>((resolvePromise) => {
     child.once("error", (error) => {
       hooks.onError?.(error);
-      resolvePromise({ code: 127, interrupted, pid: child.pid, signal: null });
+      resolvePromise(withFailureDiagnostic({ code: 127, interrupted, pid: child.pid, signal: null }, stderr, error));
     });
     child.once("close", (code, signal) =>
-      resolvePromise({ code: code ?? signalExitCode(signal), interrupted, pid: child.pid, signal }),
+      resolvePromise(
+        withFailureDiagnostic({ code: code ?? signalExitCode(signal), interrupted, pid: child.pid, signal }, stderr),
+      ),
     );
   });
   try {
@@ -49,6 +72,31 @@ export async function spawnAttached(
     process.off("SIGINT", onInterrupt);
     process.off("SIGTERM", onInterrupt);
   }
+}
+
+export function sanitizeProcessDiagnostic(value: string): string | undefined {
+  const normalized = errorMessage(value)
+    .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/gu, "")
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/gu, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, "")
+    .replace(/\r\n?/gu, "\n")
+    .trim();
+  if (!normalized) return undefined;
+  return normalized.length <= maxFailureDiagnosticLength
+    ? normalized
+    : `…${normalized.slice(-(maxFailureDiagnosticLength - 1))}`;
+}
+
+function withFailureDiagnostic(
+  result: ProcessResult & { pid?: number },
+  stderr: Buffer,
+  spawnError?: unknown,
+): ProcessResult & { pid?: number } {
+  if (result.code === 0) return result;
+  const diagnostic = sanitizeProcessDiagnostic(
+    stderr.byteLength > 0 ? stderr.toString("utf8") : spawnError === undefined ? "" : errorMessage(spawnError),
+  );
+  return diagnostic === undefined ? result : { ...result, failureDiagnostic: diagnostic };
 }
 
 export async function runAttachedProcess(

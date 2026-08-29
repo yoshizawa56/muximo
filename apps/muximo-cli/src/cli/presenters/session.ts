@@ -6,6 +6,7 @@ import type {
 import type { CliIo } from "../commands/types.js";
 
 export function presentRunAgentSession(result: RunAgentSessionResponse, io: CliIo): number {
+  presentProcessFailure(result.session.backend, result.process, io);
   if (result.cleanup.disposition === "not_requested") {
     io.out.write(
       result.cleanup.reason === "interrupted"
@@ -22,7 +23,15 @@ export function presentRunAgentSession(result: RunAgentSessionResponse, io: CliI
   return result.process.code === 0 && cleanupNeedsFailureStatus(result) ? 1 : result.process.code;
 }
 
+function presentProcessFailure(backend: string, process: RunAgentSessionResponse["process"], io: CliIo): void {
+  if (process.interrupted || process.code === 0 || process.code === 130 || process.code === 143) return;
+  const termination = process.signal ? `signal ${process.signal}` : `exit code ${process.code}`;
+  const diagnostic = process.failureDiagnostic ? `: ${process.failureDiagnostic}` : "";
+  io.err.write(`[muximo-cli] ${backend} exited with ${termination}${diagnostic}\n`);
+}
+
 export function presentResumeAgentSession(result: ResumeAgentSessionResponse, io: CliIo): number {
+  presentProcessFailure(result.session.backend, result.process, io);
   if (result.session.status === "interrupted") {
     io.out.write(`[muximo-cli] session '${result.session.name}' kept for resume after interruption\n`);
   }

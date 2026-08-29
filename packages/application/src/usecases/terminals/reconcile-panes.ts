@@ -47,11 +47,12 @@ export async function reconcilePanes(
     const sessionCandidate = hostPane.muximodSessionId
       ? await agentSessionRepository.findById(AgentSessionId.create(hostPane.muximodSessionId))
       : undefined;
+    // Adoption writes execution metadata before the backend process is spawned, so the pane command is still the
+    // caller's shell. The session/execution identity and its live owner process are the authoritative checks here.
     const adoptedSession =
       sessionCandidate &&
       hostPane.muximodExecutionId === sessionCandidate.executionId &&
-      (await isLiveAgentExecution(host, sessionCandidate)) &&
-      (await host.isManagedAgentExecution(hostPane.command, sessionCandidate.backend))
+      (await isLiveAgentExecution(host, sessionCandidate))
         ? sessionCandidate
         : undefined;
     const staleAgentMetadata =
@@ -121,6 +122,9 @@ export async function reconcilePanes(
     const workspaceId = existing?.workspaceId ?? adoptedSession?.workspaceId;
     const agentExecutionId =
       adoptedSession?.id && hostPane.muximodExecutionId ? hostPane.muximodExecutionId : undefined;
+    const executionChanged =
+      existing !== undefined &&
+      (existing.agentSessionId !== adoptedSession?.id || existing.agentExecutionId !== agentExecutionId);
     const initialState = kind === "agent" && !existing ? "starting" : observation.state;
     const createInput: PaneCreateInput = {
       id,
@@ -177,7 +181,9 @@ export async function reconcilePanes(
         windowHeight: hostPane.windowHeight,
       });
       if (record.state !== observation.state) {
-        record = Pane.transitionState(record, observation.state, "terminal observation", now);
+        record = executionChanged
+          ? Pane.resetState(record, observation.state, "new execution observed", now)
+          : Pane.transitionState(record, observation.state, "terminal observation", now);
       }
     }
     await repository.upsert(record);

@@ -86,7 +86,12 @@ function healthErrorMessage(error: DaemonHealthError): string {
   if (reason === "pid_unhealthy") {
     return context.pid === undefined
       ? "muximod process state is inconsistent with its pid file"
-      : `muximod process ${context.pid} is not owned by the selected environment; inspect the pid file before retrying`;
+      : `muximod process ${context.pid} is not owned by the selected environment; inspect the pid file, then run "muximo daemon restart" to apply the selected configuration if this is the expected muximod`;
+  }
+  if (reason === "startup_failed") {
+    if (context.process?.signal) return `muximod exited during startup with signal ${context.process.signal}`;
+    if (context.process) return `muximod exited during startup with exit code ${context.process.code}`;
+    return "muximod failed during startup";
   }
   if (reason === "stop_timeout") return "muximod did not stop before the lifecycle deadline";
   return "muximod did not become healthy before the startup deadline";

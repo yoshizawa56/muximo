@@ -118,6 +118,7 @@ export const Pane = {
   },
 
   canTransitionState: canTransitionPaneState,
+  resetState: resetPaneState,
   transitionState: transitionPane,
   isAttentionState,
 } as const;
@@ -145,10 +146,23 @@ export function transitionPaneState(
   return { from: current, to: next, reason, at };
 }
 
+/** Reinitializes a pane state when its host pane starts a new execution. */
+export function resetPaneState(entity: Pane, next: PaneState, reason: string, at: string): Pane {
+  const current = parsePane(entity);
+  validatePaneStateChange(next, reason, at);
+  return parsePane({ ...current, state: next, lastSeenAt: at });
+}
+
 export function transitionPane(entity: Pane, next: PaneState, reason: string, at: string): Pane {
   const current = parsePane(entity);
   const transition = transitionPaneState(current.state, next, reason, at);
   return parsePane({ ...current, state: transition.to, lastSeenAt: at });
+}
+
+function validatePaneStateChange(next: PaneState, reason: string, at: string): void {
+  paneStateSchema.parse(next);
+  if (!reason.trim()) throw new Error("Pane state transition requires a reason");
+  if (!at.trim()) throw new Error("Pane state transition requires a time");
 }
 
 export function isAttentionState(state: PaneState): boolean {

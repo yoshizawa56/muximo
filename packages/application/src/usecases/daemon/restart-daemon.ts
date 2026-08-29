@@ -1,5 +1,5 @@
 import { DaemonHealthError, type DaemonOptions, type DaemonRestartResult } from "../../ports/daemon.js";
-import { type DaemonLifecycleDependencies, terminateQuietly, waitFor } from "./policy.js";
+import { type DaemonLifecycleDependencies, terminateQuietly, waitFor, waitForHealthyOrExit } from "./policy.js";
 import type { StopDaemon } from "./stop-daemon.js";
 
 export type RestartDaemonDependencies = DaemonLifecycleDependencies & {
@@ -24,13 +24,20 @@ export class RestartDaemon {
 
     const startupStartedAt = this.dependencies.clock.now();
     const child = await this.dependencies.runtime.spawn(options);
-    if (
-      !(await waitFor(
-        () => this.dependencies.runtime.isHealthy(options, child.pid),
-        this.dependencies.lifecycleTimeoutMs,
-        this.dependencies,
-      ))
-    ) {
+    const startup = await waitForHealthyOrExit(
+      () => this.dependencies.runtime.isHealthy(options, child.pid),
+      child,
+      this.dependencies.lifecycleTimeoutMs,
+      this.dependencies,
+    );
+    if (startup.kind === "exited") {
+      throw new DaemonHealthError("startup_failed", options, {
+        startedAt: startupStartedAt,
+        pid: child.pid,
+        process: startup.process,
+      });
+    }
+    if (startup.kind === "timeout") {
       terminateQuietly(child);
       throw new DaemonHealthError("startup_timeout", options, {
         startedAt: startupStartedAt,

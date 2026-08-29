@@ -1,11 +1,4 @@
-import type {
-  AgentBackend,
-  AgentSessionRecord,
-  PaneKind,
-  PaneState,
-  WorkspaceId,
-  WorkspaceRecord,
-} from "@muximo/domain";
+import type { AgentSessionRecord, PaneKind, PaneState, WorkspaceId, WorkspaceRecord } from "@muximo/domain";
 import type { CreatePaneInput, MuximodPanePlacement, MuximodWorkspaceDirectory } from "./application.js";
 import type { WorkspaceDirectoryPort } from "./workspace.js";
 
@@ -69,7 +62,6 @@ export interface MuximodSessionManagementPort {
 export interface MuximodTerminalObservationPort {
   classifyCommand(command: string): Promise<MuximodPaneClassification>;
   observeUnmanagedAgent(paneId: string, fallbackState: PaneState): Promise<MuximodPaneObservation>;
-  isManagedAgentExecution(command: string, backend: AgentBackend): Promise<boolean>;
 }
 
 /** Host operations required by muximod use cases. */

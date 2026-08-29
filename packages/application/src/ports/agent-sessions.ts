@@ -12,6 +12,7 @@ import type { ClaimExecutionInput } from "./repositories.js";
 export type StartAgentSessionInput = {
   backend: AgentBackend;
   name?: string;
+  hostPaneId?: string;
   useWorktree: boolean;
   worktreeRoot?: string;
   setupHook?: string;
@@ -25,6 +26,7 @@ export type StartAgentSessionInput = {
 export type ResumeAgentSessionInput = {
   workspaceScope: WorkspaceScope;
   reference: string;
+  hostPaneId?: string;
   backendArgs: readonly string[];
 };
 
@@ -107,6 +109,7 @@ export type ProcessResult = {
   code: number;
   interrupted: boolean;
   signal?: string | null;
+  failureDiagnostic?: string;
 };
 
 /** Provider-neutral identity data that may be learned while launching a session. */
@@ -223,9 +226,13 @@ export interface AgentObservationPort {
 
 /** Publishes agent lifecycle state to the current pane/control transport. */
 export interface PanePublicationPort {
-  adopt(session: AgentSessionRecord): Promise<void>;
-  release(session: AgentSessionRecord): Promise<void>;
-  publish(session: AgentSessionRecord, state: "running" | "completed" | "failed" | "stopped"): Promise<void>;
+  adopt(session: AgentSessionRecord, hostPaneId?: string): Promise<void>;
+  release(session: AgentSessionRecord, hostPaneId?: string): Promise<void>;
+  publish(
+    session: AgentSessionRecord,
+    state: "running" | "completed" | "failed" | "stopped",
+    hostPaneId?: string,
+  ): Promise<void>;
 }
 
 export interface ProcessObservationPort {

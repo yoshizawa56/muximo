@@ -136,6 +136,7 @@ type PaneOperation =
   | { kind: "reject-host-pane-identity-update" }
   | { kind: "reject-host-server-identity-update" }
   | { kind: "reject-state-update" }
+  | { kind: "reset-state" }
   | { kind: "transition-state" };
 
 const paneCases = [
@@ -177,6 +178,17 @@ const paneCases = [
     assert: [hasError<EmptyContext, PaneRecord>({ message: "Pane update cannot change immutable field: state" })],
   },
   {
+    name: "resets a pane state when a new execution reuses the pane",
+    input: { kind: "reset-state" },
+    assert: [
+      returns<EmptyContext, PaneRecord>({
+        ...pane,
+        state: "running",
+        lastSeenAt: "2026-08-15T00:01:00.000Z",
+      }),
+    ],
+  },
+  {
     name: "transitions state with an explicit reason and time",
     input: { kind: "transition-state" },
     assert: [
@@ -212,6 +224,14 @@ const paneTable: OperationTable<undefined, "default", PaneOperation, PaneRecord,
     }
     if (input.kind === "reject-state-update") {
       return Pane.update(pane, { state: "completed" } as never);
+    }
+    if (input.kind === "reset-state") {
+      return Pane.resetState(
+        { ...pane, state: "failed" },
+        "running",
+        "new execution observed",
+        "2026-08-15T00:01:00.000Z",
+      );
     }
     return Pane.transitionState(pane, "waiting_input", "agent requested input", "2026-08-15T00:01:00.000Z");
   },

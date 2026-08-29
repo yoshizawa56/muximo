@@ -202,7 +202,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const applicationForAgentPane = () => {
     return application;
   };
-  const agentPane = createAgentPanePublication(applicationForAgentPane, environment);
+  const agentPane = createAgentPanePublication(applicationForAgentPane, logger);
   const backendOptions = {
     environment,
     opencodeRegistryFile: join(options.instanceDirectory, "opencode-servers.json"),
@@ -271,9 +271,9 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   application = createMuximodApplication({
     agentSessions: {
-      run: (input) => runAgentSession.execute(input),
-      resume: (input) => resumeAgentSession.execute(input),
-      cleanup: (input) => cleanupAgentSession.execute(input),
+      run: (input) => executeAgentSession("run", input, () => runAgentSession.execute(input), logger),
+      resume: (input) => executeAgentSession("resume", input, () => resumeAgentSession.execute(input), logger),
+      cleanup: (input) => executeAgentSession("cleanup", input, () => cleanupAgentSession.execute(input), logger),
       list: (input) => listAgentSessions.execute(input),
     },
     getTerminal: () => getLocalTerminal(environment),
@@ -559,40 +559,112 @@ function setEnvironmentValue(environment: NodeJS.ProcessEnv, key: string, value:
   else environment[key] = value;
 }
 
-function createAgentPanePublication(
-  getApplication: () => ReturnType<typeof createMuximodApplication>,
-  environment: NodeJS.ProcessEnv,
+type AgentPaneApplication = Pick<
+  ReturnType<typeof createMuximodApplication>,
+  "adoptAgentSession" | "observeAgentSession" | "releaseAgentSession"
+>;
+
+export function createAgentPanePublication(
+  getApplication: () => AgentPaneApplication,
+  logger: Pick<Logger, "debug" | "warn">,
 ): PanePublicationPort & AgentObservationPort {
+  const paneByExecution = new Map<string, string | undefined>();
+  const resolveHostPaneId = (session: AgentSessionRecord, requested?: string): string | undefined =>
+    requested ?? (session.executionId ? paneByExecution.get(session.executionId) : undefined);
+
   return {
-    adopt: (session) => {
-      const request = agentPaneRequest(session, environment);
-      return request ? getApplication().adoptAgentSession(request) : Promise.resolve();
+    adopt: async (session, hostPaneId) => {
+      if (session.executionId) paneByExecution.set(session.executionId, hostPaneId);
+      const request = agentPaneRequest(session, hostPaneId);
+      if (!request) return;
+      try {
+        await getApplication().adoptAgentSession(request);
+      } catch (error) {
+        logger.warn("pane.adopt_failed", {
+          pane: request.hostPaneId,
+          sessionId: request.agentSessionId,
+          ...errorFields(error),
+        });
+      }
     },
-    release: (session) => {
-      const request = agentPaneRequest(session, environment);
-      return request ? getApplication().releaseAgentSession(request) : Promise.resolve();
+    release: async (session, hostPaneId) => {
+      try {
+        const request = agentPaneRequest(session, resolveHostPaneId(session, hostPaneId));
+        if (!request) return;
+        try {
+          await getApplication().releaseAgentSession(request);
+        } catch (error) {
+          logger.warn("pane.release_failed", {
+            pane: request.hostPaneId,
+            sessionId: request.agentSessionId,
+            ...errorFields(error),
+          });
+        }
+      } finally {
+        if (session.executionId) paneByExecution.delete(session.executionId);
+      }
     },
-    publish: (session, state) => observe(session, { state }, environment, getApplication),
-    observe: (session, observation) => observe(session, observation, environment, getApplication),
+    publish: (session, state, hostPaneId) =>
+      observe(session, { state }, resolveHostPaneId(session, hostPaneId), getApplication, logger, "warn"),
+    observe: (session, observation) =>
+      observe(session, observation, resolveHostPaneId(session), getApplication, logger, "debug"),
   };
 }
 
 function agentPaneRequest(
   session: AgentSessionRecord,
-  environment: NodeJS.ProcessEnv,
+  hostPaneId: string | undefined,
 ): { agentSessionId: string; hostPaneId: string; executionId: string } | undefined {
-  const hostPaneId = environment.TMUX_PANE?.trim();
-  if (!hostPaneId || !/^%[0-9]+$/u.test(hostPaneId) || !session.executionId) return undefined;
-  return { agentSessionId: session.id, hostPaneId, executionId: session.executionId };
+  const normalizedHostPaneId = hostPaneId?.trim();
+  if (!normalizedHostPaneId || !/^%[0-9]+$/u.test(normalizedHostPaneId) || !session.executionId) return undefined;
+  return { agentSessionId: session.id, hostPaneId: normalizedHostPaneId, executionId: session.executionId };
 }
 
 function observe(
   session: AgentSessionRecord,
   observation: AgentStateObservation,
-  environment: NodeJS.ProcessEnv,
-  getApplication: () => ReturnType<typeof createMuximodApplication>,
+  hostPaneId: string | undefined,
+  getApplication: () => AgentPaneApplication,
+  logger: Pick<Logger, "debug" | "warn">,
+  level: "debug" | "warn",
 ): Promise<void> {
-  const request = agentPaneRequest(session, environment);
+  const request = agentPaneRequest(session, hostPaneId);
   if (!request) return Promise.resolve();
-  return getApplication().observeAgentSession({ ...request, ...observation });
+  return getApplication()
+    .observeAgentSession({ ...request, ...observation })
+    .catch((error) => {
+      const fields = {
+        pane: request.hostPaneId,
+        sessionId: request.agentSessionId,
+        state: observation.state,
+        ...errorFields(error),
+      };
+      if (level === "warn") logger.warn("pane.publish_failed", fields);
+      else logger.debug("pane.observe_failed", fields);
+    });
+}
+
+async function executeAgentSession<Result>(
+  operation: "run" | "resume" | "cleanup",
+  input: Record<string, unknown>,
+  execute: () => Promise<Result>,
+  logger: Logger,
+): Promise<Result> {
+  try {
+    return await execute();
+  } catch (error) {
+    logger.error(`agent_session.${operation}_failed`, {
+      ...agentSessionLogFields(input),
+      ...errorFields(error),
+    });
+    throw error;
+  }
+}
+
+function agentSessionLogFields(input: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...(typeof input.backend === "string" ? { backend: input.backend } : {}),
+    ...(typeof input.name === "string" ? { sessionName: input.name } : {}),
+    ...(typeof input.reference === "string" ? { reference: input.reference } : {}),
+  };
 }

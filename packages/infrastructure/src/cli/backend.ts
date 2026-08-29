@@ -124,6 +124,7 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
           MUXIMOD_AGENT_ID: session.backend,
         },
         {
+          captureFailureDiagnostic: true,
           onStarted: (pid) =>
             logger.debug("subprocess.started", { kind: "backend", executable: basename(executable), pid }),
           onError: (error) => logger.debug("subprocess.spawn_failed", { kind: "backend", ...errorFields(error) }),
@@ -136,15 +137,23 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
           logger.warn("agent.session_abort_failed", { ...errorFields(error), sessionName: session.name });
         }
       }
-      logger.debug("subprocess.finished", {
+      const finishedFields = {
         kind: "backend",
         pid: result.pid,
         exitCode: result.code,
         signal: result.signal,
         interrupted: result.interrupted,
         durationMs: Date.now() - processStartedAt,
-      });
-      return result;
+        ...(result.failureDiagnostic === undefined ? {} : { failureDiagnostic: result.failureDiagnostic }),
+      };
+      if (result.code === 0) logger.debug("subprocess.finished", finishedFields);
+      else logger.warn("subprocess.failed", finishedFields);
+      return {
+        code: result.code,
+        interrupted: result.interrupted,
+        signal: result.signal,
+        ...(result.failureDiagnostic === undefined ? {} : { failureDiagnostic: result.failureDiagnostic }),
+      };
     } finally {
       if (monitorStarted && monitor) {
         try {

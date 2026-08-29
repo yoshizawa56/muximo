@@ -547,6 +547,7 @@ class MuximodRuntime implements DaemonRuntimePort {
     let terminated = false;
     return {
       pid: handle.pid,
+      wait: () => handle.wait(),
       terminate: () => {
         if (terminated) return;
         terminated = true;

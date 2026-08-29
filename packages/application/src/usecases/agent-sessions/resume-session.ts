@@ -68,12 +68,13 @@ export class ResumeAgentSession {
 
     let execution: LaunchExecution;
     try {
-      await this.deps.panes.adopt(session);
-      await this.deps.panes.publish(session, "running");
+      await this.deps.panes.adopt(session, input.hostPaneId);
+      await this.deps.panes.publish(session, "running", input.hostPaneId);
       execution = await preparation.plan.run();
       await this.deps.panes.publish(
         session,
         execution.process.interrupted ? "stopped" : execution.process.code === 0 ? "completed" : "failed",
+        input.hostPaneId,
       );
     } catch (error) {
       await this.deps.sessions
@@ -94,7 +95,7 @@ export class ResumeAgentSession {
       throw error;
     } finally {
       try {
-        await this.deps.panes.release(session);
+        await this.deps.panes.release(session, input.hostPaneId);
       } finally {
         await preparation.plan.dispose();
       }
