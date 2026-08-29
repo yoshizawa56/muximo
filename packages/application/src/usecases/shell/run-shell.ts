@@ -65,9 +65,14 @@ export class RunShell {
         }
         shellCwd = worktree.worktreePath;
       }
-      const shell = input.shell ?? "sh";
+      const shell = input.shell ?? this.deps.defaultShell;
       return {
-        process: await this.deps.process.run({ executable: shell, args: ["-i"], cwd: shellCwd, interactive: true }),
+        process: await this.deps.process.run({
+          executable: shell,
+          args: ["-l", "-i"],
+          cwd: shellCwd,
+          interactive: true,
+        }),
       };
     } finally {
       try {

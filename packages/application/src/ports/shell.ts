@@ -77,6 +77,8 @@ export interface SessionWorktreeLookupPort {
 export type RunShellDependencies = {
   cwd: string;
   paneName: string;
+  /** Host-selected shell used when the command input does not override it. */
+  defaultShell: string;
   workspace: ShellWorkspaceResolverPort;
   sessions: SessionWorktreeLookupPort;
   process: ShellProcessPort;
