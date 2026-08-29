@@ -186,7 +186,7 @@ only when a contract or extraction is actually required.
 - `apps/web` typecheck passed.
 - `bun install --frozen-lockfile` installed the dependencies but its
   repository `lefthook install` prepare step could not replace the shared
-  worktree hook at `/Users/toru_yoshizawa/work/muximo/.git/hooks/pre-commit`.
+  worktree hook at `<shared-worktree>/.git/hooks/pre-commit`.
   No hook files were changed by this work.
 
 ### Current implementation progress

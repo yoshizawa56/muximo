@@ -12,7 +12,7 @@ const self = path
   .split(path.sep)
   .join("/");
 const maximumFileBytes = 10 * 1024 * 1024;
-const publicEnvironmentProfiles = new Set([".env.local", ".env.stg"]);
+const publicEnvironmentProfilePattern = /^\.env(?:\.[A-Za-z0-9][A-Za-z0-9._-]*)?\.example$/i;
 
 function gitFiles(args) {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean);
@@ -63,12 +63,6 @@ for (const relativeFile of files) {
   const absoluteFile = path.join(root, relativeFile);
   const normalizedFile = relativeFile.split(path.sep).join("/");
 
-  for (const { label, pattern } of forbiddenFilePatterns) {
-    if (pattern.test(normalizedFile) && !publicEnvironmentProfiles.has(normalizedFile)) {
-      failures.push(`${normalizedFile}: forbidden ${label}`);
-    }
-  }
-
   let stats;
   try {
     stats = statSync(absoluteFile);
@@ -79,6 +73,13 @@ for (const relativeFile of files) {
   }
 
   if (!stats.isFile()) continue;
+
+  for (const { label, pattern } of forbiddenFilePatterns) {
+    if (pattern.test(normalizedFile) && !isPublicEnvironmentProfile(normalizedFile)) {
+      failures.push(`${normalizedFile}: forbidden ${label}`);
+    }
+  }
+
   if (stats.size > maximumFileBytes) {
     warnings.push(`${normalizedFile}: large file (${stats.size} bytes)`);
   }
@@ -121,6 +122,10 @@ for (const relativeFile of files) {
   if (homeDirectory.length > 4 && text.includes(homeDirectory)) {
     failures.push(`${normalizedFile}: contains the current machine's home directory`);
   }
+}
+
+function isPublicEnvironmentProfile(relativeFile) {
+  return relativeFile === ".env.example" || publicEnvironmentProfilePattern.test(relativeFile);
 }
 
 console.log(`Public repository audit scanned ${files.length} file(s).`);

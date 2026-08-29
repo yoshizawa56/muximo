@@ -53,10 +53,11 @@ There is no implicit `.env` fallback, worktree-derived environment, or
 worktree-derived instance directory. A missing required profile file fails
 with an actionable error.
 
-The profile contains only stable environment configuration. It does not need
-the Tailscale hostname when the provider can discover the current hostname.
-The local and staging profile examples may be committed; machine-specific
-files and personal hostnames remain ignored.
+The profile contains only stable environment configuration. Run `mise profile`
+to select a tracked `.env.<name>.example` recipe and generate the ignored
+`.env.<name>` file. The command can discover the Tailscale hostname and writes
+machine-specific values only to the generated file. Rerunning it completely
+replaces the selected profile; there are no incremental profile updates.
 
 The raw profile may contain values for either application, including:
 
@@ -65,6 +66,17 @@ The raw profile may contain values for either application, including:
 - Web local port and external Serve port;
 - muximod schema mode (`migrate` by default, or explicit `push`);
 - provider selection and provider-specific settings that are not discoverable.
+
+The profile generator also asks whether the selected client is `browser`,
+`capacitor`, or `none`. This is setup-time intent rather than a daemon setting:
+the generated profile contains Web values only when the selected recipe and
+client represent a Web runtime.
+The bundled Capacitor shell uses the fixed `capacitor://localhost` origin,
+which muximod allows automatically. `MUXIMOD_ALLOWED_ORIGINS` contains only
+configurable HTTP(S) origins, such as the origin of a browser or a Capacitor
+Local build that loads the Web runtime remotely. A recipe without Web values,
+such as `.env.stg.example`, is therefore suitable for a bundled Capacitor
+client without a Web daemon.
 
 `@muximo/profile` exposes `getProfile()` for raw loading. `apps/muximo-cli`
 and `apps/web` then resolve their own typed options independently. They do not
@@ -223,10 +235,11 @@ does not read or change Serve state.
 
 The Web public URL is consumed only by the local iOS build. The Web CLI does
 not know about iOS. The existing ignored `apps/web/ios/local.xcconfig` remains
-the build-time injection point. A small iOS-side generation step may derive
-that file from Web's `serve.json`; this keeps hostname discovery automatic
-while preserving the Web/iOS build boundary. The committed example contains
-placeholders only.
+the build-time injection point. `mise profile` can generate that file from the
+selected connection details when a Capacitor Local client is selected, which
+keeps hostname discovery automatic while preserving the Web/iOS build
+boundary. Bundled Capacitor builds do not need a Web public URL. The committed
+example contains placeholders only.
 
 Because a local Tailscale hostname is machine-specific, an ignored local iOS
 configuration is an intentional per-person setting. It must not be embedded
