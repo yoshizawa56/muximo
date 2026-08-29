@@ -30,7 +30,7 @@ type ResolverContext = {
   resolvedName: string;
   isTarget: boolean;
 };
-type FixtureKey = "default" | "managed";
+type FixtureKey = "default" | "managed" | "named-boundary";
 
 const cases = [
   {
@@ -60,6 +60,12 @@ const cases = [
     assert: [hasObserved<ResolverContext, ResolverResult>("resolvedName", "target")],
   },
   {
+    name: "validates a named workspace against the allowed directory boundary",
+    fixture: "named-boundary",
+    input: { workspace: "target" },
+    assert: [hasError<ResolverContext, ResolverResult>({ message: "workspace root is outside the allowed roots" })],
+  },
+  {
     name: "does not accept an internal workspace id as a selector",
     input: { workspace: "workspace-id" },
     assert: [hasError<ResolverContext, ResolverResult>({ message: /workspace not found/iu })],
@@ -68,7 +74,7 @@ const cases = [
 
 const table: OperationTable<WorkspaceFixture, FixtureKey, ResolverInput, ResolverResult, ResolverContext> = {
   defaultFixture: createFixture,
-  fixtures: { default: createFixture, managed: createManagedFixture },
+  fixtures: { default: createFixture, managed: createManagedFixture, "named-boundary": createNamedBoundaryFixture },
   cases,
   execute: (fixture, input) =>
     fixture.resolver.resolveCurrent({
@@ -94,7 +100,7 @@ describe("workspace resolver", () => {
 
 function createFixture(
   registerCleanup?: (cleanup: () => void) => void,
-  options: { managedBinding?: boolean } = {},
+  options: { managedBinding?: boolean; rejectNamedWorkspace?: boolean } = {},
 ): { fixture: WorkspaceFixture } {
   const root = mkdtempSync(join(tmpdir(), "muximo-workspace-resolver-"));
   const targetPath = join(root, "target");
@@ -130,10 +136,13 @@ function createFixture(
     cwd: otherPath,
     environment: options.managedBinding ? { MUXIMOD_WORKSPACE_ID: target.id } : {},
     workspaces,
-    ...(options.managedBinding
+    ...(options.managedBinding || options.rejectNamedWorkspace
       ? {
           directory: {
-            resolveDirectory: () => {
+            resolveDirectory: (directory: string) => {
+              if (options.rejectNamedWorkspace && directory === realpathSafe(targetPath)) {
+                throw new Error("workspace root is outside the allowed roots");
+              }
               throw new Error("caller cwd should not be resolved");
             },
             resolveHook: () => "",
@@ -147,4 +156,8 @@ function createFixture(
 
 function createManagedFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorkspaceFixture } {
   return createFixture(registerCleanup, { managedBinding: true });
+}
+
+function createNamedBoundaryFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorkspaceFixture } {
+  return createFixture(registerCleanup, { rejectNamedWorkspace: true });
 }

@@ -201,11 +201,19 @@ const lifecycleTable: ScenarioTable<
 };
 
 type CopyInput = undefined;
-type CopyFixtureKey = "single" | "all" | "negated" | "symlink" | "special-global" | "special-vendor";
+type CopyFixtureKey =
+  | "single"
+  | "all"
+  | "negated"
+  | "symlink"
+  | "special-global"
+  | "special-vendor"
+  | "special-file-ignore";
 
 type CopyContext = {
   result: boolean | undefined;
   copiedPaths: readonly string[];
+  discoveryCommands: readonly string[];
   diagnosticEvents: readonly string[];
 };
 
@@ -218,6 +226,11 @@ const copyCases = [
       returns<CopyContext, boolean>(true),
       hasObserved<CopyContext, boolean>("result", true),
       hasObserved<CopyContext, boolean>("copiedPaths", [".env"]),
+      {
+        name: "limits ignored-file discovery to include pathspecs",
+        check: (context: CopyContext) =>
+          expect(context.discoveryCommands.some((command) => command.includes("-- :(glob).env"))).toBe(true),
+      },
       hasObserved<CopyContext, boolean>("diagnosticEvents", []),
     ],
   },
@@ -275,6 +288,16 @@ const copyCases = [
       hasObserved<CopyContext, boolean>("diagnosticEvents", []),
     ],
   },
+  {
+    name: "does not treat a directory collapsed by a file ignore rule as wholly ignored",
+    fixture: "special-file-ignore",
+    input: undefined,
+    assert: [
+      returns<CopyContext, boolean>(true),
+      hasObserved<CopyContext, boolean>("copiedPaths", ["vendor/config.json"]),
+      hasObserved<CopyContext, boolean>("diagnosticEvents", []),
+    ],
+  },
 ] satisfies readonly OperationCase<CopyFixtureKey, CopyInput, boolean, CopyContext>[];
 
 const copyTable: OperationTable<WorktreeFixture, CopyFixtureKey, CopyInput, boolean, CopyContext> = {
@@ -286,6 +309,7 @@ const copyTable: OperationTable<WorktreeFixture, CopyFixtureKey, CopyInput, bool
     symlink: createSymlinkFixture,
     "special-global": createSpecialGlobalFixture,
     "special-vendor": createSpecialVendorFixture,
+    "special-file-ignore": createSpecialFileIgnoreFixture,
   },
   cases: copyCases,
   execute: async (fixture) => {
@@ -303,6 +327,7 @@ const copyTable: OperationTable<WorktreeFixture, CopyFixtureKey, CopyInput, bool
           existsSync(join(fixture.created!.worktreePath!, path)),
         )
       : [],
+    discoveryCommands: gitCommands(fixture).filter((command) => command.includes("ls-files --others --ignored")),
     diagnosticEvents: fixture.diagnostics.map((record) => record.event),
   }),
 };
@@ -382,6 +407,17 @@ function createSpecialGlobalFixture(registerCleanup?: (cleanup: () => void) => v
 
 function createSpecialVendorFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
   return createSpecialIncludeFixture("vendor/**/config.json\n", registerCleanup);
+}
+
+function createSpecialFileIgnoreFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  const fixture = createGitFixture();
+  arrangeRawWorktree(fixture, "special-file-ignore");
+  writeFileSync(join(fixture.workspaceRoot, ".gitignore"), "*.json\n");
+  mkdirSync(join(fixture.workspaceRoot, "vendor"), { recursive: true });
+  writeFileSync(join(fixture.workspaceRoot, "vendor", "config.json"), "secret\n");
+  writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), "**/config.json\n");
+  registerFixtureCleanup(fixture, registerCleanup);
+  return { fixture };
 }
 
 function createSpecialIncludeFixture(

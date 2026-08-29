@@ -14,10 +14,12 @@ import { describe, it } from "vitest";
 import { gitStatus, listIgnoredDirectories, listIgnoredFiles, listUnmanagedFiles } from "./git.js";
 
 type GitFixture = { root: string };
-type GitInput = { operation: "status" | "unmanaged-files" | "ignored-files" | "ignored-directories" };
+type GitInput = {
+  operation: "status" | "unmanaged-files" | "ignored-files" | "ignored-files-pathspec" | "ignored-directories";
+};
 type GitResult = string | string[];
 type EmptyContext = {};
-type GitFixtureKey = "default" | "nested" | "ignored";
+type GitFixtureKey = "default" | "nested" | "ignored" | "collapsed";
 
 const cases = [
   {
@@ -53,10 +55,22 @@ const cases = [
     assert: [returns<EmptyContext, GitResult>([".env", "nested/secret.txt"])],
   },
   {
+    name: "limits ignored-file discovery to the requested pathspecs",
+    fixture: "ignored",
+    input: { operation: "ignored-files-pathspec" },
+    assert: [returns<EmptyContext, GitResult>([".env"])],
+  },
+  {
     name: "lists only wholly ignored directories",
     fixture: "ignored",
     input: { operation: "ignored-directories" },
     assert: [returns<EmptyContext, GitResult>(["nested"])],
+  },
+  {
+    name: "does not treat a collapsed directory as ignored when only a file below it matches",
+    fixture: "collapsed",
+    input: { operation: "ignored-directories" },
+    assert: [returns<EmptyContext, GitResult>([])],
   },
 ] satisfies readonly OperationCase<GitFixtureKey, GitInput, GitResult, EmptyContext>[];
 
@@ -88,6 +102,14 @@ const table: OperationTable<GitFixture, GitFixtureKey, GitInput, GitResult, Empt
       writeFileSync(join(root, "visible.txt"), "visible\n");
       return { fixture: { root }, cleanup: () => rmSync(root, { recursive: true, force: true }) };
     },
+    collapsed: () => {
+      const root = mkdtempSync(join(tmpdir(), "muximo-git-probe-"));
+      execFileSync("git", ["-C", root, "init", "-q"]);
+      writeFileSync(join(root, ".gitignore"), "*.json\n");
+      mkdirSync(join(root, "vendor"));
+      writeFileSync(join(root, "vendor", "config.json"), "secret\n");
+      return { fixture: { root }, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+    },
   },
   cases,
   execute: (fixture, input) =>
@@ -95,9 +117,11 @@ const table: OperationTable<GitFixture, GitFixtureKey, GitInput, GitResult, Empt
       ? gitStatus(fixture.root)
       : input.operation === "ignored-files"
         ? listIgnoredFiles(fixture.root)
-        : input.operation === "ignored-directories"
-          ? listIgnoredDirectories(fixture.root)
-          : listUnmanagedFiles(fixture.root),
+        : input.operation === "ignored-files-pathspec"
+          ? listIgnoredFiles(fixture.root, undefined, [":(glob).env"])
+          : input.operation === "ignored-directories"
+            ? listIgnoredDirectories(fixture.root)
+            : listUnmanagedFiles(fixture.root),
   observe: () => ({}),
 };
 

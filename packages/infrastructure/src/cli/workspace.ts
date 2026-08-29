@@ -69,7 +69,10 @@ export class WorkspaceResolverAdapter implements WorkspaceResolverPort {
     const named = records.filter((workspace) => workspace.name === selector);
     if (named.length > 1) throw new Error(`workspace name is ambiguous; select its path: ${selector}`);
     const [namedWorkspace] = named;
-    if (namedWorkspace) return namedWorkspace;
+    if (namedWorkspace) {
+      await this.options.directory?.resolveDirectory(namedWorkspace.rootPath);
+      return namedWorkspace;
+    }
 
     const candidate = resolveWorkspacePath(selector, cwd);
     let resolvedRoot: string | undefined;

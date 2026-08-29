@@ -99,8 +99,13 @@ export class GitWorktreeAdapter implements WorktreePort {
     let sourceFiles: string[];
     let ignoredDirectories: string[];
     try {
-      sourceFiles = listIgnoredFiles(target.workspaceRoot, this.options.environment);
-      ignoredDirectories = listIgnoredDirectories(target.workspaceRoot, this.options.environment);
+      sourceFiles = listIgnoredFiles(target.workspaceRoot, this.options.environment, include.pathspecs);
+      const safeSourceFiles = sourceFiles.filter(isSafeRelativePath);
+      ignoredDirectories = listIgnoredDirectories(
+        target.workspaceRoot,
+        this.options.environment,
+        ignoredDirectoryCandidates(safeSourceFiles),
+      );
     } catch (error) {
       this.options.logger.warn("worktree.include_source_discovery_failed", { ...errorFields(error) });
       return false;
@@ -355,4 +360,15 @@ function isSafeRelativePath(path: string): boolean {
     !path.startsWith("/") &&
     !path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
   );
+}
+
+function ignoredDirectoryCandidates(files: readonly string[]): string[] {
+  const candidates = new Set<string>();
+  for (const file of files) {
+    const segments = file.split("/");
+    for (let index = 1; index < segments.length; index += 1) {
+      candidates.add(segments.slice(0, index).join("/"));
+    }
+  }
+  return [...candidates];
 }

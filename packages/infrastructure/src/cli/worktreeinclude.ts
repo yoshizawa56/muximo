@@ -5,6 +5,7 @@ import ignore from "ignore";
 export const worktreeIncludeFileName = ".worktreeinclude";
 
 export type WorktreeIncludeMatcher = {
+  pathspecs: readonly string[];
   matches(relativePath: string, ignoredDirectories?: readonly string[]): boolean;
 };
 
@@ -26,7 +27,9 @@ export function readWorktreeInclude(workspaceRoot: string): WorktreeIncludeMatch
   } catch (error) {
     throw new Error(`invalid ${worktreeIncludeFileName}: ${path}`, { cause: error });
   }
+  const pathspecs = gitPathspecs(contents);
   return {
+    pathspecs,
     matches: (relativePath, ignoredDirectories = []) => {
       const result = matcher.test(relativePath);
       if (!result.ignored) return false;
@@ -41,4 +44,38 @@ export function readWorktreeInclude(workspaceRoot: string): WorktreeIncludeMatch
         .every((directory) => matcher.ignores(directory) || directory.split("/").includes(firstName));
     },
   };
+}
+
+/** Returns a conservative Git pathspec superset; the ignore matcher remains authoritative. */
+function gitPathspecs(contents: string): readonly string[] {
+  const pathspecs = new Set<string>();
+  for (const line of contents.split(/\r?\n/u)) {
+    const parsed = parsePositivePattern(line);
+    if (parsed.kind === "ignore") continue;
+    if (parsed.kind === "all") return [":(glob)**"];
+    const pattern = parsed.pattern;
+    if (pattern === "*" || pattern === "**" || pattern === "**/*") return [":(glob)**"];
+
+    const rootAnchored = pattern.startsWith("/");
+    const normalized = pattern.replace(/^\/+|\/+$/gu, "");
+    if (!normalized) return [":(glob)**"];
+
+    const base = rootAnchored || normalized.includes("/") ? normalized : `**/${normalized}`;
+    pathspecs.add(`:(glob)${normalized}`);
+    if (!rootAnchored) pathspecs.add(`:(glob)${base}`);
+    pathspecs.add(`:(glob)${base}/**`);
+    if (!rootAnchored && !normalized.includes("/")) pathspecs.add(`:(glob)${normalized}/**`);
+  }
+  return [...pathspecs];
+}
+
+type ParsedPattern = { kind: "ignore" } | { kind: "all" } | { kind: "pattern"; pattern: string };
+
+function parsePositivePattern(line: string): ParsedPattern {
+  if (!line || line.startsWith("#")) return { kind: "ignore" };
+  if (line.startsWith("!")) return { kind: "ignore" };
+  if (/\s/u.test(line) || line.includes("\\") || line.includes("[") || line.includes("]")) {
+    return { kind: "all" };
+  }
+  return { kind: "pattern", pattern: line };
 }
