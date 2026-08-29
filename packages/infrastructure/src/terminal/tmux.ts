@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { MuximodPanePlacement } from "@muximo/application";
 
 type AgentRuntime = {
@@ -126,13 +126,17 @@ export function resolveMuximoCommand(
   if (sourceEntry) {
     if (sourceEntry.endsWith("/apps/muximo-cli/src/index.ts")) return sourceEntry;
     const sourceLauncherCandidates = [
-      resolve(dirname(sourceEntry), "../../../muximo-cli/src/index.ts"),
+      resolve(dirname(sourceEntry), "../../../apps/muximo-cli/src/index.ts"),
       resolve(dirname(sourceEntry), "../../../../apps/muximo-cli/src/index.ts"),
     ];
-    const siblingAgentEntry = sourceLauncherCandidates.find((candidate) => existsSync(candidate));
-    if (siblingAgentEntry) return siblingAgentEntry;
+    const sourceLauncher = sourceLauncherCandidates.find((candidate) => existsSync(candidate));
+    if (sourceLauncher) return sourceLauncher;
   }
   if (entry && /\.(?:[cm]?js)$/.test(entry) && existsSync(resolve(entry))) return "muximo";
+  if (basename(runtime.execPath) === "muximod") {
+    const sibling = join(dirname(runtime.execPath), "muximo");
+    return existsSync(sibling) ? sibling : "muximo";
+  }
   return runtime.execPath;
 }
 
@@ -887,9 +891,14 @@ export function buildMuximoShellCommand(
   const prefix = Object.entries(environment)
     .map(([name, value]) => `${name}=${shellQuote(value)}`)
     .join(" ");
-  const args = [shellQuote(binary), "shell", ...wrapperArgs.map(shellQuote)];
-  const wrapper = args.join(" ");
+  const wrapper = buildMuximoCommand(binary, "shell", wrapperArgs);
   return `${prefix ? `${prefix} ` : ""}${wrapper}${command ? ` -- ${command}` : ""}`;
+}
+
+/** Builds a shell-safe invocation for a muximo CLI subcommand. */
+export function buildMuximoCommand(binary: string, subcommand: string, args: readonly string[] = []): string {
+  const launcher = binary.endsWith(".ts") ? [shellQuote(process.execPath), shellQuote(binary)] : [shellQuote(binary)];
+  return [...launcher, subcommand, ...args.map(shellQuote)].join(" ");
 }
 
 export function configureManagedTmuxSession(

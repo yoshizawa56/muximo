@@ -13,6 +13,7 @@ import {
 import type { AgentBackend, WorkspaceRecord } from "@muximo/domain";
 import { classifyTerminalCommand, classifyUnmanagedAgentOutput, executableName } from "./observation.js";
 import {
+  buildMuximoCommand,
   buildMuximoShellCommand,
   configureManagedTmuxSession,
   resolveMuximoCommand,
@@ -191,18 +192,14 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
   private buildAgentCommand(input: CreatePaneInput, workspace: WorkspaceRecord | undefined): string {
     const binary = resolveMuximoCommand(this.environment);
     if (!input.agentId) throw new ApplicationError("agent_required", "agentId is required for an agent pane");
-    const args = [binary, "run", input.agentId, "--no-worktree", "--name", input.name];
+    const args = [input.agentId, "--no-worktree", "--name", input.name];
     if (input.useWorktree) {
-      args.splice(3, 1, "--worktree");
+      args.splice(1, 1, "--worktree");
       if (workspace?.setupScriptPath) args.push("--setup-hook", workspace.setupScriptPath);
       if (workspace?.cleanupScriptPath) args.push("--cleanup-hook", workspace.cleanupScriptPath);
     }
-    return args.map(shellQuote).join(" ");
+    return buildMuximoCommand(binary, "run", args);
   }
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function toHostPaneReference(pane: TmuxPaneRef): HostPaneReference {
