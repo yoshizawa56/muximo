@@ -287,15 +287,16 @@ separate runtime process; it is an internal package implementation detail, not
 a hidden or public CLI command.
 
 The CLI resolves all Muximo configuration before calling that lifecycle API. The
-`--env` profile selects one state root and fixed ports for the environment. `local`
-uses `push` against one persistent SQLite file; `stg` and `prod` use migrations
-against their own files. Worktrees do not derive state directories and no snapshot,
-seeding, or base-instance copy is performed.
+`--env <name>` profile selects one state root and its configured ports. Every
+profile defaults to `migrate`; `push` is selected only by an explicit
+`MUXIMO_SCHEMA_MODE=push` value. Worktrees do not derive state directories and no
+snapshot, seeding, or base-instance copy is performed.
 
 `apps/web/cli.ts` independently manages one Web process per environment and its
 provider route. It does not import or invoke muximod. Muximod Serve only manages the
-muximod route. The two lifecycle surfaces share only neutral environment and
-Tailscale provider mechanics; neither is a combined supervisor.
+muximod route. The two lifecycle surfaces share only raw profile loading and
+neutral Tailscale provider mechanics; each app interprets its own environment
+values and neither is a combined supervisor.
 
 ## Web structure
 

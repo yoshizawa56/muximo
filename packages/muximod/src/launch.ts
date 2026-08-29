@@ -35,7 +35,7 @@ import {
   StopDaemon,
 } from "@muximo/application";
 import { muximodHealthSchema } from "@muximo/contract/api";
-import { isLoopbackOrPrivateBindHost } from "@muximo/environment";
+import { isLoopbackOrPrivateBindHost } from "@muximo/profile";
 import { z } from "zod";
 import {
   consumeMuximodRestartMarker,

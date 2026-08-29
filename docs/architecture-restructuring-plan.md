@@ -122,11 +122,13 @@ receive an application-generated `ClaimExecutionInput.updatedAt`.
 
 Concrete CLI capabilities live under `packages/infrastructure/src/cli/`: backend
 launch/discovery, worktrees, hooks, panes, workspace, observations, shell, tmux sessions,
-serve, and diagnostics. The application entrypoints load the selected environment
-profile, while the neutral Tailscale provider adapter remains in infrastructure.
+serve, and diagnostics. The shared profile package loads the selected raw
+profile, while each application resolves its own environment semantics. The
+neutral Tailscale provider adapter remains in infrastructure.
 Muximod lifecycle, persistence, bootstrap, and timing adapters live under
-`packages/muximod`; the CLI composition root selects either `migrate` or `push` schema
-mode. Pairing UI and control-socket clients remain CLI-local adapters.
+`packages/muximod`; the CLI composition root selects the configured `migrate` or
+explicit `push` schema mode. Pairing UI and control-socket clients remain CLI-local
+adapters.
 Normal workspace and agent-session operations use the typed
 API over local HTTP after minting a short-lived local token through the private control
 socket. Browser origins are normalized and passed exactly to daemon options; wildcard
@@ -141,9 +143,10 @@ mapping. If a client needs another daemon value or operation, the API or private
 contract is extended and the implementation remains in muximod; a local persistence
 shortcut is not permitted.
 
-The selected `--env local|stg|prod` profile determines the shared environment state
-directory and fixed local/external ports. `local` selects `push` against its one persistent
-SQLite database; `stg` and `prod` select `migrate`. No worktree-specific database, snapshot,
+The selected `--env <name>` profile determines the shared environment state directory
+and its configured local/external ports. No profile name has special behavior: the CLI
+schema mode defaults to `migrate`, and a profile must explicitly set
+`MUXIMO_SCHEMA_MODE=push` to select push. No worktree-specific database, snapshot,
 seeding, or Portless URL is used. `apps/web/cli.ts` independently manages one Vite process
 and its Web Serve route; it does not import or invoke muximod. Muximod Serve is a separate
 route-only command, and no combined development supervisor is part of the runtime.

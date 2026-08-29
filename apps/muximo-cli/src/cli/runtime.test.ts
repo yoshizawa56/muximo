@@ -1,0 +1,114 @@
+import {
+  hasError,
+  hasObserved,
+  noFixture,
+  type OperationCase,
+  type OperationTable,
+  runOperationTable,
+  type TestRegistrar,
+} from "@muximo/test-support";
+import { describe, it } from "vitest";
+import { resolveMuximoCliRuntimeOptions } from "./runtime.js";
+
+type RuntimeInput = {
+  raw?: Record<string, unknown>;
+  args?: readonly string[];
+  environment?: NodeJS.ProcessEnv;
+};
+type RuntimeResult = ReturnType<typeof resolveMuximoCliRuntimeOptions>;
+type RuntimeContext = {
+  environmentName: string | null;
+  schemaMode: string | null;
+  host: string | null;
+  port: number | null;
+  instanceDirectory: string | null;
+  webPort: string | null;
+};
+
+const cases = [
+  {
+    name: "uses migrate as the schema default without a selected profile",
+    input: {},
+    assert: [
+      hasObserved<RuntimeContext, RuntimeResult>("environmentName", "prod"),
+      hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate"),
+      hasObserved<RuntimeContext, RuntimeResult>("host", "127.0.0.1"),
+      hasObserved<RuntimeContext, RuntimeResult>("port", 4317),
+    ],
+  },
+  {
+    name: "applies explicit profile values regardless of the profile name",
+    input: {
+      environment: {
+        MUXIMO_ENV: "dev",
+        HOME: "/home/test",
+        MUXIMO_MUXIMOD_HOST: "192.168.50.10",
+        MUXIMO_MUXIMOD_PORT: "4327",
+        MUXIMO_SCHEMA_MODE: "migrate",
+        MUXIMO_WEB_PORT: "5999",
+      },
+    },
+    assert: [
+      hasObserved<RuntimeContext, RuntimeResult>("environmentName", "dev"),
+      hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate"),
+      hasObserved<RuntimeContext, RuntimeResult>("host", "192.168.50.10"),
+      hasObserved<RuntimeContext, RuntimeResult>("port", 4327),
+      hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "<home>/.local/state/muximo/dev/muximod"),
+      hasObserved<RuntimeContext, RuntimeResult>("webPort", "5999"),
+    ],
+  },
+  {
+    name: "keeps migrate as the default for a local-named profile",
+    input: { environment: { MUXIMO_ENV: "local" } },
+    assert: [hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate")],
+  },
+  {
+    name: "accepts push only when the profile explicitly requests it",
+    input: { environment: { MUXIMO_ENV: "any-name", MUXIMO_SCHEMA_MODE: "push" } },
+    assert: [hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "push")],
+  },
+  {
+    name: "lets a CLI option override a profile value",
+    input: {
+      raw: { schemaMode: "migrate", muximodPort: 4555 },
+      args: ["--schema-mode", "migrate", "--muximod-port", "4555"],
+      environment: { MUXIMO_ENV: "dev", MUXIMO_SCHEMA_MODE: "push", MUXIMO_MUXIMOD_PORT: "4327" },
+    },
+    assert: [
+      hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate"),
+      hasObserved<RuntimeContext, RuntimeResult>("port", 4555),
+    ],
+  },
+  {
+    name: "rejects a public muximod bind address",
+    input: { environment: { MUXIMO_MUXIMOD_HOST: "0.0.0.0" } },
+    assert: [hasError<RuntimeContext, RuntimeResult>({ message: /MUXIMO_MUXIMOD_HOST must be localhost/ })],
+  },
+] satisfies readonly OperationCase<"default", RuntimeInput, RuntimeResult, RuntimeContext>[];
+
+const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, RuntimeContext> = {
+  defaultFixture: noFixture(),
+  cases,
+  execute: (_fixture, input) =>
+    resolveMuximoCliRuntimeOptions({
+      raw: input.raw ?? {},
+      args: input.args ?? [],
+      environment: input.environment ?? {},
+      cwd: "/workspace",
+    }),
+  observe: (_fixture, result) =>
+    result.ok
+      ? {
+          environmentName: result.value.runtime.environmentName,
+          schemaMode: result.value.runtime.schemaMode,
+          host: result.value.runtime.muximodHost,
+          port: result.value.runtime.muximodPort,
+          instanceDirectory: result.value.runtime.muximodInstanceDirectory.replace("/home/test", "<home>"),
+          webPort: result.value.environment.MUXIMO_WEB_PORT ?? null,
+        }
+      : { environmentName: null, schemaMode: null, host: null, port: null, instanceDirectory: null, webPort: null },
+};
+
+describe("muximo CLI runtime options", () => {
+  runOperationTable(it as unknown as TestRegistrar, table);
+});

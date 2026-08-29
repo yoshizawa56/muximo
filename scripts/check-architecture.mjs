@@ -29,7 +29,7 @@ const packageRules = new Map([
   ["@muximo/contract", ["@muximo/domain"]],
   ["@muximo/application", ["@muximo/domain"]],
   ["@muximo/domain", []],
-  ["@muximo/environment", []],
+  ["@muximo/profile", []],
   ["@muximo/infrastructure", ["@muximo/application", "@muximo/domain"]],
   ["@muximo/test-support", []],
   [
@@ -38,16 +38,16 @@ const packageRules = new Map([
       "@muximo/application",
       "@muximo/contract",
       "@muximo/domain",
-      "@muximo/environment",
+      "@muximo/profile",
       "@muximo/infrastructure",
       "@muximo/muximod",
     ],
   ],
   [
     "@muximo/muximod",
-    ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/environment", "@muximo/infrastructure"],
+    ["@muximo/application", "@muximo/contract", "@muximo/domain", "@muximo/profile", "@muximo/infrastructure"],
   ],
-  ["@muximo/web", ["@muximo/contract", "@muximo/environment", "@muximo/infrastructure"]],
+  ["@muximo/web", ["@muximo/contract", "@muximo/profile", "@muximo/infrastructure"]],
 ]);
 
 const forbiddenImports = [

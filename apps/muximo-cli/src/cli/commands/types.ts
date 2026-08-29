@@ -1,5 +1,6 @@
 import type { Writable } from "node:stream";
 import type { AgentBackend } from "@muximo/domain";
+import type { MuximoCliRuntimeOptions } from "../runtime-types.js";
 
 export type CliIo = {
   out: Writable;
@@ -132,6 +133,7 @@ export type CliAppDeps = {
   handlers: CliHandlers;
   cwd: string;
   environment: NodeJS.ProcessEnv;
+  runtime?: MuximoCliRuntimeOptions;
   rootCommand?: string;
   lifecycle?: CliCommandLifecycle;
 };
@@ -146,6 +148,7 @@ export type CliCommandContext = {
   cwd: string;
   args: readonly string[];
   environment: NodeJS.ProcessEnv;
+  runtime?: MuximoCliRuntimeOptions;
   rootCommand: string;
   report(status: number): void;
   lifecycle?: CliCommandLifecycle;

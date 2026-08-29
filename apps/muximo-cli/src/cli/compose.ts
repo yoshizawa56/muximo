@@ -8,7 +8,6 @@ import { AgentSession } from "@muximo/domain";
 import {
   createLogger,
   createTailscaleServeClient,
-  defaultLogFile,
   ensureTailscaleServe,
   GitShellWorktreeAdapter,
   GitWorktreeAdapter,
@@ -16,7 +15,6 @@ import {
   type Logger,
   type LogLevel,
   localMuximodUrl,
-  parseLogLevel,
   readServeRouteState,
   removeServeRouteState,
   runDoctor,
@@ -48,10 +46,12 @@ import { createSessionHandlers } from "./handlers/session.js";
 import { createSystemHandlers, type ServeResult } from "./handlers/system.js";
 import { createWorkspaceHandlers } from "./handlers/workspace.js";
 import { createMuximodConfigResolver } from "./muximod-config.js";
+import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 export type CliCompositionOptions = {
   cwd?: string;
   environment: NodeJS.ProcessEnv;
+  runtime: MuximoCliRuntimeOptions;
   io?: CliIo;
   input?: Readable;
   logger?: Logger;
@@ -71,31 +71,36 @@ export type CliComposition = {
 export function createCliComposition(options: CliCompositionOptions): CliComposition {
   const io = options.io ?? { out: process.stdout, err: process.stderr };
   const environment = options.environment;
+  const runtime = options.runtime;
   const cwd = options.cwd ?? process.cwd();
   const logger =
     options.logger ??
     createLogger({
       service: "muximo-cli",
       mode: "attached",
-      level: options.logLevel ?? "warn",
+      level: options.logLevel ?? (runtime.verbose ? "debug" : runtime.logLevel),
       output: io.err,
-      showStack: options.logLevel === "debug",
+      showStack: options.logLevel === "debug" || (options.logLevel === undefined && runtime.verbose),
     });
-  const paths = resolveMuximodClientPaths(environment, { baseDirectory: cwd });
+  const paths = resolveMuximodClientPaths(
+    { ...environment, MUXIMOD_INSTANCE_DIR: runtime.muximodInstanceDirectory },
+    { baseDirectory: cwd },
+  );
   const muximod =
     options.muximod ??
     createMuximodLifecycle({
-      schemaMode: readSchemaMode(environment.MUXIMO_SCHEMA_MODE),
+      schemaMode: runtime.schemaMode,
       foregroundConflictPolicy: options.muximodForegroundConflictPolicy,
       environment,
       resolveConfig: createMuximodConfigResolver({
         environment,
         workingDirectory: cwd,
+        runtime,
       }),
     });
   const localDaemon = () => {
-    const host = environment.MUXIMOD_HOST ?? "127.0.0.1";
-    const port = readPort(environment.MUXIMOD_PORT, 4317);
+    const host = runtime.muximodHost;
+    const port = runtime.muximodPort;
     return {
       host,
       port,
@@ -189,14 +194,14 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   });
   const tmuxSession = new TmuxNewSessionService({ environment, tmux });
   const daemonDefaults: DaemonOptions = {
-    host: environment.MUXIMOD_HOST ?? "127.0.0.1",
-    port: readPort(environment.MUXIMOD_PORT, 4317),
+    host: runtime.muximodHost,
+    port: runtime.muximodPort,
     pidFile: paths.pidFile,
     controlSocket: paths.controlSocket,
-    logLevel: parseLogLevel(environment.MUXIMO_LOG_LEVEL, "info"),
-    logFile: defaultLogFile(environment),
+    logLevel: runtime.logLevel,
+    logFile: runtime.logFile,
   };
-  const serveStatePath = join(paths.instanceDirectory, "serve.json");
+  const serveStatePath = join(runtime.muximodInstanceDirectory, "serve.json");
   const runAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["run"]>[0]) => {
     const api = await ensureApi();
     const result = await api.agentSessions.run(input);
@@ -248,7 +253,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         runDoctor(value, {
           environment,
           logger,
-          defaultRemote: environment.MUXIMO_CODEX_REMOTE ?? "unix://",
+          defaultRemote: runtime.codexRemote,
         }),
     },
     daemon: {
@@ -272,7 +277,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
           const result = await ensureTailscaleServe(value, { logger }, environment);
           writeServeRouteState(serveStatePath, {
             schemaVersion: 1,
-            environment: environment.MUXIMO_ENV ?? "prod",
+            environment: runtime.environmentName,
             component: "muximod",
             provider: "tailscale",
             hostname: result.route.hostname,
@@ -288,7 +293,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
           return { command: "tailscale", result, state };
         }
         const state = readServeRouteState(serveStatePath);
-        if (state && (state.environment !== (environment.MUXIMO_ENV ?? "prod") || state.component !== "muximod")) {
+        if (state && (state.environment !== runtime.environmentName || state.component !== "muximod")) {
           throw new Error(`muximod Serve state belongs to a different environment: ${serveStatePath}`);
         }
         const tailscale = createTailscaleServeClient({ environment });
@@ -351,6 +356,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     io,
     cwd,
     environment,
+    runtime,
     handlers,
     lifecycle: {
       started: (commandPath) => logger.debug("command.started", { command: commandPath.join(" ") }),
@@ -393,20 +399,6 @@ function normalizeSessionName(value: string): string {
   } catch {
     return value;
   }
-}
-
-function readPort(value: string | undefined, fallback: number): number {
-  const port = Number(value ?? fallback);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("muximod port must be between 1 and 65535");
-  }
-  return port;
-}
-
-function readSchemaMode(value: string | undefined): "migrate" | "push" {
-  if (value === undefined) return "migrate";
-  if (value === "push" || value === "migrate") return value;
-  throw new Error("MUXIMO_SCHEMA_MODE must be push or migrate");
 }
 
 async function withApiInvalidation<Result>(operation: () => Promise<Result>, invalidate: () => void): Promise<Result> {

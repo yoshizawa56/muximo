@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { createCliApp } from "./app.js";
 import type { CliHandlers } from "./commands/types.js";
+import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 class CaptureOutput extends Writable {
   public value = "";
@@ -38,7 +39,22 @@ function contains<ContextType>(key: keyof ContextType, value: string) {
   };
 }
 
-function createFixture(environment: NodeJS.ProcessEnv = {}) {
+const defaultRuntime: MuximoCliRuntimeOptions = {
+  environmentName: "prod",
+  stateRoot: "/workspace/.state",
+  muximodInstanceDirectory: "/workspace/.state/prod/muximod",
+  muximodHost: "127.0.0.1",
+  muximodPort: 4317,
+  muximodServePort: 8444,
+  schemaMode: "migrate",
+  logLevel: "info",
+  logFile: "/workspace/.state/prod/muximod/muximod.log",
+  allowedOrigins: [],
+  codexRemote: "unix://",
+  verbose: false,
+};
+
+function createFixture(environment: NodeJS.ProcessEnv = {}, runtime: MuximoCliRuntimeOptions = defaultRuntime) {
   const out = new CaptureOutput();
   const err = new CaptureOutput();
   const calls: Fixture["calls"] = [];
@@ -65,7 +81,7 @@ function createFixture(environment: NodeJS.ProcessEnv = {}) {
       return 7;
     };
   }
-  const app = createCliApp({ io: { out, err }, cwd: "/workspace", environment, handlers });
+  const app = createCliApp({ io: { out, err }, cwd: "/workspace", environment, runtime, handlers });
   return { fixture: { out, err, calls, app } };
 }
 
@@ -78,7 +94,7 @@ const cases = [
     assert: [
       returns<Context, number>(2),
       contains<Context>("output", "Usage: muximo"),
-      contains<Context>("output", "--env <environment>"),
+      contains<Context>("output", "--env <profile>"),
       hasObserved<Context, number>("calls", []),
     ],
   },
@@ -312,14 +328,17 @@ const table: OperationTable<AppFixture, FixtureKey, Input, number, Context> = {
   defaultFixture: () => createFixture(),
   fixtures: {
     environment: () =>
-      createFixture({
-        MUXIMOD_HOST: "0.0.0.0",
-        MUXIMOD_PORT: "5001",
-        MUXIMO_MUXIMOD_SERVE_PORT: "9443",
-        MUXIMO_LOG_LEVEL: "debug",
-        MUXIMO_LOG_FILE: "/tmp/muximod.log",
-        MUXIMOD_ALLOWED_ORIGINS: "https://configured.example,http://127.0.0.1:5227",
-      }),
+      createFixture(
+        {
+          MUXIMOD_HOST: "0.0.0.0",
+          MUXIMOD_PORT: "5001",
+          MUXIMO_MUXIMOD_SERVE_PORT: "9443",
+          MUXIMO_LOG_LEVEL: "debug",
+          MUXIMO_LOG_FILE: "/tmp/muximod.log",
+          MUXIMOD_ALLOWED_ORIGINS: "https://configured.example,http://127.0.0.1:5227",
+        },
+        { ...defaultRuntime, muximodPort: 5001, muximodServePort: 9443 },
+      ),
   },
   cases,
   execute: (fixture, input) => fixture.app.execute(input.args),

@@ -22,9 +22,9 @@
         "@muximo/application": "workspace:*",
         "@muximo/contract": "workspace:*",
         "@muximo/domain": "workspace:*",
-        "@muximo/environment": "workspace:*",
         "@muximo/infrastructure": "workspace:*",
         "@muximo/muximod": "workspace:*",
+        "@muximo/profile": "workspace:*",
         "@orpc/client": "^1.15.0",
         "@orpc/contract": "^1.15.0",
         "commander": "^15.0.0",
@@ -52,8 +52,8 @@
         "@capacitor/ios": "8.4.2",
         "@capacitor/preferences": "8.0.1",
         "@muximo/contract": "workspace:*",
-        "@muximo/environment": "workspace:*",
         "@muximo/infrastructure": "workspace:*",
+        "@muximo/profile": "workspace:*",
         "@orpc/client": "^1.15.0",
         "@orpc/contract": "^1.15.0",
         "@orpc/tanstack-query": "^1.15.0",
@@ -122,15 +122,6 @@
         "vitest": "^4.1.10",
       },
     },
-    "packages/environment": {
-      "name": "@muximo/environment",
-      "version": "0.1.0",
-      "devDependencies": {
-        "@types/node": "^26.1.2",
-        "bun-types": "^1.3.14",
-        "typescript": "^7.0.2",
-      },
-    },
     "packages/infrastructure": {
       "name": "@muximo/infrastructure",
       "version": "0.1.0",
@@ -155,8 +146,8 @@
         "@muximo/application": "workspace:*",
         "@muximo/contract": "workspace:*",
         "@muximo/domain": "workspace:*",
-        "@muximo/environment": "workspace:*",
         "@muximo/infrastructure": "workspace:*",
+        "@muximo/profile": "workspace:*",
         "@orpc/server": "^1.15.0",
         "zod": "^4.4.3",
       },
@@ -164,6 +155,17 @@
         "@muximo/test-support": "workspace:*",
         "@orpc/client": "^1.15.0",
         "@orpc/contract": "^1.15.0",
+        "@types/node": "^26.1.2",
+        "bun-types": "^1.3.14",
+        "typescript": "^7.0.2",
+        "vitest": "^4.1.10",
+      },
+    },
+    "packages/profile": {
+      "name": "@muximo/profile",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@muximo/test-support": "workspace:*",
         "@types/node": "^26.1.2",
         "bun-types": "^1.3.14",
         "typescript": "^7.0.2",
@@ -346,13 +348,13 @@
 
     "@muximo/domain": ["@muximo/domain@workspace:packages/domain"],
 
-    "@muximo/environment": ["@muximo/environment@workspace:packages/environment"],
-
     "@muximo/infrastructure": ["@muximo/infrastructure@workspace:packages/infrastructure"],
 
     "@muximo/muximo-cli": ["@muximo/muximo-cli@workspace:apps/muximo-cli"],
 
     "@muximo/muximod": ["@muximo/muximod@workspace:packages/muximod"],
+
+    "@muximo/profile": ["@muximo/profile@workspace:packages/profile"],
 
     "@muximo/test-support": ["@muximo/test-support@workspace:packages/test-support"],
 

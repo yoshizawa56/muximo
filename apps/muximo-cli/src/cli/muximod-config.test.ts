@@ -11,8 +11,14 @@ import {
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
 import { createMuximodConfigResolver } from "./muximod-config.js";
+import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
-type ConfigInput = { environment: NodeJS.ProcessEnv; workingDirectory: string; daemon: DaemonOptions };
+type ConfigInput = {
+  environment: NodeJS.ProcessEnv;
+  workingDirectory: string;
+  daemon: DaemonOptions;
+  runtime: MuximoCliRuntimeOptions;
+};
 type ConfigContext = {};
 
 const runtimeEnvironment = {
@@ -33,6 +39,24 @@ const runtimeEnvironment = {
   migrationsDirectory: null,
 };
 
+function createRuntime(overrides: Partial<MuximoCliRuntimeOptions> = {}): MuximoCliRuntimeOptions {
+  return {
+    environmentName: "prod",
+    stateRoot: "/home/test/.local/state/muximo",
+    muximodInstanceDirectory: "/home/test/.local/state/muximo/prod/muximod",
+    muximodHost: "127.0.0.1",
+    muximodPort: 4317,
+    muximodServePort: 8444,
+    schemaMode: "migrate",
+    logLevel: "info",
+    logFile: "/home/test/.local/state/muximo/prod/muximod/muximod.log",
+    allowedOrigins: [],
+    codexRemote: "unix://",
+    verbose: false,
+    ...overrides,
+  };
+}
+
 const cases = [
   {
     name: "derives every daemon-owned path from the instance directory",
@@ -40,19 +64,20 @@ const cases = [
       environment: { HOME: "/home/test" },
       workingDirectory: "/workspace/project",
       daemon: { host: "127.0.0.1", port: 4317, pidFile: "/ignored/pid" },
+      runtime: createRuntime(),
     },
     assert: [
       returns<ConfigContext, MuximodConfig>({
         host: "127.0.0.1",
         port: 4317,
-        instanceDirectory: "/home/test/.local/state/muximo",
-        hookOutputDirectory: "/home/test/.local/state/muximo/hooks",
-        pidFile: "/home/test/.local/state/muximo/muximod.pid",
-        controlSocket: "/home/test/.local/state/muximo/muximod.sock",
+        instanceDirectory: "/home/test/.local/state/muximo/prod/muximod",
+        hookOutputDirectory: "/home/test/.local/state/muximo/prod/muximod/hooks",
+        pidFile: "/home/test/.local/state/muximo/prod/muximod/muximod.pid",
+        controlSocket: "/home/test/.local/state/muximo/prod/muximod/muximod.sock",
         allowedOrigins: [],
         allowedRoots: ["/workspace/project"],
         logLevel: "info",
-        logFile: "/home/test/.local/state/muximo/muximod.log",
+        logFile: "/home/test/.local/state/muximo/prod/muximod/muximod.log",
         workingDirectory: "/workspace/project",
         runtimeEnvironment,
       }),
@@ -76,6 +101,15 @@ const cases = [
       },
       workingDirectory: "/workspace/project",
       daemon: { host: "127.0.0.1", port: 4317, pidFile: "/ignored/pid" },
+      runtime: createRuntime({
+        environmentName: "dev",
+        stateRoot: "/workspace/project",
+        muximodInstanceDirectory: "/workspace/project/state",
+        logLevel: "debug",
+        logFile: "/workspace/project/logs/muximod.log",
+        allowedOrigins: ["https://web.example", "http://127.0.0.1:5227"],
+        codexRemote: "https://codex.example",
+      }),
     },
     assert: [
       returns<ConfigContext, MuximodConfig>({
@@ -107,6 +141,7 @@ const cases = [
       environment: { MUXIMOD_ALLOWED_ORIGINS: "*" },
       workingDirectory: "/workspace/project",
       daemon: { host: "127.0.0.1", port: 4317, pidFile: "/ignored/pid" },
+      runtime: createRuntime({ allowedOrigins: ["*"] }),
     },
     assert: [hasError<ConfigContext, MuximodConfig>({ message: "wildcard browser origins are not allowed" })],
   },

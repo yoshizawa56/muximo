@@ -16,13 +16,13 @@ run = "bun --cwd apps/web run cap:sync && bun --cwd apps/web run cap:open"
 description = "Run the local muximo CLI with the supplied arguments"
 raw = true
 raw_args = true
-run = "bun apps/muximo-cli/src/index.ts --"
+run = "bun --no-env-file apps/muximo-cli/src/index.ts --"
 
 [tasks.web]
 description = "Run the Web lifecycle CLI with the supplied arguments"
 raw = true
 raw_args = true
-run = "bun apps/web/cli.ts --"
+run = "bun --no-env-file apps/web/cli.ts --"
 
 [tasks.check]
 description = "Run the public-repository audit and project checks"

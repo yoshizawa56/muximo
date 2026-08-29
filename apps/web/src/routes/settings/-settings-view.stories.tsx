@@ -107,7 +107,7 @@ export const MuximodConnectionFailed: Story = {
   args: {
     viewModel: buildViewModel({
       errorMessage:
-        "Could not communicate with muximod while requesting server information.\nEndpoint: https://muximo-host.tailnet.ts.net:8444/rpc\nDetails: TypeError: Load failed",
+        "Could not communicate with muximod while requesting server information.\nEndpoint: https://muximo-host.tailnet.ts.net:8444/rpc\nDetails: TypeError: Load failed (HTTP status unavailable: the browser did not expose a response; check CORS, TLS, or network connectivity)",
     }),
   },
 };

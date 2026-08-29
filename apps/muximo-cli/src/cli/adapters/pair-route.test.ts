@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readServeRouteState, type ServeRouteState, writeServeRouteState } from "@muximo/infrastructure/cli-client";
+import { type ServeRouteState, writeServeRouteState } from "@muximo/infrastructure/cli-client";
 import {
   hasError,
   hasObserved,
@@ -44,7 +44,11 @@ const routeState: ServeRouteState = {
 const cases = [
   {
     name: "returns a live client-owned route",
-    input: { withoutServe: false, environment: { MUXIMO_ENV: "local" }, liveRoute: "match" },
+    input: {
+      withoutServe: false,
+      environment: { MUXIMO_ENV: "local", MUXIMOD_HOST: "127.0.0.1", MUXIMOD_PORT: "4317" },
+      liveRoute: "match",
+    },
     assert: [
       hasObserved<PairContext, string>("url", routeState.publicUrl),
       hasObserved<PairContext, string>("fetchedUrl", "https://machine.tailnet.ts.net:8444/health"),
@@ -52,7 +56,11 @@ const cases = [
   },
   {
     name: "uses the fixed local endpoint when serving is explicitly disabled",
-    input: { withoutServe: true, environment: { MUXIMO_ENV: "local" }, liveRoute: "match" },
+    input: {
+      withoutServe: true,
+      environment: { MUXIMO_ENV: "local", MUXIMOD_HOST: "127.0.0.1", MUXIMOD_PORT: "4317" },
+      liveRoute: "match",
+    },
     assert: [
       hasObserved<PairContext, string>("url", "http://127.0.0.1:4317"),
       hasObserved<PairContext, string>("fetchedUrl", "http://127.0.0.1:4317/health"),
@@ -60,12 +68,20 @@ const cases = [
   },
   {
     name: "rejects a route owned by another environment",
-    input: { withoutServe: false, environment: { MUXIMO_ENV: "stg" }, liveRoute: "match" },
+    input: {
+      withoutServe: false,
+      environment: { MUXIMO_ENV: "stg", MUXIMOD_HOST: "127.0.0.1", MUXIMOD_PORT: "4317" },
+      liveRoute: "match",
+    },
     assert: [hasError<PairContext, string>({ message: /different environment/ })],
   },
   {
     name: "rejects a route changed by the provider",
-    input: { withoutServe: false, environment: { MUXIMO_ENV: "local" }, liveRoute: "mismatch" },
+    input: {
+      withoutServe: false,
+      environment: { MUXIMO_ENV: "local", MUXIMOD_HOST: "127.0.0.1", MUXIMOD_PORT: "4317" },
+      liveRoute: "mismatch",
+    },
     assert: [hasError<PairContext, string>({ message: /does not match the live provider/ })],
   },
 ] satisfies readonly OperationCase<"default", PairInput, string, PairContext>[];
@@ -95,10 +111,6 @@ const table: OperationTable<PairFixture, "default", PairInput, string, PairConte
   },
   cases,
   execute: async (fixture, input) => {
-    if (input.environment.MUXIMO_ENV === "stg") {
-      const current = readServeRouteState(fixture.stateFile)!;
-      writeServeRouteState(fixture.stateFile, { ...current, environment: "local" });
-    }
     const result = await resolvePairMuximodBaseUrl(
       {
         withoutServe: input.withoutServe,

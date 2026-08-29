@@ -16,7 +16,7 @@
     "@muximo/application": "workspace:*",
     "@muximo/contract": "workspace:*",
     "@muximo/domain": "workspace:*",
-    "@muximo/environment": "workspace:*",
+    "@muximo/profile": "workspace:*",
     "@muximo/infrastructure": "workspace:*",
     "@muximo/muximod": "workspace:*",
     "@orpc/client": "^1.15.0",

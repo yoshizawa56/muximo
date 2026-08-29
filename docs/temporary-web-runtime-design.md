@@ -18,9 +18,11 @@ and verification.
 - `apps/web` is independent from `apps/muximo-cli`. Its browser code and its
   host-side lifecycle CLI must not start, stop, configure, or inspect muximod.
 - `muximo-cli` must not start, stop, configure, or inspect the Web process.
-- The two applications may share the pure `@muximo/environment` value normalizer
-  and the concrete Tailscale host adapter. The application entrypoints alone read
-  `process.env` and `.env.<environment>` files. They must not share
+- The two applications may share the generic `@muximo/profile` profile
+  loader and the concrete Tailscale host adapter. Application entrypoints alone
+  read `process.env` and pass the selected profile input to the loader. The
+  loader may read `.env.<environment>` files, but it must not interpret
+  component-specific variables. The applications must not share
   application-specific orchestration or call each other's entrypoints.
 - Public URLs are not muximod runtime configuration. A client discovers and
   persists a URL for its own external route, then supplies the URL to a
@@ -28,20 +30,24 @@ and verification.
 
 ## Environment profiles
 
-The global `--env` option selects one of `local`, `stg`, or `prod` for both
-client applications. Profile selection is performed by each application
-entrypoint. The shared `@muximo/environment` package only normalizes explicitly
-supplied values; it has no `process.env` access and does not read profile files.
+The global `--env <name>` option selects an arbitrary profile for the relevant
+client application. Each application entrypoint parses the option and reads the
+ambient `process.env`; the shared `@muximo/profile` package then loads
+`.env.<name>` and returns raw values. It does not interpret component-specific
+variables. Without `--env`, no profile file is loaded.
 
 Profile resolution is:
 
-1. the process environment supplies machine-local values and supported global
-   overrides;
-2. the selected profile file for source checkouts (`.env.local` or `.env.stg`)
-   owns profile-scoped values such as ports and schema mode;
-3. built-in production defaults are used for `prod`;
-4. the explicit `--env` argument selects the profile and is reflected in the
-   resolved environment.
+1. the application entrypoint supplies the selected name and ambient process
+   environment to the generic loader;
+2. if a name is selected, `.env.<name>` is parsed and overlays the ambient values;
+3. the selected name is reflected in the raw environment as `MUXIMO_ENV`;
+4. each application interprets only the values relevant to its own runtime;
+5. each application applies its own name-independent defaults.
+
+The supported Bun entrypoints use `bun --no-env-file` so Bun's automatic
+`.env` discovery cannot bypass the explicit profile selection. Compiled CLI
+invocations do not have Bun's automatic loading behavior.
 
 There is no implicit `.env` fallback, worktree-derived environment, or
 worktree-derived instance directory. A missing required profile file fails
@@ -52,16 +58,18 @@ the Tailscale hostname when the provider can discover the current hostname.
 The local and staging profile examples may be committed; machine-specific
 files and personal hostnames remain ignored.
 
-The profile defines the component values needed by each independent
-application, including:
+The raw profile may contain values for either application, including:
 
 - environment name;
-- muximod instance directory or environment state root;
 - muximod local port and external Serve port;
 - Web local port and external Serve port;
-- muximod schema mode (`push` for `local`, `migrate` for `stg` and `prod`);
-- Web runtime mode and whether the Web daemon is enabled for the profile;
+- muximod schema mode (`migrate` by default, or explicit `push`);
 - provider selection and provider-specific settings that are not discoverable.
+
+`@muximo/profile` exposes `getProfile()` for raw loading. `apps/muximo-cli`
+and `apps/web` then resolve their own typed options independently. They do not
+share component defaults or derived paths. An unused variable is simply ignored
+by the application that does not need it.
 
 The preferred state layout is derived from the selected environment and cannot
 be overridden independently for individual PID, socket, database, or log
@@ -84,11 +92,10 @@ replace that root as one deliberate global override. The derived layout is:
   serve.json
 ```
 
-All worktrees selecting the same environment use the same component state.
-Consequently, `local` is a singleton runtime: starting from another worktree
-does not create another local database or daemon. A deliberate
-`daemon restart` replaces the active process with the code from the selected
-worktree.
+All worktrees selecting the same profile use the same component state. Starting
+from another worktree therefore does not create another database or daemon. A
+deliberate `daemon restart` replaces the active process with the code from the
+selected worktree.
 
 ## Muximod lifecycle
 
@@ -98,20 +105,20 @@ The CLI invokes the typed lifecycle API exposed by `@muximo/muximod/client`.
 Conceptual commands are:
 
 ```text
-muximo --env local daemon start
-muximo --env local daemon restart
-muximo --env local daemon stop
-muximo --env local daemon status
-muximo --env local serve tailscale
-muximo --env local serve status
-muximo --env local serve stop
+muximo --env <name> daemon start
+muximo --env <name> daemon restart
+muximo --env <name> daemon stop
+muximo --env <name> daemon status
+muximo --env <name> serve tailscale
+muximo --env <name> serve status
+muximo --env <name> serve stop
 ```
 
 `daemon start` starts or reuses the one healthy muximod for the selected
-environment. `daemon restart` explicitly replaces the known process and runs
-the selected schema mode inside muximod. `local` uses `push` against its
-single persistent SQLite file; no base instance directory and no snapshot
-copy are used. `stg` and `prod` use migrations against their own files.
+profile. `daemon restart` explicitly replaces the known process and runs the
+selected schema mode inside muximod. Every profile uses `migrate` by default;
+setting `MUXIMO_SCHEMA_MODE=push` in the selected profile explicitly opts into
+push. No base instance directory and no snapshot copy are used.
 
 The muximod `serve` command manages only the muximod external route. It does
 not start or stop Web and does not become a long-running supervisor.
@@ -125,13 +132,13 @@ process and the Web external route.
 Conceptual commands are:
 
 ```text
-web --env local daemon start
-web --env local daemon restart
-web --env local daemon stop
-web --env local daemon status
-web --env local serve tailscale
-web --env local serve status
-web --env local serve stop
+web --env <name> daemon start
+web --env <name> daemon restart
+web --env <name> daemon stop
+web --env <name> daemon status
+web --env <name> serve tailscale
+web --env <name> serve status
+web --env <name> serve stop
 ```
 
 The Web daemon and Web Serve commands are intentionally independent:
@@ -249,10 +256,10 @@ muximod does not stop Web; that independence is intentional.
 
 ## Implementation checklist
 
-- [x] Add app-owned `--env` profile loading to both client entrypoints.
+- [x] Add common raw profile loading and app-owned `--env` interpretation to both client entrypoints.
 - [x] Make environment state paths deterministic and component-specific.
 - [x] Remove snapshot/base-directory handling from muximod launch options.
-- [x] Keep local schema push inside muximod and remove all CLI database paths.
+- [x] Keep schema synchronization inside muximod and remove all CLI database paths.
 - [x] Add Web daemon process management with one instance per environment.
 - [x] Split Web Serve management from Web daemon management.
 - [x] Refactor muximod Serve to be route-only and state-backed.

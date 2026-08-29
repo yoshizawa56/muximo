@@ -1,5 +1,5 @@
 {
-  "name": "@muximo/environment",
+  "name": "@muximo/profile",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -16,8 +16,10 @@
     "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "@muximo/test-support": "workspace:*",
     "@types/node": "^26.1.2",
     "bun-types": "^1.3.14",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

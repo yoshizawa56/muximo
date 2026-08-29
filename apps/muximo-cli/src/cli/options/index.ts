@@ -26,7 +26,7 @@ export type CliOptionSpec<T = unknown> = {
   description: string;
   exposure: CliOptionExposure;
   environment?: CliEnvironmentBinding;
-  defaultValue?: T;
+  defaultValue?: T | ((environment: NodeJS.ProcessEnv) => T);
   repeatable?: boolean;
   completion?: CliCompletionSpec;
 };
@@ -68,6 +68,95 @@ export function getRegisteredOptions(command: Command): readonly CliOptionSpec[]
   return optionSpecsByCommand.get(command) ?? [];
 }
 
+/** Reads values for a command's options before Commander is constructed. */
+export function readOptionValues(args: readonly string[], specs: readonly CliOptionSpec[]): Record<string, unknown> {
+  const definitions = optionDefinitions(specs);
+  const values: Record<string, unknown> = {};
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--") break;
+    const definition = findOptionDefinition(argument, definitions);
+    if (!definition) continue;
+
+    const inlineValue = readInlineValue(argument, definition.name);
+    let value: unknown;
+    if (definition.valueKind === "required") {
+      if (inlineValue !== undefined) {
+        value = inlineValue;
+      } else {
+        const next = args[++index];
+        if (next === undefined) throw new Error(`option ${definition.name} requires a value`);
+        value = next;
+      }
+    } else if (definition.valueKind === "optional") {
+      if (inlineValue !== undefined) {
+        value = inlineValue;
+      } else if (args[index + 1] !== undefined && !args[index + 1].startsWith("-")) {
+        value = args[++index];
+      } else {
+        value = true;
+      }
+    } else {
+      value = !definition.name.startsWith("--no-");
+    }
+
+    if (definition.spec.repeatable) {
+      const previous = values[definition.spec.key];
+      values[definition.spec.key] = [...(Array.isArray(previous) ? previous : []), value];
+    } else {
+      values[definition.spec.key] = value;
+    }
+  }
+
+  return values;
+}
+
+export type RootOptionScan = {
+  options: readonly string[];
+  commandIndex: number;
+};
+
+/** Splits global options from the first command for the entrypoint bootstrap. */
+export function scanRootOptions(args: readonly string[], specs: readonly CliOptionSpec[]): RootOptionScan {
+  const definitions = optionDefinitions(specs);
+  const options: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--") return { options, commandIndex: -1 };
+
+    const definition = findOptionDefinition(argument, definitions);
+    if (!definition) {
+      if (argument.startsWith("-")) {
+        options.push(argument);
+        continue;
+      }
+      return { options, commandIndex: index };
+    }
+
+    options.push(argument);
+    const inlineValue = readInlineValue(argument, definition.name);
+    if (definition.valueKind === "required" && inlineValue === undefined) {
+      const next = args[index + 1];
+      if (next !== undefined) {
+        options.push(next);
+        index += 1;
+      }
+    } else if (
+      definition.valueKind === "optional" &&
+      inlineValue === undefined &&
+      args[index + 1] !== undefined &&
+      !args[index + 1].startsWith("-")
+    ) {
+      options.push(args[index + 1]);
+      index += 1;
+    }
+  }
+
+  return { options, commandIndex: -1 };
+}
+
 export function resolveOptionValues(
   raw: OptionValues | Record<string, unknown>,
   specs: readonly CliOptionSpec[],
@@ -95,8 +184,9 @@ export function resolveOptionValues(
       }
     }
 
-    if (spec.defaultValue !== undefined) {
-      values[spec.key] = spec.defaultValue;
+    const defaultValue = resolveDefaultValue(spec.defaultValue, input.environment);
+    if (defaultValue !== undefined) {
+      values[spec.key] = defaultValue;
       sources[spec.key] = "default";
       continue;
     }
@@ -151,6 +241,53 @@ function uniqueOptionSpecs(specs: readonly CliOptionSpec[]): CliOptionSpec[] {
     });
   }
   return [...byKey.values()];
+}
+
+function resolveDefaultValue<T>(
+  value: T | ((environment: NodeJS.ProcessEnv) => T) | undefined,
+  environment: NodeJS.ProcessEnv,
+): T | undefined {
+  return typeof value === "function" ? (value as (environment: NodeJS.ProcessEnv) => T)(environment) : value;
+}
+
+type OptionFlagDefinition = {
+  name: string;
+  valueKind: "none" | "required" | "optional";
+};
+
+function parseOptionFlag(value: string): OptionFlagDefinition | undefined {
+  const name = value.split(/\s+/u)[0];
+  if (!name) return undefined;
+  return {
+    name,
+    valueKind: value.includes("<") ? "required" : value.includes("[") ? "optional" : "none",
+  };
+}
+
+function optionDefinitions(specs: readonly CliOptionSpec[]): Array<OptionFlagDefinition & { spec: CliOptionSpec }> {
+  return specs.flatMap((spec) =>
+    (spec.flags ?? []).flatMap((flags) =>
+      flags
+        .split(",")
+        .map((part) => parseOptionFlag(part.trim()))
+        .filter((definition): definition is OptionFlagDefinition => definition !== undefined)
+        .map((definition) => ({ ...definition, spec })),
+    ),
+  );
+}
+
+function findOptionDefinition(
+  argument: string,
+  definitions: readonly (OptionFlagDefinition & { spec: CliOptionSpec })[],
+): (OptionFlagDefinition & { spec: CliOptionSpec }) | undefined {
+  return definitions.find(
+    (candidate) =>
+      argument === candidate.name || (candidate.name.startsWith("--") && argument.startsWith(`${candidate.name}=`)),
+  );
+}
+
+function readInlineValue(argument: string, name: string): string | undefined {
+  return name.startsWith("--") && argument.startsWith(`${name}=`) ? argument.slice(name.length + 1) : undefined;
 }
 
 function inferFlagValue(args: readonly string[], spec: CliOptionSpec): boolean {

@@ -22,8 +22,8 @@ export function registerServeCommand(parent: Command, handlers: CliHandlers, con
           rawInput: {
             provider: "tailscale",
             command,
-            localPort: readPort(context.environment.MUXIMOD_PORT, 4317),
-            externalPort: readPort(context.environment.MUXIMO_MUXIMOD_SERVE_PORT, 8444),
+            localPort: requireRuntime(context).muximodPort,
+            externalPort: requireRuntime(context).muximodServePort,
           },
           commandPath: ["serve", command],
           context,
@@ -35,10 +35,7 @@ export function registerServeCommand(parent: Command, handlers: CliHandlers, con
   return serve;
 }
 
-function readPort(value: string | undefined, fallback: number): number {
-  const port = Number(value ?? fallback);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`port must be an integer between 1 and 65535: ${value ?? fallback}`);
-  }
-  return port;
+function requireRuntime(context: CliCommandContext) {
+  if (!context.runtime) throw new Error("CLI runtime options are unavailable");
+  return context.runtime;
 }

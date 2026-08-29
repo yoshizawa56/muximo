@@ -11,12 +11,11 @@ import {
   type WebDaemonManager,
   writeServeRouteState,
 } from "@muximo/infrastructure/web-client";
-import { type MuximoEnvironmentName, resolveWebEnvironmentProfile } from "./environment.js";
+import { getProfile, resolveProfileName } from "@muximo/profile";
+import { resolveWebOptions, type WebOptions } from "./options.js";
 
 type WebCliContext = {
-  profile: ReturnType<typeof resolveWebEnvironmentProfile>;
-  webPort: number;
-  externalPort: number;
+  options: WebOptions;
   webManager: WebDaemonManager;
   routeStateFile: string;
   tailscale: ReturnType<typeof createTailscaleServeClient>;
@@ -31,26 +30,28 @@ async function main(): Promise<number> {
       printHelp();
       return parsed.command.length === 0 ? 2 : 0;
     }
-    const profile = resolveWebEnvironmentProfile({ name: parsed.environment, cwd: process.cwd() });
-    const repositoryRoot = profile.repositoryRoot ?? process.cwd();
+    const cwd = process.cwd();
+    const profile = getProfile({
+      name: parsed.profileName,
+      cwd,
+      baseEnvironment: process.env,
+    });
+    const webOptions = resolveWebOptions(profile, cwd);
+    const repositoryRoot = profile.repositoryRoot ?? cwd;
     const webRoot = join(repositoryRoot, "apps", "web");
-    const webPort = readPort(profile.environment.VITE_DEV_PORT, 5227);
-    const externalPort = readPort(profile.environment.MUXIMO_WEB_SERVE_PORT, 8449);
     const context: WebCliContext = {
-      profile,
-      webPort,
-      externalPort,
+      options: webOptions,
       webManager: createWebDaemonManager({
-        instanceDirectory: profile.webInstanceDirectory,
-        host: profile.environment.VITE_DEV_HOST ?? "127.0.0.1",
-        port: webPort,
+        instanceDirectory: webOptions.webInstanceDirectory,
+        host: webOptions.host,
+        port: webOptions.port,
         cwd: webRoot,
         command: process.execPath,
         args: [join(webRoot, "node_modules/vite/bin/vite.js")],
-        environment: profile.environment,
+        environment: webOptions.environment,
       }),
-      routeStateFile: join(profile.webInstanceDirectory, "serve.json"),
-      tailscale: createTailscaleServeClient({ environment: profile.environment }),
+      routeStateFile: join(webOptions.webInstanceDirectory, "serve.json"),
+      tailscale: createTailscaleServeClient({ environment: webOptions.environment }),
     };
     return (await execute(parsed.command, context)) ?? 0;
   } catch (error) {
@@ -100,13 +101,13 @@ function isHelpInvocation(command: readonly string[]): boolean {
 async function applyTailscaleRoute(context: WebCliContext): Promise<number> {
   const daemon = await context.webManager.status();
   if (daemon.state !== "running") {
-    throw new Error(`Web daemon is not running; run "web --env ${context.profile.name} daemon start" first`);
+    throw new Error(`Web daemon is not running; run "web --env ${context.options.environmentName} daemon start" first`);
   }
   const result = await context.tailscale.applyRoute({
-    localHost: "127.0.0.1",
-    localPort: context.webPort,
-    externalPort: context.externalPort,
-    hostname: context.profile.environment.MUXIMO_TAILSCALE_HOSTNAME,
+    localHost: context.options.host,
+    localPort: context.options.port,
+    externalPort: context.options.externalPort,
+    hostname: context.options.environment.MUXIMO_TAILSCALE_HOSTNAME,
   });
   writeRouteState(context, result.route);
   process.stdout.write(`[web] Tailscale Serve: ${result.route.publicUrl} -> ${result.route.localTarget}\n`);
@@ -145,7 +146,7 @@ async function stopServeRoute(context: WebCliContext): Promise<number> {
 function writeRouteState(context: WebCliContext, route: TailscaleServeRoute): void {
   const state: ServeRouteState = {
     schemaVersion: 1,
-    environment: context.profile.name,
+    environment: context.options.environmentName,
     component: "web",
     provider: "tailscale",
     hostname: route.hostname,
@@ -162,51 +163,35 @@ function writeRouteState(context: WebCliContext, route: TailscaleServeRoute): vo
 function readRouteState(context: WebCliContext): ServeRouteState | undefined {
   const state = readServeRouteState(context.routeStateFile);
   if (!state) return undefined;
-  if (state.environment !== context.profile.name || state.component !== "web") {
+  if (state.environment !== context.options.environmentName || state.component !== "web") {
     throw new Error(`Web Serve state belongs to a different environment: ${context.routeStateFile}`);
   }
   return state;
 }
 
-function parseArguments(args: readonly string[]): { environment: MuximoEnvironmentName; command: string[] } {
-  const configuredEnvironment = process.env.MUXIMO_ENV;
-  if (configuredEnvironment !== undefined && !isEnvironmentName(configuredEnvironment)) {
-    throw new Error("MUXIMO_ENV must be local, stg, or prod");
-  }
-  let environment: MuximoEnvironmentName = configuredEnvironment ?? "prod";
+function parseArguments(args: readonly string[]): { profileName?: string; command: string[] } {
+  let profileName = resolveProfileName(process.env.MUXIMO_ENV);
   const command: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];
     if (value === "--env") {
       const candidate = args[++index];
-      if (!isEnvironmentName(candidate)) throw new Error("--env must be local, stg, or prod");
-      environment = candidate;
+      profileName = resolveProfileName(candidate);
       continue;
     }
     if (value?.startsWith("--env=")) {
       const candidate = value.slice("--env=".length);
-      if (!isEnvironmentName(candidate)) throw new Error("--env must be local, stg, or prod");
-      environment = candidate;
+      profileName = resolveProfileName(candidate);
       continue;
     }
     command.push(value);
   }
-  return { environment, command };
-}
-
-function isEnvironmentName(value: string | undefined): value is MuximoEnvironmentName {
-  return value === "local" || value === "stg" || value === "prod";
-}
-
-function readPort(value: string | undefined, fallback: number): number {
-  const port = Number(value ?? fallback);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`invalid Web port: ${value}`);
-  return port;
+  return { profileName, command };
 }
 
 function printHelp(): void {
   process.stdout.write(
-    "Usage: web [--env local|stg|prod] <daemon|serve> <start|restart|stop|status|tailscale>\n\n" +
+    `Usage: web [--env <profile>] <daemon|serve> <start|restart|stop|status|tailscale>\n\n` +
       "Commands:\n" +
       "  daemon start|restart|stop|status  Manage the Web process\n" +
       "  serve tailscale                   Configure the persistent Tailscale route\n" +

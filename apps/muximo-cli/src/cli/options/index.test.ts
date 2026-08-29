@@ -8,7 +8,14 @@ import {
 } from "@muximo/test-support";
 import { Command } from "commander";
 import { describe, expect, it } from "vitest";
-import { type CliOptionResolution, defineOptions, registerOptions, resolveOptionValues } from "./index.js";
+import {
+  type CliOptionResolution,
+  defineOptions,
+  readOptionValues,
+  registerOptions,
+  resolveOptionValues,
+  scanRootOptions,
+} from "./index.js";
 
 const optionSpecs = defineOptions(
   {
@@ -123,6 +130,69 @@ const table: OperationTable<undefined, "default", Input, CliOptionResolution, Cl
 describe("CLI option resolution", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, table);
+});
+
+type BootstrapInput = { args: readonly string[] };
+type BootstrapResult = ReturnType<typeof scanRootOptions> & { values: Record<string, unknown> };
+type BootstrapContext = BootstrapResult;
+
+const bootstrapOptionSpecs = defineOptions(...optionSpecs, {
+  key: "environment",
+  flags: ["--env <profile>"],
+  description: "Profile",
+  exposure: "both",
+  environment: { name: "MUXIMO_ENV", description: "Profile" },
+});
+
+const bootstrapCases = [
+  {
+    name: "keeps required global option values out of the command position",
+    input: { args: ["--port", "5000", "--force", "run"] },
+    assert: [
+      returns<BootstrapContext, BootstrapResult>({
+        options: ["--port", "5000", "--force"],
+        commandIndex: 3,
+        values: { port: "5000", force: true },
+      }),
+    ],
+  },
+  {
+    name: "supports an inline environment selector before a command",
+    input: { args: ["--port=5000", "--env=dev", "daemon", "start"] },
+    assert: [
+      returns<BootstrapContext, BootstrapResult>({
+        options: ["--port=5000", "--env=dev"],
+        commandIndex: 2,
+        values: { port: "5000", environment: "dev" },
+      }),
+    ],
+  },
+  {
+    name: "does not treat command arguments as root options",
+    input: { args: ["run", "--port", "5000"] },
+    assert: [
+      returns<BootstrapContext, BootstrapResult>({
+        options: [],
+        commandIndex: 0,
+        values: {},
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", BootstrapInput, BootstrapResult, BootstrapContext>[];
+
+const bootstrapTable: OperationTable<undefined, "default", BootstrapInput, BootstrapResult, BootstrapContext> = {
+  defaultFixture: noFixture(),
+  cases: bootstrapCases,
+  execute: (_fixture, input) => {
+    const scan = scanRootOptions(input.args, bootstrapOptionSpecs);
+    return { ...scan, values: readOptionValues(scan.options, bootstrapOptionSpecs) };
+  },
+  observe: (_fixture, result) => (result.ok ? result.value : { options: [], commandIndex: -1, values: {} }),
+};
+
+describe("CLI root option bootstrap", () => {
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, bootstrapTable);
 });
 
 const helpOptionSpecs = defineOptions(

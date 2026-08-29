@@ -23,7 +23,7 @@ export async function resolvePairMuximodBaseUrl(
 ): Promise<string> {
   if (input.withoutServe) {
     const localUrl = localMuximodUrl(
-      input.environment.MUXIMOD_HOST ?? "127.0.0.1",
+      readRequired(input.environment.MUXIMOD_HOST, "MUXIMOD_HOST"),
       readPort(input.environment.MUXIMOD_PORT),
     );
     await verifyMuximodRoute(localUrl);
@@ -34,7 +34,7 @@ export async function resolvePairMuximodBaseUrl(
   if (!state) {
     throw new Error(`muximod Serve route is unavailable; run "muximo serve tailscale" first`);
   }
-  const expectedEnvironment = input.environment.MUXIMO_ENV ?? "prod";
+  const expectedEnvironment = readRequired(input.environment.MUXIMO_ENV, "MUXIMO_ENV");
   if (state.environment !== expectedEnvironment || state.component !== "muximod") {
     throw new Error(`muximod Serve route belongs to a different environment: ${input.routeStateFile}`);
   }
@@ -46,15 +46,20 @@ export async function resolvePairMuximodBaseUrl(
   return state.publicUrl;
 }
 
+function readRequired(value: string | undefined, name: string): string {
+  if (value === undefined || value.trim() === "") throw new Error(`${name} is missing from resolved CLI options`);
+  return value;
+}
+
 async function verifyLiveRoute(state: ServeRouteState, environment: NodeJS.ProcessEnv): Promise<boolean> {
   const result = await createTailscaleServeClient({ environment }).status();
   return hasTailscaleServeRoute(result.stdout, state);
 }
 
 function readPort(value: string | undefined): number {
-  const port = Number(value ?? 4317);
+  const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`muximod port must be between 1 and 65535: ${value ?? 4317}`);
+    throw new Error(`muximod port must be between 1 and 65535: ${value ?? "<missing>"}`);
   }
   return port;
 }

@@ -1,4 +1,4 @@
-import { isMuximodApiError, muximodErrorDetails } from "./muximod-error.js";
+import { isMuximodApiError, isMuximodNetworkError, muximodErrorDetails } from "./muximod-error.js";
 
 export type MuximodRequestStage =
   | "requesting server information"
@@ -39,6 +39,9 @@ export function formatMuximodConnectionError(stage: MuximodRequestStage, endpoin
 
 function errorDetails(cause: unknown): string {
   if (isMuximodApiError(cause)) return muximodErrorDetails(cause);
+  if (isMuximodNetworkError(cause)) {
+    return `${muximodErrorDetails(cause)} (HTTP status unavailable: the browser did not expose a response; check CORS, TLS, or network connectivity)`;
+  }
   if (cause instanceof Error && cause.name && cause.message) return `${cause.name}: ${cause.message}`;
   return muximodErrorDetails(cause);
 }

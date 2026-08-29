@@ -76,23 +76,26 @@ The Bun installer also verifies the release checksum and supports `--tag`, `--fr
 The standalone command manages the long-running `muximod` process:
 
 ```sh
-muximo --env prod daemon start
-muximo --env prod daemon status
-muximo --env prod daemon log
-muximo --env prod daemon restart
-muximo --env prod daemon stop
+muximo daemon start
+muximo daemon status
+muximo daemon log
+muximo daemon restart
+muximo daemon stop
 ```
 
-`muximo --env prod daemon log` prints the most recent 100 lines from the daemon's derived environment log. Use `--lines N` to change the limit. Select `local` or `stg` with `--env`; each environment has its own fixed ports, database, PID file, socket, and log.
+`muximo daemon log` prints the most recent 100 lines from the daemon's derived
+state log. Use `--lines N` to change the limit. Select a named profile with
+`--env <name>`; each profile has its own derived state directory, ports, database,
+PID file, socket, and log.
 
-Use `muximo --env prod daemon start --foreground` when a service manager owns the process. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
+Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
 
 Starting `muximod` does not create a tmux session. Create a new managed session with `muximo tmux new-session`, adopt an existing session with `muximo tmux manage-session --name <name>`, or let the Web connection flow adopt an unmanaged session automatically.
 
 To configure a muximod-only Tailscale Serve route:
 
 ```sh
-muximo --env prod serve tailscale
+muximo serve tailscale
 ```
 
 The command discovers the current Tailscale hostname, configures the fixed
@@ -104,14 +107,14 @@ does not start or supervise `muximod`.
 After configuring the muximod Serve route, pairing displays a QR code and waits for explicit host approval:
 
 ```sh
-muximo --env prod pair
+muximo pair
 ```
 
 Scan the QR code inside the Muximo Web or iOS client. The QR code is an in-app pairing code, not a browser navigation URL. For a local endpoint or an explicitly supplied route:
 
 ```sh
-muximo --env prod pair --without-serve  # use the fixed loopback endpoint
-muximo --env prod pair --muximod-base-url https://workstation.tailnet.ts.net:8444
+muximo pair --without-serve  # use the fixed loopback endpoint
+muximo pair --muximod-base-url https://workstation.tailnet.ts.net:8444
 ```
 
 ## Common commands
@@ -161,10 +164,10 @@ mise muximo --env local serve tailscale
 mise web --env local serve tailscale
 ```
 
-The local profile uses one persistent SQLite database and `push` schema
-synchronization. The Web process uses one fixed local port and keeps HMR
-available after `web daemon start`; the two processes have independent
-lifecycle commands. To inspect the Web UI without a running muximod:
+The repository's `.env.local` explicitly selects `push` schema synchronization.
+The Web process uses one fixed local port and keeps HMR available after `web
+daemon start`; the two processes have independent lifecycle commands. To inspect
+the Web UI without a running muximod:
 
 ```sh
 cd apps/web

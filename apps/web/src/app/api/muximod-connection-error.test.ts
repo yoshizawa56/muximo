@@ -22,7 +22,7 @@ const cases = [
     },
     assert: [
       returns<Context, string>(
-        "Could not communicate with muximod while requesting server information.\nEndpoint: https://muximo-host.example:8444\nDetails: TypeError: Load failed",
+        "Could not communicate with muximod while requesting server information.\nEndpoint: https://muximo-host.example:8444\nDetails: TypeError: Load failed (HTTP status unavailable: the browser did not expose a response; check CORS, TLS, or network connectivity)",
       ),
     ],
   },

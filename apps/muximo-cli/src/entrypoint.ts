@@ -1,13 +1,14 @@
 import type { Readable, Writable } from "node:stream";
 import { DaemonHealthError } from "@muximo/application";
 import { defaultLogFile } from "@muximo/infrastructure/cli-client";
+import { getProfile, resolveProfileName } from "@muximo/profile";
 import { createCliApp } from "./cli/app.js";
 import { globalOptionSpecs } from "./cli/commands/global.js";
 import type { CliHandlers } from "./cli/commands/types.js";
 import { createCliComposition } from "./cli/compose.js";
-import { resolveCliOptions } from "./cli/options/index.js";
+import { readOptionValues, scanRootOptions } from "./cli/options/index.js";
 import { presentDaemonError } from "./cli/presenters/daemon.js";
-import { type MuximoEnvironmentName, muximoEnvironmentNames, resolveMuximoEnvironmentProfile } from "./environment.js";
+import { resolveMuximoCliRuntimeOptions } from "./cli/runtime.js";
 
 export type CliEntrypointOptions = {
   env?: NodeJS.ProcessEnv;
@@ -41,22 +42,25 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
   let environment = inputEnvironment;
   let composition: ReturnType<typeof createCliComposition> | undefined;
   try {
-    const rootArgs = rootOptionArguments(args);
-    const globalOptions = resolveCliOptions(readRootOptionValues(rootArgs), globalOptionSpecs, {
-      args: rootArgs,
-      environment: inputEnvironment,
-    });
-    const environmentName = resolveEnvironmentName(globalOptions.environment);
-    environment = resolveMuximoEnvironmentProfile({
-      name: environmentName,
+    const rootOptions = scanRootOptions(args, globalOptionSpecs);
+    const rawGlobalOptions = readOptionValues(rootOptions.options, globalOptionSpecs);
+    const profile = getProfile({
+      name: resolveProfileName(rawGlobalOptions.environment ?? inputEnvironment.MUXIMO_ENV),
       cwd: process.cwd(),
-      environment,
-    }).environment;
+      baseEnvironment: inputEnvironment,
+    });
+    const runtimeResolution = resolveMuximoCliRuntimeOptions({
+      raw: rawGlobalOptions,
+      args: rootOptions.options,
+      environment: profile.environment,
+      cwd: process.cwd(),
+    });
+    environment = runtimeResolution.environment;
     composition = createCliComposition({
       environment,
       input: options.input,
       io,
-      logLevel: globalOptions.verbose === true ? "debug" : undefined,
+      runtime: runtimeResolution.runtime,
     });
     return await composition.execute(args);
   } catch (error) {
@@ -64,13 +68,6 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
   } finally {
     composition?.close();
   }
-}
-
-function resolveEnvironmentName(value: unknown): MuximoEnvironmentName {
-  if (typeof value === "string" && (muximoEnvironmentNames as readonly string[]).includes(value)) {
-    return value as MuximoEnvironmentName;
-  }
-  throw new Error("--env must be local, stg, or prod");
 }
 
 function isCompletionInvocation(args: readonly string[]): boolean {
@@ -90,33 +87,8 @@ function isParserOnlyInvocation(args: readonly string[]): boolean {
   );
 }
 
-function rootOptionArguments(args: readonly string[]): readonly string[] {
-  const commandIndex = firstCommandIndex(args);
-  return commandIndex < 0 ? args : args.slice(0, commandIndex);
-}
-
 function firstCommandIndex(args: readonly string[]): number {
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
-    if (argument === "--") return -1;
-    if (argument === "--env") {
-      index += 1;
-      continue;
-    }
-    if (argument?.startsWith("--env=")) continue;
-    if (argument?.startsWith("-")) continue;
-    return index;
-  }
-  return -1;
-}
-
-function readRootOptionValues(args: readonly string[]): Record<string, unknown> {
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
-    if (argument === "--env") return { environment: args[index + 1] };
-    if (argument?.startsWith("--env=")) return { environment: argument.slice("--env=".length) };
-  }
-  return {};
+  return scanRootOptions(args, globalOptionSpecs).commandIndex;
 }
 
 function reportEntrypointError(err: Writable, error: unknown, environment?: NodeJS.ProcessEnv): number {
