@@ -29,7 +29,6 @@ export type WorkspaceDetailViewModel = {
   name: string;
   setupScriptPath: string;
   cleanupScriptPath: string;
-  worktreeCopyPatterns: string;
   isSaving: boolean;
   isDeleting: boolean;
   errorMessage: string | null;
@@ -38,7 +37,6 @@ export type WorkspaceDetailViewModel = {
   onNameChange: (value: string) => void;
   onSetupScriptPathChange: (value: string) => void;
   onCleanupScriptPathChange: (value: string) => void;
-  onWorktreeCopyPatternsChange: (value: string) => void;
   onSave: () => void;
   onDelete: () => void;
   onBack: () => void;
@@ -54,17 +52,6 @@ export function filterWorkspaces(workspaces: WorkspaceDirectory[], query: string
 
 export function workspaceDetailCanSave(name: string): boolean {
   return name.trim().length > 0 && name.trim().length <= 120 && !/[\u0000\r\n\t]/.test(name);
-}
-
-export function parseWorktreeCopyPatterns(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(/\r?\n/)
-        .map((pattern) => pattern.trim())
-        .filter(Boolean),
-    ),
-  ];
 }
 
 export function useWorkspacesListViewModel(): WorkspacesListViewModel {

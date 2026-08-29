@@ -41,10 +41,7 @@ export interface ShellWorktreePort {
     branch?: string;
     baseCommit?: string;
   }>;
-  copyFiles(
-    target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">,
-    patterns: readonly string[],
-  ): Promise<boolean>;
+  copyFiles(target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">): Promise<boolean>;
   remove(input: ShellWorktree): Promise<void>;
 }
 

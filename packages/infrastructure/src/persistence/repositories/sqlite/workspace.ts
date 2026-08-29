@@ -37,7 +37,6 @@ export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements
           isGit: row.isGit,
           setupScriptPath: row.setupScriptPath,
           cleanupScriptPath: row.cleanupScriptPath,
-          worktreeCopyPatterns: row.worktreeCopyPatterns,
           updatedAt: row.updatedAt,
         },
       })
@@ -58,7 +57,6 @@ function toWorkspaceRow(record: WorkspaceRecord): typeof workspaces.$inferInsert
     isGit: workspace.isGit,
     setupScriptPath: workspace.setupScriptPath ?? null,
     cleanupScriptPath: workspace.cleanupScriptPath ?? null,
-    worktreeCopyPatterns: JSON.stringify(workspace.worktreeCopyPatterns),
     createdAt: workspace.createdAt,
     updatedAt: workspace.updatedAt,
   };
@@ -72,21 +70,7 @@ function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
     isGit: row.isGit,
     ...(row.setupScriptPath !== null ? { setupScriptPath: row.setupScriptPath } : {}),
     ...(row.cleanupScriptPath !== null ? { cleanupScriptPath: row.cleanupScriptPath } : {}),
-    worktreeCopyPatterns: parseWorktreeCopyPatterns(row.id, row.worktreeCopyPatterns),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });
-}
-
-function parseWorktreeCopyPatterns(workspaceId: string, value: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw new Error(`workspace '${workspaceId}' has invalid worktree copy patterns JSON`, { cause: error });
-  }
-  if (!Array.isArray(parsed) || !parsed.every((entry) => typeof entry === "string")) {
-    throw new Error(`workspace '${workspaceId}' has invalid worktree copy patterns; expected an array of strings`);
-  }
-  return parsed;
 }

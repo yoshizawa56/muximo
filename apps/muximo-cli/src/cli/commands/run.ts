@@ -13,6 +13,12 @@ export const runOptionSpecs = defineOptions(
     exposure: "cli",
   },
   {
+    key: "workspace",
+    flags: ["--workspace <name-or-path>"],
+    description: "Select a registered workspace by name or path.",
+    exposure: "cli",
+  },
+  {
     key: "worktree",
     flags: ["-w, --worktree [name]", "--no-worktree"],
     description: "Run the session in a managed worktree.",
@@ -57,6 +63,7 @@ export const runSchema = z
   .object({
     backend: agentBackendSchema,
     name: z.string().min(1).optional(),
+    workspace: z.string().trim().min(1).optional(),
     worktree: optionalWorktreeSchema,
     worktreeRoot: z.string().optional(),
     setupHook: optionalHookSchema,
@@ -68,6 +75,7 @@ export const runSchema = z
     return {
       backend: input.backend,
       name: input.name ?? worktreeName,
+      ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
       useWorktree: input.worktree === true || typeof input.worktree === "string",
       worktreeRoot: input.worktreeRoot,
       setupHook: input.setupHook === false ? undefined : input.setupHook,

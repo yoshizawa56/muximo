@@ -28,7 +28,6 @@ const workspace = {
   isGit: true,
   setupScriptPath: null,
   cleanupScriptPath: null,
-  worktreeCopyPatterns: [],
 };
 const session = { name: "integration", paneCount: 1, waitingCount: 0, detail: "0 agents · 1 shell", managed: true };
 const agentSession = {

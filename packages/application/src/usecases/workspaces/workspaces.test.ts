@@ -22,7 +22,7 @@ import type { UpdateWorkspaceInput } from "./workspace-inputs.js";
 import { WorkspaceRecordFactory } from "./workspace-record-factory.js";
 
 type WorkspaceStep =
-  | { type: "register"; input: { directory: string; name?: string; worktreeCopyPatterns?: string[] } }
+  | { type: "register"; input: { directory: string; name?: string } }
   | { type: "update"; selector: string; input: UpdateWorkspaceInput }
   | { type: "delete"; selector: string };
 
@@ -39,7 +39,6 @@ type WorkspaceContext = {
   recordCount: number;
   recordName: string;
   rootPath: string;
-  patterns: readonly string[];
   updatedAt: string;
   auditEvents: readonly string[];
   insertCalls: number;
@@ -50,11 +49,11 @@ const scenarios = [
   {
     name: "registers and updates metadata through the workspace use cases",
     steps: [
-      { type: "register", input: { directory: "/work/project", name: "project", worktreeCopyPatterns: [".env"] } },
+      { type: "register", input: { directory: "/work/project", name: "project" } },
       {
         type: "update",
         selector: "project",
-        input: { name: "renamed", appendCopyPatterns: ["config/**/*.local.json"] },
+        input: { name: "renamed" },
       },
     ],
     assert: [
@@ -62,7 +61,6 @@ const scenarios = [
       hasObserved<WorkspaceContext, WorkspaceRecord>("recordCount", 1),
       hasObserved<WorkspaceContext, WorkspaceRecord>("recordName", "renamed"),
       hasObserved<WorkspaceContext, WorkspaceRecord>("rootPath", "/work/project"),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("patterns", [".env", "config/**/*.local.json"]),
       hasObserved<WorkspaceContext, WorkspaceRecord>("updatedAt", "2026-08-16T00:00:00.000Z"),
       hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", ["workspace.created", "workspace.updated"]),
     ],
@@ -71,13 +69,12 @@ const scenarios = [
     name: "deletes only the registered record through the workspace use cases",
     steps: [
       { type: "register", input: { directory: "/work/project" } },
-      { type: "delete", selector: "workspace-1" },
+      { type: "delete", selector: "project" },
     ],
     assert: [
       hasNoError<WorkspaceContext, WorkspaceRecord>(),
       hasObserved<WorkspaceContext, WorkspaceRecord>("recordCount", 0),
       hasObserved<WorkspaceContext, WorkspaceRecord>("recordName", ""),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("patterns", []),
       hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", ["workspace.created", "workspace.deleted"]),
     ],
   },
@@ -118,7 +115,6 @@ const table: ScenarioTable<WorkspaceFixture, "duplicate", WorkspaceStep, Workspa
       recordCount: records.length,
       recordName: record?.name ?? "",
       rootPath: record?.rootPath ?? "",
-      patterns: record?.worktreeCopyPatterns ?? [],
       updatedAt: record?.updatedAt ?? "",
       auditEvents: [...fixture.auditEvents],
       insertCalls: fixture.repository.insertCalls,
@@ -166,7 +162,6 @@ function createDuplicateWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
       rootPath: "/work/project",
       name: "project",
       isGit: true,
-      worktreeCopyPatterns: [],
       createdAt: "2026-08-14T00:00:00.000Z",
       updatedAt: "2026-08-14T00:00:00.000Z",
     }),

@@ -33,12 +33,5 @@ export class UpdateWorkspace {
 }
 
 function hasWorkspaceUpdate(input: UpdateWorkspaceInput): boolean {
-  return (
-    input.name !== undefined ||
-    input.setupHook !== undefined ||
-    input.cleanupHook !== undefined ||
-    input.worktreeCopyPatterns !== undefined ||
-    (input.appendCopyPatterns?.length ?? 0) > 0 ||
-    input.clearCopyPatterns === true
-  );
+  return input.name !== undefined || input.setupHook !== undefined || input.cleanupHook !== undefined;
 }

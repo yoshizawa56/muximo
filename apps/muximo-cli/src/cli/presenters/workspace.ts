@@ -10,7 +10,7 @@ export function presentWorkspaceList(
     for (const workspace of workspaces) output.write(`${JSON.stringify(toWorkspaceJson(workspace))}\n`);
     return 0;
   }
-  output.write(padRow(["ID", "NAME", "DIRECTORY", "GIT", "SETUP_HOOK", "CLEANUP_HOOK", "COPY_PATTERNS"]));
+  output.write(padRow(["ID", "NAME", "DIRECTORY", "GIT", "SETUP_HOOK", "CLEANUP_HOOK"]));
   if (workspaces.length === 0) {
     output.info("no registered workspaces");
     return 0;
@@ -24,7 +24,6 @@ export function presentWorkspaceList(
         workspace.isGit ? "yes" : "no",
         workspace.setupScriptPath ? displayWorkspacePath(workspace.setupScriptPath) : "-",
         workspace.cleanupScriptPath ? displayWorkspacePath(workspace.cleanupScriptPath) : "-",
-        workspace.worktreeCopyPatterns.length > 0 ? workspace.worktreeCopyPatterns.join(",") : "-",
       ]),
     );
   }
@@ -39,7 +38,6 @@ export function toWorkspaceJson(workspace: WorkspaceDirectory): Record<string, u
     is_git: workspace.isGit,
     setup_hook: workspace.setupScriptPath,
     cleanup_hook: workspace.cleanupScriptPath,
-    worktree_copy_patterns: workspace.worktreeCopyPatterns,
   };
 }
 

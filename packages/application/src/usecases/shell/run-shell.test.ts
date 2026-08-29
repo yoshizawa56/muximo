@@ -141,7 +141,6 @@ function createShellFixture(
     isGit: true,
     setupScriptPath: "setup-hook",
     cleanupScriptPath: "cleanup-hook",
-    worktreeCopyPatterns: [".env"],
     createdAt: "2026-08-23T00:00:00.000Z",
     updatedAt: "2026-08-23T00:00:00.000Z",
   });

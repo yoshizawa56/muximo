@@ -50,7 +50,7 @@ export class RunShell {
             ? await this.deps.hooks.resolveHook(workspace.cleanupScriptPath, workspace.rootPath)
             : null,
         };
-        if (!(await this.deps.worktrees.copyFiles(worktree, workspace.worktreeCopyPatterns))) {
+        if (!(await this.deps.worktrees.copyFiles(worktree))) {
           throw new Error("worktree file copy failed");
         }
         if (

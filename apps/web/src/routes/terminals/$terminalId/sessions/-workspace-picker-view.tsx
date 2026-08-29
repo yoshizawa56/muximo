@@ -184,25 +184,6 @@ export function WorkspacePickerView({
             created worktree as the current directory.
           </small>
 
-          <label className={fieldClass}>
-            <span className={fieldLabelClass}>
-              WORKTREE COPY PATTERNS <small className="tracking-normal">(OPTIONAL · ONE PER LINE)</small>
-            </span>
-            <textarea
-              className="min-h-[45px] w-full resize-y rounded-[9px] border border-[#24552e] bg-[rgb(6_20_9_/_82%)] px-[13px] py-[11px] font-mono text-base leading-[1.45] text-[#d8ffdc] outline-none transition-[border-color,box-shadow] placeholder:text-[#416a49] focus:border-lime-deep focus:shadow-[0_0_0_3px_rgb(57_214_91_/_12%)] max-[920px]:min-h-12"
-              value={viewModel.worktreeCopyPatterns}
-              onChange={(event) => viewModel.onWorktreeCopyPatternsChange(event.target.value)}
-              placeholder={".env\n.env.local\nconfig/*.local.json"}
-              rows={4}
-              spellCheck={false}
-            />
-          </label>
-          <small className={fieldHelpClass}>
-            Relative patterns such as <code className="font-mono text-[#a9e9af]">.env</code> or{" "}
-            <code className="font-mono text-[#a9e9af]">config{/**/}*.local.json</code> copy unmanaged files before the
-            setup hook runs.
-          </small>
-
           {viewModel.registrationError ? (
             <p className="m-0 text-[0.62rem] leading-[1.45] text-[#ff9a8f]" role="alert">
               {viewModel.registrationError}

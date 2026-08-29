@@ -103,7 +103,6 @@ const workspace: WorkspaceDirectoryOption = {
   isGit: true,
   setupScriptPath: "/Users/me/.config/muximo/setup",
   cleanupScriptPath: "/Users/me/.config/muximo/cleanup",
-  worktreeCopyPatterns: [".env", "config/**/*.local.json"],
 };
 
 type WorkspaceInput = { selection: WorkspaceSelection; workspace: WorkspaceDirectoryOption | undefined };

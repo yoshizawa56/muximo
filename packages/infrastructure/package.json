@@ -30,7 +30,8 @@
   "dependencies": {
     "@muximo/application": "workspace:*",
     "@muximo/domain": "workspace:*",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "ignore": "^7.0.6"
   },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",

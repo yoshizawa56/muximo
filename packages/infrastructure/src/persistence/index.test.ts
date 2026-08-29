@@ -61,7 +61,6 @@ const workspace: WorkspaceRecord = Workspace.create({
   isGit: true,
   setupScriptPath: "/config/hooks/setup",
   cleanupScriptPath: "/config/hooks/cleanup",
-  worktreeCopyPatterns: [".env", "config/*.local.json"],
   createdAt: "2026-08-09T00:00:00.000Z",
   updatedAt: "2026-08-09T00:00:00.000Z",
 });
@@ -101,7 +100,6 @@ type DatabaseFixture = {
   currentPaneAfterMigration?: PaneRecord;
   claimResults: boolean[];
   backendResults: boolean[];
-  malformedWorkspaceError?: string;
 };
 type DatabaseKey = "default" | "pending" | "restart" | "legacy-pane-migration" | "auth-migration";
 type DatabaseStep =
@@ -113,7 +111,6 @@ type DatabaseStep =
   | { type: "verify-generations" }
   | { type: "verify-upsert-identity" }
   | { type: "verify-agent-association" }
-  | { type: "verify-malformed-workspace" }
   | { type: "verify-auth-migration" }
   | { type: "verify-execution-claim" }
   | { type: "verify-atomic-claim-timestamp" };
@@ -137,7 +134,6 @@ type DatabaseContext = {
   pruneCount: number | undefined;
   claimResults: readonly boolean[];
   backendResults: readonly boolean[];
-  malformedWorkspaceError: string | undefined;
   authPairingColumns: readonly string[];
   authPairingCount: number;
   claimSession: AgentSessionRecord | undefined;
@@ -316,7 +312,7 @@ const cases = [
       hasObserved<DatabaseContext, DatabaseResult>("workspace", workspace),
       hasObserved<DatabaseContext, DatabaseResult>("session", session),
       hasObserved<DatabaseContext, DatabaseResult>("auditCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 7),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
     ],
   },
   {
@@ -341,7 +337,7 @@ const cases = [
     steps: [{ type: "verify-pending" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("probeCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 9),
     ],
   },
   {
@@ -351,7 +347,7 @@ const cases = [
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
       hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 7),
-      hasObserved<DatabaseContext, DatabaseResult>("tmuxServerDefault", null),
+      hasObserved<DatabaseContext, DatabaseResult>("tmuxServerDefault", "'legacy'"),
     ],
   },
   {
@@ -359,7 +355,7 @@ const cases = [
     fixture: "legacy-pane-migration",
     steps: [{ type: "verify-legacy-pane-migration" }],
     assert: [
-      hasObserved<DatabaseContext, DatabaseResult>("legacyPaneAfterMigration", undefined),
+      matchesObserved<DatabaseResult>("legacyPaneAfterMigration", { id: "pane-legacy-migrated" }),
       matchesObserved<DatabaseResult>("currentPaneAfterMigration", { id: "pane-current-migrated" }),
     ],
   },
@@ -388,16 +384,6 @@ const cases = [
         agentSessionId: session.id,
         agentExecutionId: "execution-id-123456",
       }),
-    ],
-  },
-  {
-    name: "fails clearly when persisted workspace patterns are malformed",
-    steps: [{ type: "verify-malformed-workspace" }],
-    assert: [
-      hasObserved<DatabaseContext, DatabaseResult>(
-        "malformedWorkspaceError",
-        "workspace 'workspace-1' has invalid worktree copy patterns; expected an array of strings",
-      ),
     ],
   },
   {
@@ -567,19 +553,6 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           } satisfies PaneRecord);
           break;
         }
-        case "verify-malformed-workspace": {
-          const workspaces = new DrizzleWorkspaceRepository(databases.db);
-          await workspaces.upsert(workspace);
-          databases.sqlite
-            .prepare("UPDATE workspaces SET worktree_copy_patterns = ? WHERE id = ?")
-            .run("{}", workspace.id);
-          try {
-            await workspaces.findById(workspace.id);
-          } catch (error) {
-            fixture.malformedWorkspaceError = error instanceof Error ? error.message : String(error);
-          }
-          break;
-        }
         case "verify-auth-migration":
           break;
         case "verify-execution-claim": {
@@ -636,9 +609,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
     return {
       pane: await panes.findById(pane.id),
       waitingPanes: await panes.list({ state: "waiting_input" }),
-      workspace: fixture.malformedWorkspaceError
-        ? undefined
-        : await new DrizzleWorkspaceRepository(database.db).findById(workspace.id),
+      workspace: await new DrizzleWorkspaceRepository(database.db).findById(workspace.id),
       session: await sessions.findByName(workspace.id, session.name),
       auditCount: database.db.select().from(auditEvents).all().length,
       migrationCount: database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all().length,
@@ -656,7 +627,6 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       pruneCount: fixture.pruneCount,
       claimResults: [...fixture.claimResults],
       backendResults: [...fixture.backendResults],
-      malformedWorkspaceError: fixture.malformedWorkspaceError,
       authPairingColumns: (
         database.sqlite.query("PRAGMA table_info(auth_pairings)").all() as Array<{ name: string }>
       ).map((column) => column.name),

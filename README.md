@@ -136,7 +136,7 @@ Manage workspaces and tmux sessions:
 
 ```sh
 muximo workspace list
-muximo workspace add ~/work/project --name project --copy-pattern .env
+muximo workspace add ~/work/project --name project
 muximo workspace update project --setup-hook ~/.config/muximo/setup
 muximo workspace delete project
 muximo tmux new-session -s project -c ~/work/project

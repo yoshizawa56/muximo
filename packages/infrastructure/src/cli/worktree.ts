@@ -7,15 +7,19 @@ import type {
   ShellWorktreePort,
   WorktreePort,
 } from "@muximo/application";
-import {
-  type AgentSessionRecord,
-  isValidWorktreeCopyPattern,
-  normalizeWorktreeCopyPatterns,
-  type WorkspaceDirectoryOption,
-} from "@muximo/domain";
+import type { AgentSessionRecord, WorkspaceDirectoryOption } from "@muximo/domain";
 import { errorFields, type Logger } from "../logging/index.js";
 import { isPathWithin, realpathAfterMkdir, realpathSafe, resolveFromRoot, unlinkEmptyDirectory } from "./filesystem.js";
-import { gitOutputOrEmpty, gitOutputRaw, gitRequired, gitStatus, gitStatusCode, listUnmanagedFiles } from "./git.js";
+import {
+  gitOutputOrEmpty,
+  gitOutputRaw,
+  gitRequired,
+  gitStatus,
+  gitStatusCode,
+  listIgnoredDirectories,
+  listIgnoredFiles,
+} from "./git.js";
+import { readWorktreeInclude } from "./worktreeinclude.js";
 
 export type WorktreeAdapterOptions = {
   environment: NodeJS.ProcessEnv;
@@ -80,24 +84,31 @@ export class GitWorktreeAdapter implements WorktreePort {
     return { worktreeRoot, worktreePath, branch, baseCommit };
   }
 
-  public async copyFiles(
-    target: Pick<AgentSessionRecord, "workspaceRoot" | "worktreePath">,
-    configuredPatterns: readonly string[],
-  ): Promise<boolean> {
-    if (!target.worktreePath || configuredPatterns.length === 0) return true;
-    const patterns = normalizeWorktreeCopyPatterns(configuredPatterns);
-    if (patterns.some((pattern) => !isValidWorktreeCopyPattern(pattern))) {
-      this.options.logger.warn("worktree.copy_pattern_invalid", { patternCount: patterns.length });
+  public async copyFiles(target: Pick<AgentSessionRecord, "workspaceRoot" | "worktreePath">): Promise<boolean> {
+    if (!target.worktreePath) return true;
+
+    let include: ReturnType<typeof readWorktreeInclude>;
+    try {
+      include = readWorktreeInclude(target.workspaceRoot);
+    } catch (error) {
+      this.options.logger.warn("worktree.include_invalid", { ...errorFields(error) });
       return false;
     }
-    const sourceFiles = listUnmanagedFiles(target.workspaceRoot, this.options.environment);
-    const matchedFiles = new Set<string>();
-    for (const pattern of patterns) {
-      const matches = sourceFiles.filter((file) => matchesWorktreeCopyPattern(pattern, file));
-      if (matches.length === 0) this.options.logger.warn("worktree.copy_pattern_unmatched", { pattern });
-      for (const file of matches) matchedFiles.add(file);
+    if (!include) return true;
+
+    let sourceFiles: string[];
+    let ignoredDirectories: string[];
+    try {
+      sourceFiles = listIgnoredFiles(target.workspaceRoot, this.options.environment);
+      ignoredDirectories = listIgnoredDirectories(target.workspaceRoot, this.options.environment);
+    } catch (error) {
+      this.options.logger.warn("worktree.include_source_discovery_failed", { ...errorFields(error) });
+      return false;
     }
-    for (const relativePath of [...matchedFiles].sort()) {
+    const matchedFiles = sourceFiles.filter(
+      (relativePath) => isSafeRelativePath(relativePath) && include.matches(relativePath, ignoredDirectories),
+    );
+    for (const relativePath of matchedFiles.sort()) {
       const sourcePath = resolve(target.workspaceRoot, relativePath);
       const targetPath = resolve(target.worktreePath, relativePath);
       if (!isPathWithin(target.workspaceRoot, sourcePath) || !isPathWithin(target.worktreePath, targetPath)) {
@@ -327,11 +338,8 @@ export class GitShellWorktreeAdapter implements ShellWorktreePort {
     return this.worktrees.create(workspace, name);
   }
 
-  public copyFiles(
-    target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">,
-    patterns: readonly string[],
-  ): Promise<boolean> {
-    return this.worktrees.copyFiles(target, patterns);
+  public copyFiles(target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">): Promise<boolean> {
+    return this.worktrees.copyFiles(target);
   }
 
   public async remove(input: ShellWorktree): Promise<void> {
@@ -339,39 +347,12 @@ export class GitShellWorktreeAdapter implements ShellWorktreePort {
   }
 }
 
-function matchesWorktreeCopyPattern(pattern: string, path: string): boolean {
-  const patternSegments = pattern.split("/");
-  const pathSegments = path.split("/");
-  const memo = new Map<string, boolean>();
-  const match = (patternIndex: number, pathIndex: number): boolean => {
-    const key = `${patternIndex}:${pathIndex}`;
-    const cached = memo.get(key);
-    if (cached !== undefined) return cached;
-    let result: boolean;
-    if (patternIndex === patternSegments.length) result = pathIndex === pathSegments.length;
-    else if (patternSegments[patternIndex] === "**") {
-      result =
-        match(patternIndex + 1, pathIndex) || (pathIndex < pathSegments.length && match(patternIndex, pathIndex + 1));
-    } else {
-      const patternSegment = patternSegments[patternIndex];
-      const pathSegment = pathSegments[pathIndex];
-      result =
-        patternSegment !== undefined &&
-        pathSegment !== undefined &&
-        matchSegmentPattern(patternSegment, pathSegment) &&
-        match(patternIndex + 1, pathIndex + 1);
-    }
-    memo.set(key, result);
-    return result;
-  };
-  return match(0, 0);
-}
-
-function matchSegmentPattern(pattern: string, value: string): boolean {
-  let expression = "^";
-  for (const character of pattern) {
-    if (character === "*") expression += ".*";
-    else expression += /[.\\+^$()|[\]{}]/.test(character) ? `\\${character}` : character;
-  }
-  return new RegExp(`${expression}$`).test(value);
+function isSafeRelativePath(path: string): boolean {
+  return (
+    path.length > 0 &&
+    !path.includes("\u0000") &&
+    !path.includes("\\") &&
+    !path.startsWith("/") &&
+    !path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  );
 }

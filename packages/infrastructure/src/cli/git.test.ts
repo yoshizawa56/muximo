@@ -11,13 +11,13 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { gitStatus, listUnmanagedFiles } from "./git.js";
+import { gitStatus, listIgnoredDirectories, listIgnoredFiles, listUnmanagedFiles } from "./git.js";
 
 type GitFixture = { root: string };
-type GitInput = { operation: "status" | "unmanaged-files" };
+type GitInput = { operation: "status" | "unmanaged-files" | "ignored-files" | "ignored-directories" };
 type GitResult = string | string[];
 type EmptyContext = {};
-type GitFixtureKey = "default" | "nested";
+type GitFixtureKey = "default" | "nested" | "ignored";
 
 const cases = [
   {
@@ -31,10 +31,32 @@ const cases = [
     assert: [hasError<EmptyContext, GitResult>({ message: /git -C/ })],
   },
   {
+    name: "rejects ignored-file discovery outside a git repository",
+    input: { operation: "ignored-files" },
+    assert: [hasError<EmptyContext, GitResult>({ message: /git -C/ })],
+  },
+  {
+    name: "rejects ignored-directory discovery outside a git repository",
+    input: { operation: "ignored-directories" },
+    assert: [hasError<EmptyContext, GitResult>({ message: /git -C/ })],
+  },
+  {
     name: "summarizes nested untracked files without expanding every file into status output",
     fixture: "nested",
     input: { operation: "status" },
     assert: [returns<EmptyContext, GitResult>("?? nested/\n")],
+  },
+  {
+    name: "lists only files ignored by Git",
+    fixture: "ignored",
+    input: { operation: "ignored-files" },
+    assert: [returns<EmptyContext, GitResult>([".env", "nested/secret.txt"])],
+  },
+  {
+    name: "lists only wholly ignored directories",
+    fixture: "ignored",
+    input: { operation: "ignored-directories" },
+    assert: [returns<EmptyContext, GitResult>(["nested"])],
   },
 ] satisfies readonly OperationCase<GitFixtureKey, GitInput, GitResult, EmptyContext>[];
 
@@ -56,10 +78,26 @@ const table: OperationTable<GitFixture, GitFixtureKey, GitInput, GitResult, Empt
       writeFileSync(join(root, "nested", "two.txt"), "two\n");
       return { fixture: { root }, cleanup: () => rmSync(root, { recursive: true, force: true }) };
     },
+    ignored: () => {
+      const root = mkdtempSync(join(tmpdir(), "muximo-git-probe-"));
+      execFileSync("git", ["-C", root, "init", "-q"]);
+      writeFileSync(join(root, ".gitignore"), ".env\nnested/\n");
+      mkdirSync(join(root, "nested"));
+      writeFileSync(join(root, ".env"), "secret\n");
+      writeFileSync(join(root, "nested", "secret.txt"), "secret\n");
+      writeFileSync(join(root, "visible.txt"), "visible\n");
+      return { fixture: { root }, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+    },
   },
   cases,
   execute: (fixture, input) =>
-    input.operation === "status" ? gitStatus(fixture.root) : listUnmanagedFiles(fixture.root),
+    input.operation === "status"
+      ? gitStatus(fixture.root)
+      : input.operation === "ignored-files"
+        ? listIgnoredFiles(fixture.root)
+        : input.operation === "ignored-directories"
+          ? listIgnoredDirectories(fixture.root)
+          : listUnmanagedFiles(fixture.root),
   observe: () => ({}),
 };
 

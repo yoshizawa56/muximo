@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` DROP COLUMN `worktree_copy_patterns`;

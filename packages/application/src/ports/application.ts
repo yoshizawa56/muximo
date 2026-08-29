@@ -69,7 +69,6 @@ export type MuximodWorkspaceDirectory = {
   isGit: boolean;
   setupScriptPath: string | null;
   cleanupScriptPath: string | null;
-  worktreeCopyPatterns: string[];
 };
 
 export type RegisterWorkspaceCommand = {
@@ -77,16 +76,12 @@ export type RegisterWorkspaceCommand = {
   name?: string;
   setupScriptPath?: Patch<string>;
   cleanupScriptPath?: Patch<string>;
-  worktreeCopyPatterns?: readonly string[];
 };
 
 export type UpdateWorkspaceCommand = {
   name?: string;
   setupScriptPath?: Patch<string>;
   cleanupScriptPath?: Patch<string>;
-  worktreeCopyPatterns?: readonly string[];
-  appendWorktreeCopyPatterns?: readonly string[];
-  clearWorktreeCopyPatterns?: boolean;
 };
 
 export type MuximodTerminalEndpoint = {

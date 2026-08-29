@@ -126,6 +126,66 @@ const cases = [
     ],
   },
   {
+    name: "dispatches the nested session ls alias to the session list handler",
+    input: { args: ["session", "ls"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "sessionList",
+          input: { global: false, names: false, json: false, all: false },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the workspace ls alias to the workspace list handler",
+    input: { args: ["workspace", "ls"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "workspaceList",
+          input: { json: false },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the workspace create alias to the workspace add handler",
+    input: { args: ["workspace", "create", "/work/project"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "workspaceAdd",
+          input: {
+            directory: "/work/project",
+            name: undefined,
+            nameExplicit: false,
+            setupHook: undefined,
+            setupHookExplicit: false,
+            cleanupHook: undefined,
+            cleanupHookExplicit: false,
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches the workspace remove alias to the workspace delete handler",
+    input: { args: ["workspace", "remove", "project"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "workspaceDelete",
+          input: { selector: "project" },
+        },
+      ]),
+    ],
+  },
+  {
     name: "dispatches typed run input while preserving opaque backend arguments",
     input: { args: ["run", "codex", "--profile", "review"] },
     assert: [
@@ -143,6 +203,30 @@ const cases = [
             setupHookExplicit: false,
             cleanupHookExplicit: false,
             backendArgs: ["--profile", "review"],
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches a name-or-path workspace selector for run",
+    input: { args: ["run", "codex", "--workspace", "project"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "run",
+          input: {
+            backend: "codex",
+            name: undefined,
+            workspace: "project",
+            useWorktree: false,
+            worktreeRoot: undefined,
+            setupHook: undefined,
+            cleanupHook: undefined,
+            setupHookExplicit: false,
+            cleanupHookExplicit: false,
+            backendArgs: [],
           },
         },
       ]),

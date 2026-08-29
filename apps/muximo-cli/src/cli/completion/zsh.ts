@@ -41,12 +41,14 @@ function appendNodeFunction(lines: string[], node: CompletionNode, rootFunctionN
     lines.push(`  case "\${words[${wordIndex}]:-}" in`);
     for (const child of node.children) {
       const childFunctionName = `${rootFunctionName}_${child.path.map(sanitizeName).join("_")}`;
-      lines.push(`    ${shellQuote(child.command.name())}) ${childFunctionName} ;;`);
+      for (const name of commandNames(child.command)) {
+        lines.push(`    ${shellQuote(name)}) ${childFunctionName} ;;`);
+      }
     }
     lines.push(
       `    *) _arguments -s ${renderArguments(
         node.options,
-        node.children.map((child) => child.command.name()),
+        node.children.flatMap((child) => commandNames(child.command)),
       )} ;;`,
       "  esac",
       "}",
@@ -55,6 +57,10 @@ function appendNodeFunction(lines: string[], node: CompletionNode, rootFunctionN
   }
 
   for (const child of node.children) appendNodeFunction(lines, child, rootFunctionName);
+}
+
+function commandNames(command: Command): string[] {
+  return [...new Set([command.name(), ...command.aliases()])];
 }
 
 function renderArguments(options: readonly CliOptionSpec[], children: readonly string[]): string {

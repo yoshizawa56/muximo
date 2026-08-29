@@ -9,6 +9,7 @@ export function gitWorkspaceRoot(cwd: string): string | undefined {
       execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
         encoding: "utf8",
         maxBuffer: gitOutputMaxBuffer,
+        stdio: ["ignore", "pipe", "ignore"],
       }).trim(),
     );
   } catch {
@@ -62,6 +63,23 @@ export function listUnmanagedFiles(cwd: string, environment?: NodeJS.ProcessEnv)
     }
   }
   return [...files];
+}
+
+export function listIgnoredFiles(cwd: string, environment?: NodeJS.ProcessEnv): string[] {
+  return gitOutputRaw(cwd, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], environment)
+    .split("\u0000")
+    .filter(Boolean);
+}
+
+export function listIgnoredDirectories(cwd: string, environment?: NodeJS.ProcessEnv): string[] {
+  return gitOutputRaw(
+    cwd,
+    ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+    environment,
+  )
+    .split("\u0000")
+    .filter((path) => path.endsWith("/"))
+    .map((path) => path.slice(0, -1));
 }
 
 export function gitStatus(cwd: string, environment?: NodeJS.ProcessEnv): string {

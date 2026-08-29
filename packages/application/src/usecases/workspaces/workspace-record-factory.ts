@@ -22,7 +22,6 @@ export class WorkspaceRecordFactory {
       isGit: directory.isGit,
       ...(setupScriptPath !== undefined ? { setupScriptPath } : {}),
       ...(cleanupScriptPath !== undefined ? { cleanupScriptPath } : {}),
-      worktreeCopyPatterns: input.worktreeCopyPatterns ?? existing?.worktreeCopyPatterns ?? [],
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     });
@@ -35,9 +34,6 @@ export class WorkspaceRecordFactory {
       name: input.name,
       setupScriptPath: setupHook,
       cleanupScriptPath: cleanupHook,
-      worktreeCopyPatterns: input.worktreeCopyPatterns,
-      appendWorktreeCopyPatterns: input.appendCopyPatterns,
-      clearWorktreeCopyPatterns: input.clearCopyPatterns,
       updatedAt: this.clock.now(),
     });
   }

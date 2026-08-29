@@ -205,7 +205,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const serveStatePath = join(runtime.muximodInstanceDirectory, "serve.json");
   const runAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["run"]>[0]) => {
     const api = await ensureApi();
-    const result = await api.agentSessions.run(input);
+    const result = await api.agentSessions.run({ ...input, cwd: input.cwd ?? cwd });
     if (
       result.cleanup.disposition !== "retained" ||
       result.cleanup.reason !== "cleanup_declined" ||

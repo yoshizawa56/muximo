@@ -21,7 +21,7 @@ export function registerWorkspaceListCommand(
   handlers: CliHandlers,
   context: CliCommandContext,
 ): Command {
-  const command = parent.command("list").description("List registered workspaces");
+  const command = parent.command("list").alias("ls").description("List registered workspaces");
   registerOptions(command, workspaceListOptionSpecs);
   command.action(async (options) => {
     const resolved = resolveCommandOptions(options, workspaceListOptionSpecs, context);
