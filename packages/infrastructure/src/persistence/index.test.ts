@@ -156,10 +156,12 @@ const restartFixture = async (registerCleanup?: CleanupRegistrar): Promise<Fixtu
   const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
     entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
   };
-  journal.entries = journal.entries.filter((entry) => entry.tag !== "0006_remove_tmux_server_default");
+  journal.entries = journal.entries.filter((entry) => entry.idx <= 5);
   writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
   rmSync(join(migrationsFolder, "0006_remove_tmux_server_default.sql"));
   rmSync(join(migrationsFolder, "meta", "0006_snapshot.json"));
+  rmSync(join(migrationsFolder, "0007_remarkable_mac_gargan.sql"));
+  rmSync(join(migrationsFolder, "meta", "0007_snapshot.json"));
 
   const file = join(root, "muximod.sqlite");
   const beforeRestart = createAgentDatabase(file, {
@@ -186,10 +188,12 @@ const legacyPaneMigrationFixture = async (
   const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
     entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
   };
-  journal.entries = journal.entries.filter((entry) => entry.tag !== "0006_remove_tmux_server_default");
+  journal.entries = journal.entries.filter((entry) => entry.idx <= 5);
   writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
   rmSync(join(migrationsFolder, "0006_remove_tmux_server_default.sql"));
   rmSync(join(migrationsFolder, "meta", "0006_snapshot.json"));
+  rmSync(join(migrationsFolder, "0007_remarkable_mac_gargan.sql"));
+  rmSync(join(migrationsFolder, "meta", "0007_snapshot.json"));
 
   const file = join(root, "muximod.sqlite");
   const beforeMigration = createAgentDatabase(file, {
@@ -346,8 +350,8 @@ const cases = [
     steps: [{ type: "verify-restart" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 7),
-      hasObserved<DatabaseContext, DatabaseResult>("tmuxServerDefault", "'legacy'"),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+      hasObserved<DatabaseContext, DatabaseResult>("tmuxServerDefault", null),
     ],
   },
   {
@@ -355,8 +359,9 @@ const cases = [
     fixture: "legacy-pane-migration",
     steps: [{ type: "verify-legacy-pane-migration" }],
     assert: [
-      matchesObserved<DatabaseResult>("legacyPaneAfterMigration", { id: "pane-legacy-migrated" }),
+      hasObserved<DatabaseContext, DatabaseResult>("legacyPaneAfterMigration", undefined),
       matchesObserved<DatabaseResult>("currentPaneAfterMigration", { id: "pane-current-migrated" }),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
     ],
   },
   {

@@ -30,7 +30,7 @@ type ResolverContext = {
   resolvedName: string;
   isTarget: boolean;
 };
-type FixtureKey = "default";
+type FixtureKey = "default" | "managed";
 
 const cases = [
   {
@@ -54,6 +54,12 @@ const cases = [
     assert: [hasObserved<ResolverContext, ResolverResult>("resolvedName", "target")],
   },
   {
+    name: "uses the managed workspace binding before resolving the caller cwd",
+    fixture: "managed",
+    input: { cwd: "missing" },
+    assert: [hasObserved<ResolverContext, ResolverResult>("resolvedName", "target")],
+  },
+  {
     name: "does not accept an internal workspace id as a selector",
     input: { workspace: "workspace-id" },
     assert: [hasError<ResolverContext, ResolverResult>({ message: /workspace not found/iu })],
@@ -62,6 +68,7 @@ const cases = [
 
 const table: OperationTable<WorkspaceFixture, FixtureKey, ResolverInput, ResolverResult, ResolverContext> = {
   defaultFixture: createFixture,
+  fixtures: { default: createFixture, managed: createManagedFixture },
   cases,
   execute: (fixture, input) =>
     fixture.resolver.resolveCurrent({
@@ -85,7 +92,10 @@ describe("workspace resolver", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
-function createFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorkspaceFixture } {
+function createFixture(
+  registerCleanup?: (cleanup: () => void) => void,
+  options: { managedBinding?: boolean } = {},
+): { fixture: WorkspaceFixture } {
   const root = mkdtempSync(join(tmpdir(), "muximo-workspace-resolver-"));
   const targetPath = join(root, "target");
   const nestedTargetPath = join(targetPath, "nested");
@@ -118,9 +128,23 @@ function createFixture(registerCleanup?: (cleanup: () => void) => void): { fixtu
   };
   const resolver = new WorkspaceResolverAdapter({
     cwd: otherPath,
-    environment: {},
+    environment: options.managedBinding ? { MUXIMOD_WORKSPACE_ID: target.id } : {},
     workspaces,
+    ...(options.managedBinding
+      ? {
+          directory: {
+            resolveDirectory: () => {
+              throw new Error("caller cwd should not be resolved");
+            },
+            resolveHook: () => "",
+          },
+        }
+      : {}),
   });
   registerCleanup?.(() => rmSync(root, { recursive: true, force: true }));
   return { fixture: { root, targetPath, nestedTargetPath, otherPath, resolver } };
+}
+
+function createManagedFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorkspaceFixture } {
+  return createFixture(registerCleanup, { managedBinding: true });
 }

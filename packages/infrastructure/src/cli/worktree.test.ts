@@ -200,9 +200,8 @@ const lifecycleTable: ScenarioTable<
   },
 };
 
-type CopyInput = {
-  includeContents: string;
-};
+type CopyInput = undefined;
+type CopyFixtureKey = "single" | "all" | "negated" | "symlink" | "special-global" | "special-vendor";
 
 type CopyContext = {
   result: boolean | undefined;
@@ -213,7 +212,8 @@ type CopyContext = {
 const copyCases = [
   {
     name: "copies an ignored file selected by .worktreeinclude",
-    input: { includeContents: ".env\n" },
+    fixture: "single",
+    input: undefined,
     assert: [
       returns<CopyContext, boolean>(true),
       hasObserved<CopyContext, boolean>("result", true),
@@ -223,7 +223,8 @@ const copyCases = [
   },
   {
     name: "does not copy an untracked file unless Git also marks it ignored",
-    input: { includeContents: "**\n" },
+    fixture: "all",
+    input: undefined,
     assert: [
       returns<CopyContext, boolean>(true),
       hasObserved<CopyContext, boolean>("copiedPaths", [".env", ".env.local"]),
@@ -232,7 +233,8 @@ const copyCases = [
   },
   {
     name: "applies Gitignore negation rules when selecting ignored files",
-    input: { includeContents: "**\n!.env.local\n" },
+    fixture: "negated",
+    input: undefined,
     assert: [
       returns<CopyContext, boolean>(true),
       hasObserved<CopyContext, boolean>("copiedPaths", [".env"]),
@@ -242,7 +244,7 @@ const copyCases = [
   {
     name: "refuses to copy through a worktree symlink",
     fixture: "symlink",
-    input: { includeContents: "nested/**\n" },
+    input: undefined,
     assert: [
       returns<CopyContext, boolean>(false),
       hasObserved<CopyContext, boolean>("result", false),
@@ -255,8 +257,8 @@ const copyCases = [
   },
   {
     name: "does not traverse a wholly ignored directory for an unrestricted ** slash pattern",
-    fixture: "special",
-    input: { includeContents: "**/config.json\n" },
+    fixture: "special-global",
+    input: undefined,
     assert: [
       returns<CopyContext, boolean>(true),
       hasObserved<CopyContext, boolean>("copiedPaths", []),
@@ -265,23 +267,29 @@ const copyCases = [
   },
   {
     name: "traverses a wholly ignored directory named by the pattern",
-    fixture: "special",
-    input: { includeContents: "vendor/**/config.json\n" },
+    fixture: "special-vendor",
+    input: undefined,
     assert: [
       returns<CopyContext, boolean>(true),
       hasObserved<CopyContext, boolean>("copiedPaths", ["vendor/config.json", "vendor/nested/config.json"]),
       hasObserved<CopyContext, boolean>("diagnosticEvents", []),
     ],
   },
-] satisfies readonly OperationCase<"default" | "symlink" | "special", CopyInput, boolean, CopyContext>[];
+] satisfies readonly OperationCase<CopyFixtureKey, CopyInput, boolean, CopyContext>[];
 
-const copyTable: OperationTable<WorktreeFixture, "default" | "symlink" | "special", CopyInput, boolean, CopyContext> = {
+const copyTable: OperationTable<WorktreeFixture, CopyFixtureKey, CopyInput, boolean, CopyContext> = {
   defaultFixture: createCopyFixture,
-  fixtures: { default: createCopyFixture, symlink: createSymlinkFixture, special: createSpecialIncludeFixture },
+  fixtures: {
+    single: createCopyFixture,
+    all: createCopyAllFixture,
+    negated: createCopyNegatedFixture,
+    symlink: createSymlinkFixture,
+    "special-global": createSpecialGlobalFixture,
+    "special-vendor": createSpecialVendorFixture,
+  },
   cases: copyCases,
-  execute: async (fixture, input) => {
+  execute: async (fixture) => {
     if (!fixture.created?.worktreePath) throw new Error("copy fixture worktree is missing");
-    writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), input.includeContents);
     fixture.copyResult = await fixture.adapter.copyFiles({
       workspaceRoot: fixture.workspaceRoot,
       worktreePath: fixture.created.worktreePath,
@@ -327,12 +335,28 @@ function createPartialCreationFixture(registerCleanup?: (cleanup: () => void) =>
 }
 
 function createCopyFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createCopyFixtureWithInclude(".env\n", registerCleanup);
+}
+
+function createCopyAllFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createCopyFixtureWithInclude("**\n", registerCleanup);
+}
+
+function createCopyNegatedFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createCopyFixtureWithInclude("**\n!.env.local\n", registerCleanup);
+}
+
+function createCopyFixtureWithInclude(
+  includeContents: string,
+  registerCleanup?: (cleanup: () => void) => void,
+): { fixture: WorktreeFixture } {
   const fixture = createGitFixture();
   arrangeRawWorktree(fixture, "copy");
   writeFileSync(join(fixture.workspaceRoot, ".gitignore"), ".env*\n");
   writeFileSync(join(fixture.workspaceRoot, ".env"), "secret\n");
   writeFileSync(join(fixture.workspaceRoot, ".env.local"), "local secret\n");
   writeFileSync(join(fixture.workspaceRoot, "untracked.txt"), "not ignored\n");
+  writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), includeContents);
   registerFixtureCleanup(fixture, registerCleanup);
   return { fixture };
 }
@@ -344,6 +368,7 @@ function createSymlinkFixture(registerCleanup?: (cleanup: () => void) => void): 
   mkdirSync(resolve(source, ".."), { recursive: true });
   writeFileSync(source, "secret\n");
   writeFileSync(join(fixture.workspaceRoot, ".gitignore"), "nested/\n");
+  writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), "nested/**\n");
   const outside = join(fixture.root, "outside");
   mkdirSync(outside, { recursive: true });
   symlinkSync(outside, join(fixture.created?.worktreePath ?? join(fixture.worktreeRoot, "symlink"), "nested"));
@@ -351,13 +376,25 @@ function createSymlinkFixture(registerCleanup?: (cleanup: () => void) => void): 
   return { fixture };
 }
 
-function createSpecialIncludeFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+function createSpecialGlobalFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createSpecialIncludeFixture("**/config.json\n", registerCleanup);
+}
+
+function createSpecialVendorFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: WorktreeFixture } {
+  return createSpecialIncludeFixture("vendor/**/config.json\n", registerCleanup);
+}
+
+function createSpecialIncludeFixture(
+  includeContents: string,
+  registerCleanup?: (cleanup: () => void) => void,
+): { fixture: WorktreeFixture } {
   const fixture = createGitFixture();
   arrangeRawWorktree(fixture, "special");
   writeFileSync(join(fixture.workspaceRoot, ".gitignore"), "vendor/\n");
   mkdirSync(join(fixture.workspaceRoot, "vendor", "nested"), { recursive: true });
   writeFileSync(join(fixture.workspaceRoot, "vendor", "config.json"), "secret\n");
   writeFileSync(join(fixture.workspaceRoot, "vendor", "nested", "config.json"), "nested secret\n");
+  writeFileSync(join(fixture.workspaceRoot, ".worktreeinclude"), includeContents);
   registerFixtureCleanup(fixture, registerCleanup);
   return { fixture };
 }

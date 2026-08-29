@@ -32,13 +32,13 @@ export class WorkspaceResolverAdapter implements WorkspaceResolverPort {
     const workspaceSelector = input.workspace?.trim();
     if (workspaceSelector) return this.resolveExplicit(workspaceSelector, input.cwd ?? this.cwd);
 
-    const cwd = await this.resolveCwd(input.cwd);
-
     const selectedWorkspaceId = this.options.environment.MUXIMOD_WORKSPACE_ID?.trim();
     if (selectedWorkspaceId) {
       const selected = await this.options.workspaces.findById(WorkspaceId.create(selectedWorkspaceId));
       if (selected) return selected;
     }
+
+    const cwd = await this.resolveCwd(input.cwd);
 
     const gitRoot = gitWorkspaceRoot(cwd);
     const root = gitRoot ?? cwd;
