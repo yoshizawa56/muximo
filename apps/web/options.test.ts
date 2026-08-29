@@ -58,7 +58,14 @@ const table: OperationTable<undefined, "default", WebInput, WebResult, WebContex
   defaultFixture: noFixture(),
   cases,
   execute: (_fixture, input) =>
-    resolveWebOptions({ name: input.name, environment: { HOME: "/home/test", ...input.environment } }, "/workspace"),
+    resolveWebOptions(
+      {
+        name: input.name,
+        repositoryRoot: "/muximo",
+        environment: { HOME: "/home/test", ...input.environment },
+      },
+      "/workspace",
+    ),
   observe: (_fixture, result) =>
     result.ok
       ? {

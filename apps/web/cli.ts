@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createTailscaleServeClient,
   createWebDaemonManager,
@@ -21,6 +22,8 @@ type WebCliContext = {
   tailscale: ReturnType<typeof createTailscaleServeClient>;
 };
 
+const sourceRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
 process.exitCode = await main();
 
 async function main(): Promise<number> {
@@ -33,11 +36,11 @@ async function main(): Promise<number> {
     const cwd = process.cwd();
     const profile = getProfile({
       name: parsed.profileName,
-      cwd,
+      repositoryRoot: sourceRepositoryRoot,
       baseEnvironment: process.env,
     });
     const webOptions = resolveWebOptions(profile, cwd);
-    const repositoryRoot = profile.repositoryRoot ?? cwd;
+    const repositoryRoot = profile.repositoryRoot;
     const webRoot = join(repositoryRoot, "apps", "web");
     const context: WebCliContext = {
       options: webOptions,

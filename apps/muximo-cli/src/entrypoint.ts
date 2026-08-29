@@ -1,4 +1,6 @@
+import { dirname, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { DaemonHealthError } from "@muximo/application";
 import { defaultLogFile } from "@muximo/infrastructure/cli-client";
 import { getProfile, resolveProfileName } from "@muximo/profile";
@@ -9,6 +11,8 @@ import { createCliComposition } from "./cli/compose.js";
 import { readOptionValues, scanRootOptions } from "./cli/options/index.js";
 import { presentDaemonError } from "./cli/presenters/daemon.js";
 import { resolveMuximoCliRuntimeOptions } from "./cli/runtime.js";
+
+const sourceRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 export type CliEntrypointOptions = {
   env?: NodeJS.ProcessEnv;
@@ -46,7 +50,7 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
     const rawGlobalOptions = readOptionValues(rootOptions.options, globalOptionSpecs);
     const profile = getProfile({
       name: resolveProfileName(rawGlobalOptions.environment ?? inputEnvironment.MUXIMO_ENV),
-      cwd: process.cwd(),
+      repositoryRoot: sourceRepositoryRoot,
       baseEnvironment: inputEnvironment,
     });
     const runtimeResolution = resolveMuximoCliRuntimeOptions({

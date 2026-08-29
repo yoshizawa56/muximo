@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isIP } from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 /** Raw environment values supplied by an application entrypoint or profile file. */
 export type EnvironmentValues = Record<string, string | undefined>;
@@ -10,28 +10,27 @@ export type ProfileName = string;
 /** A profile after generic file loading, before application-specific interpretation. */
 export type Profile = {
   name?: ProfileName;
-  repositoryRoot?: string;
+  repositoryRoot: string;
   sourceFile?: string;
   environment: EnvironmentValues;
 };
 
 export type GetProfileOptions = {
   name?: ProfileName;
-  cwd: string;
+  repositoryRoot: string;
   baseEnvironment?: EnvironmentValues;
-  repositoryRoot?: string;
 };
 
 /**
  * Loads a selected profile without interpreting component-specific variables.
- * The caller supplies the ambient environment explicitly so this package has
- * no hidden process-global input. Profile values override ambient values and
- * the selected name is authoritative for MUXIMO_ENV. An omitted name means
- * that no profile file is loaded; the caller owns its application defaults.
+ * The caller supplies the repository root and ambient environment explicitly
+ * so this package has no hidden process-global input. Profile values override
+ * ambient values and the selected name is authoritative for MUXIMO_ENV. An
+ * omitted name means that no profile file is loaded; the caller owns its
+ * application defaults.
  */
 export function getProfile(options: GetProfileOptions): Profile {
-  const cwd = resolve(options.cwd);
-  const repositoryRoot = options.repositoryRoot ?? findRepositoryRoot(cwd);
+  const repositoryRoot = resolve(options.repositoryRoot);
   const name = resolveProfileName(options.name);
   const loaded = loadProfileValues(name, repositoryRoot);
   const environment = {
@@ -40,8 +39,8 @@ export function getProfile(options: GetProfileOptions): Profile {
     ...(name === undefined ? {} : { MUXIMO_ENV: name }),
   };
   return {
+    repositoryRoot,
     ...(name === undefined ? {} : { name }),
-    ...(repositoryRoot === undefined ? {} : { repositoryRoot }),
     ...(loaded.sourceFile === undefined ? {} : { sourceFile: loaded.sourceFile }),
     environment,
   };
@@ -105,12 +104,9 @@ function isLoopbackOrPrivateIpv4(value: string): boolean {
 
 function loadProfileValues(
   name: ProfileName | undefined,
-  repositoryRoot: string | undefined,
+  repositoryRoot: string,
 ): { values: Record<string, string>; sourceFile?: string } {
   if (name === undefined) return { values: {} };
-  if (repositoryRoot === undefined) {
-    throw new Error(`the ${name} environment requires a source checkout containing .env.${name}`);
-  }
   const path = profileFilePath(name, repositoryRoot);
   if (!existsSync(path)) {
     throw new Error(`the ${name} environment profile was not found: ${path}`);
@@ -120,16 +116,6 @@ function loadProfileValues(
   } catch (error) {
     if (error instanceof Error && error.message.startsWith(`${path}:`)) throw error;
     throw new Error(`could not read environment profile ${path}`, { cause: error });
-  }
-}
-
-function findRepositoryRoot(startDirectory: string): string | undefined {
-  let current = startDirectory;
-  while (true) {
-    if (existsSync(join(current, "package.json")) && existsSync(join(current, "apps"))) return current;
-    const parent = dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
   }
 }
 

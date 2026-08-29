@@ -31,16 +31,18 @@ and verification.
 ## Environment profiles
 
 The global `--env <name>` option selects an arbitrary profile for the relevant
-client application. Each application entrypoint parses the option and reads the
-ambient `process.env`; the shared `@muximo/profile` package then loads
-`.env.<name>` and returns raw values. It does not interpret component-specific
-variables. Without `--env`, no profile file is loaded.
+client application. Each application entrypoint parses the option, reads the
+ambient `process.env`, and resolves the source repository root from its own
+module location; the shared `@muximo/profile` package then loads
+`.env.<name>` from that root and returns raw values. It does not interpret
+component-specific variables. Without `--env`, no profile file is loaded.
 
 Profile resolution is:
 
-1. the application entrypoint supplies the selected name and ambient process
-   environment to the generic loader;
-2. if a name is selected, `.env.<name>` is parsed and overlays the ambient values;
+1. the application entrypoint supplies the source repository root, selected name,
+   and ambient process environment to the generic loader;
+2. if a name is selected, `.env.<name>` is parsed from the source repository
+   root and overlays the ambient values;
 3. the selected name is reflected in the raw environment as `MUXIMO_ENV`;
 4. each application interprets only the values relevant to its own runtime;
 5. each application applies its own name-independent defaults.
