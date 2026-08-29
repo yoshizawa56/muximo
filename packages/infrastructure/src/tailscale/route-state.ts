@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSy
 import { dirname } from "node:path";
 
 export type ServeRouteState = {
-  schemaVersion: 2;
+  schemaVersion: 1;
   environment?: string;
   component: string;
   provider: "tailscale";
@@ -79,7 +79,7 @@ function isServeRouteState(value: unknown): value is ServeRouteState {
       (keys ===
         "component,externalPort,hostname,localTarget,path,provider,publicUrl,routeFingerprint,schemaVersion,updatedAt" &&
         value.environment === undefined)) &&
-    value.schemaVersion === 2 &&
+    value.schemaVersion === 1 &&
     typeof value.component === "string" &&
     value.component.length > 0 &&
     value.provider === "tailscale" &&

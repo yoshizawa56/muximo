@@ -152,7 +152,7 @@ async function stopServeRoute(context: WebCliContext): Promise<number> {
 
 function writeRouteState(context: WebCliContext, route: TailscaleServeRoute): void {
   const state: ServeRouteState = {
-    schemaVersion: 2,
+    schemaVersion: 1,
     ...(context.options.environmentName === undefined ? {} : { environment: context.options.environmentName }),
     component: "web",
     provider: "tailscale",

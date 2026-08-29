@@ -38,7 +38,7 @@ type RouteContext = {
 };
 
 const state: ServeRouteState = {
-  schemaVersion: 2,
+  schemaVersion: 1,
   environment: "local",
   component: "web",
   provider: "tailscale",
@@ -71,7 +71,7 @@ const cases = [
     input: { kind: "write-default" },
     assert: [
       hasObserved<RouteContext, ServeRouteState | undefined>("state", {
-        schemaVersion: 2,
+        schemaVersion: 1,
         component: "web",
         provider: "tailscale",
         hostname: "machine.tailnet.ts.net",
