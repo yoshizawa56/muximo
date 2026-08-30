@@ -1,3 +1,4 @@
+import type { CustomKeyboardIcon } from "./icons";
 import {
   customKeyboardAbcLetterRow,
   customKeyboardAbcRows,
@@ -6,7 +7,6 @@ import {
 } from "./layout";
 import type { CustomKeyboardTerminalAction } from "./terminal-actions";
 import type {
-  CustomKeyboardIcon,
   CustomKeyboardKey,
   CustomKeyboardLayout,
   CustomKeyboardModifier,
@@ -28,7 +28,7 @@ export function defineKey<const T extends CustomKeyboardKeyDefinition>(definitio
   return definition;
 }
 
-function defineKeys<const T extends readonly CustomKeyboardKeyDefinition[]>(definitions: T): T {
+export function defineKeys<const T extends readonly CustomKeyboardKeyDefinition[]>(definitions: T): T {
   const ids = new Set<string>();
   for (const definition of definitions) {
     if (ids.has(definition.id)) throw new Error(`Duplicate custom keyboard key id: ${definition.id}`);

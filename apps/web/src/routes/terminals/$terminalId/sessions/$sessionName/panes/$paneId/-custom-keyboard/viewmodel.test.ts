@@ -1,5 +1,13 @@
-import { noFixture, type OperationCase, type OperationTable, returns, runOperationTable } from "@muximo/test-support";
+import {
+  hasError,
+  noFixture,
+  type OperationCase,
+  type OperationTable,
+  returns,
+  runOperationTable,
+} from "@muximo/test-support";
 import { describe, it } from "vitest";
+import { defineKey, defineKeys } from "./definitions";
 import {
   applyCustomKeyboardDrop,
   assignedKeyIds,
@@ -332,7 +340,10 @@ const catalogTable: OperationTable<undefined, "default", CatalogInput, boolean, 
   observe: () => ({}),
 };
 
-type DefinitionQuery = { type: "unique" } | { type: "surface"; surfaceId: CustomKeyboardSurfaceId };
+type DefinitionQuery =
+  | { type: "unique" }
+  | { type: "surface"; surfaceId: CustomKeyboardSurfaceId }
+  | { type: "rejects-duplicate" };
 type DefinitionObservation = boolean | readonly string[];
 
 const definitionCases = [
@@ -351,6 +362,11 @@ const definitionCases = [
     input: { type: "surface", surfaceId: "profile" },
     assert: [returns<EmptyContext, DefinitionObservation>([])],
   },
+  {
+    name: "rejects duplicate definition ids",
+    input: { type: "rejects-duplicate" },
+    assert: [hasError<EmptyContext, DefinitionObservation>({ message: "Duplicate custom keyboard key id: duplicate" })],
+  },
 ] satisfies readonly OperationCase<"default", DefinitionQuery, DefinitionObservation, EmptyContext>[];
 
 const definitionTable: OperationTable<undefined, "default", DefinitionQuery, DefinitionObservation, EmptyContext> = {
@@ -360,6 +376,17 @@ const definitionTable: OperationTable<undefined, "default", DefinitionQuery, Def
     if (input.type === "unique") {
       const ids = customKeyboardKeyDefinitions.map((definition) => definition.id);
       return new Set(ids).size === ids.length;
+    }
+    if (input.type === "rejects-duplicate") {
+      const duplicateDefinition = defineKey({
+        id: "duplicate",
+        category: "special",
+        accessibleLabel: "Duplicate",
+        activation: { type: "sequence", sequence: [{ type: "text", value: "duplicate" }] },
+        defaultPlacement: "library",
+      });
+      defineKeys([duplicateDefinition, duplicateDefinition]);
+      return true;
     }
     return customKeyboardSurfaceDefinitions.find((surface) => surface.id === input.surfaceId)?.keyIds ?? [];
   },
