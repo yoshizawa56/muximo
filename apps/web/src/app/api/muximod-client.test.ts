@@ -373,15 +373,6 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
         create: os.panes.create.handler(() => ({ pane })),
       },
       agentSessions: {
-        run: os.agentSessions.run.handler(() => ({
-          process: { started: true, code: 0, interrupted: false },
-          session: agentSession,
-          cleanup: { disposition: "not_requested", reason: "no_worktree" },
-        })),
-        resume: os.agentSessions.resume.handler(() => ({
-          process: { started: true, code: 0, interrupted: false },
-          session: agentSession,
-        })),
         cleanup: os.agentSessions.cleanup.handler(() => ({
           session: agentSession,
           cleanup: { disposition: "removed" },

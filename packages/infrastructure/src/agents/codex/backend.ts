@@ -88,6 +88,8 @@ export class CodexBackendProvider implements AgentBackendProvider {
     return sessionUpdate;
   }
 
+  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {}
+
   public archive(session: AgentSessionRecord): Promise<boolean> {
     return this.manageRemoteOperation(session, "archive");
   }

@@ -2,6 +2,7 @@ import { Database as BunDatabase } from "bun:sqlite";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentExecutionReceipt } from "@muximo/application";
 import {
   AgentSession,
   AgentSessionId,
@@ -113,7 +114,8 @@ type DatabaseStep =
   | { type: "verify-agent-association" }
   | { type: "verify-auth-migration" }
   | { type: "verify-execution-claim" }
-  | { type: "verify-atomic-claim-timestamp" };
+  | { type: "verify-atomic-claim-timestamp" }
+  | { type: "verify-execution-receipt" };
 type DatabaseResult = undefined;
 type DatabaseContext = {
   pane: PaneRecord | undefined;
@@ -140,6 +142,7 @@ type DatabaseContext = {
   timestampWorkspace: { name: string; createdAt: string; updatedAt: string } | undefined;
   timestampSession: { name: string; createdAt: string; updatedAt: string } | undefined;
   tmuxServerDefault: string | null | undefined;
+  receipt: AgentExecutionReceipt | undefined;
 };
 
 const normalFixture = (): FixtureHandle<DatabaseFixture> => {
@@ -316,7 +319,7 @@ const cases = [
       hasObserved<DatabaseContext, DatabaseResult>("workspace", workspace),
       hasObserved<DatabaseContext, DatabaseResult>("session", session),
       hasObserved<DatabaseContext, DatabaseResult>("auditCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 9),
     ],
   },
   {
@@ -341,7 +344,7 @@ const cases = [
     steps: [{ type: "verify-pending" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("probeCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 9),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 10),
     ],
   },
   {
@@ -350,7 +353,7 @@ const cases = [
     steps: [{ type: "verify-restart" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 9),
       hasObserved<DatabaseContext, DatabaseResult>("tmuxServerDefault", null),
     ],
   },
@@ -361,7 +364,7 @@ const cases = [
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("legacyPaneAfterMigration", undefined),
       matchesObserved<DatabaseResult>("currentPaneAfterMigration", { id: "pane-current-migrated" }),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 9),
     ],
   },
   {
@@ -442,6 +445,19 @@ const cases = [
         executionPid: 1003,
         executionStartedAt: "2026-08-14T12:02:00.000Z",
         updatedAt: "2026-08-14T12:02:01.000Z",
+      }),
+    ],
+  },
+  {
+    name: "retains a completion receipt after the session is finalized",
+    steps: [{ type: "verify-execution-receipt" }],
+    assert: [
+      matchesObserved<DatabaseResult>("receipt", {
+        operation: "run",
+        agentSessionId: session.id,
+        executionId: "execution-receipt",
+        process: { started: true, code: 0, interrupted: false },
+        cleanup: { disposition: "not_requested", reason: "no_worktree" },
       }),
     ],
   },
@@ -602,6 +618,23 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           );
           break;
         }
+        case "verify-execution-receipt": {
+          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const finalized = AgentSession.update(session, {
+            status: "exited",
+            lastExitStatus: 0,
+            updatedAt: "2026-08-14T12:03:00.000Z",
+          });
+          await sessions.saveExecutionReceipt({
+            operation: "run",
+            agentSessionId: finalized.id,
+            executionId: "execution-receipt",
+            process: { started: true, code: 0, interrupted: false },
+            session: finalized,
+            cleanup: { disposition: "not_requested", reason: "no_worktree" },
+          });
+          break;
+        }
         default:
           assertNever(step);
       }
@@ -644,6 +677,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       tmuxServerDefault: (
         database.sqlite.query("PRAGMA table_info(panes)").all() as Array<{ name: string; dflt_value: string | null }>
       ).find((column) => column.name === "tmux_server_id")?.dflt_value,
+      receipt: await sessions.findExecutionReceipt("execution-receipt"),
     };
   },
 };

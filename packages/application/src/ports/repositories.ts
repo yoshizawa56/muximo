@@ -34,6 +34,14 @@ export type ClaimExecutionInput = {
   id: AgentSessionId;
   expectedExecutionPid: number | null;
   executionId: string;
+  executionPid: number | null;
+  executionStartedAt: string;
+  updatedAt: string;
+};
+
+export type AttachExecutionInput = {
+  id: AgentSessionId;
+  executionId: string;
   executionPid: number;
   executionStartedAt: string;
   updatedAt: string;
@@ -46,6 +54,7 @@ export interface AgentSessionRepository {
   insert(record: AgentSessionRecord): Promise<void>;
   update(record: AgentSessionRecord): Promise<void>;
   claimExecution(input: ClaimExecutionInput): Promise<boolean>;
+  attachExecution(input: AttachExecutionInput): Promise<boolean>;
   setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean>;
   delete(id: AgentSessionId): Promise<void>;
 }

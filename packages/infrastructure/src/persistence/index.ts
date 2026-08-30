@@ -37,7 +37,7 @@ export {
   DrizzleWorkspaceRepository,
   recordAuditEvent,
 } from "./repositories/sqlite/index.js";
-export { agentSessions, auditEvents, codexSessionStates, panes, workspaces } from "./schema.js";
+export { agentExecutionReceipts, agentSessions, auditEvents, codexSessionStates, panes, workspaces } from "./schema.js";
 export {
   createMigrationSchemaSynchronizer,
   createPushSchemaSynchronizer,

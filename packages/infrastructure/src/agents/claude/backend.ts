@@ -39,6 +39,8 @@ export class ClaudeBackendProvider implements AgentBackendProvider {
     return undefined;
   }
 
+  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {}
+
   public async archive(_session: AgentSessionRecord): Promise<boolean> {
     return true;
   }

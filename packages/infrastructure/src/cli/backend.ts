@@ -1,11 +1,8 @@
 import type {
-  AgentExecutionPort,
+  AgentExecutionResult,
   AgentObservationPort,
   AgentStateObservation,
-  LaunchExecution,
-  LaunchPlan,
   LaunchPreparation,
-  ProcessResult,
   RemoteSessionPort,
   SessionBaselineResult,
   SessionLauncherPort,
@@ -20,16 +17,26 @@ import type {
 import type { AgentMonitor, AgentObservation } from "../agents/index.js";
 import { errorFields } from "../logging/index.js";
 import { stringEnvironment } from "../process/process.js";
-import type { TerminalTitlePort } from "../terminal/title.js";
 
 export type BackendAdapterOptions = AgentBackendProviderOptions & {
   observations: AgentObservationPort;
   providers: AgentBackendProviderRegistry;
-  terminalTitle?: TerminalTitlePort;
+};
+
+type PreparedLaunchRuntime = {
+  launch: AgentBackendLaunch;
+  provider: ReturnType<AgentBackendProviderRegistry["get"]>;
+  runDir: string;
+  startedAt: number;
+  monitor?: AgentMonitor;
+  monitorStarted: boolean;
+  monitorStarting?: Promise<void>;
 };
 
 /** Generic launch adapter; provider behavior is delegated to the agent registry. */
 export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPort, SessionResourcePort {
+  private readonly prepared = new Map<string, PreparedLaunchRuntime>();
+
   public constructor(private readonly options: BackendAdapterOptions) {}
 
   public captureBaseline(session: AgentSessionRecord): Promise<SessionBaselineResult> {
@@ -44,10 +51,155 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     const provider = this.options.providers.get(session.backend);
     const preparation = await provider.prepareLaunch(session, backendArgs, resume);
     const runDir = session.worktreePath ?? session.workspaceRoot;
-    return {
-      sessionUpdate: preparation.sessionUpdate,
-      plan: this.wrapPlan(preparation.launch, session, runDir, provider),
+    const launch = preparation.launch;
+    if (!launch.command[0]) throw new Error("backend command executable is missing");
+    if (!session.executionId) throw new Error("agent execution id is missing");
+    const runtime: PreparedLaunchRuntime = {
+      launch,
+      provider,
+      runDir,
+      startedAt: launchStartedAt(session),
+      monitorStarted: false,
     };
+    this.prepared.set(session.executionId, runtime);
+    return {
+      execution: {
+        sessionId: session.id,
+        executionId: session.executionId,
+        sessionName: session.name,
+        backend: session.backend,
+        command: [...launch.command],
+        cwd: runDir,
+        environment: stringEnvironment({
+          ...this.options.environment,
+          MUXIMOD_AGENT_SESSION_ID: session.id,
+          MUXIMOD_AGENT_ID: session.backend,
+        }),
+      },
+      sessionUpdate: preparation.sessionUpdate,
+    };
+  }
+
+  public async startLaunch(session: AgentSessionRecord): Promise<void> {
+    if (!session.executionId) throw new Error("agent execution id is missing");
+    let runtime = this.prepared.get(session.executionId);
+    if (!runtime) {
+      runtime = await this.restoreRuntime(session);
+      if (!runtime) return;
+      this.prepared.set(session.executionId, runtime);
+    }
+    if (runtime.monitorStarted) return;
+    if (runtime.monitorStarting) return runtime.monitorStarting;
+    const starting = this.startMonitor(session, runtime);
+    runtime.monitorStarting = starting;
+    try {
+      await starting;
+    } finally {
+      if (runtime.monitorStarting === starting) runtime.monitorStarting = undefined;
+    }
+  }
+
+  /** Rebuilds observers for live host-owned executions after daemon startup. */
+  public async restoreActiveLaunches(): Promise<void> {
+    for (const session of await this.options.sessions.list()) {
+      if (
+        (session.status !== "running" && session.status !== "resuming") ||
+        session.executionId === undefined ||
+        session.executionPid === undefined
+      ) {
+        continue;
+      }
+      try {
+        await this.startLaunch(session);
+      } catch (error) {
+        this.options.logger.warn("agent.monitor_restore_failed", {
+          sessionId: session.id,
+          executionId: session.executionId,
+          ...errorFields(error),
+        });
+      }
+    }
+  }
+
+  public async completeLaunch(
+    session: AgentSessionRecord,
+    process: AgentExecutionResult,
+  ): Promise<import("@muximo/application").SessionIdentityUpdate | undefined> {
+    if (!session.executionId) throw new Error("agent execution id is missing");
+    const runtime = this.prepared.get(session.executionId);
+    const provider = runtime?.provider ?? this.options.providers.get(session.backend);
+    const runDir = runtime?.runDir ?? session.worktreePath ?? session.workspaceRoot;
+    const startedAt = runtime?.startedAt ?? launchStartedAt(session);
+    try {
+      if (runtime?.monitorStarting) await runtime.monitorStarting;
+      if (process.interrupted && runtime?.launch.abortSession) {
+        try {
+          await runtime.launch.abortSession();
+        } catch (error) {
+          this.options.logger.warn("agent.session_abort_failed", { ...errorFields(error), sessionName: session.name });
+        }
+      }
+      return await provider.afterRun(session, runDir, startedAt);
+    } finally {
+      if (runtime?.monitorStarted && runtime.monitor) {
+        try {
+          await runtime.monitor.stop();
+        } catch (error) {
+          this.options.logger.debug("agent.monitor_stop_failed", errorFields(error));
+        }
+      }
+      if (runtime) {
+        try {
+          await runtime.launch.dispose?.();
+        } finally {
+          this.prepared.delete(session.executionId);
+        }
+      } else {
+        await provider.disposeLaunch(session, runDir);
+      }
+    }
+  }
+
+  public async disposeLaunch(session: AgentSessionRecord): Promise<void> {
+    if (!session.executionId) return;
+    const runtime = this.prepared.get(session.executionId);
+    if (runtime) {
+      try {
+        if (runtime.monitorStarting) await runtime.monitorStarting;
+        if (runtime.monitorStarted && runtime.monitor) await runtime.monitor.stop();
+        await runtime.launch.dispose?.();
+      } finally {
+        this.prepared.delete(session.executionId);
+      }
+      return;
+    }
+    await this.options.providers
+      .get(session.backend)
+      .disposeLaunch(session, session.worktreePath ?? session.workspaceRoot);
+  }
+
+  /** Stops daemon-side observers while leaving the host-owned agent process untouched. */
+  public async close(): Promise<void> {
+    const errors: unknown[] = [];
+    for (const [executionId, runtime] of this.prepared) {
+      if (runtime.monitorStarting) {
+        try {
+          await runtime.monitorStarting;
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (runtime.monitorStarted && runtime.monitor) {
+        try {
+          await runtime.monitor.stop();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      this.prepared.delete(executionId);
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "agent monitor cleanup failed");
   }
 
   public archive(session: AgentSessionRecord): Promise<boolean> {
@@ -62,110 +214,6 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     return this.options.providers.get(session.backend).releaseIfUnused(session, remaining);
   }
 
-  private wrapPlan(
-    launch: AgentBackendLaunch,
-    session: AgentSessionRecord,
-    runDir: string,
-    provider: ReturnType<AgentBackendProviderRegistry["get"]>,
-  ): LaunchPlan {
-    const startedAt = Math.floor(Date.now() / 1_000);
-    let runPromise: Promise<LaunchExecution> | undefined;
-    let disposal: Promise<void> | undefined;
-    return {
-      run: (execution: AgentExecutionPort) => {
-        if (!runPromise) {
-          runPromise = this.runBackend(session, launch, runDir, startedAt, execution).then(async (process) => ({
-            process,
-            sessionUpdate: await provider.afterRun(session, runDir, startedAt),
-          }));
-        }
-        return runPromise;
-      },
-      dispose: () => {
-        if (!disposal) disposal = Promise.resolve().then(() => launch.dispose?.());
-        return disposal;
-      },
-    };
-  }
-
-  private async runBackend(
-    session: AgentSessionRecord,
-    launch: AgentBackendLaunch,
-    runDir: string,
-    startedAt: number,
-    execution: AgentExecutionPort,
-  ): Promise<ProcessResult> {
-    const logger = this.options.logger.child({
-      sessionId: session.id,
-      sessionName: session.name,
-      backend: session.backend,
-    });
-    const processStartedAt = Date.now();
-    const monitor = launch.monitor ?? this.createMonitor(session, runDir, startedAt);
-    let monitorStarted = false;
-    this.options.terminalTitle?.set(`muximo:${session.name}`);
-    try {
-      if (monitor) {
-        try {
-          await monitor.start((observation) => this.publishObservation(session, observation));
-          monitorStarted = true;
-        } catch (error) {
-          logger.debug("agent.monitor_start_failed", errorFields(error));
-        }
-      }
-      if (!launch.command[0]) throw new Error("backend command executable is missing");
-      if (!session.executionId) throw new Error("agent execution id is missing");
-      const result = await execution.execute({
-        sessionId: session.id,
-        executionId: session.executionId,
-        sessionName: session.name,
-        backend: session.backend,
-        command: launch.command,
-        cwd: runDir,
-        environment: stringEnvironment({
-          ...this.options.environment,
-          MUXIMOD_AGENT_SESSION_ID: session.id,
-          MUXIMOD_AGENT_ID: session.backend,
-        }),
-      });
-      if (result.interrupted && launch.abortSession) {
-        try {
-          await launch.abortSession();
-        } catch (error) {
-          logger.warn("agent.session_abort_failed", { ...errorFields(error), sessionName: session.name });
-        }
-      }
-      const finishedFields = {
-        kind: "backend",
-        pid: result.pid,
-        started: result.started,
-        exitCode: result.code,
-        signal: result.signal,
-        interrupted: result.interrupted,
-        durationMs: Date.now() - processStartedAt,
-        ...(result.failureDiagnostic === undefined ? {} : { failureDiagnostic: result.failureDiagnostic }),
-      };
-      if (result.code === 0) logger.debug("subprocess.finished", finishedFields);
-      else logger.warn("subprocess.failed", finishedFields);
-      return {
-        started: result.started,
-        code: result.code,
-        interrupted: result.interrupted,
-        signal: result.signal,
-        ...(result.failureDiagnostic === undefined ? {} : { failureDiagnostic: result.failureDiagnostic }),
-      };
-    } finally {
-      if (monitorStarted && monitor) {
-        try {
-          await monitor.stop();
-        } catch (error) {
-          logger.debug("agent.monitor_stop_failed", errorFields(error));
-        }
-      }
-      this.options.terminalTitle?.restore();
-    }
-  }
-
   private createMonitor(session: AgentSessionRecord, runDir: string, startedAt: number): AgentMonitor | undefined {
     const plugin = this.options.plugins.get(session.backend);
     return plugin?.createMonitor?.({
@@ -176,6 +224,36 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
       backendSessionId: session.backendSessionId ?? null,
       environment: this.options.environment,
     });
+  }
+
+  private async startMonitor(session: AgentSessionRecord, runtime: PreparedLaunchRuntime): Promise<void> {
+    runtime.startedAt = launchStartedAt(session);
+    const monitor = runtime.launch.monitor ?? this.createMonitor(session, runtime.runDir, runtime.startedAt);
+    if (!monitor) return;
+    runtime.monitor = monitor;
+    try {
+      await monitor.start((observation) => this.publishObservation(session, observation));
+      runtime.monitorStarted = true;
+    } catch (error) {
+      this.options.logger.debug("agent.monitor_start_failed", errorFields(error));
+    }
+  }
+
+  private async restoreRuntime(session: AgentSessionRecord): Promise<PreparedLaunchRuntime | undefined> {
+    const provider = this.options.providers.get(session.backend);
+    const runDir = session.worktreePath ?? session.workspaceRoot;
+    const startedAt = launchStartedAt(session);
+    const restored = await provider.restoreLaunch?.(session);
+    const monitor = restored?.monitor ?? this.createMonitor(session, runDir, startedAt);
+    if (!restored && !monitor) return undefined;
+    return {
+      launch: restored ?? { command: [], monitor },
+      provider,
+      runDir,
+      startedAt,
+      ...(monitor === undefined ? {} : { monitor }),
+      monitorStarted: false,
+    };
   }
 
   private async publishObservation(session: AgentSessionRecord, observation: AgentObservation): Promise<void> {
@@ -196,4 +274,9 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
       });
     }
   }
+}
+
+function launchStartedAt(session: AgentSessionRecord): number {
+  const parsed = session.executionStartedAt === undefined ? Number.NaN : Date.parse(session.executionStartedAt) / 1_000;
+  return Number.isFinite(parsed) ? parsed : Math.floor(Date.now() / 1_000);
 }

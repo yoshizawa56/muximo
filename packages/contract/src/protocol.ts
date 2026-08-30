@@ -63,11 +63,6 @@ const controlRequestIdSchema = z
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/);
-const agentExecutionTokenSchema = z
-  .string()
-  .min(32)
-  .max(128)
-  .regex(/^[A-Za-z0-9_-]+$/);
 const agentExecutionCommandSchema = z.array(z.string().max(16_384)).min(1).max(256);
 const agentExecutionEnvironmentSchema = z
   .record(z.string().min(1).max(256), z.string().max(64 * 1024))
@@ -82,6 +77,64 @@ const agentExecutionProcessResultSchema = z
     pid: z.number().int().positive().optional(),
   })
   .strict();
+const cleanupReasonWireSchema = z.enum([
+  "cleanup_declined",
+  "remote_archive_failed",
+  "remote_restore_failed",
+  "cleanup_hook_failed",
+  "unregistered_worktree",
+  "worktree_removal_failed",
+]);
+const cleanupResultWireSchema = z.discriminatedUnion("disposition", [
+  z.object({ disposition: z.literal("removed") }).strict(),
+  z.object({ disposition: z.literal("retained"), reason: cleanupReasonWireSchema }).strict(),
+  z.object({ disposition: z.literal("failed"), reason: cleanupReasonWireSchema }).strict(),
+]);
+const runCleanupResultWireSchema = z.discriminatedUnion("disposition", [
+  z.object({ disposition: z.literal("not_requested"), reason: z.enum(["interrupted", "no_worktree"]) }).strict(),
+  ...cleanupResultWireSchema.options,
+]);
+
+const hostPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
+
+const agentSessionWorkspaceScopeInputSchema = z.enum(["current", "all"]);
+const agentSessionArgumentSchema = z.string().max(4_096);
+const agentSessionStartInputSchema = z
+  .object({
+    backend: agentBackendSchema,
+    name: AgentSession.schema.shape.name.optional(),
+    hostPaneId: hostPaneIdWireSchema.optional(),
+    workspace: z.string().trim().min(1).max(4_096).optional(),
+    cwd: z.string().trim().min(1).max(4_096).optional(),
+    useWorktree: z.boolean(),
+    worktreeRoot: z.string().trim().min(1).max(4_096).optional(),
+    setupHook: z.string().trim().min(1).max(4_096).optional(),
+    cleanupHook: z.string().trim().min(1).max(4_096).optional(),
+    setupHookExplicit: z.boolean(),
+    cleanupHookExplicit: z.boolean(),
+    backendArgs: z.array(agentSessionArgumentSchema).max(256),
+  })
+  .strict();
+const agentSessionResumeInputSchema = z
+  .object({
+    workspaceScope: agentSessionWorkspaceScopeInputSchema,
+    reference: z.string().trim().min(1).max(256),
+    hostPaneId: hostPaneIdWireSchema.optional(),
+    backendArgs: z.array(agentSessionArgumentSchema).max(256),
+  })
+  .strict();
+const agentExecutionPlanSchema = z
+  .object({
+    sessionId: z.string().min(1).max(128),
+    executionId: z.string().min(16).max(128),
+    sessionName: z.string().min(1).max(120),
+    backend: agentBackendSchema,
+    command: agentExecutionCommandSchema,
+    cwd: z.string().min(1).max(4_096),
+    environment: agentExecutionEnvironmentSchema,
+  })
+  .strict();
+const agentSessionRecordWireSchema = AgentSession.schema;
 
 export const tmuxSessionNameSchema = z
   .string()
@@ -89,8 +142,6 @@ export const tmuxSessionNameSchema = z
   .min(1)
   .max(64)
   .regex(/^[A-Za-z0-9._-]+$/);
-
-const hostPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
 
 const httpUrlSchema = z
   .string()
@@ -214,29 +265,43 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
       lines: z.number().int().min(1).max(10_000),
     })
     .strict(),
+  z.discriminatedUnion("operation", [
+    z
+      .object({
+        type: z.literal("prepare_agent_execution"),
+        requestId: controlRequestIdSchema,
+        operation: z.literal("run"),
+        input: agentSessionStartInputSchema,
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("prepare_agent_execution"),
+        requestId: controlRequestIdSchema,
+        operation: z.literal("resume"),
+        input: agentSessionResumeInputSchema,
+      })
+      .strict(),
+  ]),
   z
     .object({
-      type: z.literal("reserve_agent_execution"),
+      type: z.literal("attach_agent_execution"),
       requestId: controlRequestIdSchema,
-      operation: z.enum(["run", "resume"]),
+      agentSessionId: z.string().min(1).max(128),
+      executionId: z.string().min(16).max(128),
       hostPaneId: hostPaneIdWireSchema.optional(),
-      ownerPid: z.number().int().positive(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("release_agent_execution"),
-      requestId: controlRequestIdSchema,
-      token: agentExecutionTokenSchema,
+      executionPid: z.number().int().positive(),
+      executionStartedAt: z.string().datetime(),
     })
     .strict(),
   z
     .object({
       type: z.literal("complete_agent_execution"),
       requestId: controlRequestIdSchema,
-      executionRequestId: controlRequestIdSchema,
-      token: agentExecutionTokenSchema,
+      operation: z.enum(["run", "resume"]),
+      agentSessionId: z.string().min(1).max(128),
       executionId: z.string().min(16).max(128),
+      hostPaneId: hostPaneIdWireSchema.optional(),
       result: agentExecutionProcessResultSchema,
     })
     .strict(),
@@ -326,40 +391,36 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
-      type: z.literal("agent_execution_reserved"),
+      type: z.literal("agent_execution_prepared"),
       requestId: controlRequestIdSchema,
-      token: agentExecutionTokenSchema,
-      ownerPid: z.number().int().positive(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("agent_execution_released"),
-      requestId: controlRequestIdSchema,
-      token: agentExecutionTokenSchema,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("execute_agent_process"),
-      requestId: controlRequestIdSchema,
-      token: agentExecutionTokenSchema,
+      operation: z.enum(["run", "resume"]),
+      agentSessionId: z.string().min(1).max(128),
       executionId: z.string().min(16).max(128),
-      sessionId: z.string().min(1).max(128),
-      sessionName: z.string().min(1).max(120),
-      backend: agentBackendSchema,
-      cwd: z.string().min(1).max(4_096),
-      command: agentExecutionCommandSchema,
-      environment: agentExecutionEnvironmentSchema,
+      hostPaneId: hostPaneIdWireSchema.optional(),
+      session: agentSessionRecordWireSchema,
+      execution: agentExecutionPlanSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("agent_execution_attached"),
+      requestId: controlRequestIdSchema,
+      agentSessionId: z.string().min(1).max(128),
+      executionId: z.string().min(16).max(128),
+      executionPid: z.number().int().positive(),
+      executionStartedAt: z.string().datetime(),
     })
     .strict(),
   z
     .object({
       type: z.literal("agent_execution_completed"),
       requestId: controlRequestIdSchema,
-      executionRequestId: controlRequestIdSchema,
-      token: agentExecutionTokenSchema,
+      operation: z.enum(["run", "resume"]),
+      agentSessionId: z.string().min(1).max(128),
       executionId: z.string().min(16).max(128),
+      process: agentExecutionProcessResultSchema,
+      session: agentSessionRecordWireSchema,
+      cleanup: runCleanupResultWireSchema.optional(),
     })
     .strict(),
   z
@@ -573,40 +634,8 @@ export const workspaceSelectionSchema = z
   .strict();
 export type WorkspaceSelection = z.infer<typeof workspaceSelectionSchema>;
 
-export const agentSessionWorkspaceScopeSchema = z.enum(["current", "all"]);
+export const agentSessionWorkspaceScopeSchema = agentSessionWorkspaceScopeInputSchema;
 export type AgentSessionWorkspaceScope = z.infer<typeof agentSessionWorkspaceScopeSchema>;
-
-const agentSessionArgumentSchema = z.string().max(4_096);
-
-export const runAgentSessionRequestSchema = z
-  .object({
-    executionToken: agentExecutionTokenSchema,
-    backend: agentBackendSchema,
-    name: AgentSession.schema.shape.name.optional(),
-    hostPaneId: hostPaneIdWireSchema.optional(),
-    workspace: z.string().trim().min(1).max(4_096).optional(),
-    cwd: z.string().trim().min(1).max(4_096).optional(),
-    useWorktree: z.boolean(),
-    worktreeRoot: z.string().trim().min(1).max(4_096).optional(),
-    setupHook: z.string().trim().min(1).max(4_096).optional(),
-    cleanupHook: z.string().trim().min(1).max(4_096).optional(),
-    setupHookExplicit: z.boolean(),
-    cleanupHookExplicit: z.boolean(),
-    backendArgs: z.array(agentSessionArgumentSchema).max(256),
-  })
-  .strict();
-export type RunAgentSessionRequest = z.infer<typeof runAgentSessionRequestSchema>;
-
-export const resumeAgentSessionRequestSchema = z
-  .object({
-    executionToken: agentExecutionTokenSchema,
-    workspaceScope: agentSessionWorkspaceScopeSchema,
-    reference: z.string().trim().min(1).max(256),
-    hostPaneId: hostPaneIdWireSchema.optional(),
-    backendArgs: z.array(agentSessionArgumentSchema).max(256),
-  })
-  .strict();
-export type ResumeAgentSessionRequest = z.infer<typeof resumeAgentSessionRequestSchema>;
 
 export const cleanupAgentSessionRequestSchema = z
   .object({
@@ -636,30 +665,16 @@ export const processResultSchema = z
   .strict();
 export type ProcessResult = z.infer<typeof processResultSchema>;
 
-export const cleanupReasonSchema = z.enum([
-  "cleanup_declined",
-  "remote_archive_failed",
-  "remote_restore_failed",
-  "cleanup_hook_failed",
-  "unregistered_worktree",
-  "worktree_removal_failed",
-]);
+export const cleanupReasonSchema = cleanupReasonWireSchema;
 export type CleanupReason = z.infer<typeof cleanupReasonSchema>;
 
-export const cleanupResultSchema = z.discriminatedUnion("disposition", [
-  z.object({ disposition: z.literal("removed") }).strict(),
-  z.object({ disposition: z.literal("retained"), reason: cleanupReasonSchema }).strict(),
-  z.object({ disposition: z.literal("failed"), reason: cleanupReasonSchema }).strict(),
-]);
+export const cleanupResultSchema = cleanupResultWireSchema;
 export type CleanupResult = z.infer<typeof cleanupResultSchema>;
 
-export const runCleanupResultSchema = z.discriminatedUnion("disposition", [
-  z.object({ disposition: z.literal("not_requested"), reason: z.enum(["interrupted", "no_worktree"]) }).strict(),
-  ...cleanupResultSchema.options,
-]);
+export const runCleanupResultSchema = runCleanupResultWireSchema;
 export type RunCleanupResult = z.infer<typeof runCleanupResultSchema>;
 
-export const agentSessionRecordSchema = AgentSession.schema;
+export const agentSessionRecordSchema = agentSessionRecordWireSchema;
 export type AgentSessionRecord = z.infer<typeof agentSessionRecordSchema>;
 
 export const agentSessionExecutionHealthSchema = z.enum(["inactive", "active", "long_running", "stale", "unknown"]);

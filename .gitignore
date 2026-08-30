@@ -34,3 +34,4 @@ coverage
 !.env.*.example
 apps/web/vite.config.timestamp-*.mjs
 .worktrees
+docs/exec_plan/

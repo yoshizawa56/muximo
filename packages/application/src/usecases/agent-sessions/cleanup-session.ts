@@ -37,6 +37,9 @@ export class CleanupAgentSession {
       reference: input.reference,
       workspaceScope: input.workspaceScope,
     });
+    if ((session.status === "running" || session.status === "resuming") && session.executionPid === undefined) {
+      throw new Error(`session '${session.name}' has an active execution that has not attached a process`);
+    }
     if (
       session.executionPid !== undefined &&
       (await this.deps.process.isAlive(session.executionPid, session.executionStartedAt))

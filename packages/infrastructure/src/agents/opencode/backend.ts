@@ -38,12 +38,25 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     return { sessionUpdate, launch };
   }
 
+  public async restoreLaunch(session: AgentSessionRecord): Promise<AgentBackendLaunch | undefined> {
+    const plugin = this.options.plugins.get(this.backend);
+    if (!plugin?.prepareLaunch || !session.backendSessionId) return undefined;
+    return this.preparePluginLaunch(session, [], plugin.prepareLaunch, true, session.executionStartedAt);
+  }
+
   public async afterRun(
     _session: AgentSessionRecord,
     _runDir: string,
     _startedAt: number,
   ): Promise<SessionIdentityUpdate | undefined> {
     return undefined;
+  }
+
+  public async disposeLaunch(_session: AgentSessionRecord, runDir: string): Promise<void> {
+    await new OpenCodeServerManager({
+      environment: this.options.environment,
+      registryFile: this.options.opencodeRegistryFile ?? defaultOpenCodeRegistryFile(this.options.environment),
+    }).dispose(runDir);
   }
 
   public async archive(_session: AgentSessionRecord): Promise<boolean> {
@@ -80,6 +93,7 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     backendArgs: readonly string[],
     prepare: NonNullable<NonNullable<import("../index.js").AgentPluginV1["prepareLaunch"]>>,
     resume: boolean,
+    startedAt = timestamp(),
   ): Promise<AgentBackendLaunch> {
     const runDir = session.worktreePath ?? session.workspaceRoot;
     const plan = await prepare({
@@ -91,7 +105,7 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
         sessionId: session.id,
         executionId: session.executionId ?? "",
         cwd: runDir,
-        startedAt: timestamp(),
+        startedAt,
         backendSessionId: session.backendSessionId ?? null,
         environment: this.options.environment,
       },

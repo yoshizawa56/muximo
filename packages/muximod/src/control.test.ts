@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuthService } from "@muximo/application";
+import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
 import {
   AuthStore,
   createAgentDatabase,
@@ -23,7 +24,10 @@ import { describe, it } from "vitest";
 import { MuximodControlServer } from "./control.js";
 
 type ControlRequest = { agentSessionId: string; hostPaneId: string; executionId: string };
-type ControlStep = { type: "adopt" | "observe" | "release" } | { type: "read-log"; lines: number };
+type ControlStep =
+  | { type: "adopt" | "observe" | "release" }
+  | { type: "read-log"; lines: number }
+  | { type: "prepare-execution" | "attach-execution" | "complete-execution" };
 type ControlFixture = {
   server: MuximodControlServer;
   handleRequest: (line: string) => void;
@@ -46,6 +50,32 @@ type ControlContext = {
 };
 
 const request: ControlRequest = { agentSessionId: "session-id", hostPaneId: "%1", executionId: "execution-id-123456" };
+const executionSession = AgentSession.create({
+  id: AgentSessionId.create(request.agentSessionId),
+  name: "review",
+  backend: "codex",
+  status: "running",
+  workspaceId: WorkspaceId.create("workspace-id"),
+  workspaceRoot: "/workspace/review",
+  workspaceName: "workspace",
+  useWorktree: false,
+  setupRan: false,
+  resuming: false,
+  executionId: request.executionId,
+  createdAt: "2026-08-30T00:00:00.000Z",
+  updatedAt: "2026-08-30T00:00:00.000Z",
+});
+const execution = {
+  sessionId: request.agentSessionId,
+  executionId: request.executionId,
+  sessionName: executionSession.name,
+  backend: "codex" as const,
+  command: ["codex"],
+  cwd: "/workspace/review",
+  environment: {},
+};
+const executionProcess = { started: true, code: 0, interrupted: false, signal: null, pid: 456 };
+const executionStartedAt = "2026-08-30T00:00:01.000Z";
 
 const fixture = (): FixtureHandle<ControlFixture> => {
   const instanceDirectory = mkdtempSync(join(tmpdir(), "muximod-control-test-"));
@@ -90,6 +120,31 @@ const fixture = (): FixtureHandle<ControlFixture> => {
     releaseAgentSession: async (input) => {
       applicationRequests.push({ operation: "release", ...input });
       calls.push(`release:${input.agentSessionId}:${input.hostPaneId}:${input.executionId}`);
+    },
+    prepareAgentExecution: async (input) => {
+      calls.push(`prepare:${input.operation}`);
+      return {
+        operation: input.operation,
+        agentSessionId: executionSession.id,
+        executionId: request.executionId,
+        hostPaneId: input.input.hostPaneId,
+        session: executionSession,
+        execution,
+      };
+    },
+    attachAgentExecution: async (input) => {
+      calls.push(`attach:${input.agentSessionId}:${input.executionPid}:${input.executionStartedAt}`);
+    },
+    completeAgentExecution: async (input) => {
+      calls.push(`complete:${input.operation}:${input.agentSessionId}:${input.result.code}`);
+      return {
+        operation: input.operation,
+        agentSessionId: input.agentSessionId,
+        executionId: input.executionId,
+        process: input.result,
+        session: executionSession,
+        cleanup: { disposition: "not_requested" as const, reason: "no_worktree" as const },
+      };
     },
   });
   const socket = {
@@ -181,6 +236,44 @@ const cases = [
       hasObserved<ControlContext, undefined>("logReads", [2]),
     ],
   },
+  {
+    name: "dispatches host-owned execution lifecycle operations without a socket ownership lease",
+    steps: [{ type: "prepare-execution" }, { type: "attach-execution" }, { type: "complete-execution" }],
+    assert: [
+      hasObserved<ControlContext, undefined>("responses", [
+        {
+          type: "agent_execution_prepared",
+          operation: "run",
+          agentSessionId: request.agentSessionId,
+          executionId: request.executionId,
+          hostPaneId: request.hostPaneId,
+          session: executionSession,
+          execution,
+        },
+        {
+          type: "agent_execution_attached",
+          agentSessionId: request.agentSessionId,
+          executionId: request.executionId,
+          executionPid: 456,
+          executionStartedAt,
+        },
+        {
+          type: "agent_execution_completed",
+          operation: "run",
+          agentSessionId: request.agentSessionId,
+          executionId: request.executionId,
+          process: executionProcess,
+          session: executionSession,
+          cleanup: { disposition: "not_requested", reason: "no_worktree" },
+        },
+      ]),
+      hasObserved<ControlContext, undefined>("calls", [
+        "prepare:run",
+        `attach:${request.agentSessionId}:456:${executionStartedAt}`,
+        `complete:run:${request.agentSessionId}:0`,
+      ]),
+    ],
+  },
 ] satisfies readonly ScenarioCase<"default", ControlStep, undefined, ControlContext>[];
 
 const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, ControlContext> = {
@@ -195,7 +288,13 @@ const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, Co
             ? "observe_agent_session"
             : step.type === "release"
               ? "release_agent_session"
-              : "read_log";
+              : step.type === "read-log"
+                ? "read_log"
+                : step.type === "prepare-execution"
+                  ? "prepare_agent_execution"
+                  : step.type === "attach-execution"
+                    ? "attach_agent_execution"
+                    : "complete_agent_execution";
       const expectedCount = testFixture.responses.length + 1;
       testFixture.handleRequest(
         JSON.stringify({
@@ -203,10 +302,27 @@ const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, Co
           requestId: `control-request-${expectedCount}`,
           ...(step.type === "read-log"
             ? { lines: step.lines }
-            : {
-                ...testFixture.request,
-                ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
-              }),
+            : step.type === "prepare-execution"
+              ? {
+                  operation: "run",
+                  input: {
+                    backend: "codex",
+                    hostPaneId: request.hostPaneId,
+                    cwd: execution.cwd,
+                    useWorktree: false,
+                    setupHookExplicit: false,
+                    cleanupHookExplicit: false,
+                    backendArgs: [],
+                  },
+                }
+              : step.type === "attach-execution"
+                ? { ...testFixture.request, executionPid: 456, executionStartedAt }
+                : step.type === "complete-execution"
+                  ? { ...testFixture.request, operation: "run", result: executionProcess }
+                  : {
+                      ...testFixture.request,
+                      ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
+                    }),
         }),
       );
       await waitFor(() => testFixture.responses.length === expectedCount);

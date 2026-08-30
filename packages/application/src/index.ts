@@ -1,9 +1,9 @@
 export { InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
 export type {
   AgentBackendResumeState,
-  AgentExecutionPort,
-  AgentExecutionRequest,
+  AgentExecutionReceipt,
   AgentExecutionResult,
+  AgentExecutionSpec,
   AgentObservationPort,
   AgentSessionExecutionHealth,
   AgentSessionListInput,
@@ -14,20 +14,21 @@ export type {
   AgentSessionResumeState,
   AgentSessionWorktreeState,
   AgentStateObservation,
+  AttachAgentSessionInput,
   CleanupAgentSessionInput,
   CleanupAgentSessionResult,
   CleanupDisposition,
   CleanupReason,
   CleanupResult,
+  CompleteAgentSessionInput,
   HookPort,
   HookResult,
   HookSessionUpdate,
-  LaunchExecution,
-  LaunchPlan,
   LaunchPreparation,
   ManagedAgentSessionRepository,
   ManagedWorktreeState,
   PanePublicationPort,
+  PreparedAgentSession,
   ProcessObservationPort,
   ProcessResult,
   RemoteSessionPort,
@@ -144,6 +145,7 @@ export type {
 export type { PaneGateway } from "./ports/panes.js";
 export type {
   AgentSessionRepository,
+  AttachExecutionInput,
   ClaimExecutionInput,
   PaneFilter,
   PaneRepository,
@@ -177,6 +179,7 @@ export {
 export { LocateAgentSession } from "./usecases/agent-sessions/locate-session.js";
 export { ResumeAgentSession } from "./usecases/agent-sessions/resume-session.js";
 export { RunAgentSession } from "./usecases/agent-sessions/run-session.js";
+export { AttachAgentSession, type AttachAgentSessionDependencies } from "./usecases/agents/attach-agent-session.js";
 export { AuthStoreError } from "./usecases/auth/auth-errors.js";
 export type { AuthServiceOptions } from "./usecases/auth/auth-service.js";
 export { AuthService } from "./usecases/auth/auth-service.js";

@@ -173,6 +173,9 @@ const table: OperationTable<Fixture, CaseKey, Input, AgentSessionListResult, Con
         insert: async () => undefined,
         update: async () => undefined,
         claimExecution: async () => true,
+        attachExecution: async () => false,
+        findExecutionReceipt: async () => undefined,
+        saveExecutionReceipt: async () => undefined,
         delete: async () => undefined,
       },
       host: {

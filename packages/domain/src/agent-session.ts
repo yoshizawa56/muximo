@@ -101,7 +101,7 @@ export const AgentSession = {
   normalizeName: normalizeAgentSessionName,
   hasActiveExecution(entity: AgentSession): boolean {
     const current = parseAgentSession(entity);
-    return (current.status === "running" || current.status === "resuming") && current.executionPid !== undefined;
+    return (current.status === "running" || current.status === "resuming") && current.executionId !== undefined;
   },
 } as const;
 

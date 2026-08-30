@@ -5,6 +5,7 @@ import {
   type AgentStateObservation,
   type AgentStatusStore,
   type ApplicationClock,
+  AttachAgentSession,
   AuthService,
   CleanupAgentSession,
   createMuximodApplication,
@@ -67,7 +68,6 @@ import {
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
 } from "@muximo/infrastructure/runtime";
-import { AgentExecutionBroker } from "./agent-execution.js";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
@@ -204,7 +204,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const applicationForAgentPane = () => {
     return application;
   };
-  const agentExecutionBroker = new AgentExecutionBroker();
   const agentPane = createAgentPanePublication(applicationForAgentPane, logger, environment);
   const backendOptions = {
     environment,
@@ -258,6 +257,12 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     clock: sessionClock,
     logger: sessionLogger,
   });
+  const attachAgentSession = new AttachAgentSession({
+    sessions: agentSessionRepository,
+    launcher: backend,
+    panes: agentPane,
+    clock: sessionClock,
+  });
   const cleanupAgentSession = new CleanupAgentSession({
     sessions: agentSessionRepository,
     locator,
@@ -272,10 +277,13 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   application = createMuximodApplication({
     agentSessions: {
-      run: (input, execution) =>
-        executeAgentSession("run", input, () => runAgentSession.execute(input, execution), logger),
-      resume: (input, execution) =>
-        executeAgentSession("resume", input, () => resumeAgentSession.execute(input, execution), logger),
+      prepareRun: (input) => executeAgentSession("prepare_run", input, () => runAgentSession.prepare(input), logger),
+      prepareResume: (input) =>
+        executeAgentSession("prepare_resume", input, () => resumeAgentSession.prepare(input), logger),
+      attach: (input) => executeAgentSession("attach", input, () => attachAgentSession.execute(input), logger),
+      completeRun: (input) => executeAgentSession("complete_run", input, () => runAgentSession.complete(input), logger),
+      completeResume: (input) =>
+        executeAgentSession("complete_resume", input, () => resumeAgentSession.complete(input), logger),
       cleanup: (input) => executeAgentSession("cleanup", input, () => cleanupAgentSession.execute(input), logger),
       list: (input) => listAgentSessions.execute(input),
     },
@@ -330,10 +338,66 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     adoptAgentSession: (request) => applicationForAgentPane().adoptAgentSession(request),
     observeAgentSession: (request) => applicationForAgentPane().observeAgentSession(request),
     releaseAgentSession: (request) => applicationForAgentPane().releaseAgentSession(request),
-    reserveAgentExecution: (peer, request) => agentExecutionBroker.reserve(peer, request),
-    releaseAgentExecution: (peer, token) => agentExecutionBroker.release(peer, token),
-    completeAgentExecution: (peer, request) => agentExecutionBroker.complete(peer, request),
-    closeAgentExecution: (peer) => agentExecutionBroker.close(peer),
+    prepareAgentExecution: async (request) => {
+      const prepared =
+        request.operation === "run"
+          ? await application.agentSessions.prepareRun({
+              ...(request.input as Parameters<typeof application.agentSessions.prepareRun>[0]),
+              backendArgs: [...request.input.backendArgs],
+            })
+          : await application.agentSessions.prepareResume({
+              ...(request.input as Parameters<typeof application.agentSessions.prepareResume>[0]),
+              backendArgs: [...request.input.backendArgs],
+            });
+      const executionId = prepared.session.executionId;
+      if (executionId === undefined || executionId !== prepared.execution.executionId) {
+        throw new Error("prepared agent session execution identity is incomplete");
+      }
+      return {
+        operation: request.operation,
+        agentSessionId: prepared.session.id,
+        executionId,
+        ...(request.input.hostPaneId === undefined ? {} : { hostPaneId: request.input.hostPaneId }),
+        session: prepared.session,
+        execution: prepared.execution,
+      };
+    },
+    attachAgentExecution: async (request) => {
+      await application.agentSessions.attach({
+        agentSessionId: request.agentSessionId,
+        executionId: request.executionId,
+        executionPid: request.executionPid,
+        executionStartedAt: request.executionStartedAt,
+        ...(request.hostPaneId === undefined ? {} : { hostPaneId: request.hostPaneId }),
+      });
+    },
+    completeAgentExecution: async (request) => {
+      const input = {
+        agentSessionId: request.agentSessionId,
+        executionId: request.executionId,
+        process: request.result,
+        ...(request.hostPaneId === undefined ? {} : { hostPaneId: request.hostPaneId }),
+      };
+      if (request.operation === "run") {
+        const completed = await application.agentSessions.completeRun(input);
+        return {
+          operation: request.operation,
+          agentSessionId: request.agentSessionId,
+          executionId: request.executionId,
+          process: completed.process,
+          session: completed.session,
+          cleanup: completed.cleanup,
+        };
+      }
+      const completed = await application.agentSessions.completeResume(input);
+      return {
+        operation: request.operation,
+        agentSessionId: request.agentSessionId,
+        executionId: request.executionId,
+        process: completed.process,
+        session: completed.session,
+      };
+    },
   });
   let controlReady = false;
   const tmuxPollIntervalMs = durationOption(options.tmuxPollIntervalMs, defaultTmuxPollIntervalMs, 1);
@@ -371,7 +435,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const app = createMuximodApp({
     auth,
     application,
-    agentExecution: agentExecutionBroker,
     isReady: () => controlReady,
     configurationFingerprint: options.configurationFingerprint,
     originPolicy:
@@ -425,6 +488,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         tmuxStateMonitor.start();
         viewportManager.configureHooks(`http://127.0.0.1:${httpServer.port}/internal/tmux-hook`, hookToken);
         await controlServer.start();
+        await backend.restoreActiveLaunches();
         controlReady = true;
         authFlowLifecycle.start();
         logger.info("daemon.listening", { host: options.host, port: httpServer.port });
@@ -445,7 +509,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         } catch {
           // Preserve the startup error while releasing the remaining resources.
         }
-        agentExecutionBroker.closeAll();
+        await backend.close().catch(() => undefined);
         try {
           await terminalSessions.closeAll();
         } catch {
@@ -491,7 +555,11 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         } catch (error) {
           cleanupErrors.push(error);
         }
-        agentExecutionBroker.closeAll();
+        try {
+          await backend.close();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
         try {
           await terminalSessions.closeAll();
         } catch (error) {
@@ -663,7 +731,7 @@ function observe(
 }
 
 async function executeAgentSession<Result>(
-  operation: "run" | "resume" | "cleanup",
+  operation: "prepare_run" | "prepare_resume" | "attach" | "complete_run" | "complete_resume" | "cleanup",
   input: Record<string, unknown>,
   execute: () => Promise<Result>,
   logger: Logger,

@@ -242,6 +242,7 @@ function createFixture(): { fixture: ReconcileFixture } {
       sessions.set(record.id, record);
     },
     claimExecution: async () => false,
+    attachExecution: async () => false,
     setBackendSessionIdIfMissing: async () => false,
     delete: async (id) => {
       sessions.delete(id);

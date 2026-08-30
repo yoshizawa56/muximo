@@ -82,7 +82,8 @@ function classifyExecutionHealth(
 
   const reference = session.executionStartedAt ?? session.updatedAt;
   const age = ageMs(reference, observation.now);
-  if (observation.processAlive === false || (observation.processAlive === undefined && session.executionPid == null)) {
+  if (session.executionPid === undefined) return "unknown";
+  if (observation.processAlive === false) {
     return age === null || age >= sessionListPolicy.staleExecutionGraceMs ? "stale" : "unknown";
   }
   if (observation.processAlive === undefined) return "unknown";

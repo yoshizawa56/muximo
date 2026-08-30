@@ -4,7 +4,7 @@ import type { ProcessResult } from "@muximo/application";
 import { errorMessage, type Logger } from "../logging/index.js";
 
 export type SpawnHooks = {
-  onStarted?: (pid: number | undefined) => void | Promise<void>;
+  onStarted?: (pid: number | undefined, startedAt: string) => void | Promise<void>;
   onError?: (error: unknown) => void;
   captureFailureDiagnostic?: boolean;
   signal?: AbortSignal;
@@ -86,7 +86,7 @@ export async function spawnAttached(
     );
   });
   try {
-    if (await started) await hooks.onStarted?.(child.pid);
+    if (await started) await hooks.onStarted?.(child.pid, new Date().toISOString());
     return await result;
   } finally {
     process.off("SIGINT", onInterrupt);

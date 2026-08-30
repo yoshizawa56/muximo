@@ -1,10 +1,19 @@
-import type { AgentSessionRepository, ClaimExecutionInput } from "@muximo/application";
+import type {
+  AgentExecutionReceipt,
+  AgentSessionRepository,
+  AttachExecutionInput,
+  ClaimExecutionInput,
+  ManagedAgentSessionRepository,
+} from "@muximo/application";
 import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
 import { and, asc, eq, isNull } from "drizzle-orm";
-import { type AgentSessionRow, agentSessions } from "../../schema.js";
+import { type AgentSessionRow, agentExecutionReceipts, agentSessions } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
-export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase implements AgentSessionRepository {
+export class DrizzleAgentSessionRepository
+  extends DrizzleRepositoryBase
+  implements AgentSessionRepository, ManagedAgentSessionRepository
+{
   public async findById(id: AgentSessionId): Promise<AgentSessionRecord | undefined> {
     const row = this.db().select().from(agentSessions).where(eq(agentSessions.id, id)).get();
     return row ? toAgentSessionRecord(row) : undefined;
@@ -66,6 +75,50 @@ export class DrizzleAgentSessionRepository extends DrizzleRepositoryBase impleme
       .returning({ id: agentSessions.id })
       .all();
     return result.length > 0;
+  }
+
+  public async attachExecution({
+    id,
+    executionId,
+    executionPid,
+    executionStartedAt,
+    updatedAt,
+  }: AttachExecutionInput): Promise<boolean> {
+    const result = this.db()
+      .update(agentSessions)
+      .set({ executionPid, executionStartedAt, updatedAt })
+      .where(
+        and(eq(agentSessions.id, id), eq(agentSessions.executionId, executionId), isNull(agentSessions.executionPid)),
+      )
+      .returning({ id: agentSessions.id })
+      .all();
+    return result.length > 0;
+  }
+
+  public async findExecutionReceipt(executionId: string): Promise<AgentExecutionReceipt | undefined> {
+    const row = this.db()
+      .select()
+      .from(agentExecutionReceipts)
+      .where(eq(agentExecutionReceipts.executionId, executionId))
+      .get();
+    return row ? toAgentExecutionReceipt(row) : undefined;
+  }
+
+  public async saveExecutionReceipt(receipt: AgentExecutionReceipt): Promise<void> {
+    this.db()
+      .insert(agentExecutionReceipts)
+      .values({
+        executionId: receipt.executionId,
+        agentSessionId: receipt.agentSessionId,
+        operation: receipt.operation,
+        process: JSON.stringify(receipt.process),
+        session: JSON.stringify(receipt.session),
+        cleanup: "cleanup" in receipt ? JSON.stringify(receipt.cleanup) : null,
+        createdAt: receipt.session.updatedAt,
+        updatedAt: receipt.session.updatedAt,
+      })
+      .onConflictDoNothing()
+      .run();
   }
 
   public async setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean> {
@@ -144,4 +197,27 @@ function toAgentSessionRecord(row: AgentSessionRow): AgentSessionRecord {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });
+}
+
+function toAgentExecutionReceipt(row: typeof agentExecutionReceipts.$inferSelect): AgentExecutionReceipt {
+  const process = JSON.parse(row.process) as AgentExecutionReceipt["process"];
+  const session = AgentSession.restore(JSON.parse(row.session));
+  if (row.operation === "run") {
+    if (row.cleanup === null) throw new Error(`execution receipt is missing cleanup: ${row.executionId}`);
+    return {
+      operation: row.operation,
+      agentSessionId: row.agentSessionId,
+      executionId: row.executionId,
+      process,
+      session,
+      cleanup: JSON.parse(row.cleanup) as Extract<AgentExecutionReceipt, { operation: "run" }>["cleanup"],
+    };
+  }
+  return {
+    operation: row.operation,
+    agentSessionId: row.agentSessionId,
+    executionId: row.executionId,
+    process,
+    session,
+  };
 }

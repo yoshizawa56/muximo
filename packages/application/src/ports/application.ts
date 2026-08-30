@@ -1,10 +1,12 @@
-import type { AgentBackend, PaneRecord, Patch } from "@muximo/domain";
+import type { AgentBackend, AgentSessionRecord, PaneRecord, Patch } from "@muximo/domain";
 import type {
-  AgentExecutionPort,
   AgentSessionListInput,
   AgentSessionListResult,
+  AttachAgentSessionInput,
   CleanupAgentSessionInput,
   CleanupAgentSessionResult,
+  CompleteAgentSessionInput,
+  PreparedAgentSession,
   ResumeAgentSessionInput,
   ResumeAgentSessionResult,
   RunAgentSessionResult,
@@ -106,8 +108,11 @@ export type MuximodSessionSummary = {
 export type MuximodPaneSummary = PaneRecord;
 
 export type MuximodAgentSessionApplication = {
-  run(input: StartAgentSessionInput, execution: AgentExecutionPort): Promise<RunAgentSessionResult>;
-  resume(input: ResumeAgentSessionInput, execution: AgentExecutionPort): Promise<ResumeAgentSessionResult>;
+  prepareRun(input: StartAgentSessionInput): Promise<PreparedAgentSession>;
+  prepareResume(input: ResumeAgentSessionInput): Promise<PreparedAgentSession>;
+  attach(input: AttachAgentSessionInput): Promise<AgentSessionRecord>;
+  completeRun(input: CompleteAgentSessionInput): Promise<RunAgentSessionResult>;
+  completeResume(input: CompleteAgentSessionInput): Promise<ResumeAgentSessionResult>;
   cleanup(input: CleanupAgentSessionInput): Promise<CleanupAgentSessionResult>;
   list(input: AgentSessionListInput): Promise<AgentSessionListResult>;
 };

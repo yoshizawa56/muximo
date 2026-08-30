@@ -88,6 +88,17 @@ export const agentSessions = sqliteTable(
   }),
 );
 
+/** Retains the final response for a host-owned execution after its session may be deleted. */
+export const agentExecutionReceipts = sqliteTable("agent_execution_receipts", {
+  executionId: text("execution_id").primaryKey(),
+  agentSessionId: text("agent_session_id").notNull(),
+  operation: text("operation", { enum: ["run", "resume"] }).notNull(),
+  process: text("process").notNull(),
+  session: text("session").notNull(),
+  cleanup: text("cleanup"),
+  ...timestamps,
+});
+
 /** Provider-owned Codex implementation state; it is intentionally outside the domain aggregate. */
 export const codexSessionStates = sqliteTable("codex_session_states", {
   agentSessionId: text("agent_session_id")
