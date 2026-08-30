@@ -17,7 +17,11 @@ import {
   type CustomKeyboardModifier,
   type CustomKeyboardProfile,
   type CustomKeyboardState,
+  type CustomKeyboardSurfaceId,
   createCustomKeyboardProfile,
+  customKeyboardKeyDefinitions,
+  customKeyboardKeyLibrary,
+  customKeyboardSurfaceDefinitions,
   customKeyboardTerminalActionOptions,
   defaultCustomKeyboardLayout,
   deleteCustomKeyboardProfile,
@@ -291,22 +295,27 @@ const defaultLayoutTable: OperationTable<undefined, "default", {}, DefaultLayout
   observe: () => ({}),
 };
 
-type CatalogInput = { keyId: string };
+type CatalogInput = { keyId: string; location: "layout" | "library" };
 
 const catalogCases = [
   {
     name: "has Enter in the built-in key catalog",
-    input: { keyId: "enter" },
+    input: { keyId: "enter", location: "layout" },
     assert: [returns<EmptyContext, boolean>(true)],
   },
   {
     name: "has exclamation in the built-in key catalog",
-    input: { keyId: "exclamation" },
+    input: { keyId: "exclamation", location: "layout" },
     assert: [returns<EmptyContext, boolean>(true)],
   },
   {
     name: "does not assign Git status to the default layout",
-    input: { keyId: "git-status" },
+    input: { keyId: "git-status", location: "layout" },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+  {
+    name: "does not retain the removed duplicate slash key",
+    input: { keyId: "number-/", location: "library" },
     assert: [returns<EmptyContext, boolean>(false)],
   },
 ] satisfies readonly OperationCase<"default", CatalogInput, boolean, EmptyContext>[];
@@ -315,9 +324,45 @@ const catalogTable: OperationTable<undefined, "default", CatalogInput, boolean, 
   defaultFixture: noFixture(),
   cases: catalogCases,
   execute: (_fixture, input) =>
-    defaultCustomKeyboardLayout.rows.some((currentRow) =>
-      currentRow.placements.some((placement) => placement.keyId === input.keyId),
-    ),
+    input.location === "layout"
+      ? defaultCustomKeyboardLayout.rows.some((currentRow) =>
+          currentRow.placements.some((placement) => placement.keyId === input.keyId),
+        )
+      : customKeyboardKeyLibrary.some((key) => key.id === input.keyId),
+  observe: () => ({}),
+};
+
+type DefinitionQuery = { type: "unique" } | { type: "surface"; surfaceId: CustomKeyboardSurfaceId };
+type DefinitionObservation = boolean | readonly string[];
+
+const definitionCases = [
+  {
+    name: "keeps every built-in key definition id unique",
+    input: { type: "unique" },
+    assert: [returns<EmptyContext, DefinitionObservation>(true)],
+  },
+  {
+    name: "derives clipboard actions from their key definitions",
+    input: { type: "surface", surfaceId: "clipboard" },
+    assert: [returns<EmptyContext, DefinitionObservation>(["copy-mode", "paste-clipboard", "paste-tmux-buffer"])],
+  },
+  {
+    name: "derives the profile surface without hardcoded action ids",
+    input: { type: "surface", surfaceId: "profile" },
+    assert: [returns<EmptyContext, DefinitionObservation>([])],
+  },
+] satisfies readonly OperationCase<"default", DefinitionQuery, DefinitionObservation, EmptyContext>[];
+
+const definitionTable: OperationTable<undefined, "default", DefinitionQuery, DefinitionObservation, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: definitionCases,
+  execute: (_fixture, input) => {
+    if (input.type === "unique") {
+      const ids = customKeyboardKeyDefinitions.map((definition) => definition.id);
+      return new Set(ids).size === ids.length;
+    }
+    return customKeyboardSurfaceDefinitions.find((surface) => surface.id === input.surfaceId)?.keyIds ?? [];
+  },
   observe: () => ({}),
 };
 
@@ -399,7 +444,7 @@ const validState = JSON.stringify({
       icon: "branch",
       libraryKeys: [
         {
-          id: "agent-command",
+          id: "custom-shortcut-agent-command",
           category: "shortcuts",
           accessibleLabel: "Agent command",
           activation: { type: "sequence", sequence: [{ type: "text", value: "agent" }] },
@@ -410,7 +455,7 @@ const validState = JSON.stringify({
           {
             id: "main",
             overflow: "scroll",
-            placements: [{ keyId: "agent-command", density: "regular" }],
+            placements: [{ keyId: "custom-shortcut-agent-command", density: "regular" }],
           },
           {
             id: "utility",
@@ -419,7 +464,7 @@ const validState = JSON.stringify({
           },
         ],
       },
-      shortcutKeyIds: ["agent-command"],
+      shortcutKeyIds: ["custom-shortcut-agent-command"],
       repeatStartDelayMs: 420,
       repeatIntervalMs: 180,
     },
@@ -437,6 +482,14 @@ const invalidState = JSON.stringify({
       icon: "terminal",
       libraryKeys: [
         {
+          id: "number-/",
+          category: "123",
+          icon: "number",
+          label: "/",
+          accessibleLabel: "Key /",
+          activation: { type: "sequence", sequence: [{ type: "text", value: "/" }] },
+        },
+        {
           id: "broken",
           category: "special",
           accessibleLabel: "Broken",
@@ -449,6 +502,7 @@ const invalidState = JSON.stringify({
             id: "main",
             overflow: "scroll",
             placements: [
+              { keyId: "number-/", density: "regular" },
               { keyId: "broken", density: "regular" },
               { keyId: "escape", density: "regular" },
             ],
@@ -489,8 +543,8 @@ const parsedStateCases = [
           "tilde",
           "at",
         ],
-        agentMainKeyIds: ["agent-command"],
-        agentShortcutKeyIds: ["agent-command"],
+        agentMainKeyIds: ["custom-shortcut-agent-command"],
+        agentShortcutKeyIds: ["custom-shortcut-agent-command"],
         agentIcon: "branch",
         utilityKeyIds: ["toggle-standard-keyboard"],
         utilityFlexGrow: 2,
@@ -498,7 +552,7 @@ const parsedStateCases = [
     ],
   },
   {
-    name: "drops invalid activations before resolving the layout",
+    name: "drops invalid activations and removed built-ins before resolving the layout",
     input: { raw: invalidState },
     assert: [
       returns<EmptyContext, ParsedStateObservation>({
@@ -727,6 +781,7 @@ describe("custom keyboard unified key model", () => {
   runOperationTable(it, resolvedLayoutTable);
   runOperationTable(it, defaultLayoutTable);
   runOperationTable(it, catalogTable);
+  runOperationTable(it, definitionTable);
   runOperationTable(it, terminalActionTable);
   runOperationTable(it, shortcutDraftTable);
   runOperationTable(it, parsedStateTable);

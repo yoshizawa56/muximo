@@ -93,6 +93,10 @@ type CustomKeyboardPopover = {
   anchor: CustomKeyboardPopoverAnchor;
 } | null;
 
+function assertNeverCustomKeyboardActivation(value: never): never {
+  throw new Error(`Unsupported custom keyboard activation: ${String(value)}`);
+}
+
 function customKeyboardPopoverAnchor(element: HTMLElement): CustomKeyboardPopoverAnchor {
   const rect = element.getBoundingClientRect();
   return {
@@ -143,17 +147,25 @@ export function CustomKeyboardView({
 
   const onKeyPress = useCallback(
     (key: CustomKeyboardKey, element?: HTMLElement) => {
-      if (key.activation.type === "surface") {
-        if (!element) return;
-        togglePopover(key.activation.surface, element);
-        return;
-      }
-      viewModel.onActivateKey(key);
-      if (
-        key.activation.type === "native" &&
-        (key.activation.action === "pick-photo" || key.activation.action === "capture-photo")
-      ) {
-        openNativeFilePicker(key.activation.action);
+      switch (key.activation.type) {
+        case "surface":
+          if (element) togglePopover(key.activation.surface, element);
+          return;
+        case "directional-flick":
+          return;
+        case "sequence":
+        case "modifier":
+        case "terminal":
+          viewModel.onActivateKey(key);
+          return;
+        case "native":
+          viewModel.onActivateKey(key);
+          if (key.activation.action === "pick-photo" || key.activation.action === "capture-photo") {
+            openNativeFilePicker(key.activation.action);
+          }
+          return;
+        default:
+          return assertNeverCustomKeyboardActivation(key.activation);
       }
     },
     [openNativeFilePicker, togglePopover, viewModel],
