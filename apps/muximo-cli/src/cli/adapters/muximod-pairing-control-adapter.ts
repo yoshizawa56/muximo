@@ -18,6 +18,7 @@ import {
   type MuximodControlResponse,
   muximodControlMaxResponseBytes,
 } from "@muximo/contract/control";
+import { sanitizeProcessDiagnostic } from "@muximo/infrastructure/cli-client";
 
 type AgentStatus = Extract<MuximodControlRequest, { type: "observe_agent_session" }>["state"];
 type AgentExecutionStart = Extract<MuximodControlResponse, { type: "execute_agent_process" }>;
@@ -282,7 +283,8 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
         code: 127,
         interrupted: controller.signal.aborted,
         signal: null,
-        failureDiagnostic: executionErrorMessage(error),
+        failureDiagnostic:
+          sanitizeProcessDiagnostic(error instanceof Error ? error.message : String(error)) ?? "agent execution failed",
       };
     } finally {
       this.activeAgentExecutions.delete(request.requestId);
@@ -381,13 +383,6 @@ function connectControlSocket(path: string): Promise<Socket> {
 
 function controlError(response: Extract<MuximodControlResponse, { type: "error" }>): PairingControlError {
   return new PairingControlError(`${response.code}: ${response.message}`, response.code);
-}
-
-function executionErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.trim();
-  if (!normalized) return "agent execution failed";
-  return normalized.length <= 4_096 ? normalized : `…${normalized.slice(-4_095)}`;
 }
 
 function toPairingClaim(response: Extract<MuximodControlResponse, { type: "pairing_claimed" }>): PairingClaim {

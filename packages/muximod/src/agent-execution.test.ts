@@ -1,6 +1,7 @@
 import type { AgentExecutionRequest } from "@muximo/application";
 import type { MuximodControlResponse } from "@muximo/contract/control";
 import {
+  type FixtureHandle,
   hasError,
   hasObserved,
   type OperationCase,
@@ -9,19 +10,27 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { AgentExecutionBroker, type AgentExecutionControlPeer } from "./agent-execution.js";
+import {
+  AgentExecutionBroker,
+  type AgentExecutionControlPeer,
+  type AgentExecutionScheduler,
+} from "./agent-execution.js";
 
 type BrokerInput = {
-  action: "success" | "operation-mismatch" | "pane-mismatch" | "connection-close";
+  action: "success" | "operation-mismatch" | "pane-mismatch" | "connection-close" | "expired";
 };
 type BrokerFixture = {
   broker: AgentExecutionBroker;
+  scheduler: FakeScheduler;
   peer: AgentExecutionControlPeer;
   frames: MuximodControlResponse[];
   resultCode?: number;
   resultPid?: number;
   pendingError?: string;
   secondUseError?: string;
+  expiredError?: string;
+  replacementReserved?: boolean;
+  reservationDelay?: number;
 };
 type BrokerContext = {
   frames: readonly string[];
@@ -29,6 +38,9 @@ type BrokerContext = {
   resultPid: number | undefined;
   pendingError: string | undefined;
   secondUseError: string | undefined;
+  expiredError: string | undefined;
+  replacementReserved: boolean | undefined;
+  reservationDelay: number | undefined;
 };
 
 const request: AgentExecutionRequest = {
@@ -74,6 +86,18 @@ const cases = [
       hasObserved<BrokerContext, undefined>("pendingError", "agent execution control connection closed"),
     ],
   },
+  {
+    name: "expires an unused token and allows the peer to reserve again",
+    input: { action: "expired" },
+    assert: [
+      hasObserved<BrokerContext, undefined>("reservationDelay", 30_000),
+      hasObserved<BrokerContext, undefined>(
+        "expiredError",
+        "agent execution token is invalid, expired, or already used",
+      ),
+      hasObserved<BrokerContext, undefined>("replacementReserved", true),
+    ],
+  },
 ] satisfies readonly OperationCase<"default", BrokerInput, undefined, BrokerContext>[];
 
 const table: OperationTable<BrokerFixture, "default", BrokerInput, undefined, BrokerContext> = {
@@ -85,6 +109,7 @@ const table: OperationTable<BrokerFixture, "default", BrokerInput, undefined, Br
       hostPaneId: "%1",
       ownerPid: 321,
     });
+    fixture.reservationDelay = fixture.scheduler.pendingDelays()[0];
 
     if (input.action === "operation-mismatch") {
       await fixture.broker.consume({ token: reservation.token, operation: "resume", hostPaneId: "%1" });
@@ -124,6 +149,24 @@ const table: OperationTable<BrokerFixture, "default", BrokerInput, undefined, Br
         }
       }
     }
+    if (input.action === "expired") {
+      fixture.scheduler.runNext();
+      try {
+        await fixture.broker.consume({ token: reservation.token, operation: "run", hostPaneId: "%1" });
+      } catch (error) {
+        fixture.expiredError = error instanceof Error ? error.message : String(error);
+      }
+      try {
+        fixture.broker.reserve(fixture.peer, {
+          operation: "run",
+          hostPaneId: "%1",
+          ownerPid: 321,
+        });
+        fixture.replacementReserved = true;
+      } catch {
+        fixture.replacementReserved = false;
+      }
+    }
     return undefined;
   },
   observe: (fixture) => ({
@@ -134,20 +177,29 @@ const table: OperationTable<BrokerFixture, "default", BrokerInput, undefined, Br
     resultPid: fixture.resultPid,
     pendingError: fixture.pendingError,
     secondUseError: fixture.secondUseError,
+    expiredError: fixture.expiredError,
+    replacementReserved: fixture.replacementReserved,
+    reservationDelay: fixture.reservationDelay,
   }),
 };
 
-function createFixture(): { fixture: BrokerFixture } {
+function createFixture(): FixtureHandle<BrokerFixture> {
   const frames: MuximodControlResponse[] = [];
+  const scheduler = createFakeScheduler();
+  const broker = new AgentExecutionBroker({ scheduler });
   const peer: AgentExecutionControlPeer = {
     isOpen: () => true,
     send: (frame) => frames.push(frame),
   };
   return {
     fixture: {
-      broker: new AgentExecutionBroker(),
+      broker,
+      scheduler,
       peer,
       frames,
+    },
+    cleanup: () => {
+      broker.closeAll();
     },
   };
 }
@@ -162,4 +214,34 @@ async function waitFor(predicate: () => boolean): Promise<void> {
     if (Date.now() >= deadline) throw new Error("timed out waiting for agent execution request");
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
+}
+
+type FakeScheduler = AgentExecutionScheduler & {
+  pendingDelays(): readonly number[];
+  runNext(): void;
+};
+
+function createFakeScheduler(): FakeScheduler {
+  const tasks = new Map<number, { callback: () => void; delayMs: number }>();
+  let nextId = 0;
+  return {
+    setTimeout(callback, delayMs) {
+      const id = ++nextId;
+      tasks.set(id, { callback, delayMs });
+      return id;
+    },
+    clearTimeout(timer) {
+      if (typeof timer !== "number") throw new Error("fake timer id must be a number");
+      tasks.delete(timer);
+    },
+    pendingDelays() {
+      return [...tasks.values()].map((task) => task.delayMs);
+    },
+    runNext() {
+      const [id, task] = [...tasks.entries()][0] ?? [];
+      if (id === undefined || task === undefined) throw new Error("no fake timer is pending");
+      tasks.delete(id);
+      task.callback();
+    },
+  };
 }

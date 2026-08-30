@@ -35,6 +35,7 @@ export * from "./cli/shell.js";
 export * from "./cli/tmux-session.js";
 export { GitShellWorktreeAdapter, GitWorktreeAdapter, type WorktreeAdapterOptions } from "./cli/worktree.js";
 export { createLogger, defaultLogFile, type Logger, type LogLevel, parseLogLevel } from "./logging/index.js";
+export { sanitizeProcessDiagnostic } from "./process/process.js";
 export {
   buildServeArgs,
   buildServeHttpUrl,

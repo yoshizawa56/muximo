@@ -106,8 +106,8 @@ export type MuximodSessionSummary = {
 export type MuximodPaneSummary = PaneRecord;
 
 export type MuximodAgentSessionApplication = {
-  run(input: StartAgentSessionInput, execution?: AgentExecutionPort): Promise<RunAgentSessionResult>;
-  resume(input: ResumeAgentSessionInput, execution?: AgentExecutionPort): Promise<ResumeAgentSessionResult>;
+  run(input: StartAgentSessionInput, execution: AgentExecutionPort): Promise<RunAgentSessionResult>;
+  resume(input: ResumeAgentSessionInput, execution: AgentExecutionPort): Promise<ResumeAgentSessionResult>;
   cleanup(input: CleanupAgentSessionInput): Promise<CleanupAgentSessionResult>;
   list(input: AgentSessionListInput): Promise<AgentSessionListResult>;
 };

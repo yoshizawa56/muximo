@@ -35,17 +35,14 @@ export type RunAgentSessionDependencies = {
   clock: SessionClock;
   logger: SessionLogger;
   confirmCleanup: SessionCleanupConfirmationPort;
-  execution: AgentExecutionPort;
 };
 
 /** Application policy for creating, executing, finalizing, and optionally removing one session. */
 export class RunAgentSession {
   public constructor(private readonly deps: RunAgentSessionDependencies) {}
 
-  public async execute(
-    input: StartAgentSessionInput,
-    execution: AgentExecutionPort = this.deps.execution,
-  ): Promise<RunAgentSessionResult> {
+  public async execute(input: StartAgentSessionInput, execution: AgentExecutionPort): Promise<RunAgentSessionResult> {
+    if (execution === undefined) throw new Error("agent execution capability is required");
     const logger = this.deps.logger.child({ operation: "run", backend: input.backend });
     logger.debug("session.starting", {
       useWorktree: input.useWorktree,

@@ -9,6 +9,16 @@ export type AgentExecutionControlPeer = {
   isOpen(): boolean;
 };
 
+export type AgentExecutionScheduler = {
+  setTimeout(callback: () => void, delayMs: number): unknown;
+  clearTimeout(timer: unknown): void;
+};
+
+export type AgentExecutionBrokerOptions = {
+  reservationTtlMs?: number;
+  scheduler?: AgentExecutionScheduler;
+};
+
 export type AgentExecutionReservationInput = {
   operation: AgentExecutionOperation;
   hostPaneId?: string;
@@ -32,7 +42,7 @@ type Reservation = AgentExecutionReservationInput & {
   token: string;
   state: "reserved" | "consumed";
   used: boolean;
-  timer: ReturnType<typeof setTimeout>;
+  timer: unknown;
   pending?: PendingExecution;
 };
 type PendingExecution = {
@@ -42,7 +52,15 @@ type PendingExecution = {
   reject(error: Error): void;
 };
 
-const reservationTtlMs = 30_000;
+const defaultReservationTtlMs = 30_000;
+const defaultScheduler: AgentExecutionScheduler = {
+  setTimeout: (callback, delayMs) => {
+    const timer = setTimeout(callback, delayMs);
+    timer.unref?.();
+    return timer;
+  },
+  clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+};
 
 /**
  * Bridges one interactive execution from the daemon to the CLI that owns the
@@ -53,14 +71,21 @@ export class AgentExecutionBroker {
   private readonly reservations = new Map<string, Reservation>();
   private readonly reservationByPeer = new Map<AgentExecutionControlPeer, string>();
 
+  private readonly reservationTtlMs: number;
+  private readonly scheduler: AgentExecutionScheduler;
+
+  public constructor(options: AgentExecutionBrokerOptions = {}) {
+    this.reservationTtlMs = options.reservationTtlMs ?? defaultReservationTtlMs;
+    this.scheduler = options.scheduler ?? defaultScheduler;
+  }
+
   public reserve(peer: AgentExecutionControlPeer, input: AgentExecutionReservationInput): AgentExecutionReservation {
     if (!peer.isOpen()) throw new Error("agent execution control connection is closed");
     if (this.reservationByPeer.has(peer)) {
       throw new Error("agent execution is already reserved on this control connection");
     }
     const token = randomBytes(32).toString("base64url");
-    const timer = setTimeout(() => this.expire(token), reservationTtlMs);
-    timer.unref?.();
+    const timer = this.scheduler.setTimeout(() => this.expire(token), this.reservationTtlMs);
     const reservation: Reservation = { ...input, peer, token, state: "reserved", used: false, timer };
     this.reservations.set(token, reservation);
     this.reservationByPeer.set(peer, token);
@@ -82,7 +107,7 @@ export class AgentExecutionBroker {
       this.deleteReservation(reservation);
       throw new Error("agent execution control connection is closed");
     }
-    clearTimeout(reservation.timer);
+    this.scheduler.clearTimeout(reservation.timer);
     reservation.state = "consumed";
     return {
       ownerPid: reservation.ownerPid,
@@ -126,7 +151,7 @@ export class AgentExecutionBroker {
   public closeAll(): void {
     for (const reservation of this.reservations.values()) {
       reservation.pending?.reject(new Error("agent execution broker stopped"));
-      clearTimeout(reservation.timer);
+      this.scheduler.clearTimeout(reservation.timer);
     }
     this.reservations.clear();
     this.reservationByPeer.clear();
@@ -176,7 +201,7 @@ export class AgentExecutionBroker {
   }
 
   private deleteReservation(reservation: Reservation): void {
-    clearTimeout(reservation.timer);
+    this.scheduler.clearTimeout(reservation.timer);
     this.reservations.delete(reservation.token);
     if (this.reservationByPeer.get(reservation.peer) === reservation.token) {
       this.reservationByPeer.delete(reservation.peer);

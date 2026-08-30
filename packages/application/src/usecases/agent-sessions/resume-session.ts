@@ -23,7 +23,6 @@ export type ResumeAgentSessionDependencies = {
   panes: PanePublicationPort;
   clock: SessionClock;
   logger: SessionLogger;
-  execution: AgentExecutionPort;
 };
 
 /** Application policy for claiming and resuming one persisted session. */
@@ -32,8 +31,9 @@ export class ResumeAgentSession {
 
   public async execute(
     input: ResumeAgentSessionInput,
-    agentExecution: AgentExecutionPort = this.deps.execution,
+    agentExecution: AgentExecutionPort,
   ): Promise<ResumeAgentSessionResult> {
+    if (agentExecution === undefined) throw new Error("agent execution capability is required");
     let session = await this.deps.locator.execute({
       reference: input.reference,
       workspaceScope: input.workspaceScope,

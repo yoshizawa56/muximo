@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import {
-  type AgentExecutionPort,
   type AgentObservationPort,
   type AgentStateObservation,
   type AgentStatusStore,
@@ -206,12 +205,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     return application;
   };
   const agentExecutionBroker = new AgentExecutionBroker();
-  const unavailableAgentExecution: AgentExecutionPort = {
-    ownerPid: process.pid,
-    execute: async () => {
-      throw new Error("agent execution requires an attached muximo-cli terminal");
-    },
-  };
   const agentPane = createAgentPanePublication(applicationForAgentPane, logger, environment);
   const backendOptions = {
     environment,
@@ -255,7 +248,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     clock: sessionClock,
     logger: sessionLogger,
     confirmCleanup: { confirm: async () => false },
-    execution: unavailableAgentExecution,
   });
   const resumeAgentSession = new ResumeAgentSession({
     sessions: agentSessionRepository,
@@ -265,7 +257,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     panes: agentPane,
     clock: sessionClock,
     logger: sessionLogger,
-    execution: unavailableAgentExecution,
   });
   const cleanupAgentSession = new CleanupAgentSession({
     sessions: agentSessionRepository,

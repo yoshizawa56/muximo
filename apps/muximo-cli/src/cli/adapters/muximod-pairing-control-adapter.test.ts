@@ -19,13 +19,12 @@ import {
   type MuximodPairingControlAdapterOptions,
 } from "./muximod-pairing-control-adapter.js";
 
-type AdapterMode = "success" | "failure";
+type AdapterFixtureKey = "success" | "failure";
 type AdapterFixture = {
   adapter: MuximodPairingControlAdapter;
   transport: PassThrough;
   writes: MuximodControlRequest[];
   executionRequests: string[];
-  executionMode: AdapterMode;
   executionFinished: Promise<void>;
   push(response: MuximodControlResponse): void;
 };
@@ -34,7 +33,7 @@ type AdapterContext = {
   completionResult: { code: number; diagnostic?: string } | undefined;
   released: boolean;
 };
-type AdapterInput = { mode: AdapterMode };
+type AdapterInput = Record<string, never>;
 
 const executionId = "execution-id-123456";
 const token = "a".repeat(43);
@@ -42,7 +41,8 @@ const token = "a".repeat(43);
 const cases = [
   {
     name: "dispatches a daemon execution request while no control request is pending",
-    input: { mode: "success" },
+    fixture: "success",
+    input: {},
     assert: [
       hasObserved<AdapterContext, undefined>("executionRequests", [executionId]),
       hasObserved<AdapterContext, undefined>("completionResult", { code: 0 }),
@@ -51,20 +51,27 @@ const cases = [
   },
   {
     name: "returns an execution failure to the daemon when the host handler throws",
-    input: { mode: "failure" },
+    fixture: "failure",
+    input: {},
     assert: [
       hasObserved<AdapterContext, undefined>("executionRequests", [executionId]),
-      hasObserved<AdapterContext, undefined>("completionResult", { code: 127, diagnostic: "provider failed" }),
+      hasObserved<AdapterContext, undefined>("completionResult", {
+        code: 127,
+        diagnostic: "provider failed --token=[REDACTED]",
+      }),
       hasObserved<AdapterContext, undefined>("released", true),
     ],
   },
-] satisfies readonly OperationCase<"default", AdapterInput, undefined, AdapterContext>[];
+] satisfies readonly OperationCase<AdapterFixtureKey, AdapterInput, undefined, AdapterContext>[];
 
-const table: OperationTable<AdapterFixture, "default", AdapterInput, undefined, AdapterContext> = {
-  defaultFixture: createFixture,
+const table: OperationTable<AdapterFixture, AdapterFixtureKey, AdapterInput, undefined, AdapterContext> = {
+  defaultFixture: () => createFixture("success"),
+  fixtures: {
+    success: () => createFixture("success"),
+    failure: () => createFixture("failure"),
+  },
   cases,
-  execute: async (fixture, input) => {
-    fixture.executionMode = input.mode;
+  execute: async (fixture) => {
     const reservationPromise = fixture.adapter.reserveAgentExecution({ operation: "run", ownerPid: process.pid });
     const reservationRequest = await waitForRequest(fixture, "reserve_agent_execution");
     fixture.push({
@@ -133,7 +140,7 @@ describe("muximod pairing control adapter", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
-function createFixture(): FixtureHandle<AdapterFixture> {
+function createFixture(mode: AdapterFixtureKey): FixtureHandle<AdapterFixture> {
   const transport = new PassThrough();
   const writes: MuximodControlRequest[] = [];
   const executionRequests: string[] = [];
@@ -141,12 +148,11 @@ function createFixture(): FixtureHandle<AdapterFixture> {
   const executionFinished = new Promise<void>((resolve) => {
     finishExecution = resolve;
   });
-  let fixture!: AdapterFixture;
   const options: MuximodPairingControlAdapterOptions = {
     onAgentExecution: async (request) => {
       executionRequests.push(request.executionId);
       try {
-        if (fixture.executionMode === "failure") throw new Error("provider failed");
+        if (mode === "failure") throw new Error("provider failed --token=secret");
         return { started: true, code: 0, interrupted: false, signal: null, pid: 456 } satisfies AgentExecutionResult;
       } finally {
         finishExecution();
@@ -165,12 +171,11 @@ function createFixture(): FixtureHandle<AdapterFixture> {
     ): MuximodPairingControlAdapter;
   };
   const adapter = new Adapter(transport as unknown as import("node:net").Socket, options);
-  fixture = {
+  const fixture: AdapterFixture = {
     adapter,
     transport,
     writes,
     executionRequests,
-    executionMode: "success",
     executionFinished,
     push(response: MuximodControlResponse) {
       transport.push(`${encodeMuximodControlResponse(response)}\n`);
