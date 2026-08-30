@@ -158,10 +158,29 @@
     container-type: inline-size;
   }
 
+  .custom-keyboard-key-button {
+    width: 34px;
+    min-width: 34px;
+    max-width: 34px;
+  }
+
+  .custom-keyboard-compact-button {
+    width: 34px;
+    min-width: 34px;
+    max-width: 34px;
+  }
+
   @container (max-width: 359px) {
+    .custom-keyboard-key-button {
+      width: 32px;
+      min-width: 32px;
+      max-width: 32px;
+    }
+
     .custom-keyboard-compact-button {
       width: 32px;
       min-width: 32px;
+      max-width: 32px;
     }
 
     .custom-keyboard-show-keyboard {
@@ -171,9 +190,16 @@
   }
 
   @container (max-width: 299px) {
+    .custom-keyboard-key-button {
+      width: 30px;
+      min-width: 30px;
+      max-width: 30px;
+    }
+
     .custom-keyboard-compact-button {
       width: 30px;
       min-width: 30px;
+      max-width: 30px;
     }
 
     .custom-keyboard-show-keyboard {
