@@ -35,6 +35,8 @@ export class AttachAgentSession {
       const claimed = await this.deps.sessions.attachExecution({
         id,
         executionId: input.executionId,
+        expectedExecutionOwnerPid: input.executionOwnerPid ?? null,
+        expectedExecutionOwnerStartedAt: input.executionOwnerStartedAt ?? null,
         executionPid: input.executionPid,
         executionStartedAt: input.executionStartedAt,
         updatedAt,

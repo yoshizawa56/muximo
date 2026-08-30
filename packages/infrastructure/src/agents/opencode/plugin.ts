@@ -87,10 +87,13 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
     },
 
     async prepareLaunch(
-      input: LaunchInput & { monitorContext: AgentMonitorContext; resumeSessionId?: string | null },
+      input: LaunchInput & {
+        monitorContext: AgentMonitorContext;
+        resumeSessionId?: string | null;
+        signal?: AbortSignal;
+      },
     ): Promise<LaunchPlan> {
       const root = input.cwd;
-      const entry = await manager.ensure(root);
       let disposed = false;
       let disposal: Promise<void> | undefined;
       const disposeOwnedServer = (): Promise<void> => {
@@ -110,10 +113,22 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
         return disposal;
       };
 
+      let serverAcquired = false;
       try {
+        input.signal?.throwIfAborted();
+        const entry = await manager.ensure(root, input.signal);
+        serverAcquired = true;
+        input.signal?.throwIfAborted();
         const baseUrl = `http://127.0.0.1:${entry.port}`;
         const client = options.clientFactory?.(baseUrl) ?? new OpenCodeClient(baseUrl, { onLog: options.onLog });
-        const sessionId = await resolveSessionId(client, entry, input.resumeSessionId ?? null, input.name);
+        const sessionId = await resolveSessionId(
+          client,
+          entry,
+          input.resumeSessionId ?? null,
+          input.name,
+          input.signal,
+        );
+        input.signal?.throwIfAborted();
         const monitor =
           options.monitorFactory?.({
             baseUrl,
@@ -146,7 +161,7 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
         // Preparation owns the server until a plan is returned. If plan
         // construction fails, release that ownership before propagating the
         // preparation error.
-        await disposeOwnedServer();
+        if (serverAcquired) await disposeOwnedServer();
         throw error;
       }
     },
@@ -162,9 +177,10 @@ async function resolveSessionId(
   entry: OpenCodeServerEntry,
   resumeSessionId: string | null,
   sessionName: string | undefined,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!resumeSessionId) {
-    const created = await client.createSession(sessionName);
+    const created = await client.createSession(sessionName, signal);
     if (!created) {
       throw new OpenCodePluginError(
         `OpenCode server on port ${entry.port} did not accept a new session; check 'opencode serve' diagnostics`,
@@ -172,7 +188,7 @@ async function resolveSessionId(
     }
     return created;
   }
-  const exists = await client.sessionExists(resumeSessionId);
+  const exists = await client.sessionExists(resumeSessionId, signal);
   if (!exists) {
     throw new OpenCodePluginError(
       `OpenCode session ${resumeSessionId} no longer exists on the owned server; start a new session instead of resuming`,
@@ -182,7 +198,7 @@ async function resolveSessionId(
   // Keep the session title in sync with the agent session name. This is
   // cosmetic; a title update failure must not block the resume.
   if (sessionName) {
-    await client.setSessionTitle(resumeSessionId, sessionName);
+    await client.setSessionTitle(resumeSessionId, sessionName, signal);
   }
   return resumeSessionId;
 }

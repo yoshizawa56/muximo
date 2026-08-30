@@ -113,6 +113,7 @@ const agentSessionStartInputSchema = z
     setupHookExplicit: z.boolean(),
     cleanupHookExplicit: z.boolean(),
     backendArgs: z.array(agentSessionArgumentSchema).max(256),
+    executionOwnerPid: z.number().int().positive().optional(),
   })
   .strict();
 const agentSessionResumeInputSchema = z
@@ -121,6 +122,7 @@ const agentSessionResumeInputSchema = z
     reference: z.string().trim().min(1).max(256),
     hostPaneId: hostPaneIdWireSchema.optional(),
     backendArgs: z.array(agentSessionArgumentSchema).max(256),
+    executionOwnerPid: z.number().int().positive().optional(),
   })
   .strict();
 const agentExecutionPlanSchema = z
@@ -292,6 +294,8 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
       hostPaneId: hostPaneIdWireSchema.optional(),
       executionPid: z.number().int().positive(),
       executionStartedAt: z.string().datetime(),
+      executionOwnerPid: z.number().int().positive().optional(),
+      executionOwnerStartedAt: z.string().datetime().optional(),
     })
     .strict(),
   z

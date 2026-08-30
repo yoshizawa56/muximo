@@ -43,6 +43,7 @@ export interface AgentBackendProvider {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    signal?: AbortSignal,
   ): Promise<AgentBackendProviderPreparation>;
   /** Reconstructs daemon-side observation for a process that survived a daemon restart. */
   restoreLaunch?(session: AgentSessionRecord): Promise<AgentBackendLaunch | undefined>;

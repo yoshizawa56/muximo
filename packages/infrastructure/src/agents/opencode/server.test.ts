@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type Assertion,
+  hasObserved,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -30,6 +31,7 @@ type Harness = {
   spawnRecords: SpawnRecord[];
   spawnEnvironments: NodeJS.ProcessEnv[];
   alivePids: Set<number>;
+  unknownPids: Set<number>;
   killed: { pid: number; signal: string }[];
   childrenDieImmediately: boolean;
   markHealthyOnSpawn: boolean;
@@ -51,6 +53,7 @@ type ServerInput = {
   seededEntry?: SeededEntry;
   seededEntries?: readonly SeededEntry[];
   seededAlive?: boolean;
+  seededUnknown?: boolean;
   seededHealthy?: boolean;
   seededPortAvailable?: boolean;
   healthOnSpawn?: boolean;
@@ -62,7 +65,9 @@ type ServerInput = {
   shutdownPollIntervalMs?: number;
   registryLockTimeoutMs?: number;
   registryLockPollIntervalMs?: number;
-  operation: "ensure" | "dispose" | "dispose-all" | "dispose-missing" | "refresh-all";
+  requestTimeoutMs?: number;
+  healthRequestHangs?: boolean;
+  operation: "ensure" | "ensure-cancel" | "dispose" | "dispose-all" | "dispose-missing" | "refresh-all";
   staleLock?: boolean;
   contendedLock?: boolean;
   unownedKillThrows?: boolean;
@@ -82,6 +87,7 @@ type ServerResult = {
   errorCode?: string;
   errorMessage?: string;
   causeMessage?: string;
+  lockExists?: boolean;
   retryable?: boolean;
   failure:
     | "health_timeout"
@@ -103,6 +109,7 @@ function createHarness(): Harness {
     spawnRecords: [],
     spawnEnvironments: [],
     alivePids: new Set(),
+    unknownPids: new Set(),
     killed: [],
     childrenDieImmediately: false,
     markHealthyOnSpawn: true,
@@ -127,6 +134,7 @@ function createManager(harness: Harness, input: ServerInput): OpenCodeServerMana
     },
     probePort: async (port) => harness.availablePorts.has(port),
     request: async (url) => {
+      if (input.healthRequestHangs) return new Promise<Response>(() => {});
       const port = Number.parseInt(String(url).match(/127\.0\.0\.1:(\d+)/)?.[1] ?? "0", 10);
       if (!harness.healthyPorts.has(port)) return new Response("unhealthy", { status: 503 });
       return new Response(JSON.stringify({ healthy: true, version: "1.2.3" }), {
@@ -135,7 +143,7 @@ function createManager(harness: Harness, input: ServerInput): OpenCodeServerMana
       });
     },
     signaller: {
-      isAlive: (pid) => harness.alivePids.has(pid),
+      observe: (pid) => (harness.unknownPids.has(pid) ? "unknown" : harness.alivePids.has(pid) ? "alive" : "dead"),
       kill: (pid, signal) => {
         if (input.unownedKillThrows) throw new Error("EPERM: operation not permitted");
         harness.killed.push({ pid, signal });
@@ -150,6 +158,7 @@ function createManager(harness: Harness, input: ServerInput): OpenCodeServerMana
     shutdownPollIntervalMs: input.shutdownPollIntervalMs,
     registryLockTimeoutMs: input.registryLockTimeoutMs,
     registryLockPollIntervalMs: input.registryLockPollIntervalMs,
+    requestTimeoutMs: input.requestTimeoutMs,
     now: () => harness.now,
     sleep: async (milliseconds) => {
       harness.now += milliseconds;
@@ -182,7 +191,7 @@ function spawnRecord(harness: Harness, command: string, args: string[], cwd: str
 
 const expectAnyStartedAt = "__ANY_STARTED_AT__";
 
-type EmptyContext = {};
+type EmptyContext = { lockExists?: boolean };
 
 const hasRegistryReadCause = (): Assertion<EmptyContext, ServerResult> => ({
   name: "preserves the registry read failure cause",
@@ -420,6 +429,26 @@ const cases = [
     ],
   },
   {
+    name: "retains a registered server when its process identity cannot be verified",
+    input: {
+      operation: "dispose" as const,
+      seededEntry: { root: "/ws", pid: 42, port: 7_000 },
+      seededUnknown: true,
+      seededHealthy: true,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [],
+        killed: [],
+        registry: { "/ws": { pid: 42, port: 7_000, version: "1.2.3", startedAt: expectAnyStartedAt } },
+        errorCode: "opencode_process_disposal_failed",
+        retryable: true,
+        failure: "disposal_failed",
+      }),
+    ],
+  },
+  {
     name: "dispose waits for confirmed process exit before reporting success",
     input: {
       operation: "dispose" as const,
@@ -527,6 +556,40 @@ const cases = [
         failure: "server_exited",
       }),
     ],
+  },
+  {
+    name: "releases the registry lock after a health request hangs",
+    input: {
+      operation: "ensure" as const,
+      healthRequestHangs: true,
+      startupTimeoutMs: 10,
+      healthPollIntervalMs: 5,
+      requestTimeoutMs: 1,
+    },
+    assert: [
+      returns<EmptyContext, ServerResult>({
+        entry: undefined,
+        spawned: [
+          {
+            command: "opencode",
+            args: ["serve", "--hostname", "127.0.0.1", "--port", "49152"],
+            cwd: "/ws",
+            pid: 1_000,
+          },
+        ],
+        killed: [],
+        registry: {},
+        failure: "health_timeout",
+      }),
+    ],
+  },
+  {
+    name: "releases the registry lock when preparation is cancelled",
+    input: {
+      operation: "ensure-cancel" as const,
+      healthRequestHangs: true,
+    },
+    assert: [hasObserved<EmptyContext, ServerResult>("lockExists", false)],
   },
   {
     name: "proceeds when a stale lock is left behind",
@@ -778,6 +841,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
             const healthy = seeded.healthy ?? input.seededHealthy ?? false;
             const portAvailable = seeded.portAvailable ?? input.seededPortAvailable !== false;
             if (alive) harness.alivePids.add(seeded.pid);
+            if (input.seededUnknown === true) harness.unknownPids.add(seeded.pid);
             if (healthy) harness.healthyPorts.add(seeded.port);
             if (portAvailable) harness.availablePorts.add(seeded.port);
           }
@@ -795,7 +859,13 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
       let errorMessage: string | undefined;
       let causeMessage: string | undefined;
       try {
-        if (input.operation === "dispose") {
+        if (input.operation === "ensure-cancel") {
+          const controller = new AbortController();
+          const pending = manager.ensure("/ws", controller.signal);
+          await waitFor(() => harness.spawnRecords.length === 1);
+          controller.abort();
+          entry = await pending;
+        } else if (input.operation === "dispose") {
           const disposed = await manager.dispose("/ws");
           if (!disposed) throw new Error("dispose returned false");
         } else if (input.operation === "dispose-all") {
@@ -843,6 +913,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
           ? (JSON.parse(readFileSync(harness.registryFile, "utf8")) as Record<string, unknown>)
           : {};
       const normalizedRegistry = normalizeRegistry(registry);
+      const lockExists = existsSync(`${harness.registryFile}.lock`);
       const result: ServerResult = {
         entry: entry
           ? { workspaceRoot: entry.workspaceRoot, pid: entry.pid, port: entry.port, version: entry.version }
@@ -854,6 +925,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
         ...(errorCode ? { errorCode, retryable } : {}),
         ...(errorMessage ? { errorMessage } : {}),
         ...(causeMessage ? { causeMessage } : {}),
+        ...(input.operation === "ensure-cancel" ? { lockExists } : {}),
         failure,
       };
       if (input.operation === "refresh-all") {
@@ -876,7 +948,7 @@ const table: OperationTable<undefined, "default", ServerInput, ServerResult, Emp
       rmSync(dirname(harness.registryFile), { recursive: true, force: true });
     }
   },
-  observe: () => ({}),
+  observe: (_fixture, result) => ({ lockExists: result.ok ? result.value.lockExists : undefined }),
 };
 
 describe("opencode server manager", () => {
@@ -894,4 +966,12 @@ function normalizeRegistry(registry: Record<string, unknown>): Record<string, un
 
 function dirname(path: string): string {
   return path.slice(0, Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")));
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for OpenCode server test state");
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+  }
 }

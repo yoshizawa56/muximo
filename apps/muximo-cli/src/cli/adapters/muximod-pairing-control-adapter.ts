@@ -38,6 +38,13 @@ type ResponseWaiter = {
   reject(error: PairingControlError): void;
 };
 
+export const muximodControlRequestTimeoutMs = 30_000;
+export const muximodControlConnectTimeoutMs = 5_000;
+
+export type MuximodPairingControlAdapterOptions = {
+  requestTimeoutMs?: number;
+};
+
 export class PairingControlError extends Error {
   public constructor(
     message: string,
@@ -58,8 +65,13 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
   private readonly responseWaiters: ResponseWaiter[] = [];
   private socketError: PairingControlError | undefined;
   private closed = false;
+  private readonly requestTimeoutMs: number;
 
-  private constructor(private readonly socket: Socket) {
+  private constructor(
+    private readonly socket: Socket,
+    options: MuximodPairingControlAdapterOptions = {},
+  ) {
+    this.requestTimeoutMs = Math.max(0, options.requestTimeoutMs ?? muximodControlRequestTimeoutMs);
     socket.on("error", (error) => {
       const failure = new PairingControlError(
         `muximod control socket failed: ${error.message}`,
@@ -76,8 +88,11 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     void this.readResponses();
   }
 
-  public static async connect(socketPath: string): Promise<MuximodPairingControlAdapter> {
-    return new MuximodPairingControlAdapter(await connectControlSocket(socketPath));
+  public static async connect(
+    socketPath: string,
+    options: MuximodPairingControlAdapterOptions = {},
+  ): Promise<MuximodPairingControlAdapter> {
+    return new MuximodPairingControlAdapter(await connectControlSocket(socketPath), options);
   }
 
   public async createPairing(input: PairDeviceInput): Promise<PairingOffer> {
@@ -259,7 +274,7 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
       () => undefined,
       () => undefined,
     );
-    return operation;
+    return withRequestTimeout(operation, this.requestTimeoutMs, () => this.close());
   }
 
   private async nextResponseFor(requestId: string): Promise<MuximodControlResponse> {
@@ -341,8 +356,18 @@ function connectControlSocket(path: string): Promise<Socket> {
       return;
     }
     const socket = createConnection(path);
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(
+        new PairingControlError(
+          `connecting to muximod control socket timed out after ${muximodControlConnectTimeoutMs}ms`,
+          "control_socket_connect_timeout",
+        ),
+      );
+    }, muximodControlConnectTimeoutMs);
     const onError = (error: Error) =>
       (() => {
+        clearTimeout(timeout);
         socket.destroy();
         reject(
           new PairingControlError(
@@ -352,10 +377,36 @@ function connectControlSocket(path: string): Promise<Socket> {
         );
       })();
     socket.once("connect", () => {
+      clearTimeout(timeout);
       socket.off("error", onError);
       resolve(socket);
     });
     socket.once("error", onError);
+  });
+}
+
+function withRequestTimeout<Result>(
+  operation: Promise<Result>,
+  timeoutMs: number,
+  onTimeout: () => void,
+): Promise<Result> {
+  return new Promise<Result>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      onTimeout();
+      reject(
+        new PairingControlError(`muximod control request timed out after ${timeoutMs}ms`, "control_request_timeout"),
+      );
+    }, timeoutMs);
+    operation.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
   });
 }
 

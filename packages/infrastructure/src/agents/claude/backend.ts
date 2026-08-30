@@ -17,6 +17,7 @@ export class ClaudeBackendProvider implements AgentBackendProvider {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    _signal?: AbortSignal,
   ): Promise<AgentBackendProviderPreparation> {
     let effective = session;
     let sessionUpdate: SessionIdentityUpdate | undefined;

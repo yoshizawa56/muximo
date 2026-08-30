@@ -6,6 +6,7 @@ import {
 } from "@muximo/contract/control";
 import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
 import {
+  type CleanupRegistrar,
   type FixtureHandle,
   hasError,
   hasObserved,
@@ -22,7 +23,9 @@ type AdapterStep =
   | { type: "prepare-response" }
   | { type: "attach" }
   | { type: "complete" }
+  | { type: "timeout" }
   | { type: "close" };
+type AdapterKey = "default" | "timeout";
 type AdapterFixture = {
   adapter: MuximodPairingControlAdapter;
   transport: PassThrough;
@@ -57,6 +60,7 @@ const session = AgentSession.create({
 const cases = [
   {
     name: "prepares, attaches, and completes a host-owned execution",
+    fixture: "default" as const,
     steps: [{ type: "prepare" }, { type: "prepare-response" }, { type: "attach" }, { type: "complete" }],
     assert: [
       hasObserved<AdapterContext, undefined>("requestTypes", [
@@ -69,6 +73,7 @@ const cases = [
   },
   {
     name: "fails a pending control request when the socket closes without executing a process",
+    fixture: "default" as const,
     steps: [{ type: "prepare" }, { type: "close" }],
     assert: [
       hasError<AdapterContext, undefined>({ code: "control_socket_closed" }),
@@ -76,10 +81,24 @@ const cases = [
       hasObserved<AdapterContext, undefined>("closed", true),
     ],
   },
-] satisfies readonly ScenarioCase<"default", AdapterStep, undefined, AdapterContext>[];
+  {
+    name: "times out and closes a control request with no response",
+    fixture: "timeout" as const,
+    steps: [{ type: "prepare" }, { type: "timeout" }],
+    assert: [
+      hasError<AdapterContext, undefined>({ code: "control_request_timeout" }),
+      hasObserved<AdapterContext, undefined>("requestTypes", ["prepare_agent_execution"]),
+      hasObserved<AdapterContext, undefined>("closed", true),
+    ],
+  },
+] satisfies readonly ScenarioCase<AdapterKey, AdapterStep, undefined, AdapterContext>[];
 
-const table: ScenarioTable<AdapterFixture, "default", AdapterStep, undefined, AdapterContext> = {
+const table: ScenarioTable<AdapterFixture, AdapterKey, AdapterStep, undefined, AdapterContext> = {
   defaultFixture: createFixture,
+  fixtures: {
+    default: createFixture,
+    timeout: (registerCleanup) => createFixture(registerCleanup, 1),
+  },
   cases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
@@ -164,6 +183,10 @@ const table: ScenarioTable<AdapterFixture, "default", AdapterStep, undefined, Ad
         await completed;
         continue;
       }
+      if (step.type === "timeout") {
+        await fixture.preparePromise;
+        continue;
+      }
       fixture.transport.destroy();
       await fixture.preparePromise;
     }
@@ -179,7 +202,7 @@ describe("muximod pairing control adapter", () => {
   runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
-function createFixture(): FixtureHandle<AdapterFixture> {
+function createFixture(_registerCleanup?: CleanupRegistrar, requestTimeoutMs?: number): FixtureHandle<AdapterFixture> {
   const transport = new PassThrough();
   const writes: MuximodControlRequest[] = [];
   const state = { closed: false };
@@ -192,9 +215,12 @@ function createFixture(): FixtureHandle<AdapterFixture> {
     return true;
   }) as typeof transport.write;
   const Adapter = MuximodPairingControlAdapter as unknown as {
-    new (socket: import("node:net").Socket): MuximodPairingControlAdapter;
+    new (socket: import("node:net").Socket, options?: { requestTimeoutMs?: number }): MuximodPairingControlAdapter;
   };
-  const adapter = new Adapter(transport as unknown as import("node:net").Socket);
+  const adapter = new Adapter(
+    transport as unknown as import("node:net").Socket,
+    requestTimeoutMs === undefined ? undefined : { requestTimeoutMs },
+  );
   return {
     fixture: {
       adapter,

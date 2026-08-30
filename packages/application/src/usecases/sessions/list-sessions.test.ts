@@ -96,6 +96,7 @@ function createFixture(): FixtureHandle<ListFixture> {
     insert: async () => undefined,
     update: async () => undefined,
     claimExecution: async () => false,
+    claimAbandonedExecution: async () => false,
     attachExecution: async () => false,
     setBackendSessionIdIfMissing: async () => false,
     delete: async () => undefined,

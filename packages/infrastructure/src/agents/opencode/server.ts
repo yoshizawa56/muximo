@@ -8,11 +8,13 @@
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer, type Server } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { OpenCodeLog, OpenCodeRequest } from "./client.js";
+import { currentProcessStartedAt, observeProcessLiveness, type ProcessLiveness } from "../../process/process.js";
+import { type OpenCodeLog, type OpenCodeRequest, openCodeRequestTimeoutMs, requestWithTimeout } from "./client.js";
 
 export type OpenCodeServerEntry = {
   workspaceRoot: string;
@@ -24,6 +26,12 @@ export type OpenCodeServerEntry = {
 
 export type OpenCodeServerRegistry = Record<string, OpenCodeServerEntry>;
 
+type RegistryLockRecord = {
+  pid: number;
+  token?: string;
+  startedAt?: string;
+};
+
 export type SpawnedChild = {
   pid: number;
   kill(signal?: NodeJS.Signals | number): boolean;
@@ -32,8 +40,8 @@ export type SpawnedChild = {
 };
 
 export type ProcessSignaller = {
-  isAlive(pid: number): boolean;
-  kill(pid: number, signal: NodeJS.Signals): void;
+  observe(pid: number, expectedStartedAt?: string): ProcessLiveness;
+  kill(pid: number, signal: NodeJS.Signals, expectedStartedAt?: string): void;
 };
 
 export class OpenCodeRegistryLockTimeoutError extends Error {
@@ -85,6 +93,7 @@ export type OpenCodeServerManagerOptions = {
   shutdownPollIntervalMs?: number;
   registryLockTimeoutMs?: number;
   registryLockPollIntervalMs?: number;
+  requestTimeoutMs?: number;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   logFileDirectory?: string;
@@ -97,7 +106,9 @@ export const openCodeServerHealthPollMs = 100;
 export const openCodeServerShutdownTimeoutMs = 3_000;
 export const openCodeServerShutdownGracePeriodMs = 2_000;
 export const openCodeServerShutdownPollMs = 50;
-export const openCodeRegistryLockTimeoutMs = 5_000;
+// Registry mutations include starting or stopping a server. Leave enough time
+// for the bounded server lifecycle to finish before reporting contention.
+export const openCodeRegistryLockTimeoutMs = 30_000;
 export const openCodeRegistryLockPollMs = 50;
 
 export function defaultOpenCodeRegistryFile(env: NodeJS.ProcessEnv = process.env): string {
@@ -120,11 +131,13 @@ export class OpenCodeServerManager {
   private readonly shutdownPollIntervalMs: number;
   private readonly registryLockTimeoutMs: number;
   private readonly registryLockPollIntervalMs: number;
+  private readonly requestTimeoutMs: number;
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly logFileDirectory: string;
   private readonly signaller: ProcessSignaller;
   private readonly onLog: OpenCodeLog | undefined;
+  private readonly processStartedAt: string | undefined;
   private readonly children = new Set<SpawnedChild>();
 
   public constructor(private readonly options: OpenCodeServerManagerOptions) {
@@ -140,11 +153,13 @@ export class OpenCodeServerManager {
     this.shutdownPollIntervalMs = Math.max(1, options.shutdownPollIntervalMs ?? openCodeServerShutdownPollMs);
     this.registryLockTimeoutMs = Math.max(0, options.registryLockTimeoutMs ?? openCodeRegistryLockTimeoutMs);
     this.registryLockPollIntervalMs = Math.max(1, options.registryLockPollIntervalMs ?? openCodeRegistryLockPollMs);
+    this.requestTimeoutMs = Math.max(0, options.requestTimeoutMs ?? openCodeRequestTimeoutMs);
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? sleep;
     this.logFileDirectory = options.logFileDirectory ?? dirnameOf(options.registryFile);
     this.signaller = options.signaller ?? defaultSignaller;
     this.onLog = options.onLog;
+    this.processStartedAt = currentProcessStartedAt();
   }
 
   /**
@@ -153,23 +168,28 @@ export class OpenCodeServerManager {
    * root so clients holding the server URL keep working. Never stops a server
    * whose pid is not owned by this registry.
    */
-  public async ensure(workspaceRoot: string): Promise<OpenCodeServerEntry> {
+  public async ensure(workspaceRoot: string, signal?: AbortSignal): Promise<OpenCodeServerEntry> {
     return this.withFileLock(async () => {
       const registry = this.readRegistry();
       const existing = registry[workspaceRoot];
       if (existing) {
-        if (this.isAlive(existing.pid) && (await this.isHealthy(existing.port))) {
+        const existingLiveness = this.observe(existing.pid, existing.startedAt);
+        if (existingLiveness === "unknown") throw unknownProcessIdentity(existing.pid);
+        if (existingLiveness === "alive" && (await this.isHealthy(existing.port, signal))) {
           return existing;
         }
+        throwIfAborted(signal);
         await this.disposeEntry(existing);
         delete registry[workspaceRoot];
       }
 
+      throwIfAborted(signal);
       const port = existing ? await this.allocatePreferredPort(existing.port) : await this.allocatePort();
+      throwIfAborted(signal);
       const child = this.spawnServer(workspaceRoot, port);
       let health: { healthy: boolean; version: string } | undefined;
       try {
-        health = await this.waitForHealth(port, child.pid);
+        health = await this.waitForHealth(port, child.pid, signal);
       } catch (error) {
         try {
           await this.disposeChild(child);
@@ -192,7 +212,7 @@ export class OpenCodeServerManager {
       registry[workspaceRoot] = entry;
       this.writeRegistry(registry);
       return entry;
-    });
+    }, signal);
   }
 
   /**
@@ -213,9 +233,14 @@ export class OpenCodeServerManager {
     });
   }
 
-  public async isHealthy(port: number): Promise<boolean> {
+  public async isHealthy(port: number, signal?: AbortSignal): Promise<boolean> {
     try {
-      const response = await this.request(`http://127.0.0.1:${port}/global/health`);
+      const response = await requestWithTimeout(
+        this.request,
+        `http://127.0.0.1:${port}/global/health`,
+        signal === undefined ? undefined : { signal },
+        this.requestTimeoutMs,
+      );
       if (!response.ok) return false;
       const body: unknown = await response.json().catch(() => undefined);
       return Boolean(body && typeof body === "object" && (body as { healthy?: unknown }).healthy === true);
@@ -315,25 +340,35 @@ export class OpenCodeServerManager {
     return child;
   }
 
-  private async waitForHealth(port: number, pid: number): Promise<{ healthy: boolean; version: string }> {
+  private async waitForHealth(
+    port: number,
+    pid: number,
+    signal?: AbortSignal,
+  ): Promise<{ healthy: boolean; version: string }> {
     const deadline = this.now() + this.startupTimeoutMs;
     for (;;) {
-      if (!this.isAlive(pid)) {
+      throwIfAborted(signal);
+      if (this.observe(pid) === "dead") {
         throw new Error(`opencode serve exited before it became healthy (${this.executable} serve --port ${port})`);
       }
-      const health = await this.isHealthy(port);
-      if (health) return { healthy: true, version: await this.readVersion(port) };
+      const health = await this.isHealthy(port, signal);
+      if (health) return { healthy: true, version: await this.readVersion(port, signal) };
       if (this.now() >= deadline) {
         throw new Error(
           `opencode serve did not become healthy within ${this.startupTimeoutMs}ms (${this.executable} serve --port ${port})`,
         );
       }
-      await this.sleep(this.healthPollIntervalMs);
+      await sleepWithAbort(this.sleep, this.healthPollIntervalMs, signal);
     }
   }
 
-  private async readVersion(port: number): Promise<string> {
-    const response = await this.request(`http://127.0.0.1:${port}/global/health`);
+  private async readVersion(port: number, signal?: AbortSignal): Promise<string> {
+    const response = await requestWithTimeout(
+      this.request,
+      `http://127.0.0.1:${port}/global/health`,
+      signal === undefined ? undefined : { signal },
+      this.requestTimeoutMs,
+    );
     if (!response.ok) throw new Error(`OpenCode health endpoint returned ${response.status} while reading its version`);
     let body: unknown;
     try {
@@ -349,7 +384,11 @@ export class OpenCodeServerManager {
 
   private async disposeEntry(entry: OpenCodeServerEntry): Promise<void> {
     this.onLog?.("debug", "opencode.server_disposing", { pid: entry.pid, port: entry.port });
-    await this.signalAndWaitExit(entry.pid, (signal) => this.signaller.kill(entry.pid, signal));
+    await this.signalAndWaitExit(
+      entry.pid,
+      (signal) => this.signaller.kill(entry.pid, signal, entry.startedAt),
+      entry.startedAt,
+    );
   }
 
   /**
@@ -363,7 +402,11 @@ export class OpenCodeServerManager {
     entry: OpenCodeServerEntry,
   ): Promise<OpenCodeServerEntry | undefined> {
     this.onLog?.("debug", "opencode.server_refreshing", { workspaceRoot, pid: entry.pid, port: entry.port });
-    await this.signalAndWaitExit(entry.pid, (signal) => this.signaller.kill(entry.pid, signal));
+    await this.signalAndWaitExit(
+      entry.pid,
+      (signal) => this.signaller.kill(entry.pid, signal, entry.startedAt),
+      entry.startedAt,
+    );
     const port = await this.allocatePreferredPort(entry.port);
     const child = this.spawnServer(workspaceRoot, port);
     try {
@@ -395,20 +438,28 @@ export class OpenCodeServerManager {
     }
   }
 
-  private async signalAndWaitExit(pid: number, sendSignal: (signal: NodeJS.Signals) => void): Promise<void> {
-    if (!this.isAlive(pid)) {
+  private async signalAndWaitExit(
+    pid: number,
+    sendSignal: (signal: NodeJS.Signals) => void,
+    expectedStartedAt?: string,
+  ): Promise<void> {
+    const initialLiveness = this.observe(pid, expectedStartedAt);
+    if (initialLiveness === "dead") {
       this.forgetChildrenForPid(pid);
       return;
     }
+    if (initialLiveness === "unknown") throw unknownProcessIdentity(pid);
 
     let signal: NodeJS.Signals = "SIGTERM";
     try {
       sendSignal(signal);
     } catch (error) {
-      if (!this.isAlive(pid)) {
+      const liveness = this.observe(pid, expectedStartedAt);
+      if (liveness === "dead") {
         this.forgetChildrenForPid(pid);
         return;
       }
+      if (liveness === "unknown") throw unknownProcessIdentity(pid, signal);
       this.onLog?.("warn", "opencode.server_not_owned", { pid });
       throw new OpenCodeServerDisposalError(
         `OpenCode process ${pid} could not be terminated; the resource may still be running`,
@@ -425,17 +476,20 @@ export class OpenCodeServerManager {
     const forceAt = startedAt + Math.min(this.shutdownGracePeriodMs, this.shutdownTimeoutMs);
     let forceSent = false;
     for (;;) {
-      if (!this.isAlive(pid)) {
+      const liveness = this.observe(pid, expectedStartedAt);
+      if (liveness === "dead") {
         this.forgetChildrenForPid(pid);
         return;
       }
+      if (liveness === "unknown") throw unknownProcessIdentity(pid, signal);
       const now = this.now();
       if (!forceSent && now >= forceAt) {
         signal = "SIGKILL";
         try {
           sendSignal(signal);
         } catch (error) {
-          if (this.isAlive(pid)) {
+          const liveness = this.observe(pid, expectedStartedAt);
+          if (liveness === "alive") {
             throw new OpenCodeServerDisposalError(
               `OpenCode process ${pid} could not be force-terminated; the resource may still be running`,
               "opencode_process_disposal_failed",
@@ -445,12 +499,15 @@ export class OpenCodeServerManager {
               error,
             );
           }
+          if (liveness === "unknown") throw unknownProcessIdentity(pid, signal);
         }
         forceSent = true;
-        if (!this.isAlive(pid)) {
+        const liveness = this.observe(pid, expectedStartedAt);
+        if (liveness === "dead") {
           this.forgetChildrenForPid(pid);
           return;
         }
+        if (liveness === "unknown") throw unknownProcessIdentity(pid, signal);
       }
       if (this.now() >= deadline) {
         throw new OpenCodeServerDisposalError(
@@ -472,7 +529,7 @@ export class OpenCodeServerManager {
 
   private async disposeChild(child: SpawnedChild): Promise<void> {
     await this.signalAndWaitExit(child.pid, (signal) => {
-      if (!child.kill(signal) && this.isAlive(child.pid)) {
+      if (!child.kill(signal) && this.observe(child.pid) === "alive") {
         throw new Error(`child process ${child.pid} rejected ${signal}`);
       }
     });
@@ -485,8 +542,8 @@ export class OpenCodeServerManager {
     }
   }
 
-  private isAlive(pid: number): boolean {
-    return this.signaller.isAlive(pid);
+  private observe(pid: number, expectedStartedAt?: string): ProcessLiveness {
+    return this.signaller.observe(pid, expectedStartedAt);
   }
 
   /**
@@ -495,53 +552,133 @@ export class OpenCodeServerManager {
    * (dead owner) are broken; a lock that stays contended returns a retryable
    * error and never runs the mutation without ownership.
    */
-  private async withFileLock<T>(operation: () => Promise<T>): Promise<T> {
+  private async withFileLock<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const lockPath = `${this.options.registryFile}.lock`;
     const deadline = this.now() + this.registryLockTimeoutMs;
     for (;;) {
-      let acquired = false;
-      try {
-        const fd = openSync(lockPath, "wx", 0o600);
-        writeFileSync(fd, `${process.pid}\n`);
-        closeSync(fd);
-        acquired = true;
-      } catch (error) {
-        if (!isLockExistsError(error)) throw error;
-        if (this.lockIsStale(lockPath)) {
-          try {
-            unlinkSync(lockPath);
-          } catch {
-            // Another process may have released the lock first.
-          }
-          continue;
-        }
-      }
-      if (!acquired) {
+      throwIfAborted(signal);
+      const token = this.tryAcquireLock(lockPath);
+      if (token === undefined) {
+        this.tryReclaimStaleLock(lockPath);
+        throwIfAborted(signal);
         if (this.now() >= deadline) {
           this.onLog?.("warn", "opencode.registry_lock_timeout", { path: lockPath });
           throw new OpenCodeRegistryLockTimeoutError(lockPath, this.registryLockTimeoutMs);
         }
-        await this.sleep(Math.min(this.registryLockPollIntervalMs, Math.max(1, deadline - this.now())));
+        await sleepWithAbort(
+          this.sleep,
+          Math.min(this.registryLockPollIntervalMs, Math.max(1, deadline - this.now())),
+          signal,
+        );
         continue;
       }
       try {
+        throwIfAborted(signal);
         return await operation();
       } finally {
-        try {
-          unlinkSync(lockPath);
-        } catch {
-          // The lock may already have been removed.
-        }
+        this.releaseLock(lockPath, token);
       }
     }
   }
 
-  private lockIsStale(lockPath: string): boolean {
+  private tryAcquireLock(lockPath: string): string | undefined {
+    if (existsSync(reclaimPath(lockPath))) return undefined;
+    const token = randomUUID();
+    let fd: number | undefined;
+    let created = false;
     try {
-      const pid = Number.parseInt(readFileSync(lockPath, "utf8").trim(), 10);
-      return !Number.isInteger(pid) || pid <= 0 || !this.isAlive(pid);
+      fd = openSync(lockPath, "wx", 0o600);
+      created = true;
+      writeFileSync(
+        fd,
+        JSON.stringify({
+          pid: process.pid,
+          token,
+          ...(this.processStartedAt === undefined ? {} : { startedAt: this.processStartedAt }),
+        }),
+      );
+      closeSync(fd);
+      fd = undefined;
+    } catch (error) {
+      if (fd !== undefined) closeSync(fd);
+      if (created) {
+        try {
+          unlinkSync(lockPath);
+        } catch {
+          // Preserve the original write failure.
+        }
+      }
+      if (isLockExistsError(error)) return undefined;
+      throw error;
+    }
+    // A stale-lock reclaimer may have claimed the barrier after the initial
+    // check. Never begin the mutation while that barrier is present.
+    if (existsSync(reclaimPath(lockPath))) {
+      this.releaseLock(lockPath, token);
+      return undefined;
+    }
+    return token;
+  }
+
+  private tryReclaimStaleLock(lockPath: string): boolean {
+    const reclaim = reclaimPath(lockPath);
+    const token = randomUUID();
+    let fd: number | undefined;
+    try {
+      fd = openSync(reclaim, "wx", 0o600);
+      writeFileSync(
+        fd,
+        JSON.stringify({
+          pid: process.pid,
+          token,
+          ...(this.processStartedAt === undefined ? {} : { startedAt: this.processStartedAt }),
+        }),
+      );
+      closeSync(fd);
+      fd = undefined;
+    } catch (error) {
+      if (fd !== undefined) closeSync(fd);
+      if (!isLockExistsError(error)) throw error;
+      const existingReclaim = readLockRecord(reclaim);
+      if (existingReclaim && this.lockOwnerIsDead(existingReclaim)) {
+        this.removeLockIfUnchanged(reclaim, existingReclaim);
+      }
+      return false;
+    }
+
+    try {
+      const lock = readLockRecord(lockPath);
+      if (!existsSync(lockPath)) return true;
+      if (!lock || !this.lockOwnerIsDead(lock)) return false;
+      return this.removeLockIfUnchanged(lockPath, lock);
+    } finally {
+      this.releaseLock(reclaim, token);
+    }
+  }
+
+  private lockOwnerIsDead(record: RegistryLockRecord): boolean {
+    if (record.pid === process.pid) return false;
+    return this.observe(record.pid, record.startedAt) === "dead";
+  }
+
+  private releaseLock(lockPath: string, token: string): void {
+    const record = readLockRecord(lockPath);
+    if (!record || record.token !== token) return;
+    try {
+      unlinkSync(lockPath);
     } catch {
+      // The lock may already have been removed.
+    }
+  }
+
+  private removeLockIfUnchanged(lockPath: string, expected: RegistryLockRecord): boolean {
+    const current = readLockRecord(lockPath);
+    if (!current || !sameLockRecord(current, expected)) return false;
+    try {
+      unlinkSync(lockPath);
       return true;
+    } catch {
+      return false;
     }
   }
 }
@@ -621,6 +758,43 @@ function isLockExistsError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "EEXIST";
 }
 
+function reclaimPath(lockPath: string): string {
+  return `${lockPath}.reclaim`;
+}
+
+function readLockRecord(path: string): RegistryLockRecord | undefined {
+  let contents: string;
+  try {
+    contents = readFileSync(path, "utf8").trim();
+  } catch (error) {
+    if (isFileNotFoundError(error)) return undefined;
+    return undefined;
+  }
+  if (!contents) return undefined;
+  const legacyPid = Number.parseInt(contents, 10);
+  if (String(legacyPid) === contents && isPositiveInteger(legacyPid)) return { pid: legacyPid };
+  try {
+    const parsed: unknown = JSON.parse(contents);
+    if (!isRecord(parsed) || !isPositiveInteger(parsed.pid)) return undefined;
+    const token = typeof parsed.token === "string" && parsed.token.length > 0 ? parsed.token : undefined;
+    const startedAt =
+      typeof parsed.startedAt === "string" && isIsoTimestamp(parsed.startedAt) ? parsed.startedAt : undefined;
+    if (parsed.token !== undefined && token === undefined) return undefined;
+    if (parsed.startedAt !== undefined && startedAt === undefined) return undefined;
+    return {
+      pid: parsed.pid,
+      ...(token === undefined ? {} : { token }),
+      ...(startedAt === undefined ? {} : { startedAt }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function sameLockRecord(left: RegistryLockRecord, right: RegistryLockRecord): boolean {
+  return left.pid === right.pid && left.token === right.token && left.startedAt === right.startedAt;
+}
+
 function isFileNotFoundError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
@@ -658,20 +832,11 @@ function isIsoTimestamp(value: string): boolean {
 }
 
 const defaultSignaller: ProcessSignaller = {
-  isAlive(pid: number): boolean {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      // A muximod child is owned by the invoking account. EPERM therefore means
-      // that the PID is not signalable by this lifecycle, so treat the record as
-      // stale instead of blocking a new daemon behind an unrelated PID.
-      void error;
-      return false;
-    }
+  observe(pid: number, expectedStartedAt?: string): ProcessLiveness {
+    return observeProcessLiveness(pid, expectedStartedAt);
   },
-  kill(pid: number, signal: NodeJS.Signals): void {
+  kill(pid: number, signal: NodeJS.Signals, expectedStartedAt?: string): void {
+    if (expectedStartedAt !== undefined && observeProcessLiveness(pid, expectedStartedAt) !== "alive") return;
     try {
       process.kill(pid, signal);
     } catch (error) {
@@ -682,4 +847,42 @@ const defaultSignaller: ProcessSignaller = {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new Error("OpenCode server preparation was cancelled");
+}
+
+async function sleepWithAbort(
+  wait: (milliseconds: number) => Promise<void>,
+  milliseconds: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (signal === undefined) {
+    await wait(milliseconds);
+    return;
+  }
+  throwIfAborted(signal);
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error("operation aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([wait(milliseconds), aborted]);
+  } finally {
+    if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function unknownProcessIdentity(pid: number, signal?: NodeJS.Signals): OpenCodeServerDisposalError {
+  return new OpenCodeServerDisposalError(
+    `OpenCode process ${pid} could not be verified; refusing to terminate or release its registry entry`,
+    "opencode_process_disposal_failed",
+    pid,
+    signal,
+    true,
+  );
 }

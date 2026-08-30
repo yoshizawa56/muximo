@@ -7,6 +7,7 @@ import type {
   ManagedAgentSessionRepository,
   PanePublicationPort,
   PreparedAgentSession,
+  ProcessObservationPort,
   RemoteSessionPort,
   RunAgentSessionResult,
   SessionAuditPort,
@@ -37,15 +38,20 @@ export type RunAgentSessionDependencies = {
   clock: SessionClock;
   logger: SessionLogger;
   confirmCleanup: SessionCleanupConfirmationPort;
+  process: ProcessObservationPort;
 };
 
 /** Prepares, completes, and optionally removes one host-owned agent session. */
 export class RunAgentSession {
   private readonly completions = new Map<string, Promise<RunAgentSessionResult>>();
+  private readonly preparing = new Set<string>();
+  private readonly recovering = new Set<string>();
+  private readonly recoveringExecutions = new Set<string>();
 
   public constructor(private readonly deps: RunAgentSessionDependencies) {}
 
-  public async prepare(input: StartAgentSessionInput): Promise<PreparedAgentSession> {
+  public async prepare(input: StartAgentSessionInput, signal?: AbortSignal): Promise<PreparedAgentSession> {
+    throwIfAborted(signal);
     const logger = this.deps.logger.child({ operation: "run", backend: input.backend });
     logger.debug("session.starting", {
       useWorktree: input.useWorktree,
@@ -53,12 +59,16 @@ export class RunAgentSession {
     });
 
     const workspace = await this.deps.workspace.resolveCurrent({ workspace: input.workspace, cwd: input.cwd });
+    throwIfAborted(signal);
     const name = AgentSession.normalizeName(
       await this.deps.naming.resolveName(workspace.id, input.name, input.backend),
     );
-    if ((await this.deps.sessions.list(workspace.id)).some((candidate) => candidate.name === name)) {
+    throwIfAborted(signal);
+    const existing = await this.deps.sessions.findByName(workspace.id, name);
+    if (existing && !(await this.recoverAbandonedExecution(existing, signal))) {
       throw new Error(`session name already exists in this workspace: ${name}`);
     }
+    throwIfAborted(signal);
 
     const setupHook = input.setupHookExplicit
       ? input.setupHook === undefined
@@ -74,11 +84,13 @@ export class RunAgentSession {
       : input.useWorktree
         ? await this.deps.hooks.resolveStoredHook(workspace.cleanupScriptPath)
         : undefined;
+    throwIfAborted(signal);
     let session: AgentSessionRecord | undefined;
     let inserted = false;
     let launchPrepared = false;
     try {
       const worktree = input.useWorktree ? await this.deps.worktrees.create(workspace, name, input.worktreeRoot) : {};
+      throwIfAborted(signal);
       const now = this.deps.clock.now();
       session = AgentSession.create({
         id: AgentSessionId.create(this.deps.clock.id()),
@@ -96,12 +108,17 @@ export class RunAgentSession {
         resuming: false,
         executionId: this.deps.clock.id(),
         executionStartedAt: now,
+        ...(input.executionOwnerPid === undefined
+          ? {}
+          : { executionOwnerPid: input.executionOwnerPid, executionOwnerStartedAt: now }),
         createdAt: now,
         updatedAt: now,
       });
 
       await this.deps.sessions.insert(session);
       inserted = true;
+      this.preparing.add(session.id);
+      throwIfAborted(signal);
       await this.deps.audit.record("agent_session.created", session.id, {
         name: session.name,
         backend: session.backend,
@@ -109,12 +126,15 @@ export class RunAgentSession {
       });
 
       session = await this.persist(session, { status: "setup" });
+      throwIfAborted(signal);
       if (!(await this.deps.worktrees.copyFiles(session))) {
         await this.markSetupFailed(session);
         throw new Error("worktree file copy failed");
       }
+      throwIfAborted(signal);
 
       const setup = await this.deps.hooks.run(session, "setup");
+      throwIfAborted(signal);
       session = await this.persistHookUpdate(session, setup.sessionUpdate);
       if (!setup.success) {
         await this.markSetupFailed(session);
@@ -126,21 +146,128 @@ export class RunAgentSession {
         ...(session.useWorktree ? { baselineStatus: "" } : {}),
         status: "ready",
       });
+      throwIfAborted(signal);
       const baseline = await this.deps.launcher.captureBaseline(session);
+      throwIfAborted(signal);
       if (!baseline.success) {
         await this.markSetupFailed(session);
         throw new Error("backend rollout baseline capture failed");
       }
 
       session = await this.persist(session, { status: "running", backendSessionId: clearPatch });
-      const preparation = await this.deps.launcher.prepareLaunch(session, input.backendArgs, false);
+      throwIfAborted(signal);
+      const preparation = await this.deps.launcher.prepareLaunch(session, input.backendArgs, false, signal);
       launchPrepared = true;
+      throwIfAborted(signal);
       session = await this.persistIdentityUpdate(session, preparation.sessionUpdate);
+      throwIfAborted(signal);
       return { session, execution: preparation.execution };
     } catch (error) {
       if (session && inserted) await this.cleanupFailedStartup(session, launchPrepared);
       logger.debug("session.failed", { message: error instanceof Error ? error.message : String(error) });
       throw error;
+    } finally {
+      if (session) this.preparing.delete(session.id);
+    }
+  }
+
+  private async recoverAbandonedExecution(session: AgentSessionRecord, signal?: AbortSignal): Promise<boolean> {
+    throwIfAborted(signal);
+    if (
+      session.status === "interrupted" ||
+      session.status === "exited" ||
+      session.executionId === undefined ||
+      session.executionPid === undefined ||
+      session.executionStartedAt === undefined ||
+      (session.executionOwnerPid !== undefined && session.executionOwnerStartedAt === undefined)
+    ) {
+      return false;
+    }
+    if (this.preparing.has(session.id)) {
+      throw new Error(`session '${session.name}' is still being prepared`);
+    }
+    if (this.recovering.has(session.id)) {
+      throw new Error(`session '${session.name}' is already being recovered`);
+    }
+    if (this.completions.has(session.executionId)) {
+      throw new Error(`session '${session.name}' is being finalized`);
+    }
+    const providerLiveness = await this.deps.process.observe(session.executionPid, session.executionStartedAt);
+    const ownerLiveness =
+      session.executionOwnerPid === undefined
+        ? "dead"
+        : await this.deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
+    throwIfAborted(signal);
+    if (providerLiveness !== "dead" || ownerLiveness !== "dead") {
+      return false;
+    }
+    // A completion may have started while the process observations were in
+    // flight. Do not claim a record that completion is already finalizing.
+    if (this.completions.has(session.executionId)) {
+      return false;
+    }
+
+    this.recovering.add(session.id);
+    this.recoveringExecutions.add(session.executionId);
+    try {
+      const claimed = await this.deps.sessions.claimAbandonedExecution({
+        id: session.id,
+        executionId: session.executionId,
+        expectedExecutionPid: session.executionPid,
+        expectedExecutionStartedAt: session.executionStartedAt,
+        expectedExecutionOwnerPid: session.executionOwnerPid ?? null,
+        expectedExecutionOwnerStartedAt: session.executionOwnerStartedAt ?? null,
+        updatedAt: this.deps.clock.now(),
+      });
+      if (!claimed) return false;
+      const recoveringSession = AgentSession.update(session, {
+        status: "recovering",
+        resuming: false,
+        updatedAt: this.deps.clock.now(),
+      });
+      this.deps.logger.debug("session.abandoned_execution_recovering", {
+        sessionId: session.id,
+        sessionName: session.name,
+        executionId: session.executionId,
+        executionPid: session.executionPid,
+        executionOwnerPid: session.executionOwnerPid,
+      });
+      try {
+        await this.deps.launcher.disposeLaunch(recoveringSession);
+      } catch (error) {
+        const failed = await this.persist(recoveringSession, {
+          status: "exited",
+          lastExitStatus: 130,
+          executionId: clearPatch,
+          executionPid: clearPatch,
+          executionStartedAt: clearPatch,
+          executionOwnerPid: clearPatch,
+          executionOwnerStartedAt: clearPatch,
+        });
+        this.deps.logger.debug("session.abandoned_execution_disposal_failed", {
+          sessionId: session.id,
+          message: errorMessage(error),
+        });
+        throw new Error(`abandoned session '${failed.name}' could not release its backend resources`, { cause: error });
+      }
+
+      const failed = await this.persist(recoveringSession, {
+        status: "exited",
+        lastExitStatus: 130,
+        executionId: clearPatch,
+        executionPid: clearPatch,
+        executionStartedAt: clearPatch,
+        executionOwnerPid: clearPatch,
+        executionOwnerStartedAt: clearPatch,
+      });
+      const cleanup = await this.removeResources(failed, true, Boolean(failed.backendSessionId));
+      if (cleanup.disposition !== "removed") {
+        throw new Error(`abandoned session '${failed.name}' could not be cleaned up: ${cleanup.reason}`);
+      }
+      return true;
+    } finally {
+      this.recovering.delete(session.id);
+      this.recoveringExecutions.delete(session.executionId);
     }
   }
 
@@ -157,6 +284,9 @@ export class RunAgentSession {
   }
 
   private async completeOnce(input: CompleteAgentSessionInput): Promise<RunAgentSessionResult> {
+    if (this.recoveringExecutions.has(input.executionId)) {
+      throw new Error(`agent execution '${input.executionId}' is being recovered`);
+    }
     const receipt = await this.deps.sessions.findExecutionReceipt(input.executionId);
     if (receipt) return this.fromReceipt(receipt, input);
 
@@ -217,6 +347,8 @@ export class RunAgentSession {
       executionId: clearPatch,
       executionPid: clearPatch,
       executionStartedAt: clearPatch,
+      executionOwnerPid: clearPatch,
+      executionOwnerStartedAt: clearPatch,
       status: process.interrupted || process.code === 130 || process.code === 143 ? "interrupted" : "exited",
     });
     if (next.status === "interrupted") {
@@ -281,6 +413,8 @@ export class RunAgentSession {
         executionId: clearPatch,
         executionPid: clearPatch,
         executionStartedAt: clearPatch,
+        executionOwnerPid: clearPatch,
+        executionOwnerStartedAt: clearPatch,
       });
       const cleanup = await this.removeResources(failed, true, Boolean(failed.backendSessionId));
       if (cleanup.disposition !== "removed") {
@@ -302,6 +436,8 @@ export class RunAgentSession {
             executionId: clearPatch,
             executionPid: clearPatch,
             executionStartedAt: clearPatch,
+            executionOwnerPid: clearPatch,
+            executionOwnerStartedAt: clearPatch,
           },
           this.deps.clock,
         ),
@@ -336,6 +472,12 @@ export class RunAgentSession {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new Error("agent execution preparation was cancelled");
 }
 
 function isStartupFailure(process: RunAgentSessionResult["process"]): boolean {

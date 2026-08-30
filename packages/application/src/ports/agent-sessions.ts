@@ -6,7 +6,7 @@ import type {
   WorkspaceId,
   WorkspaceRecord,
 } from "@muximo/domain";
-import type { ClaimExecutionInput } from "./repositories.js";
+import type { ClaimAbandonedExecutionInput, ClaimExecutionInput } from "./repositories.js";
 
 /** Provider-neutral input for starting a managed agent session. */
 export type StartAgentSessionInput = {
@@ -22,6 +22,7 @@ export type StartAgentSessionInput = {
   setupHookExplicit: boolean;
   cleanupHookExplicit: boolean;
   backendArgs: readonly string[];
+  executionOwnerPid?: number;
 };
 
 /** Provider-neutral input for resuming a managed agent session. */
@@ -30,6 +31,7 @@ export type ResumeAgentSessionInput = {
   reference: string;
   hostPaneId?: string;
   backendArgs: readonly string[];
+  executionOwnerPid?: number;
 };
 
 /** Provider-neutral input for cleaning up a managed agent session. */
@@ -145,6 +147,8 @@ export type AttachAgentSessionInput = {
   executionId: string;
   executionPid: number;
   executionStartedAt: string;
+  executionOwnerPid?: number;
+  executionOwnerStartedAt?: string;
   hostPaneId?: string;
 };
 
@@ -247,6 +251,7 @@ export interface SessionLauncherPort {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    signal?: AbortSignal,
   ): Promise<LaunchPreparation>;
   startLaunch(session: AgentSessionRecord): Promise<void>;
   completeLaunch(
@@ -289,8 +294,10 @@ export interface PanePublicationPort {
   ): Promise<void>;
 }
 
+export type ProcessLiveness = "alive" | "dead" | "unknown";
+
 export interface ProcessObservationPort {
-  isAlive(pid: number, expectedStartedAt?: string): Promise<boolean>;
+  observe(pid: number, expectedStartedAt?: string): Promise<ProcessLiveness>;
 }
 
 /** Concrete observations used by the application-owned session list policy. */
@@ -319,6 +326,7 @@ export type ManagedAgentSessionRepository = {
   insert(record: AgentSessionRecord): Promise<void>;
   update(record: AgentSessionRecord): Promise<void>;
   claimExecution(input: ClaimExecutionInput): Promise<boolean>;
+  claimAbandonedExecution(input: ClaimAbandonedExecutionInput): Promise<boolean>;
   attachExecution(input: import("./repositories.js").AttachExecutionInput): Promise<boolean>;
   delete(id: AgentSessionRecord["id"]): Promise<void>;
   findExecutionReceipt(executionId: string): Promise<AgentExecutionReceipt | undefined>;

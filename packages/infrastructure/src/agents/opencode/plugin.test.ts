@@ -25,12 +25,13 @@ const serverEntry: OpenCodeServerEntry = {
 };
 
 function fakeManager(
-  overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown> } = {},
+  overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown>; afterEnsure?: () => void } = {},
   onDispose: () => void = () => undefined,
 ): OpenCodeServerManager {
   return {
     ensure: async (root: string) => {
       if (overrides.ensureThrows) throw new Error("opencode serve did not become healthy within 15000ms");
+      overrides.afterEnsure?.();
       return { ...serverEntry, workspaceRoot: root };
     },
     isHealthy: async () => true,
@@ -259,13 +260,14 @@ describe("opencode plugin", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
-type LifecycleInput = "release" | "prepare-failure";
-type LifecycleFixtureKey = "prepare-failure";
+type LifecycleInput = "release" | "prepare-failure" | "cancel-after-ensure";
+type LifecycleFixtureKey = "prepare-failure" | "cancel-after-ensure";
 type LifecycleResult = undefined;
 type LifecycleContext = { disposeCalls: number };
 type LifecycleFixture = {
   plugin: AgentPluginV1;
   disposeCalls: { count: number };
+  signal?: AbortSignal;
 };
 
 const lifecycleCases = [
@@ -283,6 +285,15 @@ const lifecycleCases = [
       hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1),
     ],
   },
+  {
+    name: "releases a server when cancellation arrives after server preparation",
+    fixture: "cancel-after-ensure" as const,
+    input: "cancel-after-ensure" as const,
+    assert: [
+      hasError<LifecycleContext, LifecycleResult>({ message: /aborted/i }),
+      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1),
+    ],
+  },
 ] satisfies readonly OperationCase<LifecycleFixtureKey, LifecycleInput, LifecycleResult, LifecycleContext>[];
 
 const lifecycleTable: OperationTable<
@@ -293,7 +304,10 @@ const lifecycleTable: OperationTable<
   LifecycleContext
 > = {
   defaultFixture: () => createLifecycleFixture(true),
-  fixtures: { "prepare-failure": () => createLifecycleFixture(false) },
+  fixtures: {
+    "prepare-failure": () => createLifecycleFixture(false),
+    "cancel-after-ensure": () => createLifecycleFixture(true, true),
+  },
   cases: lifecycleCases,
   execute: async (fixture, input) => {
     const plan = await fixture.plugin.prepareLaunch!({
@@ -309,6 +323,7 @@ const lifecycleTable: OperationTable<
         environment: {},
       },
       resumeSessionId: input === "prepare-failure" ? "session-gone" : null,
+      signal: fixture.signal,
     });
     if (input === "release") {
       await Promise.all([plan.sidecars?.[0]?.stop(), plan.dispose?.()]);
@@ -317,17 +332,21 @@ const lifecycleTable: OperationTable<
   observe: (fixture) => ({ disposeCalls: fixture.disposeCalls.count }),
 };
 
-function createLifecycleFixture(sessionExists: boolean): FixtureHandle<LifecycleFixture> {
+function createLifecycleFixture(sessionExists: boolean, cancelAfterEnsure = false): FixtureHandle<LifecycleFixture> {
   const disposeCalls = { count: 0 };
+  const controller = cancelAfterEnsure ? new AbortController() : undefined;
   const plugin = createOpenCodePlugin({
-    serverManager: fakeManager({}, () => {
-      disposeCalls.count += 1;
-    }),
+    serverManager: fakeManager(
+      cancelAfterEnsure ? { afterEnsure: () => controller?.abort(new Error("aborted after server preparation")) } : {},
+      () => {
+        disposeCalls.count += 1;
+      },
+    ),
     clientFactory: () =>
       fakeClient({ createdTitles: [], renamedSessions: [] }, sessionExists ? { "session-resumed": {} } : {}),
     monitorFactory: () => new PassThroughMonitor(),
   });
-  return { fixture: { plugin, disposeCalls } };
+  return { fixture: { plugin, disposeCalls, signal: controller?.signal } };
 }
 
 describe("opencode plugin lifecycle", () => {

@@ -2,11 +2,12 @@ import type {
   AgentExecutionReceipt,
   AgentSessionRepository,
   AttachExecutionInput,
+  ClaimAbandonedExecutionInput,
   ClaimExecutionInput,
   ManagedAgentSessionRepository,
 } from "@muximo/application";
 import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { type AgentSessionRow, agentExecutionReceipts, agentSessions } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
@@ -55,6 +56,8 @@ export class DrizzleAgentSessionRepository
     executionId,
     executionPid,
     executionStartedAt,
+    executionOwnerPid,
+    executionOwnerStartedAt,
     updatedAt,
   }: ClaimExecutionInput): Promise<boolean> {
     const predicate =
@@ -67,6 +70,8 @@ export class DrizzleAgentSessionRepository
         executionId,
         executionPid,
         executionStartedAt,
+        executionOwnerPid,
+        executionOwnerStartedAt,
         status: "resuming",
         resuming: true,
         updatedAt,
@@ -77,9 +82,47 @@ export class DrizzleAgentSessionRepository
     return result.length > 0;
   }
 
+  public async claimAbandonedExecution({
+    id,
+    executionId,
+    expectedExecutionPid,
+    expectedExecutionStartedAt,
+    expectedExecutionOwnerPid,
+    expectedExecutionOwnerStartedAt,
+    updatedAt,
+  }: ClaimAbandonedExecutionInput): Promise<boolean> {
+    const result = this.db()
+      .update(agentSessions)
+      .set({ status: "recovering", resuming: false, updatedAt })
+      .where(
+        and(
+          eq(agentSessions.id, id),
+          eq(agentSessions.executionId, executionId),
+          inArray(agentSessions.status, ["running", "resuming"]),
+          expectedExecutionPid === null
+            ? isNull(agentSessions.executionPid)
+            : eq(agentSessions.executionPid, expectedExecutionPid),
+          expectedExecutionStartedAt === null
+            ? isNull(agentSessions.executionStartedAt)
+            : eq(agentSessions.executionStartedAt, expectedExecutionStartedAt),
+          expectedExecutionOwnerPid === null
+            ? isNull(agentSessions.executionOwnerPid)
+            : eq(agentSessions.executionOwnerPid, expectedExecutionOwnerPid),
+          expectedExecutionOwnerStartedAt === null
+            ? isNull(agentSessions.executionOwnerStartedAt)
+            : eq(agentSessions.executionOwnerStartedAt, expectedExecutionOwnerStartedAt),
+        ),
+      )
+      .returning({ id: agentSessions.id })
+      .all();
+    return result.length > 0;
+  }
+
   public async attachExecution({
     id,
     executionId,
+    expectedExecutionOwnerPid,
+    expectedExecutionOwnerStartedAt,
     executionPid,
     executionStartedAt,
     updatedAt,
@@ -88,7 +131,18 @@ export class DrizzleAgentSessionRepository
       .update(agentSessions)
       .set({ executionPid, executionStartedAt, updatedAt })
       .where(
-        and(eq(agentSessions.id, id), eq(agentSessions.executionId, executionId), isNull(agentSessions.executionPid)),
+        and(
+          eq(agentSessions.id, id),
+          eq(agentSessions.executionId, executionId),
+          inArray(agentSessions.status, ["running", "resuming"]),
+          isNull(agentSessions.executionPid),
+          expectedExecutionOwnerPid === null
+            ? isNull(agentSessions.executionOwnerPid)
+            : eq(agentSessions.executionOwnerPid, expectedExecutionOwnerPid),
+          expectedExecutionOwnerStartedAt === null
+            ? isNull(agentSessions.executionOwnerStartedAt)
+            : eq(agentSessions.executionOwnerStartedAt, expectedExecutionOwnerStartedAt),
+        ),
       )
       .returning({ id: agentSessions.id })
       .all();
@@ -163,6 +217,8 @@ function toAgentSessionRow(record: AgentSessionRecord): typeof agentSessions.$in
     executionId: session.executionId ?? null,
     executionPid: session.executionPid ?? null,
     executionStartedAt: session.executionStartedAt ?? null,
+    executionOwnerPid: session.executionOwnerPid ?? null,
+    executionOwnerStartedAt: session.executionOwnerStartedAt ?? null,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   };
@@ -194,6 +250,8 @@ function toAgentSessionRecord(row: AgentSessionRow): AgentSessionRecord {
     ...(row.executionId ? { executionId: row.executionId } : {}),
     ...(row.executionPid !== null ? { executionPid: row.executionPid } : {}),
     ...(row.executionStartedAt ? { executionStartedAt: row.executionStartedAt } : {}),
+    ...(row.executionOwnerPid !== null ? { executionOwnerPid: row.executionOwnerPid } : {}),
+    ...(row.executionOwnerStartedAt ? { executionOwnerStartedAt: row.executionOwnerStartedAt } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });

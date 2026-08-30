@@ -31,26 +31,45 @@ export class ResumeAgentSession {
 
   public constructor(private readonly deps: ResumeAgentSessionDependencies) {}
 
-  public async prepare(input: ResumeAgentSessionInput): Promise<PreparedAgentSession> {
+  public async prepare(input: ResumeAgentSessionInput, signal?: AbortSignal): Promise<PreparedAgentSession> {
+    throwIfAborted(signal);
     let session = await this.deps.locator.execute({
       reference: input.reference,
       workspaceScope: input.workspaceScope,
     });
+    throwIfAborted(signal);
     if (session.status === "setup_failed")
       throw new Error(`session '${session.name}' has a failed setup; clean it up before retrying`);
+    if (session.status === "recovering") throw new Error(`session '${session.name}' is being recovered`);
     if (session.status === "starting" || session.status === "setup" || session.status === "ready")
       throw new Error(`session '${session.name}' has not started its backend; rerun it instead of resuming`);
     if ((session.status === "running" || session.status === "resuming") && session.executionPid === undefined) {
       throw new Error(`session '${session.name}' has an active execution that has not attached a process`);
     }
-    if (
-      session.executionPid !== undefined &&
-      (await this.deps.process.isAlive(session.executionPid, session.executionStartedAt))
-    )
-      throw new Error(`session '${session.name}' is already running (pid ${session.executionPid})`);
-
+    if (session.executionPid !== undefined) {
+      const providerLiveness = await this.deps.process.observe(session.executionPid, session.executionStartedAt);
+      if (providerLiveness === "alive") {
+        throw new Error(`session '${session.name}' is already running (pid ${session.executionPid})`);
+      }
+      if (providerLiveness === "unknown") {
+        throw new Error(`could not verify whether session '${session.name}' is still running`);
+      }
+    }
+    if (session.executionOwnerPid !== undefined) {
+      const ownerLiveness = await this.deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
+      if (ownerLiveness === "alive") {
+        throw new Error(
+          `session '${session.name}' is still owned by its CLI process (pid ${session.executionOwnerPid})`,
+        );
+      }
+      if (ownerLiveness === "unknown") {
+        throw new Error(`could not verify whether session '${session.name}' is still owned by its CLI process`);
+      }
+    }
+    let launchPrepared = false;
     const executionId = this.deps.clock.id();
     const executionStartedAt = this.deps.clock.now();
+    throwIfAborted(signal);
     if (
       !(await this.deps.sessions.claimExecution({
         id: session.id,
@@ -58,24 +77,31 @@ export class ResumeAgentSession {
         executionId,
         executionPid: null,
         executionStartedAt,
+        executionOwnerPid: input.executionOwnerPid ?? null,
+        executionOwnerStartedAt: input.executionOwnerPid === undefined ? null : executionStartedAt,
         updatedAt: executionStartedAt,
       }))
     ) {
       throw new Error(`session '${session.name}' is already being resumed`);
     }
-
-    session = await this.persist(session, {
-      status: "resuming",
-      resuming: true,
-      executionId,
-      executionPid: clearPatch,
-      executionStartedAt,
-    });
-    let launchPrepared = false;
     try {
-      const preparation = await this.deps.launcher.prepareLaunch(session, input.backendArgs, true);
+      throwIfAborted(signal);
+
+      session = await this.persist(session, {
+        status: "resuming",
+        resuming: true,
+        executionId,
+        executionPid: clearPatch,
+        executionStartedAt,
+        ...(input.executionOwnerPid === undefined
+          ? { executionOwnerPid: clearPatch, executionOwnerStartedAt: clearPatch }
+          : { executionOwnerPid: input.executionOwnerPid, executionOwnerStartedAt: executionStartedAt }),
+      });
+      const preparation = await this.deps.launcher.prepareLaunch(session, input.backendArgs, true, signal);
       launchPrepared = true;
+      throwIfAborted(signal);
       session = await this.persistIdentityUpdate(session, preparation.sessionUpdate);
+      throwIfAborted(signal);
       return { session, execution: preparation.execution };
     } catch (error) {
       if (launchPrepared) {
@@ -135,6 +161,8 @@ export class ResumeAgentSession {
       executionId: clearPatch,
       executionPid: clearPatch,
       executionStartedAt: clearPatch,
+      executionOwnerPid: clearPatch,
+      executionOwnerStartedAt: clearPatch,
       status:
         input.process.interrupted || input.process.code === 130 || input.process.code === 143
           ? "interrupted"
@@ -191,6 +219,8 @@ export class ResumeAgentSession {
             executionId: clearPatch,
             executionPid: clearPatch,
             executionStartedAt: clearPatch,
+            executionOwnerPid: clearPatch,
+            executionOwnerStartedAt: clearPatch,
             resuming: false,
           },
           this.deps.clock,
@@ -202,4 +232,10 @@ export class ResumeAgentSession {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new Error("agent execution preparation was cancelled");
 }

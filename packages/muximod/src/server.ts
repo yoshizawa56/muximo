@@ -247,6 +247,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     clock: sessionClock,
     logger: sessionLogger,
     confirmCleanup: { confirm: async () => false },
+    process: processObservation,
   });
   const resumeAgentSession = new ResumeAgentSession({
     sessions: agentSessionRepository,
@@ -277,9 +278,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   application = createMuximodApplication({
     agentSessions: {
-      prepareRun: (input) => executeAgentSession("prepare_run", input, () => runAgentSession.prepare(input), logger),
-      prepareResume: (input) =>
-        executeAgentSession("prepare_resume", input, () => resumeAgentSession.prepare(input), logger),
+      prepareRun: (input, signal) =>
+        executeAgentSession("prepare_run", input, () => runAgentSession.prepare(input, signal), logger),
+      prepareResume: (input, signal) =>
+        executeAgentSession("prepare_resume", input, () => resumeAgentSession.prepare(input, signal), logger),
       attach: (input) => executeAgentSession("attach", input, () => attachAgentSession.execute(input), logger),
       completeRun: (input) => executeAgentSession("complete_run", input, () => runAgentSession.complete(input), logger),
       completeResume: (input) =>
@@ -338,17 +340,25 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     adoptAgentSession: (request) => applicationForAgentPane().adoptAgentSession(request),
     observeAgentSession: (request) => applicationForAgentPane().observeAgentSession(request),
     releaseAgentSession: (request) => applicationForAgentPane().releaseAgentSession(request),
-    prepareAgentExecution: async (request) => {
+    prepareAgentExecution: async (request, signal) => {
+      signal.throwIfAborted();
       const prepared =
         request.operation === "run"
-          ? await application.agentSessions.prepareRun({
-              ...(request.input as Parameters<typeof application.agentSessions.prepareRun>[0]),
-              backendArgs: [...request.input.backendArgs],
-            })
-          : await application.agentSessions.prepareResume({
-              ...(request.input as Parameters<typeof application.agentSessions.prepareResume>[0]),
-              backendArgs: [...request.input.backendArgs],
-            });
+          ? await application.agentSessions.prepareRun(
+              {
+                ...(request.input as Parameters<typeof application.agentSessions.prepareRun>[0]),
+                backendArgs: [...request.input.backendArgs],
+              },
+              signal,
+            )
+          : await application.agentSessions.prepareResume(
+              {
+                ...(request.input as Parameters<typeof application.agentSessions.prepareResume>[0]),
+                backendArgs: [...request.input.backendArgs],
+              },
+              signal,
+            );
+      signal.throwIfAborted();
       const executionId = prepared.session.executionId;
       if (executionId === undefined || executionId !== prepared.execution.executionId) {
         throw new Error("prepared agent session execution identity is incomplete");
@@ -368,6 +378,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         executionId: request.executionId,
         executionPid: request.executionPid,
         executionStartedAt: request.executionStartedAt,
+        ...(request.executionOwnerPid === undefined ? {} : { executionOwnerPid: request.executionOwnerPid }),
+        ...(request.executionOwnerStartedAt === undefined
+          ? {}
+          : { executionOwnerStartedAt: request.executionOwnerStartedAt }),
         ...(request.hostPaneId === undefined ? {} : { hostPaneId: request.hostPaneId }),
       });
     },

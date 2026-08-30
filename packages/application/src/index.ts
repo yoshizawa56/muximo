@@ -29,6 +29,7 @@ export type {
   ManagedWorktreeState,
   PanePublicationPort,
   PreparedAgentSession,
+  ProcessLiveness,
   ProcessObservationPort,
   ProcessResult,
   RemoteSessionPort,
@@ -146,6 +147,7 @@ export type { PaneGateway } from "./ports/panes.js";
 export type {
   AgentSessionRepository,
   AttachExecutionInput,
+  ClaimAbandonedExecutionInput,
   ClaimExecutionInput,
   PaneFilter,
   PaneRepository,

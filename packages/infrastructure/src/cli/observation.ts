@@ -3,12 +3,13 @@ import { existsSync } from "node:fs";
 import type {
   AgentSessionListObservation,
   AgentSessionWorktreeState,
+  ProcessLiveness,
   ProcessObservationPort,
   SessionObservationPort,
 } from "@muximo/application";
 import { shouldCheckAgentSessionWorktree } from "@muximo/application";
 import type { AgentSessionRecord } from "@muximo/domain";
-import { isProcessAlive } from "../process/process.js";
+import { observeProcessLiveness } from "../process/process.js";
 import { realpathSafe } from "./filesystem.js";
 import { gitOutputMaxBuffer } from "./git.js";
 
@@ -26,10 +27,18 @@ export class AgentSessionObservationAdapter implements SessionObservationPort {
   }
 
   public async observeSession(session: AgentSessionRecord, now: number): Promise<AgentSessionListObservation> {
-    const processAlive =
-      (session.status === "running" || session.status === "resuming") && session.executionPid !== undefined
-        ? isProcessAlive(session.executionPid, session.executionStartedAt)
-        : undefined;
+    const active = session.status === "running" || session.status === "resuming" || session.status === "recovering";
+    const processStates = active
+      ? [
+          ...(session.executionPid === undefined
+            ? []
+            : [observeProcessLiveness(session.executionPid, session.executionStartedAt)]),
+          ...(session.executionOwnerPid === undefined
+            ? []
+            : [observeProcessLiveness(session.executionOwnerPid, session.executionOwnerStartedAt)]),
+        ]
+      : [];
+    const processAlive = processLivenessForList(processStates);
     return {
       now,
       processAlive,
@@ -68,7 +77,14 @@ export class AgentSessionObservationAdapter implements SessionObservationPort {
 }
 
 export class ProcessObservationAdapter implements ProcessObservationPort {
-  public isAlive(pid: number, expectedStartedAt?: string): Promise<boolean> {
-    return Promise.resolve(isProcessAlive(pid, expectedStartedAt));
+  public observe(pid: number, expectedStartedAt?: string): Promise<ProcessLiveness> {
+    return Promise.resolve(observeProcessLiveness(pid, expectedStartedAt));
   }
+}
+
+function processLivenessForList(states: readonly ProcessLiveness[]): boolean | undefined {
+  if (states.length === 0) return undefined;
+  if (states.includes("alive")) return true;
+  if (states.includes("unknown")) return undefined;
+  return false;
 }

@@ -51,6 +51,8 @@ type LifecycleFixture = {
   confirmCleanup: boolean;
   provideBackendSessionId: boolean;
   processAlive: boolean;
+  abortOnClaim: boolean;
+  resumeAbortController?: AbortController;
   dirty: boolean;
   runCount: number;
   disposeCount: number;
@@ -149,6 +151,7 @@ function createFixture(
     confirmCleanup?: boolean;
     provideBackendSessionId?: boolean;
     processAlive?: boolean;
+    abortOnClaim?: boolean;
     dirty?: boolean;
     runWorkspaceInput?: WorkspaceResolutionInput;
   } = {},
@@ -169,6 +172,7 @@ function createFixture(
     confirmCleanup: options.confirmCleanup ?? true,
     provideBackendSessionId: options.provideBackendSessionId ?? true,
     processAlive: options.processAlive ?? false,
+    abortOnClaim: options.abortOnClaim ?? false,
     dirty: options.dirty ?? false,
     runCount: 0,
     disposeCount: 0,
@@ -211,11 +215,44 @@ function repository(fixture: LifecycleFixture) {
     },
     claimExecution: async (input: ClaimExecutionInput) => {
       fixture.claim = input;
+      if (fixture.abortOnClaim) fixture.resumeAbortController?.abort();
+      return true;
+    },
+    claimAbandonedExecution: async (input: {
+      id: AgentSessionId;
+      executionId: string;
+      expectedExecutionPid: number | null;
+      expectedExecutionStartedAt: string | null;
+      expectedExecutionOwnerPid: number | null;
+      expectedExecutionOwnerStartedAt: string | null;
+      updatedAt: string;
+    }) => {
+      const current = fixture.sessions.get(input.id);
+      if (
+        !current ||
+        current.executionId !== input.executionId ||
+        (current.status !== "running" && current.status !== "resuming") ||
+        (current.executionPid ?? null) !== input.expectedExecutionPid ||
+        (current.executionStartedAt ?? null) !== input.expectedExecutionStartedAt ||
+        (current.executionOwnerPid ?? null) !== input.expectedExecutionOwnerPid ||
+        (current.executionOwnerStartedAt ?? null) !== input.expectedExecutionOwnerStartedAt
+      ) {
+        return false;
+      }
+      fixture.sessions.set(input.id, { ...current, status: "recovering", resuming: false, updatedAt: input.updatedAt });
       return true;
     },
     attachExecution: async (input: AttachExecutionInput) => {
       const current = fixture.sessions.get(input.id);
-      if (!current || current.executionId !== input.executionId || current.executionPid !== undefined) return false;
+      if (
+        !current ||
+        current.executionId !== input.executionId ||
+        (current.status !== "running" && current.status !== "resuming") ||
+        current.executionPid !== undefined ||
+        (current.executionOwnerPid ?? null) !== input.expectedExecutionOwnerPid ||
+        (current.executionOwnerStartedAt ?? null) !== input.expectedExecutionOwnerStartedAt
+      )
+        return false;
       fixture.sessions.set(input.id, {
         ...current,
         executionPid: input.executionPid,
@@ -354,6 +391,7 @@ function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
         return fixture.confirmCleanup;
       },
     },
+    process: { observe: async () => (fixture.processAlive ? "alive" : "dead") },
   });
 }
 
@@ -390,7 +428,7 @@ function createResumeUseCase(fixture: LifecycleFixture): ResumeAgentSession {
       sessions,
       workspace: { resolveCurrent: async () => fixture.workspace },
     }),
-    process: { isAlive: async () => fixture.processAlive },
+    process: { observe: async () => (fixture.processAlive ? "alive" : "dead") },
     launcher: backend,
     panes: {
       adopt: async (_session, hostPaneId) => {
@@ -450,7 +488,7 @@ function createCleanupUseCase(fixture: LifecycleFixture): CleanupAgentSession {
       sessions,
       workspace: { resolveCurrent: async () => fixture.workspace },
     }),
-    process: { isAlive: async () => fixture.processAlive },
+    process: { observe: async () => (fixture.processAlive ? "alive" : "dead") },
     worktrees: {
       create: async () => ({}),
       copyFiles: async () => true,
@@ -500,7 +538,10 @@ type RunKey =
   | "prepare-failed"
   | "post-execution-failed"
   | "resolution-input"
-  | "completion-retry";
+  | "completion-retry"
+  | "abandoned-preparation"
+  | "abandoned-execution"
+  | "preparing";
 type RunStep = { operation: "run"; repeat?: number };
 const runCases = [
   {
@@ -622,6 +663,36 @@ const runCases = [
       hasObserved<RunContext, RunAgentSessionResult>("disposeCount", 1),
     ],
   },
+  {
+    name: "does not recover an owner-only execution without a recorded provider process",
+    fixture: "abandoned-preparation",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasError<RunContext, RunAgentSessionResult>({
+        message: "session name already exists in this workspace: session",
+      }),
+    ],
+  },
+  {
+    name: "does not recover a preparation while its CLI owner is alive",
+    fixture: "preparing",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasError<RunContext, RunAgentSessionResult>({
+        message: "session name already exists in this workspace: session",
+      }),
+    ],
+  },
+  {
+    name: "recovers an attached execution after both the provider and CLI have exited",
+    fixture: "abandoned-execution",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasObserved<RunContext, RunAgentSessionResult>("status", "exited"),
+      hasObserved<RunContext, RunAgentSessionResult>("deleted", true),
+      hasObserved<RunContext, RunAgentSessionResult>("worktreeRemoveCount", 1),
+    ],
+  },
 ] satisfies readonly ScenarioCase<RunKey, RunStep, RunAgentSessionResult, RunContext>[];
 
 const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSessionResult, RunContext> = {
@@ -678,6 +749,41 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
         runWorkspaceInput: { workspace: "selected", cwd: "/caller/worktree" },
       }),
     }),
+    "abandoned-preparation": () => ({
+      fixture: createFixture({
+        session: sessionFixture({
+          status: "running",
+          executionId: "abandoned-execution",
+          executionStartedAt: "2026-08-23T00:00:00.000Z",
+          executionOwnerPid: 701,
+          executionOwnerStartedAt: "2026-08-23T00:00:00.000Z",
+        }),
+      }),
+    }),
+    preparing: () => ({
+      fixture: createFixture({
+        session: sessionFixture({
+          status: "running",
+          executionId: "active-execution",
+          executionStartedAt: "2026-08-23T00:00:00.000Z",
+          executionOwnerPid: 701,
+          executionOwnerStartedAt: "2026-08-23T00:00:00.000Z",
+        }),
+        processAlive: true,
+      }),
+    }),
+    "abandoned-execution": () => ({
+      fixture: createFixture({
+        session: sessionFixture({
+          status: "running",
+          executionId: "abandoned-execution",
+          executionPid: 701,
+          executionStartedAt: "2026-08-23T00:00:00.000Z",
+          executionOwnerPid: 702,
+          executionOwnerStartedAt: "2026-08-23T00:00:00.000Z",
+        }),
+      }),
+    }),
   },
   cases: runCases,
   execute: async (fixture, steps) => {
@@ -693,6 +799,8 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
       executionId: prepared.session.executionId ?? "",
       executionPid: 700,
       executionStartedAt: "2026-08-23T00:01:00.000Z",
+      executionOwnerPid: prepared.session.executionOwnerPid,
+      executionOwnerStartedAt: prepared.session.executionOwnerStartedAt,
       hostPaneId: "%1",
     });
     let result = await useCase.complete({
@@ -736,7 +844,7 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
   },
 };
 
-type ResumeKey = "success" | "failed" | "unattached";
+type ResumeKey = "success" | "failed" | "unattached" | "cancelled";
 type ResumeStep = { operation: "resume"; attach?: boolean };
 const resumeCases = [
   {
@@ -773,6 +881,15 @@ const resumeCases = [
       }),
     ],
   },
+  {
+    name: "clears a resume claim when preparation is cancelled",
+    fixture: "cancelled",
+    steps: [{ operation: "resume", attach: false }],
+    assert: [
+      hasError<ResumeContext, ResumeAgentSessionResult>({ message: /aborted/i }),
+      hasObserved<ResumeContext, ResumeAgentSessionResult>("status", "exited"),
+    ],
+  },
 ] satisfies readonly ScenarioCase<ResumeKey, ResumeStep, ResumeAgentSessionResult, ResumeContext>[];
 
 const resumeTable: ScenarioTable<LifecycleFixture, ResumeKey, ResumeStep, ResumeAgentSessionResult, ResumeContext> = {
@@ -790,17 +907,25 @@ const resumeTable: ScenarioTable<LifecycleFixture, ResumeKey, ResumeStep, Resume
         session: sessionFixture({ name: "resume", status: "running", executionId: "active-execution" }),
       }),
     }),
+    cancelled: () => ({
+      fixture: createFixture({ session: sessionFixture({ name: "resume" }), abortOnClaim: true }),
+    }),
   },
   cases: resumeCases,
   execute: async (fixture, steps) => {
     if (steps[0]?.operation !== "resume") throw new Error("resume scenario has no resume step");
     const useCase = createResumeUseCase(fixture);
-    const prepared = await useCase.prepare({
-      workspaceScope: "current",
-      reference: "resume",
-      hostPaneId: "%2",
-      backendArgs: [],
-    });
+    const controller = fixture.abortOnClaim ? new AbortController() : undefined;
+    fixture.resumeAbortController = controller;
+    const prepared = await useCase.prepare(
+      {
+        workspaceScope: "current",
+        reference: "resume",
+        hostPaneId: "%2",
+        backendArgs: [],
+      },
+      controller?.signal,
+    );
     if (steps[0]?.attach !== false) {
       await createAttachUseCase(fixture).execute({
         agentSessionId: prepared.session.id,

@@ -21,7 +21,7 @@ export const sessionListPolicy = {
   longRunningThresholdMs: 30 * 24 * 60 * 60 * 1_000,
 } as const;
 
-const activeStates = new Set<AgentSessionState>(["running", "resuming"]);
+const activeStates = new Set<AgentSessionState>(["running", "resuming", "recovering"]);
 const resumableStates = new Set<AgentSessionState>(["exited", "interrupted"]);
 
 /** Application policy for projecting and filtering managed agent sessions. */

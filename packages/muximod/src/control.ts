@@ -65,7 +65,10 @@ export type MuximodControlServerOptions = {
   adoptAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
   observeAgentSession?: (request: AgentSessionObservationRequest) => Promise<void>;
   releaseAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
-  prepareAgentExecution?: (request: AgentExecutionPrepareRequest) => Promise<PreparedAgentExecution>;
+  prepareAgentExecution?: (
+    request: AgentExecutionPrepareRequest,
+    signal: AbortSignal,
+  ) => Promise<PreparedAgentExecution>;
   attachAgentExecution?: (request: AgentExecutionAttachRequest) => Promise<void>;
   completeAgentExecution?: (request: AgentExecutionCompleteRequest) => Promise<CompletedAgentExecution>;
 };
@@ -180,6 +183,7 @@ export class MuximodControlServer {
     let buffer = "";
     let requestQueue = Promise.resolve();
     let pendingRequests = 0;
+    const requestControllers = new Set<AbortController>();
     socket.setEncoding("utf8");
     socket.on("data", (chunk: string) => {
       if (Buffer.byteLength(chunk, "utf8") > maxControlChunkBytes) {
@@ -201,12 +205,15 @@ export class MuximodControlServer {
             socket.destroy(new Error("too many pending muximod control requests"));
             return;
           }
+          const controller = new AbortController();
+          requestControllers.add(controller);
           pendingRequests += 1;
           requestQueue = requestQueue
-            .then(() => this.handleRequest(socket, line))
+            .then(() => this.handleRequest(socket, line, controller.signal))
             .catch(() => undefined)
             .finally(() => {
               pendingRequests -= 1;
+              requestControllers.delete(controller);
             });
         }
       }
@@ -215,6 +222,8 @@ export class MuximodControlServer {
       }
     });
     socket.on("close", () => {
+      for (const controller of requestControllers) controller.abort(new Error("muximod control client disconnected"));
+      requestControllers.clear();
       this.clients.delete(socket);
       for (const [pairingId, owner] of this.pairingOwners) {
         if (owner !== socket) continue;
@@ -227,8 +236,8 @@ export class MuximodControlServer {
     socket.on("error", () => socket.destroy());
   }
 
-  private async handleRequest(socket: Socket, line: string): Promise<void> {
-    if (socket.destroyed || socket.writableEnded) return;
+  private async handleRequest(socket: Socket, line: string, signal = new AbortController().signal): Promise<void> {
+    if (socket.destroyed || socket.writableEnded || signal.aborted) return;
     const parsedRequest = decodeMuximodControlRequest(line);
     if (!parsedRequest.ok) {
       this.send(socket, {
@@ -275,7 +284,7 @@ export class MuximodControlServer {
       if (request.type === "prepare_agent_execution") {
         if (!this.options.prepareAgentExecution)
           throw controlError("agent_execution_unavailable", "agent execution is unavailable");
-        const prepared = await this.options.prepareAgentExecution(request);
+        const prepared = await this.options.prepareAgentExecution(request, signal);
         this.send(socket, {
           type: "agent_execution_prepared",
           requestId: request.requestId,

@@ -47,9 +47,10 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    signal?: AbortSignal,
   ): Promise<LaunchPreparation> {
     const provider = this.options.providers.get(session.backend);
-    const preparation = await provider.prepareLaunch(session, backendArgs, resume);
+    const preparation = await provider.prepareLaunch(session, backendArgs, resume, signal);
     const runDir = session.worktreePath ?? session.workspaceRoot;
     const launch = preparation.launch;
     if (!launch.command[0]) throw new Error("backend command executable is missing");

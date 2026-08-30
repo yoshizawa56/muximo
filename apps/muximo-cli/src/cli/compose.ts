@@ -43,7 +43,11 @@ import {
 import { confirmCleanup } from "./adapters/cleanup-prompt.js";
 import { BrowserPairingPresenter, PairCommand, TerminalPairingPresenter } from "./adapters/index.js";
 import { connectMuximodApi, type MuximodApiClient, readMuximodDaemonLog } from "./adapters/muximod-api-client.js";
-import { MuximodPairingControlAdapter, PairingControlError } from "./adapters/muximod-pairing-control-adapter.js";
+import {
+  MuximodPairingControlAdapter,
+  muximodControlRequestTimeoutMs,
+  PairingControlError,
+} from "./adapters/muximod-pairing-control-adapter.js";
 import { MuximodShellSessionWorktreeLookup, MuximodShellWorkspaceResolver } from "./adapters/muximod-shell-context.js";
 import { resolvePairMuximodBaseUrl } from "./adapters/pair-route.js";
 import { type CliApp, createCliApp } from "./app.js";
@@ -213,6 +217,8 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   };
   const serveStatePath = join(runtime.muximodInstanceDirectory, "serve.json");
   const attachedAgentExecution = new AttachedAgentExecutionAdapter(logger);
+  const agentExecutionPrepareTimeoutMs = muximodControlRequestTimeoutMs * 2;
+  const agentExecutionAttachTimeoutMs = 5_000;
   type AgentExecutionPreparation =
     | { operation: "run"; input: StartAgentSessionInput }
     | { operation: "resume"; input: ResumeAgentSessionInput };
@@ -221,17 +227,19 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       throw new Error("agent execution requires an interactive terminal (stdin, stdout, and stderr must be TTYs)");
     }
     const daemon = await ensureLocalDaemon();
-    const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket);
+    const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+      requestTimeoutMs: agentExecutionPrepareTimeoutMs,
+    });
     try {
       if (request.operation === "run") {
         return await control.prepareAgentExecution({
           operation: "run",
-          input: { ...request.input, backendArgs: [...request.input.backendArgs] },
+          input: { ...request.input, executionOwnerPid: process.pid, backendArgs: [...request.input.backendArgs] },
         });
       }
       return await control.prepareAgentExecution({
         operation: "resume",
-        input: { ...request.input, backendArgs: [...request.input.backendArgs] },
+        input: { ...request.input, executionOwnerPid: process.pid, backendArgs: [...request.input.backendArgs] },
       });
     } finally {
       control.close();
@@ -243,11 +251,15 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     executionId: string;
     executionPid: number;
     executionStartedAt: string;
+    executionOwnerPid?: number;
+    executionOwnerStartedAt?: string;
     hostPaneId?: string;
   }): Promise<void> => {
     await withControlRecovery(async () => {
       const daemon = await ensureLocalDaemon();
-      const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket);
+      const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+        requestTimeoutMs: agentExecutionAttachTimeoutMs,
+      });
       try {
         await control.attachAgentExecution(input);
       } finally {
@@ -261,7 +273,9 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   ) => {
     return withControlRecovery(async () => {
       const daemon = await ensureLocalDaemon();
-      const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket);
+      const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+        requestTimeoutMs: agentExecutionPrepareTimeoutMs,
+      });
       try {
         return await control.completeAgentExecution(input);
       } finally {
@@ -276,26 +290,40 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     hostPaneId?: string,
   ) => {
     let attachError: unknown;
+    let attachmentPromise: Promise<void> | undefined;
     const process = await attachedAgentExecution.execute(prepared.execution, {
-      onStarted: async (executionPid, executionStartedAt) => {
-        try {
-          await attachAgentExecution({
-            agentSessionId: prepared.agentSessionId,
-            executionId: prepared.executionId,
-            executionPid,
-            executionStartedAt,
-            ...(hostPaneId === undefined ? {} : { hostPaneId }),
-          });
-        } catch (error) {
+      onStarted: (executionPid, executionStartedAt) => {
+        attachmentPromise = attachAgentExecution({
+          agentSessionId: prepared.agentSessionId,
+          executionId: prepared.executionId,
+          executionPid,
+          executionStartedAt,
+          executionOwnerPid: prepared.session.executionOwnerPid,
+          executionOwnerStartedAt: prepared.session.executionOwnerStartedAt,
+          ...(hostPaneId === undefined ? {} : { hostPaneId }),
+        }).catch((error) => {
           attachError = error;
           logger.warn("agent.execution_attach_failed", {
             sessionId: prepared.agentSessionId,
             executionId: prepared.executionId,
             error,
           });
-        }
+        });
       },
     });
+    if (attachmentPromise) {
+      const attachmentSettled = await Promise.race([
+        attachmentPromise.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), agentExecutionAttachTimeoutMs)),
+      ]);
+      if (!attachmentSettled) {
+        logger.warn("agent.execution_attachment_pending", {
+          sessionId: prepared.agentSessionId,
+          executionId: prepared.executionId,
+          timeoutMs: agentExecutionAttachTimeoutMs,
+        });
+      }
+    }
     if (attachError !== undefined) {
       logger.warn("agent.execution_running_without_daemon_attachment", {
         sessionId: prepared.agentSessionId,
@@ -601,6 +629,7 @@ function isControlConnectionError(error: unknown): boolean {
     return [
       "control_socket_missing",
       "control_socket_connect_failed",
+      "control_socket_connect_timeout",
       "control_socket_closed",
       "control_socket_error",
     ].includes(error.code);

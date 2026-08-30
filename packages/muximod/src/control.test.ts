@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import {
   nodeAuthCrypto,
 } from "@muximo/infrastructure/runtime";
 import {
+  type CleanupRegistrar,
   type FixtureHandle,
   hasObserved,
   runScenarioTable,
@@ -27,18 +29,21 @@ type ControlRequest = { agentSessionId: string; hostPaneId: string; executionId:
 type ControlStep =
   | { type: "adopt" | "observe" | "release" }
   | { type: "read-log"; lines: number }
-  | { type: "prepare-execution" | "attach-execution" | "complete-execution" };
+  | { type: "prepare-execution" | "attach-execution" | "complete-execution" }
+  | { type: "cancel-prepare" };
 type ControlFixture = {
   server: MuximodControlServer;
-  handleRequest: (line: string) => void;
+  handleRequest: (line: string, signal?: AbortSignal) => void;
+  connect: () => void;
   request: ControlRequest;
   responses: string[];
   calls: string[];
   applicationRequests: unknown[];
   observations: string[];
   logReads: number[];
-  socket: { destroyed: boolean; write(data: string): void };
+  socket: ControlTestSocket;
   database: ReturnType<typeof createAgentDatabase>;
+  prepareCancelled: boolean;
 };
 type ControlContext = {
   responses: readonly unknown[];
@@ -47,6 +52,7 @@ type ControlContext = {
   applicationRequests: readonly unknown[];
   observations: readonly string[];
   logReads: readonly number[];
+  prepareCancelled: boolean;
 };
 
 const request: ControlRequest = { agentSessionId: "session-id", hostPaneId: "%1", executionId: "execution-id-123456" };
@@ -77,7 +83,38 @@ const execution = {
 const executionProcess = { started: true, code: 0, interrupted: false, signal: null, pid: 456 };
 const executionStartedAt = "2026-08-30T00:00:01.000Z";
 
-const fixture = (): FixtureHandle<ControlFixture> => {
+class ControlTestSocket extends EventEmitter {
+  public destroyed = false;
+  public writableEnded = false;
+  public writableLength = 0;
+
+  public constructor(private readonly onWrite: (data: string) => void) {
+    super();
+  }
+
+  public setEncoding(_encoding: BufferEncoding): this {
+    return this;
+  }
+
+  public write(data: string): boolean {
+    if (this.destroyed) return false;
+    this.onWrite(data);
+    return true;
+  }
+
+  public destroy(_error?: Error): this {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.writableEnded = true;
+    this.emit("close");
+    return this;
+  }
+}
+
+const fixture = (
+  _registerCleanup?: CleanupRegistrar,
+  waitForPrepareCancellation = false,
+): FixtureHandle<ControlFixture> => {
   const instanceDirectory = mkdtempSync(join(tmpdir(), "muximod-control-test-"));
   const database = createAgentDatabase(join(instanceDirectory, "muximod.sqlite"), {
     instanceDirectory,
@@ -100,6 +137,7 @@ const fixture = (): FixtureHandle<ControlFixture> => {
   const observations: string[] = [];
   const logReads: number[] = [];
   const responses: string[] = [];
+  let prepareCancelled = false;
   const server = new MuximodControlServer({
     socketPath: "/tmp/muximod-control-test.sock",
     auth,
@@ -121,8 +159,26 @@ const fixture = (): FixtureHandle<ControlFixture> => {
       applicationRequests.push({ operation: "release", ...input });
       calls.push(`release:${input.agentSessionId}:${input.hostPaneId}:${input.executionId}`);
     },
-    prepareAgentExecution: async (input) => {
+    prepareAgentExecution: async (input, signal) => {
       calls.push(`prepare:${input.operation}`);
+      if (waitForPrepareCancellation) {
+        await new Promise<void>((resolvePromise) => {
+          if (signal.aborted) {
+            prepareCancelled = true;
+            resolvePromise();
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              prepareCancelled = true;
+              resolvePromise();
+            },
+            { once: true },
+          );
+        });
+        throw new Error("muximod control request cancelled");
+      }
       return {
         operation: input.operation,
         agentSessionId: executionSession.id,
@@ -147,21 +203,24 @@ const fixture = (): FixtureHandle<ControlFixture> => {
       };
     },
   });
-  const socket = {
-    destroyed: false,
-    write(data: string) {
-      responses.push(data);
-    },
-  };
+  const socket = new ControlTestSocket((data) => responses.push(data));
   const handleRequest = (
     server as unknown as {
-      handleRequest: (client: typeof socket, line: string) => void;
+      handleRequest: (client: typeof socket, line: string, signal?: AbortSignal) => Promise<void>;
     }
   ).handleRequest.bind(server);
+  const handleConnection = (
+    server as unknown as {
+      handleConnection: (client: typeof socket) => void;
+    }
+  ).handleConnection.bind(server);
   return {
     fixture: {
       server,
-      handleRequest: (line) => handleRequest(socket, line),
+      connect: () => handleConnection(socket),
+      handleRequest: (line, signal) => {
+        void handleRequest(socket, line, signal);
+      },
       request,
       responses,
       calls,
@@ -170,6 +229,9 @@ const fixture = (): FixtureHandle<ControlFixture> => {
       logReads,
       socket,
       database,
+      get prepareCancelled() {
+        return prepareCancelled;
+      },
     },
     cleanup: async () => {
       await server.stop();
@@ -274,13 +336,44 @@ const cases = [
       ]),
     ],
   },
-] satisfies readonly ScenarioCase<"default", ControlStep, undefined, ControlContext>[];
+  {
+    name: "forwards a disconnected execution preparation cancellation",
+    fixture: "cancel" as const,
+    steps: [{ type: "cancel-prepare" }],
+    assert: [hasObserved<ControlContext, undefined>("prepareCancelled", true)],
+  },
+] satisfies readonly ScenarioCase<"cancel", ControlStep, undefined, ControlContext>[];
 
-const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, ControlContext> = {
+const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, ControlContext> = {
   defaultFixture: fixture,
+  fixtures: { cancel: (registerCleanup) => fixture(registerCleanup, true) },
   cases,
   execute: async (testFixture, steps) => {
     for (const step of steps) {
+      if (step.type === "cancel-prepare") {
+        testFixture.connect();
+        testFixture.socket.emit(
+          "data",
+          `${JSON.stringify({
+            type: "prepare_agent_execution",
+            requestId: `control-request-${testFixture.responses.length + 1}`,
+            operation: "run",
+            input: {
+              backend: "codex",
+              hostPaneId: request.hostPaneId,
+              cwd: execution.cwd,
+              useWorktree: false,
+              setupHookExplicit: false,
+              cleanupHookExplicit: false,
+              backendArgs: [],
+            },
+          })}\n`,
+        );
+        await waitFor(() => testFixture.calls.includes("prepare:run"));
+        testFixture.socket.destroy();
+        await waitFor(() => testFixture.prepareCancelled);
+        continue;
+      }
       const type =
         step.type === "adopt"
           ? "adopt_agent_session"
@@ -339,6 +432,7 @@ const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, Co
     applicationRequests: [...testFixture.applicationRequests],
     observations: [...testFixture.observations],
     logReads: [...testFixture.logReads],
+    prepareCancelled: testFixture.prepareCancelled,
   }),
 };
 

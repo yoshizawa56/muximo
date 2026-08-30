@@ -108,8 +108,8 @@ export type MuximodSessionSummary = {
 export type MuximodPaneSummary = PaneRecord;
 
 export type MuximodAgentSessionApplication = {
-  prepareRun(input: StartAgentSessionInput): Promise<PreparedAgentSession>;
-  prepareResume(input: ResumeAgentSessionInput): Promise<PreparedAgentSession>;
+  prepareRun(input: StartAgentSessionInput, signal?: AbortSignal): Promise<PreparedAgentSession>;
+  prepareResume(input: ResumeAgentSessionInput, signal?: AbortSignal): Promise<PreparedAgentSession>;
   attach(input: AttachAgentSessionInput): Promise<AgentSessionRecord>;
   completeRun(input: CompleteAgentSessionInput): Promise<RunAgentSessionResult>;
   completeResume(input: CompleteAgentSessionInput): Promise<ResumeAgentSessionResult>;

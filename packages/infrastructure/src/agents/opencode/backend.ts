@@ -26,10 +26,11 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    signal?: AbortSignal,
   ): Promise<AgentBackendProviderPreparation> {
     const plugin = this.options.plugins.get(this.backend);
     const launch = plugin?.prepareLaunch
-      ? await this.preparePluginLaunch(session, backendArgs, plugin.prepareLaunch, resume)
+      ? await this.preparePluginLaunch(session, backendArgs, plugin.prepareLaunch, resume, signal)
       : this.prepareCommandLaunch(session, backendArgs, resume);
     let sessionUpdate: SessionIdentityUpdate | undefined;
     if (launch.backendSessionId && !session.backendSessionId) {
@@ -41,7 +42,7 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
   public async restoreLaunch(session: AgentSessionRecord): Promise<AgentBackendLaunch | undefined> {
     const plugin = this.options.plugins.get(this.backend);
     if (!plugin?.prepareLaunch || !session.backendSessionId) return undefined;
-    return this.preparePluginLaunch(session, [], plugin.prepareLaunch, true, session.executionStartedAt);
+    return this.preparePluginLaunch(session, [], plugin.prepareLaunch, true, undefined, session.executionStartedAt);
   }
 
   public async afterRun(
@@ -93,8 +94,10 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     backendArgs: readonly string[],
     prepare: NonNullable<NonNullable<import("../index.js").AgentPluginV1["prepareLaunch"]>>,
     resume: boolean,
+    signal?: AbortSignal,
     startedAt = timestamp(),
   ): Promise<AgentBackendLaunch> {
+    signal?.throwIfAborted();
     const runDir = session.worktreePath ?? session.workspaceRoot;
     const plan = await prepare({
       cwd: runDir,
@@ -110,6 +113,7 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
         environment: this.options.environment,
       },
       resumeSessionId: resume ? (session.backendSessionId ?? null) : null,
+      signal,
     });
     return {
       command: [plan.primary.command, ...plan.primary.args],
