@@ -381,10 +381,18 @@ type ParsedStateObservation = {
   utilityFlexGrow: number | undefined;
 };
 
-const validV3State = JSON.stringify({
-  version: 3,
+const validState = JSON.stringify({
   profiles: [
-    { id: "default" },
+    {
+      id: "default",
+      name: "Default",
+      icon: "terminal",
+      libraryKeys: [],
+      layout: { rows: [] },
+      shortcutKeyIds: [],
+      repeatStartDelayMs: 420,
+      repeatIntervalMs: 180,
+    },
     {
       id: "agent",
       name: "Agent",
@@ -412,57 +420,21 @@ const validV3State = JSON.stringify({
         ],
       },
       shortcutKeyIds: ["agent-command"],
+      repeatStartDelayMs: 420,
+      repeatIntervalMs: 180,
     },
   ],
   workspaceProfileIds: { "workspace-1": ["agent"] },
   activeProfileIdsByWorkspace: { "workspace-1": "agent" },
+  globalActiveProfileId: "default",
 });
 
-function legacyKey(id: string, category: "special" | "shortcuts", sequence: unknown[], extra: object = {}) {
-  return {
-    id,
-    kind: category === "shortcuts" ? "shortcut" : "key",
-    category,
-    accessibleLabel: id,
-    sequence,
-    ...extra,
-  };
-}
-
-const validV2State = JSON.stringify({
-  version: 2,
+const invalidState = JSON.stringify({
   profiles: [
     {
       id: "default",
-      selectedButtonIds: ["escape", "enter"],
-      libraryButtons: [
-        legacyKey("escape", "special", [{ type: "key", key: "Escape" }]),
-        legacyKey("enter", "special", [{ type: "key", key: "Enter" }]),
-      ],
-    },
-    {
-      id: "agent",
-      name: "Agent",
-      icon: "camera",
-      selectedButtonIds: ["git-status"],
-      shortcutButtonIds: ["git-status"],
-      libraryButtons: [
-        legacyKey("git-status", "shortcuts", [
-          { type: "text", value: "git status" },
-          { type: "key", key: "Enter" },
-        ]),
-      ],
-    },
-  ],
-  workspaceProfileIds: { "workspace-1": ["agent"] },
-  activeProfileIdsByWorkspace: { "workspace-1": "agent" },
-});
-
-const invalidV3State = JSON.stringify({
-  version: 3,
-  profiles: [
-    {
-      id: "default",
+      name: "Default",
+      icon: "terminal",
       libraryKeys: [
         {
           id: "broken",
@@ -483,14 +455,20 @@ const invalidV3State = JSON.stringify({
           },
         ],
       },
+      shortcutKeyIds: [],
+      repeatStartDelayMs: 420,
+      repeatIntervalMs: 180,
     },
   ],
+  workspaceProfileIds: {},
+  activeProfileIdsByWorkspace: {},
+  globalActiveProfileId: "default",
 });
 
 const parsedStateCases = [
   {
-    name: "preserves v3 rows, custom keys, flex growth, and workspace profile selection",
-    input: { raw: validV3State },
+    name: "preserves rows, custom keys, flex growth, and workspace profile selection",
+    input: { raw: validState },
     assert: [
       returns<EmptyContext, ParsedStateObservation>({
         profileIds: ["default", "agent"],
@@ -520,31 +498,8 @@ const parsedStateCases = [
     ],
   },
   {
-    name: "migrates v2 button selections into the current row layout",
-    input: { raw: validV2State },
-    assert: [
-      returns<EmptyContext, ParsedStateObservation>({
-        profileIds: ["default", "agent"],
-        activeProfileId: "agent",
-        linkedProfileIds: ["agent"],
-        defaultMainKeyIds: ["escape", "enter"],
-        agentMainKeyIds: ["git-status"],
-        agentShortcutKeyIds: ["git-status"],
-        agentIcon: "camera",
-        utilityKeyIds: [
-          "photo-library",
-          "clipboard-surface",
-          "toggle-standard-keyboard",
-          "directional-flick",
-          "profile-surface",
-        ],
-        utilityFlexGrow: 1,
-      }),
-    ],
-  },
-  {
-    name: "drops invalid v3 activations before resolving the layout",
-    input: { raw: invalidV3State },
+    name: "drops invalid activations before resolving the layout",
+    input: { raw: invalidState },
     assert: [
       returns<EmptyContext, ParsedStateObservation>({
         profileIds: ["default"],

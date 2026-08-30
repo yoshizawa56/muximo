@@ -721,21 +721,10 @@ export const defaultCustomKeyboardLayout: CustomKeyboardLayout = {
 };
 
 type StoredCustomKeyboardState = {
-  version?: unknown;
   profiles?: unknown;
   workspaceProfileIds?: unknown;
   activeProfileIdsByWorkspace?: unknown;
   globalActiveProfileId?: unknown;
-  layout?: unknown;
-  libraryKeys?: unknown;
-  shortcutKeyIds?: unknown;
-  selectedButtonIds?: unknown;
-  libraryButtons?: unknown;
-  shortcutButtonIds?: unknown;
-  repeatStartDelayMs?: unknown;
-  repeatIntervalMs?: unknown;
-  buttons?: unknown;
-  shortcutButtons?: unknown;
 };
 
 export type CustomKeyboardState = {
@@ -745,7 +734,6 @@ export type CustomKeyboardState = {
   globalActiveProfileId: string;
 };
 
-const CUSTOM_KEYBOARD_STATE_VERSION = 3;
 const CUSTOM_KEYBOARD_PROFILE_NAME_MAX_LENGTH = 40;
 
 export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOptions): CustomKeyboardController {
@@ -824,8 +812,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
 
   useEffect(() => {
     if (!isHydrated) return;
-    const persisted = { version: CUSTOM_KEYBOARD_STATE_VERSION, ...state };
-    void storage.write(JSON.stringify(persisted));
+    void storage.write(JSON.stringify(state));
   }, [isHydrated, state, storage]);
 
   const onSelectProfile = useCallback(
@@ -1193,18 +1180,24 @@ export function parseCustomKeyboardState(raw: string | null): CustomKeyboardStat
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed)) return fallback;
-    if (parsed.version === CUSTOM_KEYBOARD_STATE_VERSION) return parseVersionedCustomKeyboardState(parsed, fallback);
-    if (parsed.version === 2) return migrateVersionTwoCustomKeyboardState(parsed, fallback);
-    return migrateLegacyCustomKeyboardState(parsed, fallback);
+    return parseStoredCustomKeyboardState(parsed, fallback);
   } catch {
     return fallback;
   }
 }
 
-function parseVersionedCustomKeyboardState(
+function parseStoredCustomKeyboardState(
   parsed: StoredCustomKeyboardState,
   fallback: CustomKeyboardState,
 ): CustomKeyboardState {
+  if (
+    !Array.isArray(parsed.profiles) ||
+    !isRecord(parsed.workspaceProfileIds) ||
+    !isRecord(parsed.activeProfileIdsByWorkspace) ||
+    typeof parsed.globalActiveProfileId !== "string"
+  ) {
+    return fallback;
+  }
   const profiles = normalizeProfiles(parsed.profiles);
   if (profiles.length === 0) return fallback;
   const profileIds = new Set(profiles.map((profile) => profile.id));
@@ -1218,67 +1211,6 @@ function parseVersionedCustomKeyboardState(
       ? parsed.globalActiveProfileId
       : DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID;
   return { profiles, workspaceProfileIds, activeProfileIdsByWorkspace, globalActiveProfileId };
-}
-
-function migrateVersionTwoCustomKeyboardState(
-  parsed: StoredCustomKeyboardState,
-  fallback: CustomKeyboardState,
-): CustomKeyboardState {
-  const profiles = Array.isArray(parsed.profiles)
-    ? parsed.profiles.flatMap((candidate) => {
-        if (!isRecord(candidate)) return [];
-        const legacyKeys = validLegacyKeyArray(candidate.libraryButtons) ?? [];
-        const libraryKeys = legacyKeys.flatMap(convertLegacyKey);
-        const selectedKeyIds = validStringArray(candidate.selectedButtonIds) ?? undefined;
-        const shortcutKeyIds = validStringArray(candidate.shortcutButtonIds);
-        return [
-          {
-            ...candidate,
-            libraryKeys,
-            layout: legacyLayout(selectedKeyIds, libraryKeys),
-            shortcutKeyIds:
-              shortcutKeyIds ?? libraryKeys.filter((key) => key.category === "shortcuts").map((key) => key.id),
-          },
-        ];
-      })
-    : [];
-  return parseVersionedCustomKeyboardState(
-    {
-      ...parsed,
-      version: CUSTOM_KEYBOARD_STATE_VERSION,
-      profiles,
-    },
-    fallback,
-  );
-}
-
-function migrateLegacyCustomKeyboardState(
-  parsed: StoredCustomKeyboardState,
-  fallback: CustomKeyboardState,
-): CustomKeyboardState {
-  const legacyButtons = validLegacyKeyArray(parsed.buttons) ?? [];
-  const storedLibraryButtons = validLegacyKeyArray(parsed.libraryButtons) ?? [];
-  const legacyShortcutButtons = (validLegacyKeyArray(parsed.shortcutButtons) ?? []).filter(
-    (key) => key.kind === "shortcut",
-  );
-  const libraryKeys = [...storedLibraryButtons, ...legacyButtons, ...legacyShortcutButtons].flatMap(convertLegacyKey);
-  const selectedKeyIds = validStringArray(parsed.selectedButtonIds) ?? legacyButtons.map((key) => key.id);
-  const profile = normalizeProfile({
-    id: DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID,
-    name: "Default",
-    icon: "terminal",
-    libraryKeys,
-    layout: legacyLayout(selectedKeyIds, libraryKeys),
-    shortcutKeyIds:
-      validStringArray(parsed.shortcutButtonIds) ??
-      legacyShortcutButtons.map((key) => key.id) ??
-      fallback.profiles[0]?.shortcutKeyIds,
-    repeatStartDelayMs: parsed.repeatStartDelayMs,
-    repeatIntervalMs: parsed.repeatIntervalMs,
-  });
-  return profile
-    ? { ...fallback, profiles: [profile], globalActiveProfileId: DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID }
-    : fallback;
 }
 
 function normalizeProfiles(value: unknown): CustomKeyboardProfile[] {
@@ -1297,9 +1229,22 @@ function normalizeProfiles(value: unknown): CustomKeyboardProfile[] {
 }
 
 function normalizeProfile(value: unknown): CustomKeyboardProfile | null {
-  if (!isRecord(value) || typeof value.id !== "string" || value.id.trim().length === 0) return null;
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    value.id.trim().length === 0 ||
+    typeof value.name !== "string" ||
+    !isCustomKeyboardIcon(value.icon) ||
+    !Array.isArray(value.libraryKeys) ||
+    !isRecord(value.layout) ||
+    !Array.isArray(value.shortcutKeyIds) ||
+    typeof value.repeatStartDelayMs !== "number" ||
+    typeof value.repeatIntervalMs !== "number"
+  ) {
+    return null;
+  }
   const isDefault = value.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID;
-  const name = isDefault ? "Default" : typeof value.name === "string" ? value.name.trim() : "";
+  const name = isDefault ? "Default" : value.name.trim();
   if (!isDefault && !isCustomKeyboardProfileNameValid(name)) return null;
   const icon = isDefault ? "terminal" : (validProfileIcon(value.icon) ?? "terminal");
   const storedLibraryKeys = validKeyArray(value.libraryKeys) ?? [];
@@ -1324,33 +1269,6 @@ function normalizeProfile(value: unknown): CustomKeyboardProfile | null {
     shortcutKeyIds,
     repeatStartDelayMs: validNumber(value.repeatStartDelayMs, 200, 1200, 420),
     repeatIntervalMs: validNumber(value.repeatIntervalMs, 80, 600, 180),
-  };
-}
-
-function legacyLayout(
-  selectedKeyIds: readonly string[] | undefined,
-  libraryKeys: readonly CustomKeyboardKey[],
-): CustomKeyboardLayout {
-  const libraryKeyIds = new Set(libraryKeys.map((key) => key.id));
-  const mainKeyIds = selectedKeyIds
-    ? uniqueIds(selectedKeyIds.filter((keyId) => libraryKeyIds.has(keyId)))
-    : (cloneCustomKeyboardLayout(defaultCustomKeyboardLayout).rows[0]?.placements.map((placement) => placement.keyId) ??
-      []);
-  const defaultLayout = cloneCustomKeyboardLayout(defaultCustomKeyboardLayout);
-  const utilityRow = defaultLayout.rows.find((row) => row.id === "utility");
-  return {
-    rows: [
-      {
-        id: "main",
-        overflow: "scroll",
-        placements: mainKeyIds.map((keyId) => ({ keyId, density: "regular" as const })),
-      },
-      {
-        id: "utility",
-        overflow: "stable",
-        placements: utilityRow?.placements.map((placement) => ({ ...placement })) ?? [],
-      },
-    ],
   };
 }
 
@@ -1611,68 +1529,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validStringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
   return value.filter((candidate): candidate is string => typeof candidate === "string");
-}
-
-type StoredLegacyCustomKeyboardKey = {
-  id: string;
-  kind: "key" | "modifier" | "shortcut";
-  category: CustomKeyboardKeyCategory;
-  icon?: CustomKeyboardIcon;
-  label?: string;
-  accessibleLabel: string;
-  sequence: CustomKeyboardSequence;
-  modifier?: CustomKeyboardModifier;
-  interaction?: "directional-flick";
-  nativeAction?: CustomKeyboardNativeAction;
-  terminalAction?: CustomKeyboardTerminalAction;
-};
-
-function validLegacyKeyArray(value: unknown): StoredLegacyCustomKeyboardKey[] | null {
-  if (!Array.isArray(value)) return null;
-  return value.filter((key): key is StoredLegacyCustomKeyboardKey => {
-    if (!key || typeof key !== "object") return false;
-    const candidate = key as Partial<StoredLegacyCustomKeyboardKey>;
-    const sequence = validSequence(candidate.sequence);
-    return (
-      typeof candidate.id === "string" &&
-      (candidate.kind === "key" || candidate.kind === "modifier" || candidate.kind === "shortcut") &&
-      (candidate.category === "abc" ||
-        candidate.category === "123" ||
-        candidate.category === "special" ||
-        candidate.category === "shortcuts") &&
-      typeof candidate.accessibleLabel === "string" &&
-      (candidate.icon === undefined || isCustomKeyboardIcon(candidate.icon)) &&
-      (candidate.label === undefined || typeof candidate.label === "string") &&
-      (candidate.modifier === undefined || isCustomKeyboardModifier(candidate.modifier)) &&
-      (candidate.interaction === undefined || candidate.interaction === "directional-flick") &&
-      (candidate.nativeAction === undefined || isCustomKeyboardNativeAction(candidate.nativeAction)) &&
-      (candidate.terminalAction === undefined || isCustomKeyboardTerminalAction(candidate.terminalAction)) &&
-      sequence !== null
-    );
-  });
-}
-
-function convertLegacyKey(key: StoredLegacyCustomKeyboardKey): CustomKeyboardKey[] {
-  const activation =
-    key.modifier !== undefined
-      ? { type: "modifier" as const, modifier: key.modifier }
-      : key.interaction === "directional-flick"
-        ? { type: "directional-flick" as const }
-        : key.nativeAction !== undefined
-          ? { type: "native" as const, action: key.nativeAction }
-          : key.terminalAction !== undefined
-            ? { type: "terminal" as const, action: key.terminalAction }
-            : { type: "sequence" as const, sequence: key.sequence };
-  return [
-    {
-      id: key.id,
-      category: key.category,
-      icon: key.icon,
-      label: key.label,
-      accessibleLabel: key.accessibleLabel,
-      activation,
-    },
-  ];
 }
 
 function validKeyArray(value: unknown): CustomKeyboardKey[] | null {
