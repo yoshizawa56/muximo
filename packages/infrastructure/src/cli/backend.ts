@@ -1,5 +1,5 @@
-import { basename } from "node:path";
 import type {
+  AgentExecutionPort,
   AgentObservationPort,
   AgentStateObservation,
   LaunchExecution,
@@ -19,7 +19,7 @@ import type {
 } from "../agents/backend.js";
 import type { AgentMonitor, AgentObservation } from "../agents/index.js";
 import { errorFields } from "../logging/index.js";
-import { spawnAttached } from "../process/process.js";
+import { stringEnvironment } from "../process/process.js";
 import type { TerminalTitlePort } from "../terminal/title.js";
 
 export type BackendAdapterOptions = AgentBackendProviderOptions & {
@@ -72,9 +72,9 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     let runPromise: Promise<LaunchExecution> | undefined;
     let disposal: Promise<void> | undefined;
     return {
-      run: () => {
+      run: (execution: AgentExecutionPort) => {
         if (!runPromise) {
-          runPromise = this.runBackend(session, launch, runDir, startedAt).then(async (process) => ({
+          runPromise = this.runBackend(session, launch, runDir, startedAt, execution).then(async (process) => ({
             process,
             sessionUpdate: await provider.afterRun(session, runDir, startedAt),
           }));
@@ -93,6 +93,7 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     launch: AgentBackendLaunch,
     runDir: string,
     startedAt: number,
+    execution: AgentExecutionPort,
   ): Promise<ProcessResult> {
     const logger = this.options.logger.child({
       sessionId: session.id,
@@ -112,24 +113,21 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
           logger.debug("agent.monitor_start_failed", errorFields(error));
         }
       }
-      const executable = launch.command[0];
-      if (!executable) throw new Error("backend command executable is missing");
-      const result = await spawnAttached(
-        executable,
-        launch.command.slice(1),
-        runDir,
-        {
+      if (!launch.command[0]) throw new Error("backend command executable is missing");
+      if (!session.executionId) throw new Error("agent execution id is missing");
+      const result = await execution.execute({
+        sessionId: session.id,
+        executionId: session.executionId,
+        sessionName: session.name,
+        backend: session.backend,
+        command: launch.command,
+        cwd: runDir,
+        environment: stringEnvironment({
           ...this.options.environment,
           MUXIMOD_AGENT_SESSION_ID: session.id,
           MUXIMOD_AGENT_ID: session.backend,
-        },
-        {
-          captureFailureDiagnostic: true,
-          onStarted: (pid) =>
-            logger.debug("subprocess.started", { kind: "backend", executable: basename(executable), pid }),
-          onError: (error) => logger.debug("subprocess.spawn_failed", { kind: "backend", ...errorFields(error) }),
-        },
-      );
+        }),
+      });
       if (result.interrupted && launch.abortSession) {
         try {
           await launch.abortSession();

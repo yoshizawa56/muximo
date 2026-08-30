@@ -6,6 +6,7 @@ import type { Readable } from "node:stream";
 import { type DaemonOptions, PairDevice, RunShell } from "@muximo/application";
 import { AgentSession } from "@muximo/domain";
 import {
+  AttachedAgentExecutionAdapter,
   createLogger,
   createTailscaleServeClient,
   ensureTailscaleServe,
@@ -35,7 +36,10 @@ import {
 import { confirmCleanup } from "./adapters/cleanup-prompt.js";
 import { BrowserPairingPresenter, PairCommand, TerminalPairingPresenter } from "./adapters/index.js";
 import { connectMuximodApi, type MuximodApiClient, readMuximodDaemonLog } from "./adapters/muximod-api-client.js";
-import { MuximodPairingControlAdapter } from "./adapters/muximod-pairing-control-adapter.js";
+import {
+  MuximodPairingControlAdapter,
+  type MuximodPairingControlAdapterOptions,
+} from "./adapters/muximod-pairing-control-adapter.js";
 import { MuximodShellSessionWorktreeLookup, MuximodShellWorkspaceResolver } from "./adapters/muximod-shell-context.js";
 import { resolvePairMuximodBaseUrl } from "./adapters/pair-route.js";
 import { type CliApp, createCliApp } from "./app.js";
@@ -204,27 +208,64 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     logFile: runtime.logFile,
   };
   const serveStatePath = join(runtime.muximodInstanceDirectory, "serve.json");
-  const runAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["run"]>[0]) => {
-    const api = await ensureApi();
-    const result = await api.agentSessions.run({
-      ...input,
-      ...(input.hostPaneId === undefined && hostPaneId !== undefined ? { hostPaneId } : {}),
-      cwd: input.cwd ?? cwd,
-    });
-    if (
-      result.cleanup.disposition !== "retained" ||
-      result.cleanup.reason !== "cleanup_declined" ||
-      !result.session.useWorktree
-    ) {
-      return result;
+  const attachedAgentExecution = new AttachedAgentExecutionAdapter(logger);
+  const executeAgentProcess: NonNullable<MuximodPairingControlAdapterOptions["onAgentExecution"]> = async (
+    request,
+    signal,
+  ) => {
+    return attachedAgentExecution.execute({ ...request, signal });
+  };
+  const openAgentExecution = async (operation: "run" | "resume", requestedPaneId?: string) => {
+    if (!hasInteractiveTerminal()) {
+      throw new Error("agent execution requires an interactive terminal (stdin, stdout, and stderr must be TTYs)");
     }
-    if (!(await confirmCleanup(environment, result.session))) return result;
-    const cleanup = await api.agentSessions.cleanup({
-      workspaceScope: "current",
-      force: true,
-      reference: result.session.name,
+    const daemon = await ensureLocalDaemon();
+    const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+      onAgentExecution: executeAgentProcess,
     });
-    return { ...result, session: cleanup.session, cleanup: cleanup.cleanup };
+    try {
+      const reservation = await control.reserveAgentExecution({
+        operation,
+        ...(requestedPaneId === undefined ? {} : { hostPaneId: requestedPaneId }),
+        ownerPid: process.pid,
+      });
+      return { control, reservation };
+    } catch (error) {
+      control.close();
+      throw error;
+    }
+  };
+  const runAgentSession = async (
+    input: Omit<Parameters<MuximodApiClient["agentSessions"]["run"]>[0], "executionToken">,
+  ) => {
+    const effectiveHostPaneId = input.hostPaneId ?? hostPaneId;
+    const execution = await openAgentExecution("run", effectiveHostPaneId);
+    try {
+      const api = await ensureApi();
+      const result = await api.agentSessions.run({
+        ...input,
+        ...(effectiveHostPaneId === undefined ? {} : { hostPaneId: effectiveHostPaneId }),
+        cwd: input.cwd ?? cwd,
+        executionToken: execution.reservation.token,
+      });
+      if (
+        result.cleanup.disposition !== "retained" ||
+        result.cleanup.reason !== "cleanup_declined" ||
+        !result.session.useWorktree
+      ) {
+        return result;
+      }
+      if (!(await confirmCleanup(environment, result.session))) return result;
+      const cleanup = await api.agentSessions.cleanup({
+        workspaceScope: "current",
+        force: true,
+        reference: result.session.name,
+      });
+      return { ...result, session: cleanup.session, cleanup: cleanup.cleanup };
+    } finally {
+      await execution.control.releaseAgentExecution(execution.reservation.token).catch(() => undefined);
+      execution.control.close();
+    }
   };
   const cleanupAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["cleanup"]>[0]) => {
     const api = await ensureApi();
@@ -338,12 +379,21 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     ...createSessionHandlers({
       run: { execute: runAgentSession },
       resume: {
-        execute: (input) =>
-          ensureApi().then((api) =>
-            input.hostPaneId === undefined && hostPaneId !== undefined
-              ? api.agentSessions.resume({ ...input, hostPaneId })
-              : api.agentSessions.resume(input),
-          ),
+        execute: async (input) => {
+          const effectiveHostPaneId = input.hostPaneId ?? hostPaneId;
+          const execution = await openAgentExecution("resume", effectiveHostPaneId);
+          try {
+            const api = await ensureApi();
+            return await api.agentSessions.resume({
+              ...input,
+              ...(effectiveHostPaneId === undefined ? {} : { hostPaneId: effectiveHostPaneId }),
+              executionToken: execution.reservation.token,
+            });
+          } finally {
+            await execution.control.releaseAgentExecution(execution.reservation.token).catch(() => undefined);
+            execution.control.close();
+          }
+        },
       },
       cleanup: { execute: cleanupAgentSession },
       list: { execute: (input) => ensureApi().then((api) => api.agentSessions.list(input)) },
@@ -417,6 +467,15 @@ function normalizeSessionName(value: string): string {
 function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
   const pane = environment.TMUX && environment.TMUX_PANE ? environment.TMUX_PANE.trim() : "";
   return /^%[0-9]+$/u.test(pane) ? pane : undefined;
+}
+
+/**
+ * Agent providers are interactive and receive all standard streams by
+ * inheritance. Requiring every stream to be a TTY prevents a partial redirect
+ * from silently changing the provider's terminal behavior.
+ */
+function hasInteractiveTerminal(): boolean {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true && process.stderr.isTTY === true;
 }
 
 async function withApiInvalidation<Result>(operation: () => Promise<Result>, invalidate: () => void): Promise<Result> {

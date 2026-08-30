@@ -326,7 +326,6 @@ function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
         return fixture.confirmCleanup;
       },
     },
-    processId: 700,
   });
 }
 
@@ -368,8 +367,11 @@ function createResumeUseCase(fixture: LifecycleFixture): ResumeAgentSession {
     },
     clock: clock(),
     logger: logger(),
-    processId: 700,
   });
+}
+
+function executionFor(fixture: LifecycleFixture) {
+  return { ownerPid: 700, execute: async () => fixture.processResult };
 }
 
 function createCleanupUseCase(fixture: LifecycleFixture): CleanupAgentSession {
@@ -595,11 +597,14 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
   cases: runCases,
   execute: async (fixture, steps) => {
     if (steps[0]?.operation !== "run") throw new Error("run scenario has no run step");
-    return createRunUseCase(fixture).execute({
-      ...runInput,
-      ...(fixture.runWorkspaceInput ?? {}),
-      useWorktree: fixture.useWorktree,
-    });
+    return createRunUseCase(fixture).execute(
+      {
+        ...runInput,
+        ...(fixture.runWorkspaceInput ?? {}),
+        useWorktree: fixture.useWorktree,
+      },
+      executionFor(fixture),
+    );
   },
   observe: (fixture, result) => {
     const session = [...fixture.sessions.values()][0];
@@ -669,12 +674,15 @@ const resumeTable: ScenarioTable<LifecycleFixture, ResumeKey, ResumeStep, Resume
   cases: resumeCases,
   execute: async (fixture, steps) => {
     if (steps[0]?.operation !== "resume") throw new Error("resume scenario has no resume step");
-    return createResumeUseCase(fixture).execute({
-      workspaceScope: "current",
-      reference: "resume",
-      hostPaneId: "%2",
-      backendArgs: [],
-    });
+    return createResumeUseCase(fixture).execute(
+      {
+        workspaceScope: "current",
+        reference: "resume",
+        hostPaneId: "%2",
+        backendArgs: [],
+      },
+      executionFor(fixture),
+    );
   },
   observe: (fixture, result) => {
     const session = [...fixture.sessions.values()][0];

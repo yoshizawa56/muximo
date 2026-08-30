@@ -67,6 +67,7 @@ import {
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
 } from "@muximo/infrastructure/runtime";
+import { AgentExecutionBroker } from "./agent-execution.js";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
@@ -203,6 +204,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const applicationForAgentPane = () => {
     return application;
   };
+  const agentExecutionBroker = new AgentExecutionBroker();
   const agentPane = createAgentPanePublication(applicationForAgentPane, logger, environment);
   const backendOptions = {
     environment,
@@ -246,7 +248,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     clock: sessionClock,
     logger: sessionLogger,
     confirmCleanup: { confirm: async () => false },
-    processId: process.pid,
   });
   const resumeAgentSession = new ResumeAgentSession({
     sessions: agentSessionRepository,
@@ -256,7 +257,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     panes: agentPane,
     clock: sessionClock,
     logger: sessionLogger,
-    processId: process.pid,
   });
   const cleanupAgentSession = new CleanupAgentSession({
     sessions: agentSessionRepository,
@@ -272,8 +272,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   application = createMuximodApplication({
     agentSessions: {
-      run: (input) => executeAgentSession("run", input, () => runAgentSession.execute(input), logger),
-      resume: (input) => executeAgentSession("resume", input, () => resumeAgentSession.execute(input), logger),
+      run: (input, execution) =>
+        executeAgentSession("run", input, () => runAgentSession.execute(input, execution), logger),
+      resume: (input, execution) =>
+        executeAgentSession("resume", input, () => resumeAgentSession.execute(input, execution), logger),
       cleanup: (input) => executeAgentSession("cleanup", input, () => cleanupAgentSession.execute(input), logger),
       list: (input) => listAgentSessions.execute(input),
     },
@@ -328,6 +330,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     adoptAgentSession: (request) => applicationForAgentPane().adoptAgentSession(request),
     observeAgentSession: (request) => applicationForAgentPane().observeAgentSession(request),
     releaseAgentSession: (request) => applicationForAgentPane().releaseAgentSession(request),
+    reserveAgentExecution: (peer, request) => agentExecutionBroker.reserve(peer, request),
+    releaseAgentExecution: (peer, token) => agentExecutionBroker.release(peer, token),
+    completeAgentExecution: (peer, request) => agentExecutionBroker.complete(peer, request),
+    closeAgentExecution: (peer) => agentExecutionBroker.close(peer),
   });
   let controlReady = false;
   const tmuxPollIntervalMs = durationOption(options.tmuxPollIntervalMs, defaultTmuxPollIntervalMs, 1);
@@ -365,6 +371,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const app = createMuximodApp({
     auth,
     application,
+    agentExecution: agentExecutionBroker,
     isReady: () => controlReady,
     configurationFingerprint: options.configurationFingerprint,
     originPolicy:
@@ -438,6 +445,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         } catch {
           // Preserve the startup error while releasing the remaining resources.
         }
+        agentExecutionBroker.closeAll();
         try {
           await terminalSessions.closeAll();
         } catch {
@@ -483,6 +491,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         } catch (error) {
           cleanupErrors.push(error);
         }
+        agentExecutionBroker.closeAll();
         try {
           await terminalSessions.closeAll();
         } catch (error) {

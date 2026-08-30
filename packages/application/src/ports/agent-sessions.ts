@@ -120,6 +120,28 @@ export type ProcessResult = {
   failureDiagnostic?: string;
 };
 
+/** Host-owned process execution capability used for interactive agent launches. */
+export type AgentExecutionRequest = {
+  sessionId: string;
+  executionId: string;
+  sessionName: string;
+  backend: AgentBackend;
+  command: readonly string[];
+  cwd: string;
+  environment: Readonly<Record<string, string>>;
+  signal?: AbortSignal;
+};
+
+export type AgentExecutionResult = ProcessResult & {
+  pid?: number;
+};
+
+/** Executes a prepared provider command in the host process that owns the TTY. */
+export interface AgentExecutionPort {
+  readonly ownerPid: number;
+  execute(input: AgentExecutionRequest): Promise<AgentExecutionResult>;
+}
+
 /** Provider-neutral identity data that may be learned while launching a session. */
 export type SessionIdentityUpdate = {
   backendSessionId?: string;
@@ -145,7 +167,7 @@ export type LaunchExecution = {
 };
 
 export type LaunchPlan = {
-  run(): Promise<LaunchExecution>;
+  run(execution: AgentExecutionPort): Promise<LaunchExecution>;
   dispose(): Promise<void>;
 };
 

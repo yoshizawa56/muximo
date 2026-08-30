@@ -63,6 +63,25 @@ const controlRequestIdSchema = z
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/);
+const agentExecutionTokenSchema = z
+  .string()
+  .min(32)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
+const agentExecutionCommandSchema = z.array(z.string().max(16_384)).min(1).max(256);
+const agentExecutionEnvironmentSchema = z
+  .record(z.string().min(1).max(256), z.string().max(64 * 1024))
+  .refine((value) => Object.keys(value).length <= 1_024, "environment has too many entries");
+const agentExecutionProcessResultSchema = z
+  .object({
+    started: z.boolean(),
+    code: z.number().int(),
+    interrupted: z.boolean(),
+    signal: z.string().max(32).nullable().optional(),
+    failureDiagnostic: z.string().trim().min(1).max(4_096).optional(),
+    pid: z.number().int().positive().optional(),
+  })
+  .strict();
 
 export const tmuxSessionNameSchema = z
   .string()
@@ -195,6 +214,32 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
       lines: z.number().int().min(1).max(10_000),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("reserve_agent_execution"),
+      requestId: controlRequestIdSchema,
+      operation: z.enum(["run", "resume"]),
+      hostPaneId: hostPaneIdWireSchema.optional(),
+      ownerPid: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("release_agent_execution"),
+      requestId: controlRequestIdSchema,
+      token: agentExecutionTokenSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("complete_agent_execution"),
+      requestId: controlRequestIdSchema,
+      executionRequestId: controlRequestIdSchema,
+      token: agentExecutionTokenSchema,
+      executionId: z.string().min(16).max(128),
+      result: agentExecutionProcessResultSchema,
+    })
+    .strict(),
 ]);
 export type MuximodControlRequest = z.infer<typeof muximodControlRequestSchema>;
 
@@ -277,6 +322,44 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
       state: z.enum(["available", "empty", "missing"]),
       logFile: z.string().min(1),
       lines: z.array(z.string()).max(10_000),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("agent_execution_reserved"),
+      requestId: controlRequestIdSchema,
+      token: agentExecutionTokenSchema,
+      ownerPid: z.number().int().positive(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("agent_execution_released"),
+      requestId: controlRequestIdSchema,
+      token: agentExecutionTokenSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("execute_agent_process"),
+      requestId: controlRequestIdSchema,
+      token: agentExecutionTokenSchema,
+      executionId: z.string().min(16).max(128),
+      sessionId: z.string().min(1).max(128),
+      sessionName: z.string().min(1).max(120),
+      backend: agentBackendSchema,
+      cwd: z.string().min(1).max(4_096),
+      command: agentExecutionCommandSchema,
+      environment: agentExecutionEnvironmentSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("agent_execution_completed"),
+      requestId: controlRequestIdSchema,
+      executionRequestId: controlRequestIdSchema,
+      token: agentExecutionTokenSchema,
+      executionId: z.string().min(16).max(128),
     })
     .strict(),
   z
@@ -497,6 +580,7 @@ const agentSessionArgumentSchema = z.string().max(4_096);
 
 export const runAgentSessionRequestSchema = z
   .object({
+    executionToken: agentExecutionTokenSchema,
     backend: agentBackendSchema,
     name: AgentSession.schema.shape.name.optional(),
     hostPaneId: hostPaneIdWireSchema.optional(),
@@ -515,6 +599,7 @@ export type RunAgentSessionRequest = z.infer<typeof runAgentSessionRequestSchema
 
 export const resumeAgentSessionRequestSchema = z
   .object({
+    executionToken: agentExecutionTokenSchema,
     workspaceScope: agentSessionWorkspaceScopeSchema,
     reference: z.string().trim().min(1).max(256),
     hostPaneId: hostPaneIdWireSchema.optional(),

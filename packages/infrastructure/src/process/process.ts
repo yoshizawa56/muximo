@@ -7,6 +7,7 @@ export type SpawnHooks = {
   onStarted?: (pid: number | undefined) => void | Promise<void>;
   onError?: (error: unknown) => void;
   captureFailureDiagnostic?: boolean;
+  signal?: AbortSignal;
 };
 
 const maxFailureDiagnosticBytes = 16_384;
@@ -51,8 +52,16 @@ export async function spawnAttached(
     interrupted = true;
     child.kill(signal);
   };
+  const onAbort = () => {
+    interrupted = true;
+    child.kill("SIGTERM");
+  };
   process.once("SIGINT", onInterrupt);
   process.once("SIGTERM", onInterrupt);
+  if (hooks.signal) {
+    if (hooks.signal.aborted) onAbort();
+    else hooks.signal.addEventListener("abort", onAbort, { once: true });
+  }
   const started = new Promise<boolean>((resolvePromise) => {
     child.once("spawn", () => {
       processStarted = true;
@@ -82,6 +91,7 @@ export async function spawnAttached(
   } finally {
     process.off("SIGINT", onInterrupt);
     process.off("SIGTERM", onInterrupt);
+    hooks.signal?.removeEventListener("abort", onAbort);
   }
 }
 

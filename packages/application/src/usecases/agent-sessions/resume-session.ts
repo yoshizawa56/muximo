@@ -1,5 +1,6 @@
 import { type AgentSession, type AgentSessionRecord, clearPatch } from "@muximo/domain";
 import type {
+  AgentExecutionPort,
   LaunchExecution,
   ManagedAgentSessionRepository,
   PanePublicationPort,
@@ -22,14 +23,17 @@ export type ResumeAgentSessionDependencies = {
   panes: PanePublicationPort;
   clock: SessionClock;
   logger: SessionLogger;
-  processId: number;
 };
 
 /** Application policy for claiming and resuming one persisted session. */
 export class ResumeAgentSession {
   public constructor(private readonly deps: ResumeAgentSessionDependencies) {}
 
-  public async execute(input: ResumeAgentSessionInput): Promise<ResumeAgentSessionResult> {
+  public async execute(
+    input: ResumeAgentSessionInput,
+    agentExecution: AgentExecutionPort,
+  ): Promise<ResumeAgentSessionResult> {
+    if (agentExecution === undefined) throw new Error("agent execution capability is required");
     let session = await this.deps.locator.execute({
       reference: input.reference,
       workspaceScope: input.workspaceScope,
@@ -51,7 +55,7 @@ export class ResumeAgentSession {
         id: session.id,
         expectedExecutionPid: session.executionPid ?? null,
         executionId,
-        executionPid: this.deps.processId,
+        executionPid: agentExecution.ownerPid,
         executionStartedAt,
         updatedAt: executionStartedAt,
       }))
@@ -63,20 +67,20 @@ export class ResumeAgentSession {
       status: "resuming",
       resuming: true,
       executionId,
-      executionPid: this.deps.processId,
+      executionPid: agentExecution.ownerPid,
       executionStartedAt,
     });
     const preparation = await this.deps.launcher.prepareLaunch(session, input.backendArgs, true);
     session = await this.persistIdentityUpdate(session, preparation.sessionUpdate);
 
-    let execution: LaunchExecution;
+    let launchExecution: LaunchExecution;
     try {
       await this.deps.panes.adopt(session, input.hostPaneId);
       await this.deps.panes.publish(session, "running", input.hostPaneId);
-      execution = await preparation.plan.run();
+      launchExecution = await preparation.plan.run(agentExecution);
       await this.deps.panes.publish(
         session,
-        execution.process.interrupted ? "stopped" : execution.process.code === 0 ? "completed" : "failed",
+        launchExecution.process.interrupted ? "stopped" : launchExecution.process.code === 0 ? "completed" : "failed",
         input.hostPaneId,
       );
     } catch (error) {
@@ -104,18 +108,20 @@ export class ResumeAgentSession {
       }
     }
 
-    session = await this.persistIdentityUpdate(session, execution.sessionUpdate);
+    session = await this.persistIdentityUpdate(session, launchExecution.sessionUpdate);
     const next = await this.persist(session, {
-      lastExitStatus: execution.process.code,
+      lastExitStatus: launchExecution.process.code,
       executionId: clearPatch,
       executionPid: clearPatch,
       executionStartedAt: clearPatch,
       status:
-        execution.process.interrupted || execution.process.code === 130 || execution.process.code === 143
+        launchExecution.process.interrupted ||
+        launchExecution.process.code === 130 ||
+        launchExecution.process.code === 143
           ? "interrupted"
           : "exited",
     });
-    return { process: execution.process, session: next };
+    return { process: launchExecution.process, session: next };
   }
 
   private async persist(

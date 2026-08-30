@@ -1,6 +1,9 @@
 export { InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
 export type {
   AgentBackendResumeState,
+  AgentExecutionPort,
+  AgentExecutionRequest,
+  AgentExecutionResult,
   AgentObservationPort,
   AgentSessionExecutionHealth,
   AgentSessionListInput,

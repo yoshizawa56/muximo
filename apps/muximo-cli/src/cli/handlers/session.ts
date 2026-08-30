@@ -26,9 +26,12 @@ type AsyncExecutor<Input, Result> = {
   execute(input: Input): Promise<Result>;
 };
 
+type CliRunRequest = Omit<RunAgentSessionRequest, "executionToken">;
+type CliResumeRequest = Omit<ResumeAgentSessionRequest, "executionToken">;
+
 export type SessionHandlerDependencies = {
-  run: AsyncExecutor<RunAgentSessionRequest, RunAgentSessionResponse>;
-  resume: AsyncExecutor<ResumeAgentSessionRequest, ResumeAgentSessionResponse>;
+  run: AsyncExecutor<CliRunRequest, RunAgentSessionResponse>;
+  resume: AsyncExecutor<CliResumeRequest, ResumeAgentSessionResponse>;
   cleanup: AsyncExecutor<CleanupAgentSessionRequest, CleanupAgentSessionResponse>;
   list: AsyncExecutor<ListAgentSessionsRequest, AgentSessionListResponse>;
   io: CliIo;
@@ -59,11 +62,11 @@ export function createSessionHandlers(
   };
 }
 
-function toStartInput(input: CliRunInput): RunAgentSessionRequest {
+function toStartInput(input: CliRunInput): CliRunRequest {
   return { ...input, backendArgs: [...input.backendArgs] };
 }
 
-function toResumeInput(input: CliSessionResumeInput): ResumeAgentSessionRequest {
+function toResumeInput(input: CliSessionResumeInput): CliResumeRequest {
   return {
     workspaceScope: input.global ? "all" : "current",
     reference: input.reference,
