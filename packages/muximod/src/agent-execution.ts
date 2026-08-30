@@ -141,7 +141,7 @@ export class AgentExecutionBroker {
   }
 
   public close(peer: AgentExecutionControlPeer): void {
-    for (const reservation of this.reservations.values()) {
+    for (const reservation of [...this.reservations.values()]) {
       if (reservation.peer !== peer) continue;
       reservation.pending?.reject(new Error("agent execution control connection closed"));
       this.deleteReservation(reservation);

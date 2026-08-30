@@ -14,7 +14,11 @@ export class AttachedAgentExecutionAdapter implements AgentExecutionPort {
   public execute(input: Parameters<AgentExecutionPort["execute"]>[0]) {
     const executable = input.command[0];
     if (!executable) throw new Error("agent execution command executable is missing");
+    // Keep all standard streams inherited for interactive providers. Capturing
+    // stderr would replace the child's stderr TTY with a pipe and can make the
+    // provider reject the launch, so failure diagnostics remain on the TTY.
     return spawnAttached(executable, [...input.command.slice(1)], input.cwd, input.environment, {
+      captureFailureDiagnostic: false,
       signal: input.signal,
       onStarted: (pid) => this.logger?.debug("agent.process_started", { backend: input.backend, pid }),
       onError: (error) => this.logger?.debug("agent.process_spawn_failed", { backend: input.backend, error }),

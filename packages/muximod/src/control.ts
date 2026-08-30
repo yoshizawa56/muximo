@@ -390,7 +390,7 @@ export class MuximodControlServer {
       socket.destroy(new Error("muximod control response is too large"));
       return;
     }
-    if (socket.writableLength + Buffer.byteLength(frame, "utf8") > muximodControlMaxBufferedResponseBytes) {
+    if ((socket.writableLength ?? 0) + Buffer.byteLength(frame, "utf8") > muximodControlMaxBufferedResponseBytes) {
       socket.destroy(new Error("muximod control response buffer is too large"));
       return;
     }

@@ -469,6 +469,11 @@ function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
   return /^%[0-9]+$/u.test(pane) ? pane : undefined;
 }
 
+/**
+ * Agent providers are interactive and receive all standard streams by
+ * inheritance. Requiring every stream to be a TTY prevents a partial redirect
+ * from silently changing the provider's terminal behavior.
+ */
 function hasInteractiveTerminal(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true && process.stderr.isTTY === true;
 }

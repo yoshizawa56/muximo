@@ -140,6 +140,56 @@ describe("muximod pairing control adapter", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
+type ConcurrentFixture = {
+  adapter: MuximodPairingControlAdapter;
+  transport: PassThrough;
+  executionRequests: string[];
+  state: { closed: boolean };
+  closed: Promise<void>;
+  push(response: MuximodControlResponse): void;
+};
+type ConcurrentContext = {
+  executionRequests: readonly string[];
+  closed: boolean;
+};
+
+const concurrentCases = [
+  {
+    name: "closes the control connection when the daemon sends concurrent executions",
+    input: {},
+    assert: [
+      hasObserved<ConcurrentContext, undefined>("executionRequests", [executionId]),
+      hasObserved<ConcurrentContext, undefined>("closed", true),
+    ],
+  },
+] satisfies readonly OperationCase<"default", Record<string, never>, undefined, ConcurrentContext>[];
+
+const concurrentTable: OperationTable<
+  ConcurrentFixture,
+  "default",
+  Record<string, never>,
+  undefined,
+  ConcurrentContext
+> = {
+  defaultFixture: createConcurrentFixture,
+  cases: concurrentCases,
+  execute: async (fixture) => {
+    fixture.push(executionFrame("execution-request-1"));
+    await waitForCondition(() => fixture.executionRequests.length === 1);
+    fixture.push(executionFrame("execution-request-2"));
+    await fixture.closed;
+    return undefined;
+  },
+  observe: (fixture) => ({
+    executionRequests: [...fixture.executionRequests],
+    closed: fixture.state.closed,
+  }),
+};
+
+describe("muximod pairing control adapter protocol guards", () => {
+  runOperationTable(it as unknown as TestRegistrar, concurrentTable);
+});
+
 function createFixture(mode: AdapterFixtureKey): FixtureHandle<AdapterFixture> {
   const transport = new PassThrough();
   const writes: MuximodControlRequest[] = [];
@@ -201,4 +251,72 @@ async function waitForRequest<Kind extends MuximodControlRequest["type"]>(
     if (Date.now() >= deadline) throw new Error(`timed out waiting for ${type} request`);
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
+}
+
+async function waitForCondition(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for condition");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+function createConcurrentFixture(): FixtureHandle<ConcurrentFixture> {
+  const transport = new PassThrough();
+  const executionRequests: string[] = [];
+  const state = { closed: false };
+  let resolveClosed!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+  transport.once("close", () => {
+    state.closed = true;
+    resolveClosed();
+  });
+  const originalWrite = transport.write.bind(transport);
+  transport.write = (() => true) as typeof transport.write;
+  const options: MuximodPairingControlAdapterOptions = {
+    onAgentExecution: async (request) => {
+      executionRequests.push(request.executionId);
+      return { started: true, code: 0, interrupted: false, signal: null, pid: 456 } satisfies AgentExecutionResult;
+    },
+  };
+  const Adapter = MuximodPairingControlAdapter as unknown as {
+    new (
+      socket: import("node:net").Socket,
+      options?: MuximodPairingControlAdapterOptions,
+    ): MuximodPairingControlAdapter;
+  };
+  const adapter = new Adapter(transport as unknown as import("node:net").Socket, options);
+  return {
+    fixture: {
+      adapter,
+      transport,
+      executionRequests,
+      state,
+      closed,
+      push(response: MuximodControlResponse) {
+        transport.push(`${encodeMuximodControlResponse(response)}\n`);
+      },
+    },
+    cleanup: () => {
+      adapter.close();
+      transport.write = originalWrite;
+    },
+  };
+}
+
+function executionFrame(requestId: string): Extract<MuximodControlResponse, { type: "execute_agent_process" }> {
+  return {
+    type: "execute_agent_process",
+    requestId,
+    token,
+    executionId,
+    sessionId: "session-id",
+    sessionName: "review",
+    backend: "codex",
+    cwd: "/workspace/review",
+    command: ["codex"],
+    environment: {},
+  };
 }

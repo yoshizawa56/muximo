@@ -286,10 +286,11 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
         failureDiagnostic:
           sanitizeProcessDiagnostic(error instanceof Error ? error.message : String(error)) ?? "agent execution failed",
       };
-    } finally {
-      this.activeAgentExecutions.delete(request.requestId);
     }
-    if (this.closed || this.socket.destroyed) return;
+    if (this.closed || this.socket.destroyed) {
+      this.activeAgentExecutions.delete(request.requestId);
+      return;
+    }
     try {
       await this.request({
         type: "complete_agent_execution",
@@ -300,6 +301,8 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
       });
     } catch (error) {
       this.socket.destroy(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      this.activeAgentExecutions.delete(request.requestId);
     }
   }
 
@@ -329,6 +332,17 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
           );
         }
         if (parsed.value.type === "execute_agent_process") {
+          // AgentExecutionBroker allows one reservation per control peer. Keep
+          // the same invariant here and fail closed if the daemon violates it.
+          if (this.activeAgentExecutions.size > 0) {
+            this.socket.destroy(
+              new PairingControlError(
+                "muximod sent concurrent agent execution requests on one control connection",
+                "concurrent_agent_execution",
+              ),
+            );
+            continue;
+          }
           void this.handleAgentExecution(parsed.value);
           continue;
         }
