@@ -2,7 +2,12 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { type ReactNode, useCallback, useState } from "react";
 import { expect, fireEvent, userEvent, within } from "storybook/test";
 import { applyCustomKeyboardDrop, selectedButtonsFromIds } from "./policy";
-import { CustomKeyboardSettingsView, CustomKeyboardView, DirectionalFlickIcon } from "./view";
+import {
+  type CustomKeyboardClipboardHistoryEntry,
+  CustomKeyboardSettingsView,
+  CustomKeyboardView,
+  DirectionalFlickIcon,
+} from "./view";
 import {
   type CustomKeyboardButton,
   type CustomKeyboardDragSource,
@@ -144,9 +149,9 @@ const specialButtonLibrary: readonly CustomKeyboardButton[] = [
     id: "photo-library",
     kind: "key",
     category: "special",
-    icon: "photo",
-    label: "PHOTO",
-    accessibleLabel: "Open photo library",
+    icon: "plus",
+    label: "ADD",
+    accessibleLabel: "Add image",
     sequence: [],
     nativeAction: "pick-photo",
   },
@@ -251,11 +256,13 @@ function InteractiveShellStory({
   initialButtons = defaultCustomKeyboardButtons,
   initialActiveModifiers = [],
   initialProfiles = defaultStoryProfiles,
+  clipboardHistory,
 }: {
   startInSettings?: boolean;
   initialButtons?: readonly CustomKeyboardButton[];
   initialActiveModifiers?: CustomKeyboardViewModel["activeModifiers"];
   initialProfiles?: readonly CustomKeyboardProfileSummary[];
+  clipboardHistory?: readonly CustomKeyboardClipboardHistoryEntry[];
 }) {
   const [keyboardState, setKeyboardState] = useState<StoryKeyboardState>(() => ({
     libraryButtons: uniqueStoryButtons([...buttonLibrary, ...initialButtons]),
@@ -344,6 +351,10 @@ function InteractiveShellStory({
   const onNativeFileSelected = useCallback((action: CustomKeyboardNativeFileAction, file: File) => {
     const actionLabel = action === "capture-photo" ? "Camera photo selected" : "Photo selected";
     setLastAction(`${actionLabel}: ${file.name} · ${formatFileSize(file.size)}`);
+  }, []);
+
+  const onClipboardHistorySelect = useCallback((entry: CustomKeyboardClipboardHistoryEntry) => {
+    setLastAction(`Selected ${entry.source} history: ${entry.preview}`);
   }, []);
 
   const onToggleNativeKeyboard = useCallback(() => {
@@ -486,6 +497,8 @@ function InteractiveShellStory({
       settingsViewModel={settingsViewModel}
       initialSettingsOpen={startInSettings}
       nativeKeyboard={<MockStandardKeyboard />}
+      clipboardHistory={clipboardHistory}
+      onClipboardHistorySelect={onClipboardHistorySelect}
       terminalSurface={<MockTerminalSurface lastAction={lastAction} nativeKeyboardVisible={nativeKeyboardVisible} />}
     />
   );
@@ -497,12 +510,16 @@ function StoryShell({
   terminalSurface,
   nativeKeyboard,
   initialSettingsOpen = false,
+  clipboardHistory,
+  onClipboardHistorySelect,
 }: {
   keyboardViewModel?: CustomKeyboardViewModel;
   settingsViewModel?: CustomKeyboardSettingsViewModel;
   terminalSurface?: ReactNode;
   nativeKeyboard?: ReactNode;
   initialSettingsOpen?: boolean;
+  clipboardHistory?: readonly CustomKeyboardClipboardHistoryEntry[];
+  onClipboardHistorySelect?: (entry: CustomKeyboardClipboardHistoryEntry) => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
 
@@ -533,6 +550,8 @@ function StoryShell({
           viewModel={keyboardViewModel}
           nativeKeyboard={nativeKeyboard}
           onOpenSettings={() => setSettingsOpen(true)}
+          clipboardHistory={clipboardHistory}
+          onClipboardHistorySelect={onClipboardHistorySelect}
         >
           {terminalSurface}
         </CustomKeyboardView>
@@ -628,13 +647,14 @@ export const ShellAndKeyboard: Story = {
   render: () => <InteractiveShellStory />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const clipboardPaste = canvas.getByRole("button", { name: "Paste from clipboard" });
-    const tmuxPaste = canvas.getByRole("button", { name: "Paste from tmux buffer" });
-    await expect(clipboardPaste).toHaveTextContent("clip");
-    await expect(tmuxPaste).toHaveTextContent("tmux");
-    const clipboardIcon = clipboardPaste.querySelector("svg");
-    await expect(clipboardIcon).not.toBeNull();
-    await expect(clipboardIcon).toHaveAttribute("width", "16");
+    await userEvent.click(canvas.getByRole("button", { name: "Open copy and paste actions" }));
+    const clipboardDialog = canvas.getByRole("dialog", { name: "Copy and paste actions" });
+    await expect(clipboardDialog).toBeVisible();
+    await expect(within(clipboardDialog).getByRole("button", { name: "Copy mode" })).toBeVisible();
+    await expect(within(clipboardDialog).getByRole("button", { name: "Paste from clipboard" })).toBeVisible();
+    await expect(within(clipboardDialog).getByRole("button", { name: "Paste from tmux buffer" })).toBeVisible();
+    await userEvent.click(within(clipboardDialog).getByRole("button", { name: "Paste from clipboard" }));
+    await expect(clipboardDialog).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Slash" }));
     await expect(canvas.getByRole("status", { name: "Last input" })).toHaveTextContent("Slash");
     await userEvent.click(canvas.getByRole("button", { name: /show standard keyboard/i }));
@@ -646,6 +666,29 @@ export const ShellAndKeyboard: Story = {
     await expect(canvas.getByRole("button", { name: /hide standard keyboard/i })).toHaveAttribute(
       "aria-pressed",
       "true",
+    );
+  },
+};
+
+export const ClipboardHistoryExperiment: Story = {
+  render: () => (
+    <InteractiveShellStory
+      clipboardHistory={[
+        { id: "history-1", source: "PC clipboard", preview: "git status --short", age: "just now" },
+        { id: "history-2", source: "tmux buffer", preview: "bun test packages/contract", age: "2 min ago" },
+        { id: "history-3", source: "Device clipboard", preview: "Review this pane", age: "10 min ago" },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Open copy and paste actions" }));
+    const clipboardDialog = canvas.getByRole("dialog", { name: "Copy and paste actions" });
+    await expect(within(clipboardDialog).getByText("History experiment")).toBeVisible();
+    const historyEntry = within(clipboardDialog).getByRole("button", { name: "Use history entry git status --short" });
+    await userEvent.click(historyEntry);
+    await expect(canvas.getByRole("status", { name: "Last input" })).toHaveTextContent(
+      "Selected PC clipboard history: git status --short",
     );
   },
 };
@@ -662,11 +705,11 @@ export const ProfileSelection: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("button", { name: /select custom keyboard profile/i }));
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
     await expect(canvas.getByRole("dialog", { name: "Select custom keyboard profile" })).toBeVisible();
     await expect(canvas.getByRole("option", { name: /Review/ })).toBeVisible();
     await userEvent.click(canvas.getByRole("option", { name: /Agent/ }));
-    await expect(canvas.getByRole("button", { name: /current profile Agent/i })).toBeVisible();
+    await expect(canvas.getByRole("status", { name: "Last input" })).toHaveTextContent("Selected profile Agent");
   },
 };
 
@@ -677,6 +720,8 @@ export const ProfileIconPicker: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    const profileDialog = canvas.getByRole("dialog", { name: "Select custom keyboard profile" });
+    await userEvent.click(within(profileDialog).getByRole("button", { name: "Keyboard settings" }));
     await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
     await userEvent.click(canvas.getByRole("tab", { name: "Device" }));
     const camera = canvas.getByRole("button", { name: "Use Camera icon" });
@@ -739,6 +784,11 @@ export const SettingsEditor: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Close custom keyboard settings" }));
     await expect(canvas.getByText("Shell / mobile terminal")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await userEvent.click(
+      within(canvas.getByRole("dialog", { name: "Select custom keyboard profile" })).getByRole("button", {
+        name: "Keyboard settings",
+      }),
+    );
     await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Flick repeat" }));
     await expect(canvas.getByRole("button", { name: "Flick repeat" })).toHaveAttribute("aria-expanded", "true");
@@ -781,6 +831,11 @@ export const SettingsEditor: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Close custom keyboard settings" }));
     await expect(canvas.getByText("Shell / mobile terminal")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await userEvent.click(
+      within(canvas.getByRole("dialog", { name: "Select custom keyboard profile" })).getByRole("button", {
+        name: "Keyboard settings",
+      }),
+    );
     await userEvent.click(canvas.getByRole("button", { name: "Save" }));
     await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
   },

@@ -146,36 +146,38 @@
     min-height: 0;
   }
 
+  .custom-keyboard-bar {
+    padding-bottom: max(4px, var(--safe-area-bottom));
+  }
+
+  .custom-keyboard-bar--custom {
+    padding-bottom: max(10px, calc(var(--safe-area-bottom) + 8px));
+  }
+
   .custom-keyboard-fixed-row {
     container-type: inline-size;
   }
 
   @container (max-width: 359px) {
-    .custom-keyboard-profile-button {
-      max-width: 34px;
-      padding-inline: 0;
-    }
-
-    .custom-keyboard-profile-name,
-    .custom-keyboard-profile-chevron {
-      display: none;
-    }
-
     .custom-keyboard-compact-button {
       width: 32px;
       min-width: 32px;
     }
+
+    .custom-keyboard-show-keyboard {
+      max-width: none;
+      min-width: 48px;
+    }
   }
 
   @container (max-width: 299px) {
-    .custom-keyboard-profile-button {
-      max-width: 30px;
-      min-width: 30px;
-    }
-
     .custom-keyboard-compact-button {
       width: 30px;
       min-width: 30px;
+    }
+
+    .custom-keyboard-show-keyboard {
+      min-width: 44px;
     }
   }
 

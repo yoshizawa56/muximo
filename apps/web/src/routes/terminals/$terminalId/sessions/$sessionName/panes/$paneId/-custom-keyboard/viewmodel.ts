@@ -225,7 +225,7 @@ export const customKeyboardIconOptions: readonly {
   { value: "control", glyph: "⌃", label: "Control", category: "terminal" },
   { value: "option", glyph: "⌥", label: "Option", category: "terminal" },
   { value: "shortcut", glyph: "⌁", label: "Shortcut", category: "terminal" },
-  { value: "directional-flick", glyph: "◎", label: "Directional arrows", category: "terminal" },
+  { value: "directional-flick", glyph: "◎", label: "Arrow pad", category: "terminal" },
   { value: "terminal", glyph: ">_", label: "Terminal", category: "terminal" },
   { value: "branch", glyph: "⎇", label: "Branch", category: "terminal" },
   { value: "bolt", glyph: "ϟ", label: "Bolt", category: "terminal" },
@@ -410,7 +410,7 @@ export const defaultCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
     category: "special",
     icon: "directional-flick",
     label: "Arrows",
-    accessibleLabel: "Directional arrow input",
+    accessibleLabel: "Arrow pad",
     sequence: [],
     interaction: "directional-flick",
   },
@@ -568,9 +568,9 @@ const nativeCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
     id: "photo-library",
     kind: "key",
     category: "special",
-    icon: "photo",
-    label: "PHOTO",
-    accessibleLabel: "Open photo library",
+    icon: "plus",
+    label: "ADD",
+    accessibleLabel: "Add image",
     sequence: [],
     nativeAction: "pick-photo",
   },
@@ -621,10 +621,10 @@ export const customKeyboardButtonLibrary: readonly CustomKeyboardButton[] = uniq
 ]);
 
 export const customKeyboardFixedButtonIds = [
+  "photo-library",
   "copy-mode",
   "paste-clipboard",
   "paste-tmux-buffer",
-  "photo-library",
   "directional-flick",
 ] as const;
 

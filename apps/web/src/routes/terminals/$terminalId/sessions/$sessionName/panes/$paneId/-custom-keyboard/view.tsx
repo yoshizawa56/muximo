@@ -64,21 +64,34 @@ type PointerDragPosition = {
   y: number;
 };
 
+export type CustomKeyboardClipboardHistoryEntry = {
+  id: string;
+  source: "Device clipboard" | "PC clipboard" | "tmux buffer";
+  preview: string;
+  age: string;
+};
+
+type CustomKeyboardPopover = "profile" | "clipboard" | null;
+
 export function CustomKeyboardView({
   viewModel,
   children,
   nativeKeyboard,
   onOpenSettings,
+  clipboardHistory,
+  onClipboardHistorySelect,
 }: {
   viewModel: CustomKeyboardViewModel;
   children: ReactNode;
   nativeKeyboard?: ReactNode;
   onOpenSettings: () => void;
+  clipboardHistory?: readonly CustomKeyboardClipboardHistoryEntry[];
+  onClipboardHistorySelect?: (entry: CustomKeyboardClipboardHistoryEntry) => void;
 }) {
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const pendingNativeFileActionRef = useRef<CustomKeyboardNativeFileAction | null>(null);
-  const [profilePickerOpen, setProfilePickerOpen] = useState(false);
+  const [openPopover, setOpenPopover] = useState<CustomKeyboardPopover>(null);
 
   const openNativeFilePicker = useCallback((action: CustomKeyboardNativeFileAction) => {
     pendingNativeFileActionRef.current = action;
@@ -131,17 +144,20 @@ export function CustomKeyboardView({
       <CustomKeyboardBar
         viewModel={viewModel}
         onButtonPress={onButtonPress}
-        onOpenProfilePicker={() => setProfilePickerOpen(true)}
-        profilePickerOpen={profilePickerOpen}
-        onOpenSettings={onOpenSettings}
+        onOpenProfilePicker={() => setOpenPopover((current) => (current === "profile" ? null : "profile"))}
+        profilePickerOpen={openPopover === "profile"}
+        onOpenClipboardMenu={() => setOpenPopover((current) => (current === "clipboard" ? null : "clipboard"))}
+        clipboardMenuOpen={openPopover === "clipboard"}
+        clipboardHistory={clipboardHistory}
+        onClipboardHistorySelect={onClipboardHistorySelect}
       />
       {viewModel.nativeKeyboardVisible ? nativeKeyboard : null}
-      {profilePickerOpen ? (
+      {openPopover === "profile" ? (
         <CustomKeyboardProfilePicker
           viewModel={viewModel}
-          onClose={() => setProfilePickerOpen(false)}
+          onClose={() => setOpenPopover(null)}
           onOpenSettings={() => {
-            setProfilePickerOpen(false);
+            setOpenPopover(null);
             onOpenSettings();
           }}
         />
@@ -175,21 +191,39 @@ export function CustomKeyboardBar({
   onKeepNativeKeyboardOpen = viewModel.onKeepNativeKeyboardOpen,
   onOpenProfilePicker,
   profilePickerOpen,
-  onOpenSettings,
+  onOpenClipboardMenu,
+  clipboardMenuOpen,
+  clipboardHistory,
+  onClipboardHistorySelect,
 }: {
   viewModel: CustomKeyboardViewModel;
   onButtonPress?: (button: CustomKeyboardButton) => void;
   onKeepNativeKeyboardOpen?: () => void;
   onOpenProfilePicker: () => void;
   profilePickerOpen: boolean;
-  onOpenSettings: () => void;
+  onOpenClipboardMenu: () => void;
+  clipboardMenuOpen: boolean;
+  clipboardHistory?: readonly CustomKeyboardClipboardHistoryEntry[];
+  onClipboardHistorySelect?: (entry: CustomKeyboardClipboardHistoryEntry) => void;
 }) {
+  const addImageButton = viewModel.fixedButtons.find((button) => button.id === "photo-library");
+  const copyButton = viewModel.fixedButtons.find((button) => button.id === "copy-mode");
+  const pasteButtons = viewModel.fixedButtons.filter(
+    (button) => button.id === "paste-clipboard" || button.id === "paste-tmux-buffer",
+  );
   const arrowButton = viewModel.fixedButtons.find((button) => button.interaction === "directional-flick");
-  const commonFixedButtons = viewModel.fixedButtons.filter((button) => button.interaction !== "directional-flick");
+  const commonFixedButtons = viewModel.fixedButtons.filter(
+    (button) =>
+      button.interaction !== "directional-flick" &&
+      button.id !== "photo-library" &&
+      button.id !== "copy-mode" &&
+      button.id !== "paste-clipboard" &&
+      button.id !== "paste-tmux-buffer",
+  );
 
   return (
     <div
-      className="shrink-0 border-t border-[#1c4a28] bg-[rgb(5_15_8_/_98%)] pb-[max(4px,var(--safe-area-bottom))] pl-[max(5px,var(--safe-area-left))] pr-[max(5px,var(--safe-area-right))] pt-1 shadow-[0_-10px_24px_rgb(0_0_0_/_28%)]"
+      className={`custom-keyboard-bar shrink-0 border-t border-[#1c4a28] bg-[rgb(5_15_8_/_98%)] pl-[max(5px,var(--safe-area-left))] pr-[max(5px,var(--safe-area-right))] pt-1 shadow-[0_-10px_24px_rgb(0_0_0_/_28%)] ${viewModel.nativeKeyboardVisible ? "" : "custom-keyboard-bar--custom"}`}
       role="toolbar"
       aria-label="Custom terminal keyboard"
     >
@@ -211,32 +245,50 @@ export function CustomKeyboardBar({
           </div>
         </div>
         <div className="custom-keyboard-fixed-row flex min-w-0 items-stretch gap-0.5 overflow-hidden">
-          <button
-            className="custom-keyboard-profile-button flex h-[34px] min-w-[34px] max-w-[96px] flex-1 shrink items-center gap-1 overflow-hidden rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1.5 text-[#a9e8b1] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
-            type="button"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              onKeepNativeKeyboardOpen?.();
-            }}
-            onMouseDown={(event) => {
-              event.preventDefault();
-              onKeepNativeKeyboardOpen?.();
-            }}
-            onClick={onOpenProfilePicker}
+          {addImageButton ? (
+            <CustomKeyboardButtonView
+              button={addImageButton}
+              compact
+              active={false}
+              onPress={onButtonPress}
+              onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
+              onDirectionalFlick={viewModel.onDirectionalFlick}
+              repeatStartDelayMs={viewModel.repeatStartDelayMs}
+              repeatIntervalMs={viewModel.repeatIntervalMs}
+            />
+          ) : null}
+          <CustomKeyboardActionSurface
+            className="custom-keyboard-compact-button grid h-[34px] min-w-[34px] shrink-0 place-items-center rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1 text-[#91d89b] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
+            onPress={onOpenClipboardMenu}
+            onInteractionStart={onKeepNativeKeyboardOpen}
+            preserveNativeKeyboardFocus
             aria-haspopup="dialog"
-            aria-expanded={profilePickerOpen}
-            aria-label={`Select custom keyboard profile, current profile ${viewModel.activeProfile.name}`}
-            title={viewModel.activeProfile.name}
+            aria-expanded={clipboardMenuOpen}
+            aria-label="Open copy and paste actions"
+            title="Open copy and paste actions"
           >
-            <CustomKeyboardIconView icon={viewModel.activeProfile.icon} size={15} />
-            <span className="custom-keyboard-profile-name min-w-0 truncate text-[0.54rem] font-bold">
-              {viewModel.activeProfile.name}
+            <CustomKeyboardIconView icon="clipboard" size={16} />
+            <span className="text-[0.4rem] font-bold uppercase leading-none" aria-hidden="true">
+              clip
             </span>
-            <span className="custom-keyboard-profile-chevron ml-auto text-[0.56rem]" aria-hidden="true">
-              ▾
-            </span>
-          </button>
-          <div className="ml-auto flex min-w-0 shrink-0 items-stretch gap-0.5">
+          </CustomKeyboardActionSurface>
+          <CustomKeyboardActionSurface
+            className={`custom-keyboard-show-keyboard flex h-[34px] min-w-[52px] max-w-[160px] flex-1 items-center justify-center gap-1 rounded-[6px] border px-2 font-mono text-[0.52rem] font-bold uppercase tracking-[0.04em] transition-colors ${
+              viewModel.nativeKeyboardVisible
+                ? "border-[#78b7ff] bg-[#123052] text-[#a9d5ff]"
+                : "border-[#2a5c36] bg-[#0b2111] text-[#91d89b] hover:border-[#4f9e5e] hover:bg-[#12351a]"
+            }`}
+            onPress={viewModel.onToggleNativeKeyboard}
+            onInteractionStart={onKeepNativeKeyboardOpen}
+            preserveNativeKeyboardFocus
+            aria-pressed={viewModel.nativeKeyboardVisible}
+            aria-label={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
+            title={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
+          >
+            <CustomKeyboardIconView icon="keyboard" size={16} />
+            <span className="truncate">Keyboard</span>
+          </CustomKeyboardActionSurface>
+          <div className="flex min-w-0 shrink-0 items-stretch gap-0.5">
             {commonFixedButtons.map((button) => (
               <CustomKeyboardButtonView
                 key={button.id}
@@ -262,34 +314,167 @@ export function CustomKeyboardBar({
                 repeatIntervalMs={viewModel.repeatIntervalMs}
               />
             ) : null}
-            <span className="mx-0.5 h-[34px] w-px shrink-0 bg-[#1c4a28]" aria-hidden="true" />
             <CustomKeyboardActionSurface
               className="custom-keyboard-compact-button grid size-[34px] place-items-center rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1 text-[#91d89b] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
-              onPress={onOpenSettings}
+              onPress={onOpenProfilePicker}
               onInteractionStart={onKeepNativeKeyboardOpen}
               preserveNativeKeyboardFocus
+              aria-haspopup="dialog"
+              aria-expanded={profilePickerOpen}
               aria-label="Open custom keyboard settings"
               title="Open custom keyboard settings"
             >
               <AppIcon name="settings" size={16} />
             </CustomKeyboardActionSurface>
-            <CustomKeyboardActionSurface
-              className={`custom-keyboard-compact-button grid size-[34px] place-items-center rounded-[6px] border px-1 transition-colors ${
-                viewModel.nativeKeyboardVisible
-                  ? "border-[#78b7ff] bg-[#123052] text-[#a9d5ff]"
-                  : "border-[#2a5c36] bg-[#0b2111] text-[#91d89b] hover:border-[#4f9e5e] hover:bg-[#12351a]"
-              }`}
-              onPress={viewModel.onToggleNativeKeyboard}
-              aria-pressed={viewModel.nativeKeyboardVisible}
-              aria-label={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
-              title={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
-            >
-              <CustomKeyboardIconView icon="keyboard" size={16} />
-            </CustomKeyboardActionSurface>
           </div>
         </div>
       </div>
+      {clipboardMenuOpen ? (
+        <CustomKeyboardClipboardPicker
+          copyButton={copyButton}
+          pasteButtons={pasteButtons}
+          history={clipboardHistory}
+          onSelect={(button) => {
+            onButtonPress(button);
+            onOpenClipboardMenu();
+          }}
+          onHistorySelect={onClipboardHistorySelect}
+          onClose={onOpenClipboardMenu}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function CustomKeyboardClipboardPicker({
+  copyButton,
+  pasteButtons,
+  history,
+  onSelect,
+  onHistorySelect,
+  onClose,
+}: {
+  copyButton?: CustomKeyboardButton;
+  pasteButtons: readonly CustomKeyboardButton[];
+  history?: readonly CustomKeyboardClipboardHistoryEntry[];
+  onSelect: (button: CustomKeyboardButton) => void;
+  onHistorySelect?: (entry: CustomKeyboardClipboardHistoryEntry) => void;
+  onClose: () => void;
+}) {
+  return (
+    <AppSafeAreaOverlay className="z-40">
+      <div className="relative h-full w-full" onPointerDown={onClose} role="presentation">
+        <section
+          className="pointer-events-auto absolute bottom-[60px] left-2 flex max-h-[min(62%,420px)] w-[min(86vw,320px)] flex-col overflow-hidden rounded-[12px] border border-[#2b6838] bg-[#071509] shadow-[0_16px_50px_rgb(0_0_0_/_55%)]"
+          role="dialog"
+          aria-label="Copy and paste actions"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#1d4325] px-3 py-2">
+            <div className="min-w-0">
+              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.14em] text-[#63ae6e]">
+                Clipboard
+              </span>
+              <h2 className="m-0 mt-0.5 truncate text-[0.78rem] font-bold">Copy and paste</h2>
+            </div>
+            <button
+              className="grid size-7 shrink-0 place-items-center rounded-[6px] border border-[#2d5d37] bg-[#0b2111] text-[#a9e8b1]"
+              type="button"
+              onClick={onClose}
+              aria-label="Close copy and paste actions"
+            >
+              <AppIcon name="close" size={14} />
+            </button>
+          </header>
+          <div className="min-h-0 overflow-y-auto p-2">
+            <div className="grid gap-1">
+              {copyButton ? (
+                <ClipboardPopoverAction
+                  button={copyButton}
+                  label="Copy mode"
+                  detail="Select text from the terminal"
+                  onSelect={onSelect}
+                />
+              ) : null}
+              {pasteButtons.map((button) => (
+                <ClipboardPopoverAction
+                  button={button}
+                  key={button.id}
+                  label={button.accessibleLabel}
+                  detail={
+                    button.terminalAction === "paste-from-clipboard"
+                      ? "Use the device clipboard"
+                      : "Use the tmux buffer"
+                  }
+                  onSelect={onSelect}
+                />
+              ))}
+            </div>
+            {history?.length ? (
+              <div className="mt-2 border-t border-[#1d4325] pt-2">
+                <div className="mb-1 px-1 font-mono text-[0.46rem] font-bold uppercase tracking-[0.12em] text-[#63ae6e]">
+                  History experiment
+                </div>
+                <div className="grid gap-1">
+                  {history.map((entry) => (
+                    <button
+                      className="flex min-w-0 items-center gap-2 rounded-[7px] border border-[#244d2d] bg-[#0a1c0e] px-2 py-1.5 text-left text-[#b3eebc] hover:border-[#70c27b] hover:bg-[#102d17]"
+                      key={entry.id}
+                      type="button"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        onHistorySelect?.(entry);
+                        onClose();
+                      }}
+                      aria-label={`Use history entry ${entry.preview}`}
+                    >
+                      <span className="grid size-6 shrink-0 place-items-center rounded-[5px] bg-[#0b2411]">
+                        <CustomKeyboardIconView icon="clipboard" size={13} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <strong className="block truncate text-[0.56rem] font-bold">{entry.preview}</strong>
+                        <small className="block truncate text-[0.46rem] text-[#78ae80]">
+                          {entry.source} · {entry.age}
+                        </small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      </div>
+    </AppSafeAreaOverlay>
+  );
+}
+
+function ClipboardPopoverAction({
+  button,
+  label,
+  detail,
+  onSelect,
+}: {
+  button: CustomKeyboardButton;
+  label: string;
+  detail: string;
+  onSelect: (button: CustomKeyboardButton) => void;
+}) {
+  return (
+    <CustomKeyboardActionSurface
+      className="flex min-h-10 min-w-0 items-center gap-2 rounded-[7px] border border-[#244d2d] bg-[#0a1c0e] px-2 text-left text-[#b3eebc] hover:border-[#70c27b] hover:bg-[#102d17]"
+      onPress={() => onSelect(button)}
+      aria-label={label}
+      title={label}
+    >
+      <span className="grid size-6 shrink-0 place-items-center rounded-[5px] bg-[#0b2411]">
+        <CustomKeyboardIconView icon={button.icon ?? "clipboard"} size={14} />
+      </span>
+      <span className="min-w-0">
+        <strong className="block truncate text-[0.58rem] font-bold">{label}</strong>
+        <small className="block truncate text-[0.48rem] text-[#78ae80]">{detail}</small>
+      </span>
+    </CustomKeyboardActionSurface>
   );
 }
 
@@ -304,15 +489,10 @@ function CustomKeyboardProfilePicker({
 }) {
   return (
     <AppSafeAreaOverlay className="z-40">
-      <div
-        className="flex h-full items-end justify-center bg-[rgb(0_0_0_/_48%)] p-3"
-        onPointerDown={onClose}
-        role="presentation"
-      >
+      <div className="relative h-full w-full" onPointerDown={onClose} role="presentation">
         <section
-          className="flex max-h-[min(72%,480px)] w-full max-w-[430px] flex-col overflow-hidden rounded-[14px] border border-[#2b6838] bg-[#071509] shadow-[0_20px_60px_rgb(0_0_0_/_55%)]"
+          className="pointer-events-auto absolute bottom-[60px] right-2 flex max-h-[min(62%,420px)] w-[min(88vw,330px)] flex-col overflow-hidden rounded-[12px] border border-[#2b6838] bg-[#071509] shadow-[0_16px_50px_rgb(0_0_0_/_55%)]"
           role="dialog"
-          aria-modal="true"
           aria-label="Select custom keyboard profile"
           onPointerDown={(event) => event.stopPropagation()}
         >
@@ -382,7 +562,7 @@ function CustomKeyboardProfilePicker({
               type="button"
               onClick={onOpenSettings}
             >
-              Manage
+              Keyboard settings
             </button>
           </footer>
         </section>
@@ -400,6 +580,8 @@ function CustomKeyboardActionSurface({
   "aria-label": ariaLabel,
   title,
   "aria-pressed": ariaPressed,
+  "aria-haspopup": ariaHaspopup,
+  "aria-expanded": ariaExpanded,
 }: {
   className: string;
   children: ReactNode;
@@ -409,6 +591,8 @@ function CustomKeyboardActionSurface({
   "aria-label": string;
   title: string;
   "aria-pressed"?: boolean;
+  "aria-haspopup"?: "dialog" | "menu";
+  "aria-expanded"?: boolean;
 }) {
   return (
     <button
@@ -427,6 +611,8 @@ function CustomKeyboardActionSurface({
       }}
       onClick={onPress}
       aria-pressed={ariaPressed}
+      aria-haspopup={ariaHaspopup}
+      aria-expanded={ariaExpanded}
       aria-label={ariaLabel}
       title={title}
       data-preserve-native-keyboard-focus={preserveNativeKeyboardFocus ? "true" : undefined}
@@ -569,7 +755,9 @@ function CustomKeyboardDirectionalFlickButtonView({
     >
       <DirectionalFlickIcon direction={preview?.direction ?? null} repeating={preview?.repeating ?? false} />
       <span className="sr-only">
-        {preview ? `${preview.repeating ? "Repeating" : "Sending"} ${preview.direction} arrow` : "Flick for arrows"}
+        {preview
+          ? `${preview.repeating ? "Repeating" : "Sending"} ${preview.direction} arrow`
+          : "Arrow pad: swipe or hold"}
       </span>
     </button>
   );
@@ -1143,7 +1331,7 @@ export function CustomKeyboardSettingsView({
         {showFlickSettings ? (
           <div className="mt-2 rounded-[8px] border border-[#285a33] bg-[#071509] p-2">
             <p className="m-0 text-[0.54rem] text-[#719176]">
-              Hold a flick to wait, then repeat the arrow input at the selected interval.
+              Swipe or hold the arrow pad to repeat the arrow input at the selected interval.
             </p>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               <label className="rounded-[7px] border border-[#1d4325] bg-[#061008] p-2">
