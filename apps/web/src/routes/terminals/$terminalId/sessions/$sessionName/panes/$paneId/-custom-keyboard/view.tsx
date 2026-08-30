@@ -273,7 +273,7 @@ export function CustomKeyboardBar({
               aria-label="Open custom keyboard settings"
               title="Open custom keyboard settings"
             >
-              <AppIcon name="sliders" size={16} />
+              <AppIcon name="settings" size={16} />
             </CustomKeyboardActionSurface>
             <CustomKeyboardActionSurface
               className={`custom-keyboard-compact-button grid size-[34px] place-items-center rounded-[6px] border px-1 transition-colors ${
