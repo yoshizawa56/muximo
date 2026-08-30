@@ -1,32 +1,27 @@
 import { noFixture, type OperationCase, type OperationTable, returns, runOperationTable } from "@muximo/test-support";
 import { describe, it } from "vitest";
 import {
-  customKeyboardAbcLetterRow,
-  customKeyboardAbcRows,
-  customKeyboardNumberRows,
-  customKeyboardPunctuationRow,
-} from "./layout";
-import {
   applyCustomKeyboardDrop,
-  insertButtonIdBeforeTarget,
+  assignedKeyIds,
+  type CustomKeyboardDropState,
   isCustomKeyboardShortcutDraftValid,
-  selectedButtonsFromIds,
+  resolveCustomKeyboardLayout,
   toggleCustomKeyboardModifier,
 } from "./policy";
 import {
-  type CustomKeyboardButton,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
   type CustomKeyboardIcon,
+  type CustomKeyboardKey,
+  type CustomKeyboardLayout,
   type CustomKeyboardModifier,
+  type CustomKeyboardProfile,
   type CustomKeyboardState,
   createCustomKeyboardProfile,
-  customKeyboardButtonLibrary,
   customKeyboardTerminalActionOptions,
-  defaultCustomKeyboardButtons,
+  defaultCustomKeyboardLayout,
   deleteCustomKeyboardProfile,
   duplicateCustomKeyboardProfile,
-  isCustomKeyboardFixedButton,
   isCustomKeyboardProfileNameValid,
   parseCustomKeyboardState,
   resolveActiveProfileId,
@@ -36,34 +31,17 @@ import {
 
 type EmptyContext = {};
 
-const selectionLibrary: readonly CustomKeyboardButton[] = [
-  {
-    id: "escape",
-    kind: "key",
-    category: "special",
-    accessibleLabel: "Escape",
-    sequence: [{ type: "key", key: "Escape" }],
-  },
-  {
-    id: "tab",
-    kind: "key",
-    category: "special",
-    accessibleLabel: "Tab",
-    sequence: [{ type: "key", key: "Tab" }],
-  },
-  {
-    id: "git-status",
-    kind: "shortcut",
-    category: "shortcuts",
-    accessibleLabel: "Git status shortcut",
-    sequence: [{ type: "text", value: "git status" }],
-  },
-];
+function key(id: string, activation: CustomKeyboardKey["activation"]): CustomKeyboardKey {
+  return { id, category: "special", accessibleLabel: id, activation };
+}
 
-type ModifierInput = {
-  activeModifiers: readonly CustomKeyboardModifier[];
-  modifier: CustomKeyboardModifier;
-};
+function row(
+  id: string,
+  overflow: "scroll" | "stable",
+  placements: CustomKeyboardLayout["rows"][number]["placements"],
+): CustomKeyboardLayout["rows"][number] {
+  return { id, overflow, placements };
+}
 
 const modifierCases = [
   {
@@ -81,279 +59,286 @@ const modifierCases = [
     input: { activeModifiers: ["ctrl"], modifier: "alt" },
     assert: [returns<EmptyContext, CustomKeyboardModifier[]>(["ctrl", "alt"])],
   },
-] satisfies readonly OperationCase<"default", ModifierInput, CustomKeyboardModifier[], EmptyContext>[];
+] satisfies readonly OperationCase<
+  "default",
+  { activeModifiers: readonly CustomKeyboardModifier[]; modifier: CustomKeyboardModifier },
+  CustomKeyboardModifier[],
+  EmptyContext
+>[];
 
-const modifierTable: OperationTable<undefined, "default", ModifierInput, CustomKeyboardModifier[], EmptyContext> = {
+const modifierTable: OperationTable<
+  undefined,
+  "default",
+  { activeModifiers: readonly CustomKeyboardModifier[]; modifier: CustomKeyboardModifier },
+  CustomKeyboardModifier[],
+  EmptyContext
+> = {
   defaultFixture: noFixture(),
   cases: modifierCases,
   execute: (_fixture, input) => toggleCustomKeyboardModifier(input.activeModifiers, input.modifier),
   observe: () => ({}),
 };
 
-type InsertInput = {
-  buttonIds: readonly string[];
-  sourceId: string;
-  targetId: string | null;
-};
-
-const insertCases = [
-  {
-    name: "inserts an existing key before the target and shifts the intervening keys",
-    input: { buttonIds: ["escape", "tab", "git-status"], sourceId: "escape", targetId: "git-status" },
-    assert: [returns<EmptyContext, string[]>(["tab", "escape", "git-status"])],
-  },
-  {
-    name: "keeps the canonical order when an existing key has no valid target",
-    input: { buttonIds: ["escape", "tab"], sourceId: "escape", targetId: "missing" },
-    assert: [returns<EmptyContext, string[]>(["escape", "tab"])],
-  },
-] satisfies readonly OperationCase<"default", InsertInput, string[], EmptyContext>[];
-
-const insertTable: OperationTable<undefined, "default", InsertInput, string[], EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases: insertCases,
-  execute: (_fixture, input) => insertButtonIdBeforeTarget(input.buttonIds, input.sourceId, input.targetId),
-  observe: () => ({}),
-};
-
-type DeriveInput = {
-  selectedButtonIds: readonly string[];
-  libraryButtons: readonly CustomKeyboardButton[];
-};
-
-type DropState = {
-  selectedButtonIds: readonly string[];
-  shortcutButtonIds: readonly string[];
+const layoutForDrop: CustomKeyboardLayout = {
+  rows: [
+    row("main", "scroll", [
+      { keyId: "escape", density: "regular" },
+      { keyId: "enter", density: "regular" },
+    ]),
+    row("utility", "stable", [
+      { keyId: "directional-flick", density: "compact", flexGrow: 1 },
+      { keyId: "profile-surface", density: "compact" },
+    ]),
+  ],
 };
 
 type DropInput = {
-  state: DropState;
+  state: CustomKeyboardDropState;
   source: CustomKeyboardDragSource;
   target: CustomKeyboardDropTarget;
 };
 
-type KeyboardLayoutInput = "abc" | "123";
-
-type KeyboardLayoutObservation = {
-  rows: readonly (readonly string[])[];
-  bottomRow: readonly string[];
-};
-
-const keyboardLayoutCases = [
-  {
-    name: "uses two letter rows before the Shift row on the ABC keyboard",
-    input: "abc" as const,
-    assert: [
-      returns<EmptyContext, KeyboardLayoutObservation>({
-        rows: customKeyboardAbcRows,
-        bottomRow: customKeyboardAbcLetterRow,
-      }),
-    ],
-  },
-  {
-    name: "keeps ten keys in each base number row including double quote",
-    input: "123" as const,
-    assert: [
-      returns<EmptyContext, KeyboardLayoutObservation>({
-        rows: customKeyboardNumberRows.base,
-        bottomRow: customKeyboardPunctuationRow,
-      }),
-    ],
-  },
-] satisfies readonly OperationCase<"default", KeyboardLayoutInput, KeyboardLayoutObservation, EmptyContext>[];
-
-const keyboardLayoutTable: OperationTable<
-  undefined,
-  "default",
-  KeyboardLayoutInput,
-  KeyboardLayoutObservation,
-  EmptyContext
-> = {
-  defaultFixture: noFixture(),
-  cases: keyboardLayoutCases,
-  execute: (_fixture, input) =>
-    input === "abc"
-      ? { rows: customKeyboardAbcRows, bottomRow: customKeyboardAbcLetterRow }
-      : { rows: customKeyboardNumberRows.base, bottomRow: customKeyboardPunctuationRow },
-  observe: () => ({}),
-};
-
 const dropCases = [
   {
-    name: "inserts a selected key before the target through the shared keyboard drop operation",
+    name: "moves a keyboard key across rows while preserving its placement density",
     input: {
-      state: { selectedButtonIds: ["letter-a", "escape", "git-status"], shortcutButtonIds: ["git-status"] },
-      source: { buttonId: "letter-a", collection: "keyboard" },
-      target: { type: "keyboard", targetButtonId: "git-status" },
+      state: { layout: layoutForDrop, shortcutKeyIds: [] },
+      source: { keyId: "escape", collection: "keyboard", rowId: "main" },
+      target: { type: "keyboard", rowId: "utility", targetKeyId: "profile-surface" },
     },
     assert: [
-      returns<EmptyContext, DropState>({
-        selectedButtonIds: ["escape", "letter-a", "git-status"],
-        shortcutButtonIds: ["git-status"],
+      returns<EmptyContext, CustomKeyboardDropState>({
+        layout: {
+          rows: [
+            row("main", "scroll", [{ keyId: "enter", density: "regular" }]),
+            row("utility", "stable", [
+              { keyId: "directional-flick", density: "compact", flexGrow: 1 },
+              { keyId: "escape", density: "regular" },
+              { keyId: "profile-surface", density: "compact" },
+            ]),
+          ],
+        },
+        shortcutKeyIds: [],
       }),
     ],
   },
   {
-    name: "assigns an available regular key immediately before the drop target",
+    name: "assigns an available library key to the end of a stable row",
     input: {
-      state: { selectedButtonIds: ["escape", "git-status"], shortcutButtonIds: ["git-status"] },
-      source: { buttonId: "letter-a", collection: "library" },
-      target: { type: "keyboard", targetButtonId: "git-status" },
+      state: { layout: layoutForDrop, shortcutKeyIds: [] },
+      source: { keyId: "letter-a", collection: "library" },
+      target: { type: "keyboard", rowId: "utility", targetKeyId: null },
     },
     assert: [
-      returns<EmptyContext, DropState>({
-        selectedButtonIds: ["escape", "letter-a", "git-status"],
-        shortcutButtonIds: ["git-status"],
+      returns<EmptyContext, CustomKeyboardDropState>({
+        layout: {
+          rows: [
+            row("main", "scroll", [
+              { keyId: "escape", density: "regular" },
+              { keyId: "enter", density: "regular" },
+            ]),
+            row("utility", "stable", [
+              { keyId: "directional-flick", density: "compact", flexGrow: 1 },
+              { keyId: "profile-surface", density: "compact" },
+              { keyId: "letter-a", density: "regular" },
+            ]),
+          ],
+        },
+        shortcutKeyIds: [],
       }),
     ],
   },
   {
-    name: "moves a shortcut card within the shortcut library using the same drop contract",
+    name: "reorders shortcut library entries through the same drop contract",
     input: {
-      state: { selectedButtonIds: ["escape"], shortcutButtonIds: ["git-status", "npm-test", "clear-screen"] },
-      source: { buttonId: "clear-screen", collection: "shortcut-library" },
+      state: { layout: layoutForDrop, shortcutKeyIds: ["git-status", "npm-test", "clear-screen"] },
+      source: { keyId: "clear-screen", collection: "shortcut-library" },
       target: { type: "shortcut-library", targetIndex: 0 },
     },
     assert: [
-      returns<EmptyContext, DropState>({
-        selectedButtonIds: ["escape"],
-        shortcutButtonIds: ["clear-screen", "git-status", "npm-test"],
+      returns<EmptyContext, CustomKeyboardDropState>({
+        layout: layoutForDrop,
+        shortcutKeyIds: ["clear-screen", "git-status", "npm-test"],
       }),
     ],
   },
   {
-    name: "ignores a stale custom keyboard drag source instead of assigning it again",
+    name: "ignores a stale keyboard drag source",
     input: {
-      state: { selectedButtonIds: ["escape"], shortcutButtonIds: [] },
-      source: { buttonId: "letter-a", collection: "keyboard" },
-      target: { type: "keyboard", targetButtonId: "escape" },
+      state: { layout: layoutForDrop, shortcutKeyIds: [] },
+      source: { keyId: "missing", collection: "keyboard" },
+      target: { type: "keyboard", rowId: "main", targetKeyId: "escape" },
     },
-    assert: [
-      returns<EmptyContext, DropState>({
-        selectedButtonIds: ["escape"],
-        shortcutButtonIds: [],
-      }),
-    ],
+    assert: [returns<EmptyContext, CustomKeyboardDropState>({ layout: layoutForDrop, shortcutKeyIds: [] })],
   },
-] satisfies readonly OperationCase<"default", DropInput, DropState, EmptyContext>[];
+] satisfies readonly OperationCase<"default", DropInput, CustomKeyboardDropState, EmptyContext>[];
 
-const dropTable: OperationTable<undefined, "default", DropInput, DropState, EmptyContext> = {
+const dropTable: OperationTable<undefined, "default", DropInput, CustomKeyboardDropState, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: dropCases,
   execute: (_fixture, input) => applyCustomKeyboardDrop(input.state, input.source, input.target),
   observe: () => ({}),
 };
 
-const deriveCases = [
-  {
-    name: "derives displayed buttons in canonical order and ignores stale ids",
-    input: { selectedButtonIds: ["git-status", "missing", "escape"], libraryButtons: selectionLibrary },
-    assert: [returns<EmptyContext, string[]>(["git-status", "escape"])],
-  },
-  {
-    name: "derives no displayed buttons for an empty selection",
-    input: { selectedButtonIds: [], libraryButtons: selectionLibrary },
-    assert: [returns<EmptyContext, string[]>([])],
-  },
-] satisfies readonly OperationCase<"default", DeriveInput, string[], EmptyContext>[];
+type ResolvedLayoutObservation = {
+  rows: readonly { id: string; overflow: string; keyIds: readonly string[] }[];
+  assignedKeyIds: readonly string[];
+};
 
-const deriveTable: OperationTable<undefined, "default", DeriveInput, string[], EmptyContext> = {
+const resolvedLayoutCases = [
+  {
+    name: "resolves every layout row from the shared key library",
+    input: {},
+    assert: [
+      returns<EmptyContext, ResolvedLayoutObservation>({
+        rows: [
+          { id: "main", overflow: "scroll", keyIds: ["escape", "enter"] },
+          { id: "utility", overflow: "stable", keyIds: ["profile-surface"] },
+        ],
+        assignedKeyIds: ["escape", "enter", "profile-surface"],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", {}, ResolvedLayoutObservation, EmptyContext>[];
+
+const resolvedLayoutTable: OperationTable<undefined, "default", {}, ResolvedLayoutObservation, EmptyContext> = {
   defaultFixture: noFixture(),
-  cases: deriveCases,
-  execute: (_fixture, input) =>
-    selectedButtonsFromIds(input.selectedButtonIds, input.libraryButtons).map((button) => button.id),
+  cases: resolvedLayoutCases,
+  execute: () => {
+    const layout: CustomKeyboardLayout = {
+      rows: [
+        row("main", "scroll", [
+          { keyId: "escape", density: "regular" },
+          { keyId: "enter", density: "regular" },
+        ]),
+        row("utility", "stable", [{ keyId: "profile-surface", density: "compact" }]),
+      ],
+    };
+    const library = [
+      key("escape", { type: "sequence", sequence: [{ type: "key", key: "Escape" }] }),
+      key("enter", { type: "sequence", sequence: [{ type: "key", key: "Enter" }] }),
+      key("profile-surface", { type: "surface", surface: "profile" }),
+    ];
+    const rows = resolveCustomKeyboardLayout(layout, library);
+    return {
+      rows: rows.map((currentRow) => ({
+        id: currentRow.id,
+        overflow: currentRow.overflow,
+        keyIds: currentRow.items.map((item) => item.key.id),
+      })),
+      assignedKeyIds: assignedKeyIds(layout),
+    };
+  },
   observe: () => ({}),
 };
 
-type DefaultButtonInput = {
-  buttonId: string;
-  interaction?: CustomKeyboardButton["interaction"];
-  terminalAction?: CustomKeyboardButton["terminalAction"];
+type DefaultLayoutObservation = {
+  mainKeyIds: readonly string[];
+  utilityKeyIds: readonly string[];
+  utilityOverflow: string | undefined;
+  keyboardFlexGrow: number | undefined;
 };
 
-const defaultButtonCases = [
+const defaultLayoutCases = [
   {
-    name: "includes Enter in the default custom keyboard",
-    input: { buttonId: "enter" },
+    name: "keeps Enter and exclamation in the default main row",
+    input: {},
+    assert: [
+      returns<EmptyContext, DefaultLayoutObservation>({
+        mainKeyIds: [
+          "escape",
+          "tab",
+          "enter",
+          "delete",
+          "ctrl",
+          "alt",
+          "slash",
+          "exclamation",
+          "double-quote",
+          "apostrophe",
+          "pipe",
+          "tilde",
+          "at",
+        ],
+        utilityKeyIds: [
+          "photo-library",
+          "clipboard-surface",
+          "toggle-standard-keyboard",
+          "directional-flick",
+          "profile-surface",
+        ],
+        utilityOverflow: "stable",
+        keyboardFlexGrow: 1,
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", {}, DefaultLayoutObservation, EmptyContext>[];
+
+const defaultLayoutTable: OperationTable<undefined, "default", {}, DefaultLayoutObservation, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: defaultLayoutCases,
+  execute: () => {
+    const main = defaultCustomKeyboardLayout.rows.find((currentRow) => currentRow.id === "main");
+    const utility = defaultCustomKeyboardLayout.rows.find((currentRow) => currentRow.id === "utility");
+    return {
+      mainKeyIds: main?.placements.map((placement) => placement.keyId) ?? [],
+      utilityKeyIds: utility?.placements.map((placement) => placement.keyId) ?? [],
+      utilityOverflow: utility?.overflow,
+      keyboardFlexGrow: utility?.placements.find((placement) => placement.keyId === "toggle-standard-keyboard")
+        ?.flexGrow,
+    };
+  },
+  observe: () => ({}),
+};
+
+type CatalogInput = { keyId: string };
+
+const catalogCases = [
+  {
+    name: "has Enter in the built-in key catalog",
+    input: { keyId: "enter" },
     assert: [returns<EmptyContext, boolean>(true)],
   },
   {
-    name: "includes Delete in the default custom keyboard",
-    input: { buttonId: "delete" },
+    name: "has exclamation in the built-in key catalog",
+    input: { keyId: "exclamation" },
     assert: [returns<EmptyContext, boolean>(true)],
   },
   {
-    name: "includes the exclamation mark in the default custom keyboard",
-    input: { buttonId: "exclamation" },
-    assert: [returns<EmptyContext, boolean>(true)],
-  },
-  {
-    name: "includes the directional flick key in the default custom keyboard",
-    input: { buttonId: "directional-flick", interaction: "directional-flick" },
-    assert: [returns<EmptyContext, boolean>(true)],
-  },
-  {
-    name: "includes the copy mode action in the default custom keyboard",
-    input: { buttonId: "copy-mode", terminalAction: "enter-copy-mode" },
-    assert: [returns<EmptyContext, boolean>(true)],
-  },
-  {
-    name: "includes clipboard paste in the default custom keyboard",
-    input: { buttonId: "paste-clipboard", terminalAction: "paste-from-clipboard" },
-    assert: [returns<EmptyContext, boolean>(true)],
-  },
-  {
-    name: "includes tmux buffer paste in the default custom keyboard",
-    input: { buttonId: "paste-tmux-buffer", terminalAction: "paste-from-tmux-buffer" },
-    assert: [returns<EmptyContext, boolean>(true)],
-  },
-  {
-    name: "keeps the Git status shortcut out of the default custom keyboard",
-    input: { buttonId: "git-status" },
+    name: "does not assign Git status to the default layout",
+    input: { keyId: "git-status" },
     assert: [returns<EmptyContext, boolean>(false)],
   },
-] satisfies readonly OperationCase<"default", DefaultButtonInput, boolean, EmptyContext>[];
+] satisfies readonly OperationCase<"default", CatalogInput, boolean, EmptyContext>[];
 
-const defaultButtonTable: OperationTable<undefined, "default", DefaultButtonInput, boolean, EmptyContext> = {
+const catalogTable: OperationTable<undefined, "default", CatalogInput, boolean, EmptyContext> = {
   defaultFixture: noFixture(),
-  cases: defaultButtonCases,
+  cases: catalogCases,
   execute: (_fixture, input) =>
-    defaultCustomKeyboardButtons.some(
-      (button) =>
-        button.id === input.buttonId &&
-        (input.interaction === undefined || button.interaction === input.interaction) &&
-        (input.terminalAction === undefined || button.terminalAction === input.terminalAction),
+    defaultCustomKeyboardLayout.rows.some((currentRow) =>
+      currentRow.placements.some((placement) => placement.keyId === input.keyId),
     ),
   observe: () => ({}),
 };
 
-type TerminalActionOptionObservation = {
-  ids: readonly string[];
-  actions: readonly string[];
-};
+type TerminalActionObservation = { ids: readonly string[]; actions: readonly string[] };
 
-const terminalActionOptionCases = [
+const terminalActionCases = [
   {
-    name: "exposes all terminal actions to the custom keyboard library",
+    name: "exposes copy and paste actions as library keys",
     input: {},
     assert: [
-      returns<EmptyContext, TerminalActionOptionObservation>({
+      returns<EmptyContext, TerminalActionObservation>({
         ids: ["copy-mode", "paste-clipboard", "paste-tmux-buffer"],
         actions: ["enter-copy-mode", "paste-from-clipboard", "paste-from-tmux-buffer"],
       }),
     ],
   },
-] satisfies readonly OperationCase<"default", {}, TerminalActionOptionObservation, EmptyContext>[];
+] satisfies readonly OperationCase<"default", {}, TerminalActionObservation, EmptyContext>[];
 
-const terminalActionOptionTable: OperationTable<
-  undefined,
-  "default",
-  {},
-  TerminalActionOptionObservation,
-  EmptyContext
-> = {
+const terminalActionTable: OperationTable<undefined, "default", {}, TerminalActionObservation, EmptyContext> = {
   defaultFixture: noFixture(),
-  cases: terminalActionOptionCases,
+  cases: terminalActionCases,
   execute: () => ({
     ids: customKeyboardTerminalActionOptions.map((option) => option.id),
     actions: customKeyboardTerminalActionOptions.map((option) => option.action),
@@ -361,535 +346,435 @@ const terminalActionOptionTable: OperationTable<
   observe: () => ({}),
 };
 
-type ShortcutDraftInput = {
-  sequence: CustomKeyboardButton["sequence"];
-};
+type ShortcutSequence = Extract<CustomKeyboardKey["activation"], { type: "sequence" }>["sequence"];
 
 const shortcutDraftCases = [
   {
     name: "rejects a shortcut draft without sequence tokens",
-    input: { sequence: [] },
+    input: { sequence: [] as ShortcutSequence },
     assert: [returns<EmptyContext, boolean>(false)],
   },
   {
     name: "accepts a shortcut draft with one sequence token",
-    input: { sequence: [{ type: "key", key: "Enter" }] },
+    input: { sequence: [{ type: "key", key: "Enter" }] as ShortcutSequence },
     assert: [returns<EmptyContext, boolean>(true)],
   },
-] satisfies readonly OperationCase<"default", ShortcutDraftInput, boolean, EmptyContext>[];
+] satisfies readonly OperationCase<"default", { sequence: ShortcutSequence }, boolean, EmptyContext>[];
 
-const shortcutDraftTable: OperationTable<undefined, "default", ShortcutDraftInput, boolean, EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases: shortcutDraftCases,
-  execute: (_fixture, input) => isCustomKeyboardShortcutDraftValid(input),
-  observe: () => ({}),
-};
-
-type ShiftLibraryObservation = {
-  count: number;
-  categories: readonly string[];
-};
-
-const shiftLibraryCases = [
+const shortcutDraftTable: OperationTable<undefined, "default", { sequence: ShortcutSequence }, boolean, EmptyContext> =
   {
-    name: "keeps one Shift entry in the ABC keyboard library",
-    input: {},
-    assert: [returns<EmptyContext, ShiftLibraryObservation>({ count: 1, categories: ["abc"] })],
-  },
-] satisfies readonly OperationCase<"default", {}, ShiftLibraryObservation, EmptyContext>[];
-
-const shiftLibraryTable: OperationTable<undefined, "default", {}, ShiftLibraryObservation, EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases: shiftLibraryCases,
-  execute: () => {
-    const shiftButtons = customKeyboardButtonLibrary.filter((button) => button.id === "shift");
-    return { count: shiftButtons.length, categories: shiftButtons.map((button) => button.category) };
-  },
-  observe: () => ({}),
-};
+    defaultFixture: noFixture(),
+    cases: shortcutDraftCases,
+    execute: (_fixture, input) => isCustomKeyboardShortcutDraftValid(input),
+    observe: () => ({}),
+  };
 
 type ParsedStateObservation = {
-  selectedButtonIds: readonly string[];
-  hasInvalidButton: boolean;
-  hasInvalidTerminalAction: boolean;
-  hasEscapeButton: boolean;
-  shiftCategory: string | undefined;
+  profileIds: readonly string[];
+  activeProfileId: string;
+  linkedProfileIds: readonly string[];
+  defaultMainKeyIds: readonly string[];
+  agentMainKeyIds: readonly string[];
+  agentShortcutKeyIds: readonly string[];
+  agentIcon: CustomKeyboardIcon;
+  utilityKeyIds: readonly string[];
+  utilityFlexGrow: number | undefined;
 };
+
+const validV3State = JSON.stringify({
+  version: 3,
+  profiles: [
+    { id: "default" },
+    {
+      id: "agent",
+      name: "Agent",
+      icon: "branch",
+      libraryKeys: [
+        {
+          id: "agent-command",
+          category: "shortcuts",
+          accessibleLabel: "Agent command",
+          activation: { type: "sequence", sequence: [{ type: "text", value: "agent" }] },
+        },
+      ],
+      layout: {
+        rows: [
+          {
+            id: "main",
+            overflow: "scroll",
+            placements: [{ keyId: "agent-command", density: "regular" }],
+          },
+          {
+            id: "utility",
+            overflow: "stable",
+            placements: [{ keyId: "toggle-standard-keyboard", density: "compact", flexGrow: 2 }],
+          },
+        ],
+      },
+      shortcutKeyIds: ["agent-command"],
+    },
+  ],
+  workspaceProfileIds: { "workspace-1": ["agent"] },
+  activeProfileIdsByWorkspace: { "workspace-1": "agent" },
+});
+
+function legacyKey(id: string, category: "special" | "shortcuts", sequence: unknown[], extra: object = {}) {
+  return {
+    id,
+    kind: category === "shortcuts" ? "shortcut" : "key",
+    category,
+    accessibleLabel: id,
+    sequence,
+    ...extra,
+  };
+}
+
+const validV2State = JSON.stringify({
+  version: 2,
+  profiles: [
+    {
+      id: "default",
+      selectedButtonIds: ["escape", "enter"],
+      libraryButtons: [
+        legacyKey("escape", "special", [{ type: "key", key: "Escape" }]),
+        legacyKey("enter", "special", [{ type: "key", key: "Enter" }]),
+      ],
+    },
+    {
+      id: "agent",
+      name: "Agent",
+      icon: "camera",
+      selectedButtonIds: ["git-status"],
+      shortcutButtonIds: ["git-status"],
+      libraryButtons: [
+        legacyKey("git-status", "shortcuts", [
+          { type: "text", value: "git status" },
+          { type: "key", key: "Enter" },
+        ]),
+      ],
+    },
+  ],
+  workspaceProfileIds: { "workspace-1": ["agent"] },
+  activeProfileIdsByWorkspace: { "workspace-1": "agent" },
+});
+
+const invalidV3State = JSON.stringify({
+  version: 3,
+  profiles: [
+    {
+      id: "default",
+      libraryKeys: [
+        {
+          id: "broken",
+          category: "special",
+          accessibleLabel: "Broken",
+          activation: { type: "unsupported" },
+        },
+      ],
+      layout: {
+        rows: [
+          {
+            id: "main",
+            overflow: "scroll",
+            placements: [
+              { keyId: "broken", density: "regular" },
+              { keyId: "escape", density: "regular" },
+            ],
+          },
+        ],
+      },
+    },
+  ],
+});
 
 const parsedStateCases = [
   {
-    name: "drops a persisted button whose sequence contains an invalid token",
-    input: {
-      raw: JSON.stringify({
-        selectedButtonIds: ["broken-shortcut", "escape"],
-        libraryButtons: [
-          {
-            id: "broken-shortcut",
-            kind: "shortcut",
-            category: "shortcuts",
-            accessibleLabel: "Broken shortcut",
-            sequence: [null],
-          },
-        ],
-      }),
-    },
+    name: "preserves v3 rows, custom keys, flex growth, and workspace profile selection",
+    input: { raw: validV3State },
     assert: [
       returns<EmptyContext, ParsedStateObservation>({
-        selectedButtonIds: ["escape"],
-        hasInvalidButton: false,
-        hasInvalidTerminalAction: false,
-        hasEscapeButton: true,
-        shiftCategory: "abc",
+        profileIds: ["default", "agent"],
+        activeProfileId: "agent",
+        linkedProfileIds: ["agent"],
+        defaultMainKeyIds: [
+          "escape",
+          "tab",
+          "enter",
+          "delete",
+          "ctrl",
+          "alt",
+          "slash",
+          "exclamation",
+          "double-quote",
+          "apostrophe",
+          "pipe",
+          "tilde",
+          "at",
+        ],
+        agentMainKeyIds: ["agent-command"],
+        agentShortcutKeyIds: ["agent-command"],
+        agentIcon: "branch",
+        utilityKeyIds: ["toggle-standard-keyboard"],
+        utilityFlexGrow: 2,
       }),
     ],
   },
   {
-    name: "keeps the canonical ABC Shift entry over a stale persisted special entry",
-    input: {
-      raw: JSON.stringify({
-        selectedButtonIds: ["shift"],
-        libraryButtons: [
-          {
-            id: "shift",
-            kind: "modifier",
-            category: "special",
-            icon: "control",
-            label: "Shift",
-            accessibleLabel: "Shift modifier",
-            sequence: [],
-            modifier: "shift",
-          },
-        ],
-      }),
-    },
+    name: "migrates v2 button selections into the current row layout",
+    input: { raw: validV2State },
     assert: [
       returns<EmptyContext, ParsedStateObservation>({
-        selectedButtonIds: ["shift"],
-        hasInvalidButton: false,
-        hasInvalidTerminalAction: false,
-        hasEscapeButton: true,
-        shiftCategory: "abc",
+        profileIds: ["default", "agent"],
+        activeProfileId: "agent",
+        linkedProfileIds: ["agent"],
+        defaultMainKeyIds: ["escape", "enter"],
+        agentMainKeyIds: ["git-status"],
+        agentShortcutKeyIds: ["git-status"],
+        agentIcon: "camera",
+        utilityKeyIds: [
+          "photo-library",
+          "clipboard-surface",
+          "toggle-standard-keyboard",
+          "directional-flick",
+          "profile-surface",
+        ],
+        utilityFlexGrow: 1,
       }),
     ],
   },
   {
-    name: "drops a persisted button with an unknown terminal action",
-    input: {
-      raw: JSON.stringify({
-        selectedButtonIds: ["broken-terminal-action", "escape"],
-        libraryButtons: [
-          {
-            id: "broken-terminal-action",
-            kind: "key",
-            category: "special",
-            accessibleLabel: "Broken terminal action",
-            sequence: [],
-            terminalAction: "unsupported-action",
-          },
-        ],
-      }),
-    },
+    name: "drops invalid v3 activations before resolving the layout",
+    input: { raw: invalidV3State },
     assert: [
       returns<EmptyContext, ParsedStateObservation>({
-        selectedButtonIds: ["escape"],
-        hasInvalidButton: false,
-        hasInvalidTerminalAction: false,
-        hasEscapeButton: true,
-        shiftCategory: "abc",
+        profileIds: ["default"],
+        activeProfileId: "default",
+        linkedProfileIds: [],
+        defaultMainKeyIds: ["escape"],
+        agentMainKeyIds: [],
+        agentShortcutKeyIds: [],
+        agentIcon: "terminal",
+        utilityKeyIds: [],
+        utilityFlexGrow: undefined,
       }),
     ],
   },
-] satisfies readonly OperationCase<"default", { raw: string | null }, ParsedStateObservation, EmptyContext>[];
+] satisfies readonly OperationCase<"default", { raw: string }, ParsedStateObservation, EmptyContext>[];
 
-const parsedStateTable: OperationTable<
-  undefined,
-  "default",
-  { raw: string | null },
-  ParsedStateObservation,
-  EmptyContext
-> = {
+const parsedStateTable: OperationTable<undefined, "default", { raw: string }, ParsedStateObservation, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: parsedStateCases,
   execute: (_fixture, input) => {
     const state = parseCustomKeyboardState(input.raw);
-    const profile = state.profiles.find((candidate) => candidate.id === "default");
-    return {
-      selectedButtonIds: profile?.selectedButtonIds ?? [],
-      hasInvalidButton: profile?.libraryButtons.some((button) => button.id === "broken-shortcut") ?? false,
-      hasInvalidTerminalAction:
-        profile?.libraryButtons.some((button) => button.id === "broken-terminal-action") ?? false,
-      hasEscapeButton: profile?.libraryButtons.some((button) => button.id === "escape") ?? false,
-      shiftCategory: profile?.libraryButtons.find((button) => button.id === "shift")?.category,
-    };
-  },
-  observe: () => ({}),
-};
-
-type ProfileStateParseObservation = {
-  profileIds: readonly string[];
-  activeProfileId: string;
-  linkedProfileIds: readonly string[];
-  defaultSelectedButtonIds: readonly string[];
-  agentSelectedButtonIds: readonly string[];
-  agentIcon: CustomKeyboardIcon;
-  defaultFixedButtonIds: readonly string[];
-};
-
-const profileStateParseCases = [
-  {
-    name: "restores multiple profiles and workspace mapping from version two state",
-    input: {
-      raw: JSON.stringify({
-        version: 2,
-        profiles: [
-          { id: "default", selectedButtonIds: ["copy-mode", "escape"] },
-          { id: "agent", name: "Agent", icon: "camera", selectedButtonIds: ["copy-mode", "git-status"] },
-        ],
-        workspaceProfileIds: { "workspace-1": ["agent"] },
-        activeProfileIdsByWorkspace: { "workspace-1": "agent" },
-        globalActiveProfileId: "default",
-      }),
-    },
-    assert: [
-      returns<EmptyContext, ProfileStateParseObservation>({
-        profileIds: ["default", "agent"],
-        activeProfileId: "agent",
-        linkedProfileIds: ["agent"],
-        defaultSelectedButtonIds: ["escape"],
-        agentSelectedButtonIds: ["git-status"],
-        agentIcon: "camera",
-        defaultFixedButtonIds: [],
-      }),
-    ],
-  },
-] satisfies readonly OperationCase<"default", { raw: string }, ProfileStateParseObservation, EmptyContext>[];
-
-const profileStateParseTable: OperationTable<
-  undefined,
-  "default",
-  { raw: string },
-  ProfileStateParseObservation,
-  EmptyContext
-> = {
-  defaultFixture: noFixture(),
-  cases: profileStateParseCases,
-  execute: (_fixture, input) => {
-    const state = parseCustomKeyboardState(input.raw);
     const defaultProfile = state.profiles.find((profile) => profile.id === "default");
     const agentProfile = state.profiles.find((profile) => profile.id === "agent");
+    const utilityRow = agentProfile?.layout.rows.find((currentRow) => currentRow.id === "utility");
     return {
       profileIds: state.profiles.map((profile) => profile.id),
       activeProfileId: resolveActiveProfileId(state, "workspace-1"),
       linkedProfileIds: state.workspaceProfileIds["workspace-1"] ?? [],
-      defaultSelectedButtonIds: defaultProfile?.selectedButtonIds ?? [],
-      agentSelectedButtonIds: agentProfile?.selectedButtonIds ?? [],
+      defaultMainKeyIds:
+        defaultProfile?.layout.rows
+          .find((currentRow) => currentRow.id === "main")
+          ?.placements.map((item) => item.keyId) ?? [],
+      agentMainKeyIds:
+        agentProfile?.layout.rows
+          .find((currentRow) => currentRow.id === "main")
+          ?.placements.map((item) => item.keyId) ?? [],
+      agentShortcutKeyIds: agentProfile?.shortcutKeyIds ?? [],
       agentIcon: agentProfile?.icon ?? "terminal",
-      defaultFixedButtonIds: (defaultProfile?.selectedButtonIds ?? []).filter(isCustomKeyboardFixedButton),
+      utilityKeyIds: utilityRow?.placements.map((item) => item.keyId) ?? [],
+      utilityFlexGrow: utilityRow?.placements.find((item) => item.keyId === "toggle-standard-keyboard")?.flexGrow,
     };
   },
   observe: () => ({}),
 };
 
-const defaultProfileState = parseCustomKeyboardState(null);
-const defaultProfile = defaultProfileState.profiles[0];
-if (!defaultProfile) throw new Error("Default custom keyboard profile fixture is missing");
-const agentProfile = {
-  ...defaultProfile,
-  id: "agent",
-  name: "Agent",
-  icon: "camera" as const,
-  selectedButtonIds: [...defaultProfile.selectedButtonIds, "git-status"],
-};
-const unlinkedProfileState: CustomKeyboardState = {
-  ...defaultProfileState,
-  profiles: [defaultProfile, agentProfile],
-};
-const linkedProfileState: CustomKeyboardState = {
-  ...defaultProfileState,
-  profiles: [defaultProfile, agentProfile],
-  workspaceProfileIds: { "workspace-1": [agentProfile.id] },
-  activeProfileIdsByWorkspace: { "workspace-1": agentProfile.id },
-  globalActiveProfileId: defaultProfile.id,
-};
+function profileStateWithAgent(): CustomKeyboardState {
+  const state = parseCustomKeyboardState(null);
+  const defaultProfile = state.profiles[0];
+  if (!defaultProfile) throw new Error("Default custom keyboard profile fixture is missing");
+  const agent: CustomKeyboardProfile = {
+    ...defaultProfile,
+    id: "agent",
+    name: "Agent",
+    icon: "spark",
+    libraryKeys: defaultProfile.libraryKeys.map((key) => ({ ...key })),
+    layout: {
+      rows: defaultProfile.layout.rows.map((currentRow) => ({
+        ...currentRow,
+        placements: currentRow.placements.map((placement) => ({ ...placement })),
+      })),
+    },
+    shortcutKeyIds: [...defaultProfile.shortcutKeyIds],
+  };
+  return { ...state, profiles: [...state.profiles, agent] };
+}
 
-type ProfileNameInput = { name: string };
-const profileNameCases = [
-  {
-    name: "accepts a short profile name",
-    input: { name: "Agent" },
-    assert: [returns<EmptyContext, boolean>(true)],
-  },
-  {
-    name: "rejects an empty profile name",
-    input: { name: "   " },
-    assert: [returns<EmptyContext, boolean>(false)],
-  },
-  {
-    name: "rejects a profile name containing a control character",
-    input: { name: "Agent\nProfile" },
-    assert: [returns<EmptyContext, boolean>(false)],
-  },
-] satisfies readonly OperationCase<"default", ProfileNameInput, boolean, EmptyContext>[];
+type ProfileOperation =
+  | { type: "select"; profileId: string }
+  | { type: "create"; name: string; icon: CustomKeyboardIcon }
+  | { type: "duplicate"; profileId: string }
+  | { type: "delete"; profileId: string }
+  | { type: "toggle-link"; profileId: string };
 
-const profileNameTable: OperationTable<undefined, "default", ProfileNameInput, boolean, EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases: profileNameCases,
-  execute: (_fixture, input) => isCustomKeyboardProfileNameValid(input.name),
-  observe: () => ({}),
-};
-
-type ProfileSelectionInput = {
-  state: CustomKeyboardState;
-  workspaceId: string | null;
-  profileId: string;
-};
-
-type ProfileSelectionObservation = {
-  activeProfileId: string;
-  linkedProfileIds: readonly string[];
-  workspaceOneLinkedProfileIds: readonly string[];
-};
-
-const profileSelectionCases = [
-  {
-    name: "selects a profile and links it to the workspace",
-    input: { state: unlinkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
-    assert: [
-      returns<EmptyContext, ProfileSelectionObservation>({
-        activeProfileId: agentProfile.id,
-        linkedProfileIds: [agentProfile.id],
-        workspaceOneLinkedProfileIds: [agentProfile.id],
-      }),
-    ],
-  },
-  {
-    name: "restores a linked profile when resolving the workspace selection",
-    input: { state: linkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
-    assert: [
-      returns<EmptyContext, ProfileSelectionObservation>({
-        activeProfileId: agentProfile.id,
-        linkedProfileIds: [agentProfile.id],
-        workspaceOneLinkedProfileIds: [agentProfile.id],
-      }),
-    ],
-  },
-  {
-    name: "falls back to Default when a workspace has no linked profile",
-    input: { state: defaultProfileState, workspaceId: "workspace-1", profileId: "missing" },
-    assert: [
-      returns<EmptyContext, ProfileSelectionObservation>({
-        activeProfileId: defaultProfile.id,
-        linkedProfileIds: [],
-        workspaceOneLinkedProfileIds: [],
-      }),
-    ],
-  },
-  {
-    name: "allows the same profile to be linked to multiple workspaces",
-    input: { state: linkedProfileState, workspaceId: "workspace-2", profileId: agentProfile.id },
-    assert: [
-      returns<EmptyContext, ProfileSelectionObservation>({
-        activeProfileId: agentProfile.id,
-        linkedProfileIds: [agentProfile.id],
-        workspaceOneLinkedProfileIds: [agentProfile.id],
-      }),
-    ],
-  },
-] satisfies readonly OperationCase<"default", ProfileSelectionInput, ProfileSelectionObservation, EmptyContext>[];
-
-const profileSelectionTable: OperationTable<
-  undefined,
-  "default",
-  ProfileSelectionInput,
-  ProfileSelectionObservation,
-  EmptyContext
-> = {
-  defaultFixture: noFixture(),
-  cases: profileSelectionCases,
-  execute: (_fixture, input) => {
-    const state = selectCustomKeyboardProfile(input.state, input.workspaceId, input.profileId);
-    return {
-      activeProfileId: resolveActiveProfileId(state, input.workspaceId),
-      linkedProfileIds: input.workspaceId ? (state.workspaceProfileIds[input.workspaceId] ?? []) : [],
-      workspaceOneLinkedProfileIds: state.workspaceProfileIds["workspace-1"] ?? [],
-    };
-  },
-  observe: () => ({}),
-};
-
-type ProfileMutationInput = {
-  state: CustomKeyboardState;
-  workspaceId: string | null;
-  profileId?: string;
-  name?: string;
-  icon?: CustomKeyboardIcon;
-};
-
-type ProfileMutationObservation = {
+type ProfileObservation = {
   profileIds: readonly string[];
   profileNames: readonly string[];
   activeProfileId: string;
   linkedProfileIds: readonly string[];
-  defaultSelectedButtonIds: readonly string[];
 };
 
-const profileCreationCases = [
+function observeProfileState(state: CustomKeyboardState): ProfileObservation {
+  return {
+    profileIds: state.profiles.map((profile) => profile.id),
+    profileNames: state.profiles.map((profile) => profile.name),
+    activeProfileId: resolveActiveProfileId(state, "workspace-1"),
+    linkedProfileIds: state.workspaceProfileIds["workspace-1"] ?? [],
+  };
+}
+
+const profileCases = [
   {
-    name: "creates a profile with the chosen icon and selects it for the workspace",
-    input: { state: defaultProfileState, workspaceId: "workspace-1", name: "Agent", icon: "spark" as const },
+    name: "selects a profile and links it to the workspace",
+    input: { state: profileStateWithAgent(), operation: { type: "select", profileId: "agent" } as const },
     assert: [
-      returns<EmptyContext, ProfileMutationObservation>({
+      returns<EmptyContext, ProfileObservation>({
+        profileIds: ["default", "agent"],
+        profileNames: ["Default", "Agent"],
+        activeProfileId: "agent",
+        linkedProfileIds: ["agent"],
+      }),
+    ],
+  },
+  {
+    name: "creates and activates a named profile",
+    input: {
+      state: parseCustomKeyboardState(null),
+      operation: { type: "create", name: "Agent", icon: "spark" } as const,
+    },
+    assert: [
+      returns<EmptyContext, ProfileObservation>({
         profileIds: ["default", "custom-keyboard-profile-2"],
         profileNames: ["Default", "Agent"],
         activeProfileId: "custom-keyboard-profile-2",
         linkedProfileIds: ["custom-keyboard-profile-2"],
-        defaultSelectedButtonIds: defaultProfile.selectedButtonIds,
       }),
     ],
   },
-] satisfies readonly OperationCase<"default", ProfileMutationInput, ProfileMutationObservation, EmptyContext>[];
-
-const profileCreationTable: OperationTable<
-  undefined,
-  "default",
-  ProfileMutationInput,
-  ProfileMutationObservation,
-  EmptyContext
-> = {
-  defaultFixture: noFixture(),
-  cases: profileCreationCases,
-  execute: (_fixture, input) =>
-    observeProfileMutation(
-      createCustomKeyboardProfile(input.state, input.workspaceId, {
-        name: input.name ?? "",
-        icon: input.icon ?? "terminal",
-      }),
-      input.workspaceId,
-    ),
-  observe: () => ({}),
-};
-
-const profileDuplicationCases = [
   {
-    name: "duplicates a linked profile and selects the copy",
-    input: { state: linkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
+    name: "duplicates a profile with its layout and library",
+    input: { state: profileStateWithAgent(), operation: { type: "duplicate", profileId: "agent" } as const },
     assert: [
-      returns<EmptyContext, ProfileMutationObservation>({
+      returns<EmptyContext, ProfileObservation>({
         profileIds: ["default", "agent", "custom-keyboard-profile-3"],
         profileNames: ["Default", "Agent", "Agent Copy"],
         activeProfileId: "custom-keyboard-profile-3",
-        linkedProfileIds: ["agent", "custom-keyboard-profile-3"],
-        defaultSelectedButtonIds: defaultProfile.selectedButtonIds,
+        linkedProfileIds: ["custom-keyboard-profile-3"],
       }),
     ],
   },
-] satisfies readonly OperationCase<"default", ProfileMutationInput, ProfileMutationObservation, EmptyContext>[];
-
-const profileDuplicationTable: OperationTable<
-  undefined,
-  "default",
-  ProfileMutationInput,
-  ProfileMutationObservation,
-  EmptyContext
-> = {
-  defaultFixture: noFixture(),
-  cases: profileDuplicationCases,
-  execute: (_fixture, input) =>
-    observeProfileMutation(
-      duplicateCustomKeyboardProfile(input.state, input.workspaceId, input.profileId ?? ""),
-      input.workspaceId,
-    ),
-  observe: () => ({}),
-};
-
-const profileDeletionCases = [
   {
-    name: "deletes a linked profile and falls back to Default",
-    input: { state: linkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
+    name: "deletes a profile and falls back to Default for its workspace",
+    input: {
+      state: {
+        ...profileStateWithAgent(),
+        workspaceProfileIds: { "workspace-1": ["agent"] },
+        activeProfileIdsByWorkspace: { "workspace-1": "agent" },
+      },
+      operation: { type: "delete", profileId: "agent" } as const,
+    },
     assert: [
-      returns<EmptyContext, ProfileMutationObservation>({
+      returns<EmptyContext, ProfileObservation>({
         profileIds: ["default"],
         profileNames: ["Default"],
         activeProfileId: "default",
         linkedProfileIds: [],
-        defaultSelectedButtonIds: defaultProfile.selectedButtonIds,
       }),
     ],
   },
-] satisfies readonly OperationCase<"default", ProfileMutationInput, ProfileMutationObservation, EmptyContext>[];
+  {
+    name: "toggles a profile link without changing the active default",
+    input: {
+      state: { ...profileStateWithAgent(), activeProfileIdsByWorkspace: { "workspace-1": "default" } },
+      operation: { type: "toggle-link", profileId: "agent" } as const,
+    },
+    assert: [
+      returns<EmptyContext, ProfileObservation>({
+        profileIds: ["default", "agent"],
+        profileNames: ["Default", "Agent"],
+        activeProfileId: "default",
+        linkedProfileIds: ["agent"],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<
+  "default",
+  { state: CustomKeyboardState; operation: ProfileOperation },
+  ProfileObservation,
+  EmptyContext
+>[];
 
-const profileDeletionTable: OperationTable<
+const profileTable: OperationTable<
   undefined,
   "default",
-  ProfileMutationInput,
-  ProfileMutationObservation,
+  { state: CustomKeyboardState; operation: ProfileOperation },
+  ProfileObservation,
   EmptyContext
 > = {
   defaultFixture: noFixture(),
-  cases: profileDeletionCases,
-  execute: (_fixture, input) =>
-    observeProfileMutation(deleteCustomKeyboardProfile(input.state, input.profileId ?? ""), input.workspaceId),
-  observe: () => ({}),
-};
-
-function observeProfileMutation(state: CustomKeyboardState, workspaceId: string | null): ProfileMutationObservation {
-  const activeProfileId = resolveActiveProfileId(state, workspaceId);
-  const activeProfile = state.profiles.find((profile) => profile.id === activeProfileId);
-  return {
-    profileIds: state.profiles.map((profile) => profile.id),
-    profileNames: state.profiles.map((profile) => profile.name),
-    activeProfileId,
-    linkedProfileIds: workspaceId ? (state.workspaceProfileIds[workspaceId] ?? []) : [],
-    defaultSelectedButtonIds:
-      activeProfile?.id === defaultProfile.id ? activeProfile.selectedButtonIds : defaultProfile.selectedButtonIds,
-  };
-}
-
-type ProfileLinkInput = {
-  state: CustomKeyboardState;
-  workspaceId: string | null;
-  profileId: string;
-};
-
-const profileLinkCases = [
-  {
-    name: "links an unlinked profile to a workspace",
-    input: { state: unlinkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
-    assert: [returns<EmptyContext, readonly string[]>([agentProfile.id])],
-  },
-  {
-    name: "unlinks a linked profile from a workspace",
-    input: { state: linkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
-    assert: [returns<EmptyContext, readonly string[]>([])],
-  },
-] satisfies readonly OperationCase<"default", ProfileLinkInput, readonly string[], EmptyContext>[];
-
-const profileLinkTable: OperationTable<undefined, "default", ProfileLinkInput, readonly string[], EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases: profileLinkCases,
+  cases: profileCases,
   execute: (_fixture, input) => {
-    const state = toggleCustomKeyboardProfileLink(input.state, input.workspaceId, input.profileId);
-    return input.workspaceId ? (state.workspaceProfileIds[input.workspaceId] ?? []) : [];
+    const { state, operation } = input;
+    const nextState =
+      operation.type === "select"
+        ? selectCustomKeyboardProfile(state, "workspace-1", operation.profileId)
+        : operation.type === "create"
+          ? createCustomKeyboardProfile(state, "workspace-1", { name: operation.name, icon: operation.icon })
+          : operation.type === "duplicate"
+            ? duplicateCustomKeyboardProfile(state, "workspace-1", operation.profileId)
+            : operation.type === "delete"
+              ? deleteCustomKeyboardProfile(state, operation.profileId)
+              : toggleCustomKeyboardProfileLink(state, "workspace-1", operation.profileId);
+    return observeProfileState(nextState);
   },
   observe: () => ({}),
 };
 
-describe("custom keyboard selection state", () => {
+const profileNameCases = [
+  {
+    name: "accepts a trimmed profile name",
+    input: " Agent ",
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "rejects an empty profile name",
+    input: "   ",
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+  {
+    name: "rejects a profile name containing a newline",
+    input: "Agent\nShell",
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+] satisfies readonly OperationCase<"default", string, boolean, EmptyContext>[];
+
+const profileNameTable: OperationTable<undefined, "default", string, boolean, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: profileNameCases,
+  execute: (_fixture, input) => isCustomKeyboardProfileNameValid(input),
+  observe: () => ({}),
+};
+
+describe("custom keyboard unified key model", () => {
   runOperationTable(it, modifierTable);
-  runOperationTable(it, keyboardLayoutTable);
-  runOperationTable(it, insertTable);
-  runOperationTable(it, deriveTable);
   runOperationTable(it, dropTable);
-  runOperationTable(it, defaultButtonTable);
-  runOperationTable(it, terminalActionOptionTable);
+  runOperationTable(it, resolvedLayoutTable);
+  runOperationTable(it, defaultLayoutTable);
+  runOperationTable(it, catalogTable);
+  runOperationTable(it, terminalActionTable);
   runOperationTable(it, shortcutDraftTable);
-  runOperationTable(it, shiftLibraryTable);
   runOperationTable(it, parsedStateTable);
-  runOperationTable(it, profileStateParseTable);
+  runOperationTable(it, profileTable);
   runOperationTable(it, profileNameTable);
-  runOperationTable(it, profileSelectionTable);
-  runOperationTable(it, profileCreationTable);
-  runOperationTable(it, profileDuplicationTable);
-  runOperationTable(it, profileDeletionTable);
-  runOperationTable(it, profileLinkTable);
 });

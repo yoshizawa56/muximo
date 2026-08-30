@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   applyCustomKeyboardDrop,
+  assignedKeyIds,
   isCustomKeyboardShortcutDraftValid,
-  selectedButtonsFromIds,
+  keysFromIds,
+  removeKeyFromLayout,
+  resolveCustomKeyboardLayout,
   toggleCustomKeyboardModifier,
 } from "./policy";
 import { type CustomKeyboardStorage, createCustomKeyboardStorage } from "./storage";
@@ -31,7 +34,7 @@ export type CustomKeyboardNativeAction = "pick-photo" | "capture-photo" | "scan-
 
 export type CustomKeyboardNativeFileAction = Extract<CustomKeyboardNativeAction, "pick-photo" | "capture-photo">;
 
-export type CustomKeyboardButtonCategory = "abc" | "123" | "special" | "shortcuts";
+export type CustomKeyboardKeyCategory = "abc" | "123" | "special" | "shortcuts";
 
 export type CustomKeyboardIcon =
   | "escape"
@@ -79,6 +82,7 @@ export type CustomKeyboardIcon =
   | "share"
   | "clipboard"
   | "keyboard"
+  | "settings"
   | "globe"
   | "flashlight"
   | "phone"
@@ -92,29 +96,80 @@ export type CustomKeyboardIcon =
 
 export type CustomKeyboardIconCategory = "terminal" | "symbols" | "actions" | "device";
 
-export type CustomKeyboardButton = {
+export type CustomKeyboardKeyActivation =
+  | {
+      type: "sequence";
+      sequence: CustomKeyboardSequence;
+    }
+  | {
+      type: "modifier";
+      modifier: CustomKeyboardModifier;
+    }
+  | {
+      type: "native";
+      action: CustomKeyboardNativeAction;
+    }
+  | {
+      type: "terminal";
+      action: CustomKeyboardTerminalAction;
+    }
+  | {
+      type: "directional-flick";
+    }
+  | {
+      type: "surface";
+      surface: CustomKeyboardSurfaceId;
+    };
+
+export type CustomKeyboardSurfaceId = "clipboard" | "profile";
+
+export type CustomKeyboardKey = {
   id: string;
-  kind: "key" | "modifier" | "shortcut";
-  category: CustomKeyboardButtonCategory;
+  category: CustomKeyboardKeyCategory;
   icon?: CustomKeyboardIcon;
   label?: string;
   accessibleLabel: string;
-  sequence: CustomKeyboardSequence;
-  modifier?: CustomKeyboardModifier;
-  interaction?: "directional-flick";
-  nativeAction?: CustomKeyboardNativeAction;
-  terminalAction?: CustomKeyboardTerminalAction;
+  activation: CustomKeyboardKeyActivation;
+};
+
+export type CustomKeyboardLayoutPlacement = {
+  keyId: string;
+  density: "regular" | "compact";
+  flexGrow?: number;
+};
+
+export type CustomKeyboardLayoutRow = {
+  id: string;
+  overflow: "scroll" | "stable";
+  placements: CustomKeyboardLayoutPlacement[];
+};
+
+export type CustomKeyboardLayout = {
+  rows: CustomKeyboardLayoutRow[];
+};
+
+export type CustomKeyboardResolvedLayoutItem = CustomKeyboardLayoutPlacement & {
+  key: CustomKeyboardKey;
+};
+
+export type CustomKeyboardResolvedLayoutRow = Omit<CustomKeyboardLayoutRow, "placements"> & {
+  items: CustomKeyboardResolvedLayoutItem[];
 };
 
 export type CustomKeyboardProfile = {
   id: string;
   name: string;
   icon: CustomKeyboardIcon;
-  selectedButtonIds: string[];
-  libraryButtons: CustomKeyboardButton[];
-  shortcutButtonIds: string[];
+  layout: CustomKeyboardLayout;
+  libraryKeys: CustomKeyboardKey[];
+  shortcutKeyIds: string[];
   repeatStartDelayMs: number;
   repeatIntervalMs: number;
+};
+
+export type CustomKeyboardSurfaceViewModel = {
+  id: CustomKeyboardSurfaceId;
+  keys: readonly CustomKeyboardKey[];
 };
 
 export type CustomKeyboardProfileSummary = {
@@ -127,14 +182,16 @@ export type CustomKeyboardProfileSummary = {
 export type CustomKeyboardDragCollection = "keyboard" | "library" | "shortcut-library";
 
 export type CustomKeyboardDragSource = {
-  buttonId: string;
+  keyId: string;
   collection: CustomKeyboardDragCollection;
+  rowId?: string;
 };
 
 export type CustomKeyboardDropTarget =
   | {
       type: "keyboard";
-      targetButtonId: string | null;
+      rowId: string;
+      targetKeyId: string | null;
     }
   | {
       type: "shortcut-library";
@@ -149,8 +206,8 @@ export type CustomKeyboardShortcutDraft = {
 export type CustomKeyboardFlickDirection = "up" | "down" | "left" | "right";
 
 export type CustomKeyboardViewModel = {
-  buttons: readonly CustomKeyboardButton[];
-  fixedButtons: readonly CustomKeyboardButton[];
+  rows: readonly CustomKeyboardResolvedLayoutRow[];
+  surfaces: readonly CustomKeyboardSurfaceViewModel[];
   activeModifiers: readonly CustomKeyboardModifier[];
   nativeKeyboardVisible: boolean;
   activeProfile: CustomKeyboardProfileSummary;
@@ -159,24 +216,22 @@ export type CustomKeyboardViewModel = {
   repeatStartDelayMs: number;
   repeatIntervalMs: number;
   onSelectProfile: (profileId: string) => void;
-  onButtonPress: (button: CustomKeyboardButton) => void;
+  onActivateKey: (key: CustomKeyboardKey) => void;
   onDirectionalFlick: (direction: CustomKeyboardFlickDirection) => void;
-  onNativeAction: (action: CustomKeyboardNativeAction) => void;
-  onTerminalAction: (action: CustomKeyboardTerminalAction) => void;
   onNativeFileSelected: (action: CustomKeyboardNativeFileAction, file: File) => void;
   onKeepNativeKeyboardOpen: () => void;
   onToggleNativeKeyboard: () => void;
 };
 
 export type CustomKeyboardSettingsViewModel = {
-  buttons: readonly CustomKeyboardButton[];
-  availableButtons: readonly CustomKeyboardButton[];
-  shortcutButtons: readonly CustomKeyboardButton[];
+  rows: readonly CustomKeyboardResolvedLayoutRow[];
+  availableKeys: readonly CustomKeyboardKey[];
+  shortcutKeys: readonly CustomKeyboardKey[];
   activeProfile: CustomKeyboardProfileSummary;
   profiles: readonly CustomKeyboardProfileSummary[];
   linkedProfileIds: readonly string[];
   workspaceId: string | null;
-  selectedButtonIds: readonly string[];
+  assignedKeyIds: readonly string[];
   repeatStartDelayMs: number;
   repeatIntervalMs: number;
   onSelectProfile: (profileId: string) => void;
@@ -187,10 +242,10 @@ export type CustomKeyboardSettingsViewModel = {
   onSetProfileIcon: (profileId: string, icon: CustomKeyboardIcon) => void;
   onToggleProfileLink: (profileId: string) => void;
   onDrop: (source: CustomKeyboardDragSource, target: CustomKeyboardDropTarget) => void;
-  onRemoveButton: (buttonId: string) => void;
+  onRemoveKey: (keyId: string) => void;
   onRegisterShortcut: (draft: CustomKeyboardShortcutDraft) => void;
-  onUpdateShortcut: (buttonId: string, draft: CustomKeyboardShortcutDraft) => void;
-  onDeleteShortcut: (buttonId: string) => void;
+  onUpdateShortcut: (keyId: string, draft: CustomKeyboardShortcutDraft) => void;
+  onDeleteShortcut: (keyId: string) => void;
   onRepeatStartDelayChange: (startDelayMs: number) => void;
   onRepeatIntervalChange: (intervalMs: number) => void;
 };
@@ -268,6 +323,7 @@ export const customKeyboardIconOptions: readonly {
   { value: "share", glyph: "↗", label: "Share", category: "device" },
   { value: "clipboard", glyph: "▣", label: "Clipboard", category: "device" },
   { value: "keyboard", glyph: "⌨", label: "Keyboard", category: "device" },
+  { value: "settings", glyph: "⚙", label: "Settings", category: "device" },
   { value: "globe", glyph: "◎", label: "Globe", category: "device" },
   { value: "flashlight", glyph: "☼", label: "Flashlight", category: "device" },
   { value: "phone", glyph: "☎", label: "Phone", category: "device" },
@@ -355,64 +411,103 @@ export const customKeyboardTerminalActionOptions: readonly CustomKeyboardTermina
   },
 ];
 
-function specialKeyButton(id: string): CustomKeyboardButton {
+function specialKeyButton(id: string): CustomKeyboardKey {
   const definition = customKeyboardSpecialKeyOptions.find((candidate) => candidate.id === id);
   if (!definition) throw new Error(`Unknown special key: ${id}`);
   return {
     id: definition.id,
-    kind: "key",
     category: "special",
     icon: definition.icon,
     label: definition.label,
     accessibleLabel: definition.accessibleLabel,
-    sequence: keySequence(definition.key),
+    activation: { type: "sequence", sequence: keySequence(definition.key) },
   };
 }
 
-function specialModifierButton(id: string): CustomKeyboardButton {
+function specialModifierButton(id: string): CustomKeyboardKey {
   const definition = customKeyboardSpecialModifierOptions.find((candidate) => candidate.id === id);
   if (!definition) throw new Error(`Unknown special modifier: ${id}`);
   return {
     id: definition.id,
-    kind: "modifier",
     category: "special",
     icon: definition.icon,
     label: definition.label,
     accessibleLabel: definition.accessibleLabel,
-    sequence: [],
-    modifier: definition.modifier,
+    activation: { type: "modifier", modifier: definition.modifier },
   };
 }
 
-function terminalActionButton(id: string): CustomKeyboardButton {
+function terminalActionButton(id: string): CustomKeyboardKey {
   const definition = customKeyboardTerminalActionOptions.find((candidate) => candidate.id === id);
   if (!definition) throw new Error(`Unknown terminal action: ${id}`);
   return {
     id: definition.id,
-    kind: "key",
     category: "special",
     icon: definition.icon,
     label: definition.label,
     accessibleLabel: definition.accessibleLabel,
-    sequence: [],
-    terminalAction: definition.action,
+    activation: { type: "terminal", action: definition.action },
   };
 }
 
-export const defaultCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
+const customKeyboardSurfaceKeys: readonly CustomKeyboardKey[] = [
+  {
+    id: "clipboard-surface",
+    category: "special",
+    icon: "clipboard",
+    label: "CLIP",
+    accessibleLabel: "Open copy and paste actions",
+    activation: { type: "surface", surface: "clipboard" },
+  },
+  {
+    id: "toggle-standard-keyboard",
+    category: "special",
+    icon: "keyboard",
+    label: "KEYBOARD",
+    accessibleLabel: "Show or hide the standard keyboard",
+    activation: { type: "native", action: "toggle-standard-keyboard" },
+  },
+  {
+    id: "profile-surface",
+    category: "special",
+    icon: "settings",
+    label: "PROFILE",
+    accessibleLabel: "Open custom keyboard profiles and settings",
+    activation: { type: "surface", surface: "profile" },
+  },
+];
+
+const nativeCustomKeyboardKeys: readonly CustomKeyboardKey[] = [
+  {
+    id: "camera",
+    category: "special",
+    icon: "camera",
+    label: "CAM",
+    accessibleLabel: "Open camera",
+    activation: { type: "native", action: "capture-photo" },
+  },
+  {
+    id: "photo-library",
+    category: "special",
+    icon: "plus",
+    label: "ADD",
+    accessibleLabel: "Add image",
+    activation: { type: "native", action: "pick-photo" },
+  },
+];
+
+export const defaultCustomKeyboardKeys: readonly CustomKeyboardKey[] = [
   specialKeyButton("escape"),
   specialKeyButton("tab"),
   specialKeyButton("enter"),
   specialKeyButton("delete"),
   {
     id: "directional-flick",
-    kind: "key",
     category: "special",
     icon: "directional-flick",
     label: "Arrows",
     accessibleLabel: "Arrow pad",
-    sequence: [],
-    interaction: "directional-flick",
+    activation: { type: "directional-flick" },
   },
   specialModifierButton("ctrl"),
   specialModifierButton("alt"),
@@ -421,74 +516,67 @@ export const defaultCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
   terminalActionButton("paste-tmux-buffer"),
   {
     id: "slash",
-    kind: "key",
     category: "123",
     icon: "slash",
     accessibleLabel: "Slash",
-    sequence: textSequence("/"),
+    activation: { type: "sequence", sequence: textSequence("/") },
   },
   {
     id: "exclamation",
-    kind: "key",
     category: "123",
     icon: "number",
     label: "!",
     accessibleLabel: "Exclamation mark",
-    sequence: textSequence("!"),
+    activation: { type: "sequence", sequence: textSequence("!") },
   },
   {
     id: "double-quote",
-    kind: "key",
     category: "123",
     icon: "quote",
     accessibleLabel: "Double quote",
-    sequence: textSequence('"'),
+    activation: { type: "sequence", sequence: textSequence('"') },
   },
   {
     id: "apostrophe",
-    kind: "key",
     category: "123",
     icon: "apostrophe",
     accessibleLabel: "Apostrophe",
-    sequence: textSequence("'"),
+    activation: { type: "sequence", sequence: textSequence("'") },
   },
   {
     id: "pipe",
-    kind: "key",
     category: "123",
     icon: "pipe",
     accessibleLabel: "Pipe",
-    sequence: textSequence("|"),
+    activation: { type: "sequence", sequence: textSequence("|") },
   },
   {
     id: "tilde",
-    kind: "key",
     category: "123",
     icon: "tilde",
     accessibleLabel: "Tilde",
-    sequence: textSequence("~"),
+    activation: { type: "sequence", sequence: textSequence("~") },
   },
   {
     id: "at",
-    kind: "key",
     category: "123",
     icon: "at",
     accessibleLabel: "At sign",
-    sequence: textSequence("@"),
+    activation: { type: "sequence", sequence: textSequence("@") },
   },
+  ...customKeyboardSurfaceKeys,
 ];
 
-const alphabetCustomKeyboardButtons: readonly CustomKeyboardButton[] = [..."qwertyuiopasdfghjklzxcvbnm"].map((key) => ({
+const alphabetCustomKeyboardKeys: readonly CustomKeyboardKey[] = [..."qwertyuiopasdfghjklzxcvbnm"].map((key) => ({
   id: `letter-${key}`,
-  kind: "key",
   category: "abc",
   icon: "letter",
   label: key,
   accessibleLabel: `Letter ${key.toUpperCase()}`,
-  sequence: [keyToken(key)],
+  activation: { type: "sequence", sequence: [keyToken(key)] },
 }));
 
-const numberCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
+const numberCustomKeyboardKeys: readonly CustomKeyboardKey[] = [
   "1",
   "2",
   "3",
@@ -520,15 +608,14 @@ const numberCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
   '"',
 ].map((value) => ({
   id: `number-${value}`,
-  kind: "key",
   category: "123",
   icon: "number",
   label: value,
   accessibleLabel: `Key ${value}`,
-  sequence: [textToken(value)],
+  activation: { type: "sequence", sequence: [textToken(value)] },
 }));
 
-const numberSymbolCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
+const numberSymbolCustomKeyboardKeys: readonly CustomKeyboardKey[] = [
   ["left-bracket", "[", "Left bracket"],
   ["right-bracket", "]", "Right bracket"],
   ["left-brace", "{", "Left brace"],
@@ -545,98 +632,93 @@ const numberSymbolCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
   ["bullet", "•", "Bullet"],
 ].map(([id, value, accessibleLabel]) => ({
   id: `number-${id}`,
-  kind: "key",
   category: "123",
   icon: "number",
   label: value,
   accessibleLabel,
-  sequence: [textToken(value)],
+  activation: { type: "sequence", sequence: [textToken(value)] },
 }));
 
-const nativeCustomKeyboardButtons: readonly CustomKeyboardButton[] = [
-  {
-    id: "camera",
-    kind: "key",
-    category: "special",
-    icon: "camera",
-    label: "CAM",
-    accessibleLabel: "Open camera",
-    sequence: [],
-    nativeAction: "capture-photo",
-  },
-  {
-    id: "photo-library",
-    kind: "key",
-    category: "special",
-    icon: "plus",
-    label: "ADD",
-    accessibleLabel: "Add image",
-    sequence: [],
-    nativeAction: "pick-photo",
-  },
-];
-
-const builtInShortcutButtons: readonly CustomKeyboardButton[] = [
+const builtInShortcutKeys: readonly CustomKeyboardKey[] = [
   {
     id: "git-status",
-    kind: "shortcut",
     category: "shortcuts",
     icon: "branch",
     accessibleLabel: "Git status shortcut",
-    sequence: [textToken("git status"), keyToken("Enter")],
+    activation: { type: "sequence", sequence: [textToken("git status"), keyToken("Enter")] },
   },
   {
     id: "npm-test",
-    kind: "shortcut",
     category: "shortcuts",
     icon: "bolt",
     accessibleLabel: "Run Bun test shortcut",
-    sequence: [textToken("bun test"), keyToken("Enter")],
+    activation: { type: "sequence", sequence: [textToken("bun test"), keyToken("Enter")] },
   },
   {
     id: "clear-screen",
-    kind: "shortcut",
     category: "shortcuts",
     icon: "terminal",
     accessibleLabel: "Clear terminal shortcut",
-    sequence: [textToken("clear"), keyToken("Enter")],
+    activation: { type: "sequence", sequence: [textToken("clear"), keyToken("Enter")] },
   },
 ];
 
-const shiftCustomKeyboardButton = { ...specialModifierButton("shift"), category: "abc" as const };
+const shiftCustomKeyboardKey = { ...specialModifierButton("shift"), category: "abc" as const };
 
-export const customKeyboardButtonLibrary: readonly CustomKeyboardButton[] = uniqueButtons([
-  ...defaultCustomKeyboardButtons,
-  shiftCustomKeyboardButton,
-  ...alphabetCustomKeyboardButtons,
-  ...numberCustomKeyboardButtons,
-  ...numberSymbolCustomKeyboardButtons,
+export const customKeyboardKeyLibrary: readonly CustomKeyboardKey[] = uniqueKeys([
+  ...defaultCustomKeyboardKeys,
+  shiftCustomKeyboardKey,
+  ...alphabetCustomKeyboardKeys,
+  ...numberCustomKeyboardKeys,
+  ...numberSymbolCustomKeyboardKeys,
   ...customKeyboardSpecialKeyOptions.map((definition) => specialKeyButton(definition.id)),
   ...customKeyboardSpecialModifierOptions
     .filter((definition) => definition.id !== "shift")
     .map((definition) => specialModifierButton(definition.id)),
   ...customKeyboardTerminalActionOptions.map((definition) => terminalActionButton(definition.id)),
-  ...nativeCustomKeyboardButtons,
-  ...builtInShortcutButtons,
+  ...nativeCustomKeyboardKeys,
+  ...builtInShortcutKeys,
 ]);
 
-export const customKeyboardFixedButtonIds = [
+export const customKeyboardSurfaceDefinitions: readonly {
+  id: CustomKeyboardSurfaceId;
+  keyIds: readonly string[];
+}[] = [
+  { id: "clipboard", keyIds: ["copy-mode", "paste-clipboard", "paste-tmux-buffer"] },
+  { id: "profile", keyIds: [] },
+];
+
+const defaultUtilityKeyIds = new Set([
   "photo-library",
-  "copy-mode",
-  "paste-clipboard",
-  "paste-tmux-buffer",
+  "clipboard-surface",
+  "toggle-standard-keyboard",
   "directional-flick",
-] as const;
+  "profile-surface",
+]);
+const defaultSurfaceActionKeyIds = new Set(["copy-mode", "paste-clipboard", "paste-tmux-buffer"]);
 
-const customKeyboardFixedButtonIdSet = new Set<string>(customKeyboardFixedButtonIds);
-
-export const customKeyboardFixedButtons: readonly CustomKeyboardButton[] = customKeyboardFixedButtonIds.flatMap(
-  (buttonId) => customKeyboardButtonLibrary.filter((button) => button.id === buttonId),
-);
-
-export function isCustomKeyboardFixedButton(buttonId: string): boolean {
-  return customKeyboardFixedButtonIdSet.has(buttonId);
-}
+export const defaultCustomKeyboardLayout: CustomKeyboardLayout = {
+  rows: [
+    {
+      id: "main",
+      overflow: "scroll",
+      placements: defaultCustomKeyboardKeys
+        .filter((key) => !defaultUtilityKeyIds.has(key.id) && !defaultSurfaceActionKeyIds.has(key.id))
+        .map((key) => ({ keyId: key.id, density: "regular" as const })),
+    },
+    {
+      id: "utility",
+      overflow: "stable",
+      placements: [
+        { keyId: "photo-library", density: "compact" },
+        { keyId: "clipboard-surface", density: "compact" },
+        { keyId: "toggle-standard-keyboard", density: "compact", flexGrow: 1 },
+        { keyId: "directional-flick", density: "compact" },
+        { keyId: "profile-surface", density: "compact" },
+      ],
+    },
+  ],
+};
 
 type StoredCustomKeyboardState = {
   version?: unknown;
@@ -644,6 +726,9 @@ type StoredCustomKeyboardState = {
   workspaceProfileIds?: unknown;
   activeProfileIdsByWorkspace?: unknown;
   globalActiveProfileId?: unknown;
+  layout?: unknown;
+  libraryKeys?: unknown;
+  shortcutKeyIds?: unknown;
   selectedButtonIds?: unknown;
   libraryButtons?: unknown;
   shortcutButtonIds?: unknown;
@@ -660,7 +745,7 @@ export type CustomKeyboardState = {
   globalActiveProfileId: string;
 };
 
-const CUSTOM_KEYBOARD_STATE_VERSION = 2;
+const CUSTOM_KEYBOARD_STATE_VERSION = 3;
 const CUSTOM_KEYBOARD_PROFILE_NAME_MAX_LENGTH = 40;
 
 export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOptions): CustomKeyboardController {
@@ -794,18 +879,37 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     [options.workspaceId, updateActiveModifiers],
   );
 
-  const onButtonPress = useCallback(
-    (button: CustomKeyboardButton) => {
-      const modifier = button.modifier;
+  const onToggleNativeKeyboard = useCallback(() => {
+    options.onNativeKeyboardToggle();
+  }, [options.onNativeKeyboardToggle]);
+
+  const onActivateKey = useCallback(
+    (key: CustomKeyboardKey) => {
+      const activation = key.activation;
+      if (activation.type === "surface" || activation.type === "directional-flick") return;
+      const modifier = activation.type === "modifier" ? activation.modifier : null;
       if (modifier) {
         updateActiveModifiers(toggleCustomKeyboardModifier(activeModifiersRef.current, modifier));
         return;
       }
       const modifiers = activeModifiersRef.current;
       updateActiveModifiers([]);
-      options.onSequence(button.sequence, modifiers);
+      if (activation.type === "sequence") {
+        options.onSequence(activation.sequence, modifiers);
+      } else if (activation.type === "native") {
+        if (activation.action === "toggle-standard-keyboard") onToggleNativeKeyboard();
+        options.onNativeAction?.(activation.action);
+      } else if (activation.type === "terminal") {
+        options.onTerminalAction(activation.action);
+      }
     },
-    [options.onSequence, updateActiveModifiers],
+    [
+      onToggleNativeKeyboard,
+      options.onNativeAction,
+      options.onSequence,
+      options.onTerminalAction,
+      updateActiveModifiers,
+    ],
   );
 
   const onDirectionalFlick = useCallback(
@@ -817,30 +921,9 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     [options.onKeyEffect, options.onSequence, updateActiveModifiers],
   );
 
-  const onToggleNativeKeyboard = useCallback(() => {
-    options.onNativeKeyboardToggle();
-  }, [options.onNativeKeyboardToggle]);
-
   const onKeepNativeKeyboardOpen = useCallback(() => {
     options.onKeepNativeKeyboardOpen?.();
   }, [options.onKeepNativeKeyboardOpen]);
-
-  const onNativeAction = useCallback(
-    (action: CustomKeyboardNativeAction) => {
-      updateActiveModifiers([]);
-      if (action === "toggle-standard-keyboard") onToggleNativeKeyboard();
-      options.onNativeAction?.(action);
-    },
-    [onToggleNativeKeyboard, options.onNativeAction, updateActiveModifiers],
-  );
-
-  const onTerminalAction = useCallback(
-    (action: CustomKeyboardTerminalAction) => {
-      updateActiveModifiers([]);
-      options.onTerminalAction(action);
-    },
-    [options.onTerminalAction, updateActiveModifiers],
-  );
 
   const onDrop = useCallback(
     (source: CustomKeyboardDragSource, target: CustomKeyboardDropTarget) => {
@@ -849,16 +932,19 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
           (profile) => profile.id === resolveActiveProfileId(current, options.workspaceId),
         );
         if (!currentProfile) return current;
-        const sourceButton = currentProfile.libraryButtons.find((button) => button.id === source.buttonId);
-        if (!sourceButton) return current;
-        if (isCustomKeyboardFixedButton(source.buttonId)) return current;
-        if (source.collection === "shortcut-library" && sourceButton.kind !== "shortcut") return current;
+        const sourceKey = currentProfile.libraryKeys.find((key) => key.id === source.keyId);
+        if (!sourceKey) return current;
+        if (source.collection === "shortcut-library" && sourceKey.category !== "shortcuts") return current;
         return updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => {
-          const next = applyCustomKeyboardDrop(profile, source, target);
+          const next = applyCustomKeyboardDrop(
+            { layout: profile.layout, shortcutKeyIds: profile.shortcutKeyIds },
+            source,
+            target,
+          );
           return {
             ...profile,
-            selectedButtonIds: [...next.selectedButtonIds].filter((buttonId) => !isCustomKeyboardFixedButton(buttonId)),
-            shortcutButtonIds: [...next.shortcutButtonIds],
+            layout: next.layout,
+            shortcutKeyIds: [...next.shortcutKeyIds],
           };
         });
       });
@@ -866,13 +952,12 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     [options.workspaceId],
   );
 
-  const onRemoveButton = useCallback(
-    (buttonId: string) => {
-      if (isCustomKeyboardFixedButton(buttonId)) return;
+  const onRemoveKey = useCallback(
+    (keyId: string) => {
       setState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
-          selectedButtonIds: profile.selectedButtonIds.filter((id) => id !== buttonId),
+          layout: removeKeyFromLayout(profile.layout, keyId),
         })),
       );
     },
@@ -884,19 +969,19 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
       if (!isCustomKeyboardShortcutDraftValid(draft)) return;
       setState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => {
-          const id = nextShortcutId(profile.libraryButtons);
+          const id = nextShortcutId(profile.libraryKeys);
           const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
-          const shortcut: CustomKeyboardButton = {
+          const shortcut: CustomKeyboardKey = {
             id,
-            kind: "shortcut",
             category: "shortcuts",
+            icon: draft.icon,
             accessibleLabel: `${iconLabel} shortcut`,
-            ...draft,
+            activation: { type: "sequence", sequence: draft.sequence },
           };
           return {
             ...profile,
-            libraryButtons: [...profile.libraryButtons, shortcut],
-            shortcutButtonIds: [...profile.shortcutButtonIds, shortcut.id],
+            libraryKeys: [...profile.libraryKeys, shortcut],
+            shortcutKeyIds: [...profile.shortcutKeyIds, shortcut.id],
           };
         }),
       );
@@ -905,17 +990,22 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
   );
 
   const onUpdateShortcut = useCallback(
-    (buttonId: string, draft: CustomKeyboardShortcutDraft) => {
+    (keyId: string, draft: CustomKeyboardShortcutDraft) => {
       if (!isCustomKeyboardShortcutDraftValid(draft)) return;
       const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
-      const update = (button: CustomKeyboardButton): CustomKeyboardButton =>
-        button.id === buttonId
-          ? { ...button, icon: draft.icon, sequence: draft.sequence, accessibleLabel: `${iconLabel} shortcut` }
-          : button;
+      const update = (key: CustomKeyboardKey): CustomKeyboardKey =>
+        key.id === keyId
+          ? {
+              ...key,
+              icon: draft.icon,
+              accessibleLabel: `${iconLabel} shortcut`,
+              activation: { type: "sequence", sequence: draft.sequence },
+            }
+          : key;
       setState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
-          libraryButtons: profile.libraryButtons.map(update),
+          libraryKeys: profile.libraryKeys.map(update),
         })),
       );
     },
@@ -923,40 +1013,44 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
   );
 
   const onDeleteShortcut = useCallback(
-    (buttonId: string) => {
+    (keyId: string) => {
       setState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
-          selectedButtonIds: profile.selectedButtonIds.filter((id) => id !== buttonId),
-          libraryButtons: profile.libraryButtons.filter((button) => button.id !== buttonId),
-          shortcutButtonIds: profile.shortcutButtonIds.filter((id) => id !== buttonId),
+          layout: removeKeyFromLayout(profile.layout, keyId),
+          libraryKeys: profile.libraryKeys.filter((key) => key.id !== keyId),
+          shortcutKeyIds: profile.shortcutKeyIds.filter((id) => id !== keyId),
         })),
       );
     },
     [options.workspaceId],
   );
 
-  const buttons = useMemo(
+  const rows = useMemo(
+    () => resolveCustomKeyboardLayout(activeProfile.layout, activeProfile.libraryKeys),
+    [activeProfile],
+  );
+  const surfaces = useMemo(
     () =>
-      selectedButtonsFromIds(activeProfile.selectedButtonIds, activeProfile.libraryButtons).filter(
-        (button) => !isCustomKeyboardFixedButton(button.id),
-      ),
+      customKeyboardSurfaceDefinitions.map((surface) => ({
+        id: surface.id,
+        keys: keysFromIds(surface.keyIds, activeProfile.libraryKeys),
+      })),
+    [activeProfile.libraryKeys],
+  );
+  const shortcutKeys = useMemo(
+    () => keysFromIds(activeProfile.shortcutKeyIds, activeProfile.libraryKeys),
     [activeProfile],
   );
-  const shortcutButtons = useMemo(
-    () => selectedButtonsFromIds(activeProfile.shortcutButtonIds, activeProfile.libraryButtons),
-    [activeProfile],
-  );
-  const availableButtons = useMemo(() => {
-    const selectedButtonIds = new Set(activeProfile.selectedButtonIds);
-    return activeProfile.libraryButtons.filter(
-      (candidate) => !selectedButtonIds.has(candidate.id) && !isCustomKeyboardFixedButton(candidate.id),
-    );
-  }, [activeProfile]);
+  const assignedIds = useMemo(() => assignedKeyIds(activeProfile.layout), [activeProfile.layout]);
+  const availableKeys = useMemo(() => {
+    const assigned = new Set(assignedIds);
+    return activeProfile.libraryKeys.filter((candidate) => !assigned.has(candidate.id));
+  }, [activeProfile.libraryKeys, assignedIds]);
 
   const keyboard: CustomKeyboardViewModel = {
-    buttons,
-    fixedButtons: customKeyboardFixedButtons,
+    rows,
+    surfaces,
     activeModifiers,
     nativeKeyboardVisible: options.nativeKeyboardVisible,
     activeProfile: activeProfileSummary,
@@ -965,24 +1059,22 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     repeatStartDelayMs: activeProfile.repeatStartDelayMs,
     repeatIntervalMs: activeProfile.repeatIntervalMs,
     onSelectProfile,
-    onButtonPress,
+    onActivateKey,
     onDirectionalFlick,
-    onNativeAction,
-    onTerminalAction,
     onNativeFileSelected: (action, file) => options.onNativeFileSelected?.(action, file),
     onKeepNativeKeyboardOpen,
     onToggleNativeKeyboard,
   };
 
   const settings: CustomKeyboardSettingsViewModel = {
-    buttons,
-    availableButtons,
-    shortcutButtons,
+    rows,
+    availableKeys,
+    shortcutKeys,
     activeProfile: activeProfileSummary,
     profiles: profileSummaries,
     linkedProfileIds,
     workspaceId: options.workspaceId,
-    selectedButtonIds: activeProfile.selectedButtonIds,
+    assignedKeyIds: assignedIds,
     repeatStartDelayMs: activeProfile.repeatStartDelayMs,
     repeatIntervalMs: activeProfile.repeatIntervalMs,
     onSelectProfile,
@@ -993,7 +1085,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     onSetProfileIcon,
     onToggleProfileLink,
     onDrop,
-    onRemoveButton,
+    onRemoveKey,
     onRegisterShortcut,
     onUpdateShortcut,
     onDeleteShortcut,
@@ -1044,17 +1136,17 @@ function textToken(value: string): CustomKeyboardSequenceToken {
   return { type: "text", value };
 }
 
-function uniqueButtons(buttons: readonly CustomKeyboardButton[]): CustomKeyboardButton[] {
-  return [...new Map(buttons.map((button) => [button.id, button] as const)).values()];
+function uniqueKeys(keys: readonly CustomKeyboardKey[]): CustomKeyboardKey[] {
+  return [...new Map(keys.map((key) => [key.id, key] as const)).values()];
 }
 
 function uniqueIds(ids: readonly string[]): string[] {
   return [...new Set(ids)];
 }
 
-function nextShortcutId(buttons: readonly CustomKeyboardButton[]): string {
-  const existingIds = new Set(buttons.map((button) => button.id));
-  let index = buttons.length + 1;
+function nextShortcutId(keys: readonly CustomKeyboardKey[]): string {
+  const existingIds = new Set(keys.map((key) => key.id));
+  let index = keys.length + 1;
   while (existingIds.has(`custom-shortcut-${index}`)) index += 1;
   return `custom-shortcut-${index}`;
 }
@@ -1087,13 +1179,9 @@ function createDefaultCustomKeyboardProfile(): CustomKeyboardProfile {
     id: DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID,
     name: "Default",
     icon: "terminal",
-    libraryButtons: [...customKeyboardButtonLibrary],
-    selectedButtonIds: defaultCustomKeyboardButtons
-      .map((button) => button.id)
-      .filter((buttonId) => !isCustomKeyboardFixedButton(buttonId)),
-    shortcutButtonIds: customKeyboardButtonLibrary
-      .filter((button) => button.kind === "shortcut")
-      .map((button) => button.id),
+    layout: cloneCustomKeyboardLayout(defaultCustomKeyboardLayout),
+    libraryKeys: [...customKeyboardKeyLibrary],
+    shortcutKeyIds: customKeyboardKeyLibrary.filter((key) => key.category === "shortcuts").map((key) => key.id),
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
   };
@@ -1106,6 +1194,7 @@ export function parseCustomKeyboardState(raw: string | null): CustomKeyboardStat
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed)) return fallback;
     if (parsed.version === CUSTOM_KEYBOARD_STATE_VERSION) return parseVersionedCustomKeyboardState(parsed, fallback);
+    if (parsed.version === 2) return migrateVersionTwoCustomKeyboardState(parsed, fallback);
     return migrateLegacyCustomKeyboardState(parsed, fallback);
   } catch {
     return fallback;
@@ -1131,28 +1220,59 @@ function parseVersionedCustomKeyboardState(
   return { profiles, workspaceProfileIds, activeProfileIdsByWorkspace, globalActiveProfileId };
 }
 
+function migrateVersionTwoCustomKeyboardState(
+  parsed: StoredCustomKeyboardState,
+  fallback: CustomKeyboardState,
+): CustomKeyboardState {
+  const profiles = Array.isArray(parsed.profiles)
+    ? parsed.profiles.flatMap((candidate) => {
+        if (!isRecord(candidate)) return [];
+        const legacyKeys = validLegacyKeyArray(candidate.libraryButtons) ?? [];
+        const libraryKeys = legacyKeys.flatMap(convertLegacyKey);
+        const selectedKeyIds = validStringArray(candidate.selectedButtonIds) ?? undefined;
+        const shortcutKeyIds = validStringArray(candidate.shortcutButtonIds);
+        return [
+          {
+            ...candidate,
+            libraryKeys,
+            layout: legacyLayout(selectedKeyIds, libraryKeys),
+            shortcutKeyIds:
+              shortcutKeyIds ?? libraryKeys.filter((key) => key.category === "shortcuts").map((key) => key.id),
+          },
+        ];
+      })
+    : [];
+  return parseVersionedCustomKeyboardState(
+    {
+      ...parsed,
+      version: CUSTOM_KEYBOARD_STATE_VERSION,
+      profiles,
+    },
+    fallback,
+  );
+}
+
 function migrateLegacyCustomKeyboardState(
   parsed: StoredCustomKeyboardState,
   fallback: CustomKeyboardState,
 ): CustomKeyboardState {
-  const legacyButtons = validButtonArray(parsed.buttons);
-  const storedLibraryButtons = validButtonArray(parsed.libraryButtons);
-  const legacyShortcutButtons = validButtonArray(parsed.shortcutButtons)?.filter(
-    (button) => button.kind === "shortcut",
+  const legacyButtons = validLegacyKeyArray(parsed.buttons) ?? [];
+  const storedLibraryButtons = validLegacyKeyArray(parsed.libraryButtons) ?? [];
+  const legacyShortcutButtons = (validLegacyKeyArray(parsed.shortcutButtons) ?? []).filter(
+    (key) => key.kind === "shortcut",
   );
+  const libraryKeys = [...storedLibraryButtons, ...legacyButtons, ...legacyShortcutButtons].flatMap(convertLegacyKey);
+  const selectedKeyIds = validStringArray(parsed.selectedButtonIds) ?? legacyButtons.map((key) => key.id);
   const profile = normalizeProfile({
     id: DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID,
     name: "Default",
     icon: "terminal",
-    libraryButtons: [...(storedLibraryButtons ?? []), ...(legacyButtons ?? [])],
-    selectedButtonIds:
-      validStringArray(parsed.selectedButtonIds) ??
-      legacyButtons?.map((button) => button.id) ??
-      fallback.profiles[0]?.selectedButtonIds,
-    shortcutButtonIds:
+    libraryKeys,
+    layout: legacyLayout(selectedKeyIds, libraryKeys),
+    shortcutKeyIds:
       validStringArray(parsed.shortcutButtonIds) ??
-      legacyShortcutButtons?.map((button) => button.id) ??
-      fallback.profiles[0]?.shortcutButtonIds,
+      legacyShortcutButtons.map((key) => key.id) ??
+      fallback.profiles[0]?.shortcutKeyIds,
     repeatStartDelayMs: parsed.repeatStartDelayMs,
     repeatIntervalMs: parsed.repeatIntervalMs,
   });
@@ -1182,38 +1302,113 @@ function normalizeProfile(value: unknown): CustomKeyboardProfile | null {
   const name = isDefault ? "Default" : typeof value.name === "string" ? value.name.trim() : "";
   if (!isDefault && !isCustomKeyboardProfileNameValid(name)) return null;
   const icon = isDefault ? "terminal" : (validProfileIcon(value.icon) ?? "terminal");
-  const storedLibraryButtons = validButtonArray(value.libraryButtons) ?? [];
-  const builtInButtonIds = new Set(customKeyboardButtonLibrary.map((button) => button.id));
-  const libraryButtons = uniqueButtons([
-    ...customKeyboardButtonLibrary,
-    ...storedLibraryButtons.filter((button) => !builtInButtonIds.has(button.id)),
+  const storedLibraryKeys = validKeyArray(value.libraryKeys) ?? [];
+  const builtInKeyIds = new Set(customKeyboardKeyLibrary.map((key) => key.id));
+  const libraryKeys = uniqueKeys([
+    ...customKeyboardKeyLibrary,
+    ...storedLibraryKeys.filter((key) => !builtInKeyIds.has(key.id)),
   ]);
-  const defaultSelectedButtonIds = defaultCustomKeyboardButtons
-    .map((button) => button.id)
-    .filter((buttonId) => !isCustomKeyboardFixedButton(buttonId));
-  const selectedButtonIds = uniqueIds(
-    (validStringArray(value.selectedButtonIds) ?? defaultSelectedButtonIds).filter(
-      (buttonId) => !isCustomKeyboardFixedButton(buttonId) && libraryButtons.some((button) => button.id === buttonId),
-    ),
-  );
-  const defaultShortcutButtonIds = libraryButtons
-    .filter((button) => button.kind === "shortcut")
-    .map((button) => button.id);
-  const shortcutButtonIds = uniqueIds(
-    (validStringArray(value.shortcutButtonIds) ?? defaultShortcutButtonIds).filter((buttonId) =>
-      libraryButtons.some((button) => button.id === buttonId && button.kind === "shortcut"),
+  const layout = normalizeLayout(value.layout, libraryKeys);
+  const defaultShortcutKeyIds = libraryKeys.filter((key) => key.category === "shortcuts").map((key) => key.id);
+  const shortcutKeyIds = uniqueIds(
+    (validStringArray(value.shortcutKeyIds) ?? defaultShortcutKeyIds).filter((keyId) =>
+      libraryKeys.some((key) => key.id === keyId && key.category === "shortcuts"),
     ),
   );
   return {
     id: value.id,
     name: isDefault ? "Default" : name,
     icon,
-    libraryButtons,
-    selectedButtonIds,
-    shortcutButtonIds,
+    layout,
+    libraryKeys,
+    shortcutKeyIds,
     repeatStartDelayMs: validNumber(value.repeatStartDelayMs, 200, 1200, 420),
     repeatIntervalMs: validNumber(value.repeatIntervalMs, 80, 600, 180),
   };
+}
+
+function legacyLayout(
+  selectedKeyIds: readonly string[] | undefined,
+  libraryKeys: readonly CustomKeyboardKey[],
+): CustomKeyboardLayout {
+  const libraryKeyIds = new Set(libraryKeys.map((key) => key.id));
+  const mainKeyIds = selectedKeyIds
+    ? uniqueIds(selectedKeyIds.filter((keyId) => libraryKeyIds.has(keyId)))
+    : (cloneCustomKeyboardLayout(defaultCustomKeyboardLayout).rows[0]?.placements.map((placement) => placement.keyId) ??
+      []);
+  const defaultLayout = cloneCustomKeyboardLayout(defaultCustomKeyboardLayout);
+  const utilityRow = defaultLayout.rows.find((row) => row.id === "utility");
+  return {
+    rows: [
+      {
+        id: "main",
+        overflow: "scroll",
+        placements: mainKeyIds.map((keyId) => ({ keyId, density: "regular" as const })),
+      },
+      {
+        id: "utility",
+        overflow: "stable",
+        placements: utilityRow?.placements.map((placement) => ({ ...placement })) ?? [],
+      },
+    ],
+  };
+}
+
+function normalizeLayout(value: unknown, libraryKeys: readonly CustomKeyboardKey[]): CustomKeyboardLayout {
+  if (!isRecord(value) || !Array.isArray(value.rows)) return cloneCustomKeyboardLayout(defaultCustomKeyboardLayout);
+  const libraryKeyIds = new Set(libraryKeys.map((key) => key.id));
+  const usedKeyIds = new Set<string>();
+  const usedRowIds = new Set<string>();
+  const rows: CustomKeyboardLayoutRow[] = value.rows.flatMap((candidate) => {
+    if (!isRecord(candidate) || typeof candidate.id !== "string" || candidate.id.trim().length === 0) return [];
+    if (usedRowIds.has(candidate.id) || !Array.isArray(candidate.placements)) return [];
+    const overflow = candidate.overflow === "stable" || candidate.overflow === "scroll" ? candidate.overflow : null;
+    if (!overflow) return [];
+    usedRowIds.add(candidate.id);
+    const placements: CustomKeyboardLayoutPlacement[] = candidate.placements.flatMap((placement) => {
+      if (!isRecord(placement) || typeof placement.keyId !== "string" || !libraryKeyIds.has(placement.keyId)) {
+        return [];
+      }
+      if (usedKeyIds.has(placement.keyId)) return [];
+      const density = placement.density === "compact" || placement.density === "regular" ? placement.density : null;
+      if (!density) return [];
+      const flexGrow = validFlexGrow(placement.flexGrow);
+      usedKeyIds.add(placement.keyId);
+      return [
+        {
+          keyId: placement.keyId,
+          density: density as "compact" | "regular",
+          ...(flexGrow === undefined ? {} : { flexGrow }),
+        },
+      ];
+    });
+    return [{ id: candidate.id, overflow: overflow as "scroll" | "stable", placements }];
+  });
+  return rows.length > 0 ? { rows } : cloneCustomKeyboardLayout(defaultCustomKeyboardLayout);
+}
+
+function cloneCustomKeyboardLayout(layout: CustomKeyboardLayout): CustomKeyboardLayout {
+  return {
+    rows: layout.rows.map((row) => ({
+      ...row,
+      placements: row.placements.map((placement) => ({ ...placement })),
+    })),
+  };
+}
+
+function cloneCustomKeyboardKey(key: CustomKeyboardKey): CustomKeyboardKey {
+  const activation = key.activation;
+  return {
+    ...key,
+    activation:
+      activation.type === "sequence"
+        ? { type: "sequence", sequence: activation.sequence.map((token) => ({ ...token })) }
+        : { ...activation },
+  };
+}
+
+function validFlexGrow(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 8 ? value : undefined;
 }
 
 function normalizeWorkspaceProfileIds(value: unknown, profileIds: ReadonlySet<string>): Record<string, string[]> {
@@ -1328,9 +1523,9 @@ export function duplicateCustomKeyboardProfile(
     ...source,
     id: nextProfileId(state.profiles),
     name: nextDuplicateProfileName(source.name, state.profiles),
-    libraryButtons: source.libraryButtons.map((button) => ({ ...button, sequence: [...button.sequence] })),
-    selectedButtonIds: [...source.selectedButtonIds],
-    shortcutButtonIds: [...source.shortcutButtonIds],
+    libraryKeys: source.libraryKeys.map((key) => cloneCustomKeyboardKey(key)),
+    layout: cloneCustomKeyboardLayout(source.layout),
+    shortcutKeyIds: [...source.shortcutKeyIds],
   };
   return selectCustomKeyboardProfile({ ...state, profiles: [...state.profiles, profile] }, workspaceId, profile.id);
 }
@@ -1418,11 +1613,25 @@ function validStringArray(value: unknown): string[] | null {
   return value.filter((candidate): candidate is string => typeof candidate === "string");
 }
 
-function validButtonArray(value: unknown): CustomKeyboardButton[] | null {
+type StoredLegacyCustomKeyboardKey = {
+  id: string;
+  kind: "key" | "modifier" | "shortcut";
+  category: CustomKeyboardKeyCategory;
+  icon?: CustomKeyboardIcon;
+  label?: string;
+  accessibleLabel: string;
+  sequence: CustomKeyboardSequence;
+  modifier?: CustomKeyboardModifier;
+  interaction?: "directional-flick";
+  nativeAction?: CustomKeyboardNativeAction;
+  terminalAction?: CustomKeyboardTerminalAction;
+};
+
+function validLegacyKeyArray(value: unknown): StoredLegacyCustomKeyboardKey[] | null {
   if (!Array.isArray(value)) return null;
-  return value.filter((button): button is CustomKeyboardButton => {
-    if (!button || typeof button !== "object") return false;
-    const candidate = button as Partial<CustomKeyboardButton>;
+  return value.filter((key): key is StoredLegacyCustomKeyboardKey => {
+    if (!key || typeof key !== "object") return false;
+    const candidate = key as Partial<StoredLegacyCustomKeyboardKey>;
     const sequence = validSequence(candidate.sequence);
     return (
       typeof candidate.id === "string" &&
@@ -1441,6 +1650,69 @@ function validButtonArray(value: unknown): CustomKeyboardButton[] | null {
       sequence !== null
     );
   });
+}
+
+function convertLegacyKey(key: StoredLegacyCustomKeyboardKey): CustomKeyboardKey[] {
+  const activation =
+    key.modifier !== undefined
+      ? { type: "modifier" as const, modifier: key.modifier }
+      : key.interaction === "directional-flick"
+        ? { type: "directional-flick" as const }
+        : key.nativeAction !== undefined
+          ? { type: "native" as const, action: key.nativeAction }
+          : key.terminalAction !== undefined
+            ? { type: "terminal" as const, action: key.terminalAction }
+            : { type: "sequence" as const, sequence: key.sequence };
+  return [
+    {
+      id: key.id,
+      category: key.category,
+      icon: key.icon,
+      label: key.label,
+      accessibleLabel: key.accessibleLabel,
+      activation,
+    },
+  ];
+}
+
+function validKeyArray(value: unknown): CustomKeyboardKey[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((key): key is CustomKeyboardKey => {
+    if (!isRecord(key)) return false;
+    if (
+      typeof key.id !== "string" ||
+      (key.category !== "abc" &&
+        key.category !== "123" &&
+        key.category !== "special" &&
+        key.category !== "shortcuts") ||
+      typeof key.accessibleLabel !== "string" ||
+      (key.icon !== undefined && !isCustomKeyboardIcon(key.icon)) ||
+      (key.label !== undefined && typeof key.label !== "string") ||
+      !isRecord(key.activation)
+    ) {
+      return false;
+    }
+    return validKeyActivation(key.activation);
+  });
+}
+
+function validKeyActivation(value: Record<string, unknown>): value is CustomKeyboardKey["activation"] {
+  switch (value.type) {
+    case "sequence":
+      return validSequence(value.sequence) !== null;
+    case "modifier":
+      return isCustomKeyboardModifier(value.modifier);
+    case "native":
+      return isCustomKeyboardNativeAction(value.action);
+    case "terminal":
+      return isCustomKeyboardTerminalAction(value.action);
+    case "directional-flick":
+      return Object.keys(value).length === 1;
+    case "surface":
+      return value.surface === "clipboard" || value.surface === "profile";
+    default:
+      return false;
+  }
 }
 
 function validSequence(value: unknown): CustomKeyboardSequence | null {

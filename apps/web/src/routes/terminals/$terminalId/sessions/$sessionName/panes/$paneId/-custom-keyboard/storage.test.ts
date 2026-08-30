@@ -14,6 +14,7 @@ import {
   type CustomKeyboardStorage,
   createCustomKeyboardStorage,
   LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY,
+  PREVIOUS_CUSTOM_KEYBOARD_STORAGE_KEY,
 } from "./storage";
 
 type LegacyStorage = {
@@ -47,17 +48,23 @@ type WriteContext = {
 function createStorageFixture(
   options: {
     preferenceValue?: string;
+    preferenceKey?: string;
     legacyValue?: string;
+    legacyKey?: string;
     failPreferenceGet?: boolean;
     failPreferenceSet?: boolean;
   } = {},
 ): FixtureHandle<StorageFixture> {
   const preferenceValues = new Map<string, string>();
-  if (options.preferenceValue !== undefined) preferenceValues.set(CUSTOM_KEYBOARD_STORAGE_KEY, options.preferenceValue);
+  if (options.preferenceValue !== undefined) {
+    preferenceValues.set(options.preferenceKey ?? CUSTOM_KEYBOARD_STORAGE_KEY, options.preferenceValue);
+  }
   const preferenceGetKeys: string[] = [];
   const preferenceSetValues: string[] = [];
   const legacyValues = new Map<string, string>();
-  if (options.legacyValue !== undefined) legacyValues.set(LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY, options.legacyValue);
+  if (options.legacyValue !== undefined) {
+    legacyValues.set(options.legacyKey ?? LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY, options.legacyValue);
+  }
   const legacyStorage: LegacyStorage = {
     values: legacyValues,
     getItem: (key) => legacyValues.get(key) ?? null,
@@ -93,7 +100,7 @@ function createStorageFixture(
   };
 }
 
-type ReadFixtureKey = "current" | "legacy" | "empty";
+type ReadFixtureKey = "current" | "legacy" | "previous-preferences" | "empty";
 const readCases = [
   {
     name: "reads the current Preferences value without touching legacy storage",
@@ -117,6 +124,19 @@ const readCases = [
     ],
   },
   {
+    name: "migrates the previous Preferences value into the current storage key",
+    fixture: "previous-preferences",
+    input: {},
+    assert: [
+      returns<ReadContext, string | null>("previous-value"),
+      hasObserved<ReadContext, string | null>("preferenceGetKeys", [
+        CUSTOM_KEYBOARD_STORAGE_KEY,
+        PREVIOUS_CUSTOM_KEYBOARD_STORAGE_KEY,
+      ]),
+      hasObserved<ReadContext, string | null>("preferenceSetValues", ["previous-value"]),
+    ],
+  },
+  {
     name: "returns null when neither storage has a value",
     fixture: "empty",
     input: {},
@@ -129,6 +149,11 @@ const readTable: OperationTable<StorageFixture, ReadFixtureKey, {}, string | nul
   fixtures: {
     current: () => createStorageFixture({ preferenceValue: "current-value", legacyValue: "legacy-value" }),
     legacy: () => createStorageFixture({ legacyValue: "legacy-value" }),
+    "previous-preferences": () =>
+      createStorageFixture({
+        preferenceKey: PREVIOUS_CUSTOM_KEYBOARD_STORAGE_KEY,
+        preferenceValue: "previous-value",
+      }),
     empty: () => createStorageFixture(),
   },
   cases: readCases,

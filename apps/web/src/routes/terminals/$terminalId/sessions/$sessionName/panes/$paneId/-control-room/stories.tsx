@@ -2,12 +2,13 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { storyPanes } from "../../../../../../-story-fixtures";
+import { keysFromIds, resolveCustomKeyboardLayout } from "../-custom-keyboard/policy";
 import {
   type CustomKeyboardSettingsViewModel,
   type CustomKeyboardViewModel,
-  customKeyboardFixedButtons,
-  defaultCustomKeyboardButtons,
-  isCustomKeyboardFixedButton,
+  customKeyboardKeyLibrary,
+  customKeyboardSurfaceDefinitions,
+  defaultCustomKeyboardLayout,
 } from "../-custom-keyboard/viewmodel";
 import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
 import type { PaneViewModel } from "../-terminal/viewmodel";
@@ -54,9 +55,13 @@ function createTerminal(overrides: Partial<PaneViewModel> = {}): PaneViewModel {
 }
 
 function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): CustomKeyboardViewModel {
+  const rows = resolveCustomKeyboardLayout(defaultCustomKeyboardLayout, customKeyboardKeyLibrary);
   return {
-    buttons: defaultCustomKeyboardButtons.filter((button) => !isCustomKeyboardFixedButton(button.id)),
-    fixedButtons: customKeyboardFixedButtons,
+    rows,
+    surfaces: customKeyboardSurfaceDefinitions.map((surface) => ({
+      id: surface.id,
+      keys: keysFromIds(surface.keyIds, customKeyboardKeyLibrary),
+    })),
     activeModifiers: [],
     nativeKeyboardVisible: false,
     activeProfile: { id: "default", name: "Default", icon: "terminal", linked: true },
@@ -65,10 +70,8 @@ function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): Custo
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
     onSelectProfile: fn(),
-    onButtonPress: fn(),
+    onActivateKey: fn(),
     onDirectionalFlick: fn(),
-    onNativeAction: fn(),
-    onTerminalAction: fn(),
     onNativeFileSelected: fn(),
     onKeepNativeKeyboardOpen: fn(),
     onToggleNativeKeyboard: fn(),
@@ -77,15 +80,21 @@ function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): Custo
 }
 
 function createKeyboardSettings(): CustomKeyboardSettingsViewModel {
+  const rows = resolveCustomKeyboardLayout(defaultCustomKeyboardLayout, customKeyboardKeyLibrary);
+  const assignedKeyIds = rows.flatMap((row) => row.items.map((item) => item.key.id));
+  const assigned = new Set(assignedKeyIds);
   return {
-    buttons: defaultCustomKeyboardButtons.filter((button) => !isCustomKeyboardFixedButton(button.id)),
-    availableButtons: [],
-    shortcutButtons: [],
+    rows,
+    availableKeys: customKeyboardKeyLibrary.filter((key) => !assigned.has(key.id)),
+    shortcutKeys: keysFromIds(
+      customKeyboardKeyLibrary.filter((key) => key.category === "shortcuts").map((key) => key.id),
+      customKeyboardKeyLibrary,
+    ),
     activeProfile: { id: "default", name: "Default", icon: "terminal", linked: true },
     profiles: [{ id: "default", name: "Default", icon: "terminal", linked: true }],
     linkedProfileIds: [],
     workspaceId: "muximo",
-    selectedButtonIds: [],
+    assignedKeyIds,
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
     onSelectProfile: fn(),
@@ -96,7 +105,7 @@ function createKeyboardSettings(): CustomKeyboardSettingsViewModel {
     onSetProfileIcon: fn(),
     onToggleProfileLink: fn(),
     onDrop: fn(),
-    onRemoveButton: fn(),
+    onRemoveKey: fn(),
     onRegisterShortcut: fn(),
     onUpdateShortcut: fn(),
     onDeleteShortcut: fn(),

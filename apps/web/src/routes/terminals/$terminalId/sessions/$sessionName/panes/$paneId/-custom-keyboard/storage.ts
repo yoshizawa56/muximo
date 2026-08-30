@@ -1,6 +1,7 @@
 import { Preferences, type PreferencesPlugin } from "@capacitor/preferences";
 
-export const CUSTOM_KEYBOARD_STORAGE_KEY = "muximo.custom-keyboard.v2";
+export const CUSTOM_KEYBOARD_STORAGE_KEY = "muximo.custom-keyboard.v3";
+export const PREVIOUS_CUSTOM_KEYBOARD_STORAGE_KEY = "muximo.custom-keyboard.v2";
 export const LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY = "muximo.custom-keyboard.v1";
 
 type LegacyStorage = Pick<Storage, "getItem" | "removeItem" | "setItem">;
@@ -20,20 +21,25 @@ export function createCustomKeyboardStorage(
       const currentPreferenceValue = await readPreferenceValue(preferences, CUSTOM_KEYBOARD_STORAGE_KEY);
       if (currentPreferenceValue !== null) return currentPreferenceValue;
 
-      const legacyPreferenceValue = await readPreferenceValue(preferences, LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY);
-      if (legacyPreferenceValue !== null) {
-        await migratePreferenceValue(preferences, legacyPreferenceValue);
-        return legacyPreferenceValue;
+      for (const legacyKey of [PREVIOUS_CUSTOM_KEYBOARD_STORAGE_KEY, LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY]) {
+        const legacyPreferenceValue = await readPreferenceValue(preferences, legacyKey);
+        if (legacyPreferenceValue !== null) {
+          await migratePreferenceValue(preferences, legacyKey, legacyPreferenceValue);
+          return legacyPreferenceValue;
+        }
       }
 
       const currentBrowserValue = readLegacyValue(legacyStorage, CUSTOM_KEYBOARD_STORAGE_KEY);
       if (currentBrowserValue !== null) return currentBrowserValue;
 
-      const legacyBrowserValue = readLegacyValue(legacyStorage, LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY);
-      if (legacyBrowserValue === null) return null;
-
-      await migrateBrowserValue(preferences, legacyStorage, legacyBrowserValue);
-      return legacyBrowserValue;
+      for (const legacyKey of [PREVIOUS_CUSTOM_KEYBOARD_STORAGE_KEY, LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY]) {
+        const legacyBrowserValue = readLegacyValue(legacyStorage, legacyKey);
+        if (legacyBrowserValue !== null) {
+          await migrateBrowserValue(preferences, legacyStorage, legacyKey, legacyBrowserValue);
+          return legacyBrowserValue;
+        }
+      }
+      return null;
     },
     async write(value) {
       try {
@@ -57,10 +63,10 @@ async function readPreferenceValue(preferences: PreferencesStore, key: string): 
   }
 }
 
-async function migratePreferenceValue(preferences: PreferencesStore, value: string): Promise<void> {
+async function migratePreferenceValue(preferences: PreferencesStore, sourceKey: string, value: string): Promise<void> {
   try {
     await preferences.set({ key: CUSTOM_KEYBOARD_STORAGE_KEY, value });
-    await preferences.remove({ key: LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY });
+    await preferences.remove({ key: sourceKey });
   } catch {
     // Keep the legacy value available when migration cannot be completed yet.
   }
@@ -69,15 +75,16 @@ async function migratePreferenceValue(preferences: PreferencesStore, value: stri
 async function migrateBrowserValue(
   preferences: PreferencesStore,
   storage: LegacyStorage | undefined,
+  sourceKey: string,
   value: string,
 ): Promise<void> {
   try {
     await preferences.set({ key: CUSTOM_KEYBOARD_STORAGE_KEY, value });
-    storage?.removeItem(LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY);
+    storage?.removeItem(sourceKey);
   } catch {
     try {
       storage?.setItem(CUSTOM_KEYBOARD_STORAGE_KEY, value);
-      storage?.removeItem(LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY);
+      storage?.removeItem(sourceKey);
     } catch {
       // Storage may be unavailable in private browsing or an embedded webview.
     }

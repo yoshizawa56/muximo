@@ -1,5 +1,6 @@
 import {
   type ChangeEvent,
+  type CSSProperties,
   type DragEvent,
   Fragment,
   type KeyboardEvent,
@@ -23,13 +24,13 @@ import {
 } from "./layout";
 import { isCustomKeyboardShortcutDraftValid } from "./policy";
 import {
-  type CustomKeyboardButton,
-  type CustomKeyboardButtonCategory,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
   type CustomKeyboardFlickDirection,
   type CustomKeyboardIcon,
   type CustomKeyboardIconCategory,
+  type CustomKeyboardKey,
+  type CustomKeyboardKeyCategory,
   type CustomKeyboardModifier,
   type CustomKeyboardNativeFileAction,
   type CustomKeyboardSequence,
@@ -50,12 +51,13 @@ type ShortcutDropIndicator = {
 };
 
 type PointerDragState = {
-  buttonId: string;
+  keyId: string;
   source: CustomKeyboardDragSource;
   startX: number;
   startY: number;
   started: boolean;
-  targetButtonId: string | null;
+  targetRowId: string | null;
+  targetKeyId: string | null;
   targetIndex: number | null;
   overPreview: boolean;
 };
@@ -139,26 +141,22 @@ export function CustomKeyboardView({
     input.click();
   }, []);
 
-  const onButtonPress = useCallback(
-    (button: CustomKeyboardButton) => {
-      const nativeAction = button.nativeAction;
-      if (nativeAction) {
-        viewModel.onNativeAction(nativeAction);
-        if (nativeAction === "pick-photo" || nativeAction === "capture-photo") {
-          openNativeFilePicker(nativeAction);
-        }
+  const onKeyPress = useCallback(
+    (key: CustomKeyboardKey, element?: HTMLElement) => {
+      if (key.activation.type === "surface") {
+        if (!element) return;
+        togglePopover(key.activation.surface, element);
         return;
       }
-
-      const terminalAction = button.terminalAction;
-      if (terminalAction) {
-        viewModel.onTerminalAction(terminalAction);
-        return;
+      viewModel.onActivateKey(key);
+      if (
+        key.activation.type === "native" &&
+        (key.activation.action === "pick-photo" || key.activation.action === "capture-photo")
+      ) {
+        openNativeFilePicker(key.activation.action);
       }
-
-      viewModel.onButtonPress(button);
     },
-    [openNativeFilePicker, viewModel],
+    [openNativeFilePicker, togglePopover, viewModel],
   );
 
   const onNativeFileChange = useCallback(
@@ -178,10 +176,8 @@ export function CustomKeyboardView({
       <div className="relative flex min-h-0 flex-1 flex-col">{children}</div>
       <CustomKeyboardBar
         viewModel={viewModel}
-        onButtonPress={onButtonPress}
-        onOpenProfilePicker={(anchor) => togglePopover("profile", anchor)}
+        onKeyPress={onKeyPress}
         profilePickerOpen={openPopover?.kind === "profile"}
-        onOpenClipboardMenu={(anchor) => togglePopover("clipboard", anchor)}
         clipboardMenuOpen={openPopover?.kind === "clipboard"}
         clipboardMenuAnchor={openPopover?.kind === "clipboard" ? openPopover.anchor : undefined}
         clipboardHistory={clipboardHistory}
@@ -225,11 +221,9 @@ export function CustomKeyboardView({
 
 export function CustomKeyboardBar({
   viewModel,
-  onButtonPress = viewModel.onButtonPress,
+  onKeyPress = (key) => viewModel.onActivateKey(key),
   onKeepNativeKeyboardOpen = viewModel.onKeepNativeKeyboardOpen,
-  onOpenProfilePicker,
   profilePickerOpen,
-  onOpenClipboardMenu,
   clipboardMenuOpen,
   clipboardMenuAnchor,
   clipboardHistory,
@@ -237,31 +231,17 @@ export function CustomKeyboardBar({
   onClosePopover,
 }: {
   viewModel: CustomKeyboardViewModel;
-  onButtonPress?: (button: CustomKeyboardButton) => void;
+  onKeyPress?: (key: CustomKeyboardKey, element?: HTMLElement) => void;
   onKeepNativeKeyboardOpen?: () => void;
-  onOpenProfilePicker: (anchor: HTMLElement) => void;
   profilePickerOpen: boolean;
-  onOpenClipboardMenu: (anchor: HTMLElement) => void;
   clipboardMenuOpen: boolean;
   clipboardMenuAnchor?: CustomKeyboardPopoverAnchor;
   clipboardHistory?: readonly CustomKeyboardClipboardHistoryEntry[];
   onClipboardHistorySelect?: (entry: CustomKeyboardClipboardHistoryEntry) => void;
   onClosePopover: () => void;
 }) {
-  const addImageButton = viewModel.fixedButtons.find((button) => button.id === "photo-library");
-  const copyButton = viewModel.fixedButtons.find((button) => button.id === "copy-mode");
-  const pasteButtons = viewModel.fixedButtons.filter(
-    (button) => button.id === "paste-clipboard" || button.id === "paste-tmux-buffer",
-  );
-  const arrowButton = viewModel.fixedButtons.find((button) => button.interaction === "directional-flick");
-  const commonFixedButtons = viewModel.fixedButtons.filter(
-    (button) =>
-      button.interaction !== "directional-flick" &&
-      button.id !== "photo-library" &&
-      button.id !== "copy-mode" &&
-      button.id !== "paste-clipboard" &&
-      button.id !== "paste-tmux-buffer",
-  );
+  const clipboardSurface = viewModel.surfaces.find((surface) => surface.id === "clipboard");
+  const clipboardKeys = clipboardSurface?.keys ?? [];
 
   return (
     <div
@@ -270,121 +250,84 @@ export function CustomKeyboardBar({
       aria-label="Custom terminal keyboard"
     >
       <div className="mx-auto flex min-w-0 max-w-[1560px] flex-col items-stretch gap-0.5">
-        <div className="min-w-0 overflow-x-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="flex min-w-max items-stretch gap-0.5">
-            {viewModel.buttons.map((button) => (
-              <CustomKeyboardButtonView
-                key={button.id}
-                button={button}
-                active={button.modifier ? viewModel.activeModifiers.includes(button.modifier) : false}
-                onPress={onButtonPress}
-                onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
-                onDirectionalFlick={viewModel.onDirectionalFlick}
-                repeatStartDelayMs={viewModel.repeatStartDelayMs}
-                repeatIntervalMs={viewModel.repeatIntervalMs}
-              />
-            ))}
-          </div>
-        </div>
-        <div className="custom-keyboard-fixed-row flex min-w-0 items-stretch gap-0.5 overflow-hidden">
-          {addImageButton ? (
-            <CustomKeyboardButtonView
-              button={addImageButton}
-              compact
-              active={false}
-              onPress={onButtonPress}
-              onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
-              onDirectionalFlick={viewModel.onDirectionalFlick}
-              repeatStartDelayMs={viewModel.repeatStartDelayMs}
-              repeatIntervalMs={viewModel.repeatIntervalMs}
-            />
-          ) : null}
-          <CustomKeyboardActionSurface
-            className="custom-keyboard-compact-button grid h-[34px] min-w-[34px] shrink-0 place-items-center rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1 text-[#91d89b] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
-            onPress={(element) => onOpenClipboardMenu(element)}
-            onInteractionStart={onKeepNativeKeyboardOpen}
-            preserveNativeKeyboardFocus
-            aria-haspopup="dialog"
-            aria-expanded={clipboardMenuOpen}
-            aria-label="Open copy and paste actions"
-            title="Open copy and paste actions"
-          >
-            <CustomKeyboardIconView icon="clipboard" size={16} />
-            <span className="text-[0.4rem] font-bold uppercase leading-none" aria-hidden="true">
-              clip
-            </span>
-          </CustomKeyboardActionSurface>
-          <CustomKeyboardActionSurface
-            className={`custom-keyboard-show-keyboard flex h-[34px] min-w-0 flex-1 items-center justify-center gap-1 rounded-[6px] border px-2 font-mono text-[0.52rem] font-bold uppercase tracking-[0.04em] transition-colors ${
-              viewModel.nativeKeyboardVisible
-                ? "border-[#78b7ff] bg-[#123052] text-[#a9d5ff]"
-                : "border-[#2a5c36] bg-[#0b2111] text-[#91d89b] hover:border-[#4f9e5e] hover:bg-[#12351a]"
-            }`}
-            onPress={viewModel.onToggleNativeKeyboard}
-            onInteractionStart={onKeepNativeKeyboardOpen}
-            preserveNativeKeyboardFocus
-            aria-pressed={viewModel.nativeKeyboardVisible}
-            aria-label={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
-            title={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
-          >
-            <CustomKeyboardIconView icon="keyboard" size={16} />
-            <span className="truncate">Keyboard</span>
-          </CustomKeyboardActionSurface>
-          <div className="flex min-w-0 shrink-0 items-stretch gap-0.5">
-            {commonFixedButtons.map((button) => (
-              <CustomKeyboardButtonView
-                key={button.id}
-                button={button}
-                compact
-                active={false}
-                onPress={onButtonPress}
-                onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
-                onDirectionalFlick={viewModel.onDirectionalFlick}
-                repeatStartDelayMs={viewModel.repeatStartDelayMs}
-                repeatIntervalMs={viewModel.repeatIntervalMs}
-              />
-            ))}
-            {arrowButton ? (
-              <CustomKeyboardButtonView
-                button={arrowButton}
-                compact
-                active={false}
-                onPress={onButtonPress}
-                onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
-                onDirectionalFlick={viewModel.onDirectionalFlick}
-                repeatStartDelayMs={viewModel.repeatStartDelayMs}
-                repeatIntervalMs={viewModel.repeatIntervalMs}
-              />
-            ) : null}
-            <CustomKeyboardActionSurface
-              className="custom-keyboard-compact-button grid size-[34px] place-items-center rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1 text-[#91d89b] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
-              onPress={(element) => onOpenProfilePicker(element)}
-              onInteractionStart={onKeepNativeKeyboardOpen}
-              preserveNativeKeyboardFocus
-              aria-haspopup="dialog"
-              aria-expanded={profilePickerOpen}
-              aria-label="Open custom keyboard settings"
-              title="Open custom keyboard settings"
-            >
-              <AppIcon name="settings" size={16} />
-            </CustomKeyboardActionSurface>
-          </div>
-        </div>
+        {viewModel.rows.map((row) => (
+          <CustomKeyboardLayoutRowView
+            key={row.id}
+            row={row}
+            viewModel={viewModel}
+            stableRow={row.overflow === "stable"}
+            onKeyPress={onKeyPress}
+            onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
+            profilePickerOpen={profilePickerOpen}
+            clipboardMenuOpen={clipboardMenuOpen}
+          />
+        ))}
       </div>
       {clipboardMenuOpen && clipboardMenuAnchor ? (
         <CustomKeyboardClipboardPicker
-          copyButton={copyButton}
-          pasteButtons={pasteButtons}
+          keys={clipboardKeys}
           history={clipboardHistory}
           anchor={clipboardMenuAnchor}
-          onSelect={(button) => {
-            onButtonPress(button);
+          onSelect={(key) => {
+            onKeyPress(key);
             onClosePopover();
           }}
           onHistorySelect={onClipboardHistorySelect}
           onClose={onClosePopover}
         />
       ) : null}
+    </div>
+  );
+}
+
+function CustomKeyboardLayoutRowView({
+  row,
+  viewModel,
+  stableRow,
+  onKeyPress,
+  onKeepNativeKeyboardOpen,
+  profilePickerOpen,
+  clipboardMenuOpen,
+}: {
+  row: CustomKeyboardViewModel["rows"][number];
+  viewModel: CustomKeyboardViewModel;
+  stableRow: boolean;
+  onKeyPress: (key: CustomKeyboardKey, element?: HTMLElement) => void;
+  onKeepNativeKeyboardOpen: () => void;
+  profilePickerOpen: boolean;
+  clipboardMenuOpen: boolean;
+}) {
+  const scrollable = row.overflow === "scroll";
+  return (
+    <div
+      className={`custom-keyboard-layout-row min-w-0 ${scrollable ? "overflow-x-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" : "w-full overflow-hidden"}`}
+      data-custom-keyboard-row={row.id}
+    >
+      <div className={`flex items-stretch gap-0.5 ${scrollable ? "min-w-max" : "w-full min-w-0"}`}>
+        {row.items.map((item) => (
+          <CustomKeyboardButtonView
+            key={item.key.id}
+            button={item.key}
+            compact={item.density === "compact"}
+            flexGrow={item.flexGrow}
+            stableRow={stableRow}
+            active={
+              item.key.activation.type === "modifier" &&
+              viewModel.activeModifiers.includes(item.key.activation.modifier)
+            }
+            nativeKeyboardVisible={viewModel.nativeKeyboardVisible}
+            surfaceOpen={
+              item.key.activation.type === "surface" &&
+              (item.key.activation.surface === "profile" ? profilePickerOpen : clipboardMenuOpen)
+            }
+            onPress={onKeyPress}
+            onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
+            onDirectionalFlick={viewModel.onDirectionalFlick}
+            repeatStartDelayMs={viewModel.repeatStartDelayMs}
+            repeatIntervalMs={viewModel.repeatIntervalMs}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -484,22 +427,26 @@ function CustomKeyboardPopoverFrame({
 }
 
 function CustomKeyboardClipboardPicker({
-  copyButton,
-  pasteButtons,
+  keys,
   history,
   anchor,
   onSelect,
   onHistorySelect,
   onClose,
 }: {
-  copyButton?: CustomKeyboardButton;
-  pasteButtons: readonly CustomKeyboardButton[];
+  keys: readonly CustomKeyboardKey[];
   history?: readonly CustomKeyboardClipboardHistoryEntry[];
   anchor: CustomKeyboardPopoverAnchor;
-  onSelect: (button: CustomKeyboardButton) => void;
+  onSelect: (key: CustomKeyboardKey) => void;
   onHistorySelect?: (entry: CustomKeyboardClipboardHistoryEntry) => void;
   onClose: () => void;
 }) {
+  const copyKey = keys.find((key) => key.activation.type === "terminal" && key.activation.action === "enter-copy-mode");
+  const pasteKeys = keys.filter(
+    (key) =>
+      key.activation.type === "terminal" &&
+      (key.activation.action === "paste-from-clipboard" || key.activation.action === "paste-from-tmux-buffer"),
+  );
   return (
     <CustomKeyboardPopoverFrame
       anchor={anchor}
@@ -526,21 +473,24 @@ function CustomKeyboardClipboardPicker({
       </header>
       <div className="min-h-0 overflow-y-auto p-2">
         <div className="grid gap-1">
-          {copyButton ? (
+          {copyKey ? (
             <ClipboardPopoverAction
-              button={copyButton}
+              key={copyKey.id}
+              button={copyKey}
               label="Copy mode"
               detail="Select text from the terminal"
               onSelect={onSelect}
             />
           ) : null}
-          {pasteButtons.map((button) => (
+          {pasteKeys.map((button) => (
             <ClipboardPopoverAction
               button={button}
               key={button.id}
               label={button.accessibleLabel}
               detail={
-                button.terminalAction === "paste-from-clipboard" ? "Use the device clipboard" : "Use the tmux buffer"
+                button.activation.type === "terminal" && button.activation.action === "paste-from-clipboard"
+                  ? "Use the device clipboard"
+                  : "Use the tmux buffer"
               }
               onSelect={onSelect}
             />
@@ -589,10 +539,10 @@ function ClipboardPopoverAction({
   detail,
   onSelect,
 }: {
-  button: CustomKeyboardButton;
+  button: CustomKeyboardKey;
   label: string;
   detail: string;
-  onSelect: (button: CustomKeyboardButton) => void;
+  onSelect: (button: CustomKeyboardKey) => void;
 }) {
   return (
     <CustomKeyboardActionSurface
@@ -704,6 +654,7 @@ function CustomKeyboardProfilePicker({
 
 function CustomKeyboardActionSurface({
   className,
+  style,
   children,
   onPress,
   onInteractionStart,
@@ -715,6 +666,7 @@ function CustomKeyboardActionSurface({
   "aria-expanded": ariaExpanded,
 }: {
   className: string;
+  style?: CSSProperties;
   children: ReactNode;
   onPress: (element: HTMLButtonElement) => void;
   onInteractionStart?: () => void;
@@ -728,6 +680,7 @@ function CustomKeyboardActionSurface({
   return (
     <button
       className={className}
+      style={style}
       type="button"
       onPointerDown={(event) => {
         event.preventDefault();
@@ -756,27 +709,37 @@ function CustomKeyboardActionSurface({
 function CustomKeyboardButtonView({
   button,
   compact = false,
+  flexGrow,
+  stableRow = false,
   active,
+  nativeKeyboardVisible = false,
+  surfaceOpen = false,
   onPress,
   onKeepNativeKeyboardOpen,
   onDirectionalFlick,
   repeatStartDelayMs,
   repeatIntervalMs,
 }: {
-  button: CustomKeyboardButton;
+  button: CustomKeyboardKey;
   compact?: boolean;
+  flexGrow?: number;
+  stableRow?: boolean;
   active: boolean;
-  onPress: (button: CustomKeyboardButton) => void;
+  nativeKeyboardVisible?: boolean;
+  surfaceOpen?: boolean;
+  onPress: (button: CustomKeyboardKey, element?: HTMLElement) => void;
   onKeepNativeKeyboardOpen: () => void;
   onDirectionalFlick: (direction: CustomKeyboardFlickDirection) => void;
   repeatStartDelayMs: number;
   repeatIntervalMs: number;
 }) {
-  if (button.interaction === "directional-flick") {
+  if (button.activation.type === "directional-flick") {
     return (
       <CustomKeyboardDirectionalFlickButtonView
         button={button}
         compact={compact}
+        flexGrow={flexGrow}
+        stableRow={stableRow}
         onDirection={onDirectionalFlick}
         onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
         repeatStartDelayMs={repeatStartDelayMs}
@@ -789,23 +752,42 @@ function CustomKeyboardButtonView({
   const showValueAsPrimary = valueLabel !== undefined;
   const icon = button.icon;
   const showIcon = icon !== undefined && (compact || !showValueAsPrimary);
-  const compactLabel = compactTerminalActionLabel(button);
+  const compactLabel = compact
+    ? (compactTerminalActionLabel(button) ?? button.label)
+    : compactTerminalActionLabel(button);
+  const isStandardKeyboardToggle =
+    button.activation.type === "native" && button.activation.action === "toggle-standard-keyboard";
+  const isFileAction =
+    button.activation.type === "native" &&
+    (button.activation.action === "pick-photo" || button.activation.action === "capture-photo");
+  const accessibleLabel = isStandardKeyboardToggle
+    ? nativeKeyboardVisible
+      ? "Hide standard keyboard"
+      : "Show standard keyboard"
+    : button.accessibleLabel;
 
   return (
     <CustomKeyboardActionSurface
-      className={`${compact ? "custom-keyboard-compact-button " : "custom-keyboard-key-button "}group relative flex h-[34px] shrink-0 flex-col items-center justify-center gap-0 overflow-hidden rounded-[6px] border px-1 font-mono transition-[border-color,background-color,transform] active:scale-[0.97] ${
-        active
-          ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd] shadow-[0_0_0_2px_rgb(139_255_154_/_14%)]"
-          : button.kind === "shortcut"
-            ? "border-[#315d88] bg-[#0d2237] text-[#a8d7ff] hover:border-[#5a9dd3] hover:bg-[#123452]"
-            : "border-[#245631] bg-[#0b1c0f] text-[#b3eebc] hover:border-[#4e9d5d] hover:bg-[#12351a]"
+      className={`${compact ? "custom-keyboard-compact-button " : "custom-keyboard-key-button "}group relative flex h-[34px] min-w-0 shrink-0 flex-col items-center justify-center gap-0 overflow-hidden rounded-[6px] border px-1 font-mono transition-[border-color,background-color,transform] active:scale-[0.97] ${
+        isStandardKeyboardToggle && nativeKeyboardVisible
+          ? "border-[#78b7ff] bg-[#123052] text-[#a9d5ff]"
+          : active || surfaceOpen
+            ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd] shadow-[0_0_0_2px_rgb(139_255_154_/_14%)]"
+            : button.category === "shortcuts"
+              ? "border-[#315d88] bg-[#0d2237] text-[#a8d7ff] hover:border-[#5a9dd3] hover:bg-[#123452]"
+              : "border-[#245631] bg-[#0b1c0f] text-[#b3eebc] hover:border-[#4e9d5d] hover:bg-[#12351a]"
       }`}
-      onPress={() => onPress(button)}
-      onInteractionStart={button.nativeAction ? undefined : onKeepNativeKeyboardOpen}
-      preserveNativeKeyboardFocus={!button.nativeAction}
-      aria-pressed={button.modifier ? active : undefined}
-      aria-label={button.accessibleLabel}
-      title={button.accessibleLabel}
+      style={customKeyboardKeyFlexStyle(flexGrow, stableRow)}
+      onPress={(element) => onPress(button, element)}
+      onInteractionStart={isFileAction ? undefined : onKeepNativeKeyboardOpen}
+      preserveNativeKeyboardFocus={!isFileAction}
+      aria-pressed={
+        button.activation.type === "modifier" ? active : isStandardKeyboardToggle ? nativeKeyboardVisible : undefined
+      }
+      aria-haspopup={button.activation.type === "surface" ? "dialog" : undefined}
+      aria-expanded={button.activation.type === "surface" ? surfaceOpen : undefined}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
     >
       {showIcon ? (
         <span
@@ -832,23 +814,34 @@ function CustomKeyboardButtonView({
       ) : !compact && displayLabel ? (
         <span className="max-w-[38px] truncate text-[0.4rem] font-bold leading-none">{displayLabel}</span>
       ) : null}
-      {button.kind === "shortcut" ? (
+      {button.category === "shortcuts" ? (
         <span className="absolute right-0.5 top-0.5 size-0.5 rounded-full bg-[#72c8ff] opacity-80" aria-hidden="true" />
       ) : null}
     </CustomKeyboardActionSurface>
   );
 }
 
+function customKeyboardKeyFlexStyle(flexGrow: number | undefined, stableRow: boolean): CSSProperties | undefined {
+  if (flexGrow !== undefined) {
+    return { flex: `${flexGrow} 1 0%`, width: "auto", minWidth: 0, maxWidth: "none" };
+  }
+  return stableRow ? { flex: "0 1 34px", minWidth: 0 } : undefined;
+}
+
 function CustomKeyboardDirectionalFlickButtonView({
   button,
   compact = false,
+  flexGrow,
+  stableRow = false,
   onDirection,
   onKeepNativeKeyboardOpen,
   repeatStartDelayMs,
   repeatIntervalMs,
 }: {
-  button: CustomKeyboardButton;
+  button: CustomKeyboardKey;
   compact?: boolean;
+  flexGrow?: number;
+  stableRow?: boolean;
   onDirection: (direction: CustomKeyboardFlickDirection) => void;
   onKeepNativeKeyboardOpen: () => void;
   repeatStartDelayMs: number;
@@ -876,7 +869,7 @@ function CustomKeyboardDirectionalFlickButtonView({
           ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd] shadow-[0_0_0_2px_rgb(139_255_154_/_14%)]"
           : "border-[#245631] bg-[#0b1c0f] text-[#b3eebc] hover:border-[#4e9d5d] hover:bg-[#12351a]"
       }`}
-      style={{ touchAction: "none" }}
+      style={{ ...customKeyboardKeyFlexStyle(flexGrow, stableRow), touchAction: "none" }}
       type="button"
       onPointerDown={(event) => {
         onKeepNativeKeyboardOpen();
@@ -953,9 +946,10 @@ export function CustomKeyboardSettingsView({
   const [draggedButtonId, setDraggedButtonId] = useState<string | null>(null);
   const [pointerDragPosition, setPointerDragPosition] = useState<PointerDragPosition | null>(null);
   const [dropTargetButtonId, setDropTargetButtonId] = useState<string | null>(null);
+  const [dropTargetRowId, setDropTargetRowId] = useState<string | null>(null);
   const [shortcutDropIndicator, setShortcutDropIndicator] = useState<ShortcutDropIndicator | null>(null);
   const [previewDropActive, setPreviewDropActive] = useState(false);
-  const [activeTab, setActiveTab] = useState<CustomKeyboardButtonCategory>("abc");
+  const [activeTab, setActiveTab] = useState<CustomKeyboardKeyCategory>("abc");
   const [abcShiftActive, setAbcShiftActive] = useState(false);
   const [numberShiftActive, setNumberShiftActive] = useState(false);
   const [showFlickSettings, setShowFlickSettings] = useState(false);
@@ -980,14 +974,17 @@ export function CustomKeyboardSettingsView({
   }, [activeProfile]);
 
   const addButton = useCallback(
-    (button: CustomKeyboardButton) => {
-      viewModel.onDrop({ buttonId: button.id, collection: "library" }, { type: "keyboard", targetButtonId: null });
+    (button: CustomKeyboardKey) => {
+      viewModel.onDrop(
+        { keyId: button.id, collection: "library" },
+        { type: "keyboard", rowId: viewModel.rows[0]?.id ?? "main", targetKeyId: null },
+      );
     },
     [viewModel],
   );
 
   const addButtonFromClick = useCallback(
-    (button: CustomKeyboardButton) => {
+    (button: CustomKeyboardKey) => {
       if (suppressClickRef.current) {
         suppressClickRef.current = false;
         return;
@@ -1001,6 +998,7 @@ export function CustomKeyboardSettingsView({
     setDraggedButtonId(null);
     setPointerDragPosition(null);
     setDropTargetButtonId(null);
+    setDropTargetRowId(null);
     setShortcutDropIndicator(null);
     setPreviewDropActive(false);
     dragSourceRef.current = null;
@@ -1009,7 +1007,8 @@ export function CustomKeyboardSettingsView({
   const commitDrop = useCallback(
     (
       source: CustomKeyboardDragSource,
-      targetButtonId: string | null,
+      targetRowId: string | null,
+      targetKeyId: string | null,
       targetIndex: number | null,
       overPreview: boolean,
     ) => {
@@ -1020,7 +1019,11 @@ export function CustomKeyboardSettingsView({
       const target: CustomKeyboardDropTarget =
         shortcutEditMode && activeTab === "shortcuts" && targetIndex !== null
           ? { type: "shortcut-library", targetIndex }
-          : { type: "keyboard", targetButtonId: targetButtonId ?? null };
+          : {
+              type: "keyboard",
+              rowId: targetRowId ?? viewModel.rows[0]?.id ?? "main",
+              targetKeyId: targetKeyId ?? null,
+            };
       viewModel.onDrop(source, target);
       resetDrag();
     },
@@ -1029,17 +1032,24 @@ export function CustomKeyboardSettingsView({
 
   const setDragSource = (event: DragEvent<HTMLElement>, source: CustomKeyboardDragSource) => {
     dragSourceRef.current = source;
-    setDraggedButtonId(source.buttonId);
+    setDraggedButtonId(source.keyId);
     setDropTargetButtonId(null);
+    setDropTargetRowId(null);
     setShortcutDropIndicator(null);
     setPreviewDropActive(false);
     event.dataTransfer.effectAllowed = "copyMove";
-    event.dataTransfer.setData("text/plain", source.buttonId);
+    event.dataTransfer.setData("text/plain", source.keyId);
     event.dataTransfer.setData("application/x-muximo-keyboard-collection", source.collection);
   };
 
-  const handleDrop = (event: DragEvent<HTMLElement>, targetButtonId?: string, targetIndex?: number) => {
+  const handleDrop = (
+    event: DragEvent<HTMLElement>,
+    targetKeyId?: string,
+    targetIndex?: number,
+    targetRowId?: string,
+  ) => {
     event.preventDefault();
+    event.stopPropagation();
     const sourceId = draggedButtonId ?? event.dataTransfer.getData("text/plain");
     if (!sourceId) {
       resetDrag();
@@ -1052,22 +1062,23 @@ export function CustomKeyboardSettingsView({
       ? collectionValue
       : shortcutEditMode && activeTab === "shortcuts"
         ? "shortcut-library"
-        : viewModel.selectedButtonIds.includes(sourceId)
+        : viewModel.assignedKeyIds.includes(sourceId)
           ? "keyboard"
           : "library";
-    const source = dragSourceRef.current ?? { buttonId: sourceId, collection };
-    commitDrop(source, targetButtonId ?? null, targetIndex ?? null, overPreview);
+    const source = dragSourceRef.current ?? { keyId: sourceId, collection };
+    commitDrop(source, targetRowId ?? null, targetKeyId ?? null, targetIndex ?? null, overPreview);
   };
 
   const beginPointerDrag = (event: ReactPointerEvent<HTMLElement>, source: CustomKeyboardDragSource) => {
     if (event.pointerType === "mouse") return;
     pointerDragRef.current = {
-      buttonId: source.buttonId,
+      keyId: source.keyId,
       source,
       startX: event.clientX,
       startY: event.clientY,
       started: false,
-      targetButtonId: null,
+      targetRowId: null,
+      targetKeyId: null,
       targetIndex: null,
       overPreview: false,
     };
@@ -1082,7 +1093,7 @@ export function CustomKeyboardSettingsView({
         const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
         if (distance < 8) return;
         drag.started = true;
-        setDraggedButtonId(drag.buttonId);
+        setDraggedButtonId(drag.keyId);
         dragSourceRef.current = drag.source;
         suppressClickRef.current = true;
       }
@@ -1090,17 +1101,21 @@ export function CustomKeyboardSettingsView({
       event.preventDefault();
       setPointerDragPosition({ x: event.clientX, y: event.clientY });
       const target = document.elementFromPoint(event.clientX, event.clientY);
-      const targetButtonId = target?.closest<HTMLElement>("[data-custom-keyboard-drop-target]")?.dataset
+      const targetKeyId = target?.closest<HTMLElement>("[data-custom-keyboard-drop-target]")?.dataset
         .customKeyboardDropTarget;
+      const targetRowId = target?.closest<HTMLElement>("[data-custom-keyboard-drop-row]")?.dataset
+        .customKeyboardDropRow;
       const targetIndexValue = target?.closest<HTMLElement>("[data-custom-keyboard-drop-index]")?.dataset
         .customKeyboardDropIndex;
       const targetIndex = targetIndexValue === undefined ? null : Number(targetIndexValue);
       const overPreview = Boolean(target?.closest<HTMLElement>('[data-custom-keyboard-drop-zone="preview"]'));
-      drag.targetButtonId = targetButtonId ?? null;
+      drag.targetRowId = targetRowId ?? null;
+      drag.targetKeyId = targetKeyId ?? null;
       drag.targetIndex =
         shortcutEditMode && activeTab === "shortcuts" && Number.isInteger(targetIndex) ? targetIndex : null;
       drag.overPreview = overPreview;
-      setDropTargetButtonId(targetButtonId ?? null);
+      setDropTargetButtonId(targetKeyId ?? null);
+      setDropTargetRowId(targetRowId ?? null);
       setShortcutDropIndicator(drag.targetIndex === null ? null : { index: drag.targetIndex });
       setPreviewDropActive(overPreview);
     };
@@ -1110,7 +1125,7 @@ export function CustomKeyboardSettingsView({
       if (!drag) return;
       pointerDragRef.current = null;
       if (drag.started) {
-        commitDrop(drag.source, drag.targetButtonId, drag.targetIndex, drag.overPreview);
+        commitDrop(drag.source, drag.targetRowId, drag.targetKeyId, drag.targetIndex, drag.overPreview);
         if (suppressClickTimerRef.current !== null) window.clearTimeout(suppressClickTimerRef.current);
         suppressClickTimerRef.current = window.setTimeout(() => {
           suppressClickRef.current = false;
@@ -1143,9 +1158,13 @@ export function CustomKeyboardSettingsView({
     };
   }, [activeTab, commitDrop, resetDrag, shortcutEditMode]);
 
-  const openShortcutModal = (button?: CustomKeyboardButton) => {
+  const openShortcutModal = (button?: CustomKeyboardKey) => {
     setEditingShortcutId(button?.id ?? null);
-    setShortcutDraft(button ? { icon: button.icon ?? "shortcut", sequence: button.sequence } : createShortcutDraft());
+    setShortcutDraft(
+      button && button.activation.type === "sequence"
+        ? { icon: button.icon ?? "shortcut", sequence: button.activation.sequence }
+        : createShortcutDraft(),
+    );
     setShortcutModalOpen(true);
   };
 
@@ -1166,19 +1185,15 @@ export function CustomKeyboardSettingsView({
     setActiveTab("shortcuts");
   };
 
-  const assignedButtonIds = new Set(viewModel.selectedButtonIds);
+  const assignedKeyIds = new Set(viewModel.assignedKeyIds);
+  const layoutKeys = viewModel.rows.flatMap((row) => row.items.map((item) => item.key));
+  const allKeys = [...layoutKeys, ...viewModel.availableKeys];
   const categoryButtons = Array.from(
-    new Map(
-      [...viewModel.buttons, ...viewModel.availableButtons]
-        .filter((button) => button.category === activeTab)
-        .map((button) => [button.id, button] as const),
-    ).values(),
+    new Map(allKeys.filter((key) => key.category === activeTab).map((key) => [key.id, key] as const)).values(),
   );
-  const pointerDraggedButton = draggedButtonId
-    ? [...viewModel.buttons, ...viewModel.availableButtons].find((button) => button.id === draggedButtonId)
-    : null;
+  const pointerDraggedButton = draggedButtonId ? allKeys.find((key) => key.id === draggedButtonId) : null;
   const draggingShortcutCard =
-    activeTab === "shortcuts" && shortcutEditMode && pointerDraggedButton?.kind === "shortcut";
+    activeTab === "shortcuts" && shortcutEditMode && pointerDraggedButton?.category === "shortcuts";
 
   return (
     <main className="relative flex h-[var(--app-viewport-height)] min-h-0 flex-col overflow-hidden bg-[#061008] text-[#d9f4dc]">
@@ -1433,37 +1448,58 @@ export function CustomKeyboardSettingsView({
           onDragLeave={shortcutEditMode ? undefined : () => setPreviewDropActive(false)}
           onDrop={shortcutEditMode ? undefined : (event) => handleDrop(event)}
         >
-          <div className="flex min-w-max flex-col gap-1">
-            <div className="flex min-w-max items-center gap-1">
-              {viewModel.buttons.map((button) => (
-                <CustomKeyboardPreviewButton
-                  key={button.id}
-                  button={button}
-                  assigned
-                  dragging={button.id === draggedButtonId}
-                  dropTarget={button.id === dropTargetButtonId}
-                  dragEnabled={!shortcutEditMode}
-                  onRemove={() => viewModel.onRemoveButton(button.id)}
-                  onDragStart={(event) => setDragSource(event, { buttonId: button.id, collection: "keyboard" })}
-                  onPointerDown={(event) => beginPointerDrag(event, { buttonId: button.id, collection: "keyboard" })}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setDropTargetButtonId(button.id);
-                    setPreviewDropActive(true);
-                  }}
-                  onDrop={(event) => handleDrop(event, button.id)}
-                  onDragEnd={resetDrag}
-                />
-              ))}
-              <span
-                className={`flex h-[34px] min-w-[92px] shrink-0 items-center justify-center rounded-[6px] border border-dashed px-2 font-mono text-[0.48rem] transition-colors ${
-                  previewDropActive ? "border-[#8bff9a] text-[#baffc1]" : "border-[#2a5c36] text-[#628168]"
-                }`}
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            {viewModel.rows.map((row) => (
+              <fieldset
+                className="m-0 flex min-w-0 items-center gap-1 overflow-x-auto border-0 p-0 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                key={row.id}
+                data-custom-keyboard-drop-row={row.id}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setDropTargetRowId(row.id);
+                  setPreviewDropActive(true);
+                }}
+                onDrop={(event) => handleDrop(event, undefined, undefined, row.id)}
               >
-                Drag keys here
-              </span>
-            </div>
-            <div className="h-4" aria-hidden="true" />
+                <span className="w-12 shrink-0 font-mono text-[0.42rem] font-bold uppercase tracking-[0.08em] text-[#628168]">
+                  {row.id}
+                </span>
+                {row.items.map((item) => (
+                  <CustomKeyboardPreviewButton
+                    key={item.key.id}
+                    button={item.key}
+                    assigned
+                    dragging={item.key.id === draggedButtonId}
+                    dropTarget={row.id === dropTargetRowId && item.key.id === dropTargetButtonId}
+                    dragEnabled={!shortcutEditMode}
+                    onRemove={() => viewModel.onRemoveKey(item.key.id)}
+                    onDragStart={(event) =>
+                      setDragSource(event, { keyId: item.key.id, collection: "keyboard", rowId: row.id })
+                    }
+                    onPointerDown={(event) =>
+                      beginPointerDrag(event, { keyId: item.key.id, collection: "keyboard", rowId: row.id })
+                    }
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setDropTargetRowId(row.id);
+                      setDropTargetButtonId(item.key.id);
+                      setPreviewDropActive(true);
+                    }}
+                    onDrop={(event) => handleDrop(event, item.key.id, undefined, row.id)}
+                    onDragEnd={resetDrag}
+                  />
+                ))}
+                <span
+                  className={`flex h-[34px] min-w-[92px] shrink-0 items-center justify-center rounded-[6px] border border-dashed px-2 font-mono text-[0.48rem] transition-colors ${
+                    previewDropActive && dropTargetRowId === row.id
+                      ? "border-[#8bff9a] text-[#baffc1]"
+                      : "border-[#2a5c36] text-[#628168]"
+                  }`}
+                >
+                  Drag keys here
+                </span>
+              </fieldset>
+            ))}
           </div>
         </div>
         {showFlickSettings ? (
@@ -1560,7 +1596,7 @@ export function CustomKeyboardSettingsView({
         ) : (
           <CustomKeyboardButtonLibrary
             buttons={categoryButtons}
-            assignedButtonIds={assignedButtonIds}
+            assignedKeyIds={assignedKeyIds}
             category={activeTab}
             shiftActive={abcShiftActive}
             onToggleShift={() => setAbcShiftActive((current) => !current)}
@@ -1608,12 +1644,12 @@ export function CustomKeyboardSettingsView({
             <span className="min-w-0 flex-1">
               <strong className="block truncate text-[0.62rem]">{shortcutDisplayLabel(pointerDraggedButton)}</strong>
               <code className="mt-0.5 block truncate text-[0.52rem] text-[#8fc998]">
-                {formatSequence(pointerDraggedButton.sequence)}
+                {formatSequence(keySequence(pointerDraggedButton))}
               </code>
             </span>
           ) : (
             <span className="max-w-[42px] truncate text-[0.42rem] leading-none">
-              {pointerDraggedButton.kind === "shortcut"
+              {pointerDraggedButton.category === "shortcuts"
                 ? shortcutDisplayLabel(pointerDraggedButton)
                 : (pointerDraggedButton.label ?? "key")}
             </span>
@@ -1624,7 +1660,7 @@ export function CustomKeyboardSettingsView({
   );
 }
 
-const customKeyboardSettingsTabs: readonly { value: CustomKeyboardButtonCategory; label: string }[] = [
+const customKeyboardSettingsTabs: readonly { value: CustomKeyboardKeyCategory; label: string }[] = [
   { value: "abc", label: "ABC" },
   { value: "123", label: "123" },
   { value: "special", label: "Special" },
@@ -1655,7 +1691,7 @@ function CustomKeyboardPreviewButton({
   onDrop,
   onDragEnd,
 }: {
-  button: CustomKeyboardButton;
+  button: CustomKeyboardKey;
   assigned: boolean;
   dragging: boolean;
   dropTarget: boolean;
@@ -1721,7 +1757,7 @@ function CustomKeyboardPreviewButton({
 
 function CustomKeyboardButtonLibrary({
   buttons,
-  assignedButtonIds,
+  assignedKeyIds,
   category,
   shiftActive,
   onToggleShift,
@@ -1733,25 +1769,27 @@ function CustomKeyboardButtonLibrary({
   onDragEnd,
   draggedButtonId,
 }: {
-  buttons: readonly CustomKeyboardButton[];
-  assignedButtonIds: ReadonlySet<string>;
-  category: Exclude<CustomKeyboardButtonCategory, "shortcuts">;
+  buttons: readonly CustomKeyboardKey[];
+  assignedKeyIds: ReadonlySet<string>;
+  category: Exclude<CustomKeyboardKeyCategory, "shortcuts">;
   shiftActive: boolean;
   onToggleShift: () => void;
   numberShiftActive: boolean;
   onToggleNumberShift: () => void;
-  onAddButton: (button: CustomKeyboardButton) => void;
+  onAddButton: (button: CustomKeyboardKey) => void;
   onDragStart: (event: DragEvent<HTMLElement>, source: CustomKeyboardDragSource) => void;
   onPointerDown: (event: ReactPointerEvent<HTMLElement>, source: CustomKeyboardDragSource) => void;
   onDragEnd: () => void;
   draggedButtonId: string | null;
 }) {
-  const buttonsByLabel = new Map<string, CustomKeyboardButton>();
+  const buttonsByLabel = new Map<string, CustomKeyboardKey>();
   for (const button of buttons) {
     const label = keyboardButtonDisplayLabel(button);
     if (label && !buttonsByLabel.has(label.toLowerCase())) buttonsByLabel.set(label.toLowerCase(), button);
   }
-  const shiftButton = buttons.find((button) => button.modifier === "shift");
+  const shiftButton = buttons.find(
+    (button) => button.activation.type === "modifier" && button.activation.modifier === "shift",
+  );
 
   const renderKey = (label: string) => {
     const button = buttonsByLabel.get(label.toLowerCase());
@@ -1770,20 +1808,20 @@ function CustomKeyboardButtonLibrary({
       <CustomKeyboardLibraryKey
         key={button.id}
         button={button}
-        assigned={assignedButtonIds.has(button.id)}
+        assigned={assignedKeyIds.has(button.id)}
         dragged={draggedButtonId === button.id}
         displayLabel={shiftActive && category === "abc" ? label.toUpperCase() : label}
         onAddButton={onAddButton}
-        onDragStart={(event, buttonId) =>
+        onDragStart={(event, keyId) =>
           onDragStart(event, {
-            buttonId,
-            collection: assignedButtonIds.has(buttonId) ? "keyboard" : "library",
+            keyId,
+            collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
           })
         }
-        onPointerDown={(event, buttonId) =>
+        onPointerDown={(event, keyId) =>
           onPointerDown(event, {
-            buttonId,
-            collection: assignedButtonIds.has(buttonId) ? "keyboard" : "library",
+            keyId,
+            collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
           })
         }
         onDragEnd={onDragEnd}
@@ -1818,22 +1856,22 @@ function CustomKeyboardButtonLibrary({
             {shiftButton ? (
               <CustomKeyboardLibraryKey
                 button={shiftButton}
-                assigned={assignedButtonIds.has(shiftButton.id)}
+                assigned={assignedKeyIds.has(shiftButton.id)}
                 dragged={draggedButtonId === shiftButton.id}
                 displayLabel="⇧"
                 isShiftKey
                 shiftActive={shiftActive}
                 onAddButton={onAddButton}
-                onDragStart={(event, buttonId) =>
+                onDragStart={(event, keyId) =>
                   onDragStart(event, {
-                    buttonId,
-                    collection: assignedButtonIds.has(buttonId) ? "keyboard" : "library",
+                    keyId,
+                    collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
                   })
                 }
-                onPointerDown={(event, buttonId) =>
+                onPointerDown={(event, keyId) =>
                   onPointerDown(event, {
-                    buttonId,
-                    collection: assignedButtonIds.has(buttonId) ? "keyboard" : "library",
+                    keyId,
+                    collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
                   })
                 }
                 onDragEnd={onDragEnd}
@@ -1944,21 +1982,21 @@ function CustomKeyboardButtonLibrary({
             <CustomKeyboardLibraryKey
               key={button.id}
               button={button}
-              assigned={assignedButtonIds.has(button.id)}
+              assigned={assignedKeyIds.has(button.id)}
               dragged={draggedButtonId === button.id}
               displayLabel={specialLibraryDisplayLabel(button)}
               displayIcon
               onAddButton={onAddButton}
-              onDragStart={(event, buttonId) =>
+              onDragStart={(event, keyId) =>
                 onDragStart(event, {
-                  buttonId,
-                  collection: assignedButtonIds.has(buttonId) ? "keyboard" : "library",
+                  keyId,
+                  collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
                 })
               }
-              onPointerDown={(event, buttonId) =>
+              onPointerDown={(event, keyId) =>
                 onPointerDown(event, {
-                  buttonId,
-                  collection: assignedButtonIds.has(buttonId) ? "keyboard" : "library",
+                  keyId,
+                  collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
                 })
               }
               onDragEnd={onDragEnd}
@@ -1970,17 +2008,17 @@ function CustomKeyboardButtonLibrary({
   );
 }
 
-function keyboardButtonDisplayLabel(button: CustomKeyboardButton): string | undefined {
-  if (button.kind === "shortcut") return shortcutDisplayLabel(button);
+function keyboardButtonDisplayLabel(button: CustomKeyboardKey): string | undefined {
+  if (button.category === "shortcuts") return shortcutDisplayLabel(button);
   if (button.category === "special") return specialLibraryDisplayLabel(button);
   return keyboardButtonValueLabel(button);
 }
 
-function keyboardButtonValueLabel(button: CustomKeyboardButton): string | undefined {
-  if (button.kind === "shortcut" || button.kind === "modifier") return undefined;
+function keyboardButtonValueLabel(button: CustomKeyboardKey): string | undefined {
+  if (button.category === "shortcuts" || button.activation.type !== "sequence") return undefined;
   if (button.category === "abc" || button.category === "123" || !button.icon) {
     if (button.label) return button.label;
-    const [token] = button.sequence;
+    const [token] = button.activation.sequence;
     if (token?.type === "text") return token.value;
     if (token?.type === "key" && token.key.length <= 2 && !token.modifiers?.length) return token.key;
   }
@@ -2001,16 +2039,16 @@ function CustomKeyboardLibraryKey({
   onDragEnd,
   onToggleShift,
 }: {
-  button: CustomKeyboardButton;
+  button: CustomKeyboardKey;
   assigned: boolean;
   dragged: boolean;
   displayLabel: string;
   isShiftKey?: boolean;
   shiftActive?: boolean;
   displayIcon?: boolean;
-  onAddButton: (button: CustomKeyboardButton) => void;
-  onDragStart: (event: DragEvent<HTMLElement>, buttonId: string) => void;
-  onPointerDown: (event: ReactPointerEvent<HTMLElement>, buttonId: string) => void;
+  onAddButton: (button: CustomKeyboardKey) => void;
+  onDragStart: (event: DragEvent<HTMLElement>, keyId: string) => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>, keyId: string) => void;
   onDragEnd: () => void;
   onToggleShift?: () => void;
 }) {
@@ -2084,7 +2122,7 @@ function CustomKeyboardShortcutLibrary({
   editMode: boolean;
   onToggleEditMode: () => void;
   onRegisterShortcut: () => void;
-  onEditShortcut: (button: CustomKeyboardButton) => void;
+  onEditShortcut: (button: CustomKeyboardKey) => void;
   draggedButtonId: string | null;
   onDragStart: (event: DragEvent<HTMLElement>, source: CustomKeyboardDragSource) => void;
   onPointerDown: (event: ReactPointerEvent<HTMLElement>, source: CustomKeyboardDragSource) => void;
@@ -2093,7 +2131,7 @@ function CustomKeyboardShortcutLibrary({
   onDragEnd: () => void;
   dropIndicator: ShortcutDropIndicator | null;
 }) {
-  const shortcuts = viewModel.shortcutButtons;
+  const shortcuts = viewModel.shortcutKeys;
 
   const renderDropZone = (index: number) => {
     const active = editMode && dropIndicator?.index === index && draggedButtonId !== null;
@@ -2158,7 +2196,7 @@ function CustomKeyboardShortcutLibrary({
       </p>
       <div className="mt-3 grid gap-0">
         {shortcuts.map((button, index) => {
-          const assigned = viewModel.selectedButtonIds.includes(button.id);
+          const assigned = viewModel.assignedKeyIds.includes(button.id);
           const canReorder = editMode;
           return (
             <Fragment key={button.id}>
@@ -2174,13 +2212,13 @@ function CustomKeyboardShortcutLibrary({
                 draggable
                 onDragStart={(event) =>
                   onDragStart(event, {
-                    buttonId: button.id,
+                    keyId: button.id,
                     collection: editMode ? "shortcut-library" : assigned ? "keyboard" : "library",
                   })
                 }
                 onPointerDown={(event) =>
                   onPointerDown(event, {
-                    buttonId: button.id,
+                    keyId: button.id,
                     collection: editMode ? "shortcut-library" : assigned ? "keyboard" : "library",
                   })
                 }
@@ -2204,7 +2242,7 @@ function CustomKeyboardShortcutLibrary({
                       {shortcutDisplayLabel(button)}
                     </strong>
                     <code className="mt-0.5 block truncate font-mono text-[0.54rem] text-[#6e9c75]">
-                      {formatSequence(button.sequence)}
+                      {formatSequence(keySequence(button))}
                     </code>
                   </span>
                 </div>
@@ -2680,6 +2718,14 @@ function CustomKeyboardIconView({ icon, size = 15 }: { icon: CustomKeyboardIcon;
           <path d="M6.5 10h.01M9.5 10h.01M12.5 10h.01M15.5 10h.01M18 10h.01M6.5 13h.01M9.5 13h.01M12.5 13h5" />
         </svg>
       );
+    case "settings":
+      return (
+        <svg {...iconProps}>
+          <title>Settings</title>
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" />
+          <circle cx="12" cy="12" r="3.5" />
+        </svg>
+      );
     case "globe":
       return (
         <svg {...iconProps}>
@@ -2739,8 +2785,9 @@ function keyboardIconGlyph(icon: CustomKeyboardIcon): string {
   return customKeyboardIconOptions.find((option) => option.value === icon)?.glyph ?? "?";
 }
 
-function compactTerminalActionLabel(button: CustomKeyboardButton): string | undefined {
-  switch (button.terminalAction) {
+function compactTerminalActionLabel(button: CustomKeyboardKey): string | undefined {
+  if (button.activation.type !== "terminal") return undefined;
+  switch (button.activation.action) {
     case "paste-from-clipboard":
       return "clip";
     case "paste-from-tmux-buffer":
@@ -2750,14 +2797,18 @@ function compactTerminalActionLabel(button: CustomKeyboardButton): string | unde
   }
 }
 
-function shortcutDisplayLabel(button: CustomKeyboardButton): string {
-  const sequenceLabel = button.sequence
+function shortcutDisplayLabel(button: CustomKeyboardKey): string {
+  const sequenceLabel = keySequence(button)
     .map((token) => (token.type === "text" ? token.value : formatSequenceKeyLabel(token.key, token.modifiers ?? [])))
     .join(" ")
     .trim()
     .replace(/\s+/g, " ");
   const compactLabel = Array.from(sequenceLabel).slice(0, 4).join("").trim();
   return compactLabel || "···";
+}
+
+function keySequence(button: CustomKeyboardKey): CustomKeyboardSequence {
+  return button.activation.type === "sequence" ? button.activation.sequence : [];
 }
 
 function sequenceWithStableKeys(sequence: CustomKeyboardSequence): readonly {
@@ -2774,7 +2825,7 @@ function sequenceWithStableKeys(sequence: CustomKeyboardSequence): readonly {
   });
 }
 
-function specialLibraryDisplayLabel(button: CustomKeyboardButton): string {
+function specialLibraryDisplayLabel(button: CustomKeyboardKey): string {
   if (button.icon === "escape") return "";
   const iconOption = customKeyboardIconOptions.find((option) => option.value === button.icon);
   return button.label ?? iconOption?.label ?? button.accessibleLabel;

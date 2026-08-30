@@ -1,8 +1,12 @@
 import type {
-  CustomKeyboardButton,
   CustomKeyboardDragSource,
   CustomKeyboardDropTarget,
+  CustomKeyboardKey,
+  CustomKeyboardLayout,
+  CustomKeyboardLayoutPlacement,
+  CustomKeyboardLayoutRow,
   CustomKeyboardModifier,
+  CustomKeyboardResolvedLayoutRow,
   CustomKeyboardShortcutDraft,
 } from "./viewmodel";
 
@@ -10,15 +14,31 @@ export function isCustomKeyboardShortcutDraftValid(draft: Pick<CustomKeyboardSho
   return draft.sequence.length > 0;
 }
 
-export function selectedButtonsFromIds(
-  selectedButtonIds: readonly string[],
-  libraryButtons: readonly CustomKeyboardButton[],
-): CustomKeyboardButton[] {
-  const buttonsById = new Map(libraryButtons.map((button) => [button.id, button] as const));
-  return selectedButtonIds.flatMap((buttonId) => {
-    const button = buttonsById.get(buttonId);
-    return button ? [button] : [];
+export function keysFromIds(keyIds: readonly string[], libraryKeys: readonly CustomKeyboardKey[]): CustomKeyboardKey[] {
+  const keysById = new Map(libraryKeys.map((key) => [key.id, key] as const));
+  return keyIds.flatMap((keyId) => {
+    const key = keysById.get(keyId);
+    return key ? [key] : [];
   });
+}
+
+export function resolveCustomKeyboardLayout(
+  layout: CustomKeyboardLayout,
+  libraryKeys: readonly CustomKeyboardKey[],
+): CustomKeyboardResolvedLayoutRow[] {
+  const keysById = new Map(libraryKeys.map((key) => [key.id, key] as const));
+  return layout.rows.map((row) => ({
+    id: row.id,
+    overflow: row.overflow,
+    items: row.placements.flatMap((placement) => {
+      const key = keysById.get(placement.keyId);
+      return key ? [{ ...placement, key }] : [];
+    }),
+  }));
+}
+
+export function assignedKeyIds(layout: CustomKeyboardLayout): string[] {
+  return layout.rows.flatMap((row) => row.placements.map((placement) => placement.keyId));
 }
 
 export function toggleCustomKeyboardModifier(
@@ -30,31 +50,9 @@ export function toggleCustomKeyboardModifier(
     : [...activeModifiers, modifier];
 }
 
-export function insertButtonIdBeforeTarget(
-  buttonIds: readonly string[],
-  sourceId: string,
-  targetId: string | null,
-): string[] {
-  const sourceIndex = buttonIds.indexOf(sourceId);
-  const targetIndex = targetId === null ? -1 : buttonIds.indexOf(targetId);
-
-  if (sourceIndex >= 0) {
-    if (targetId === null || targetIndex < 0 || sourceIndex === targetIndex) return [...buttonIds];
-    const next = [...buttonIds];
-    next.splice(sourceIndex, 1);
-    const nextTargetIndex = next.indexOf(targetId);
-    next.splice(nextTargetIndex, 0, sourceId);
-    return next;
-  }
-
-  const next = [...buttonIds];
-  next.splice(targetIndex < 0 ? next.length : targetIndex, 0, sourceId);
-  return next;
-}
-
 export type CustomKeyboardDropState = {
-  selectedButtonIds: readonly string[];
-  shortcutButtonIds: readonly string[];
+  layout: CustomKeyboardLayout;
+  shortcutKeyIds: readonly string[];
 };
 
 export function applyCustomKeyboardDrop(
@@ -65,37 +63,87 @@ export function applyCustomKeyboardDrop(
   if (target.type === "shortcut-library") {
     if (source.collection !== "shortcut-library") return copyDropState(state);
     return {
-      selectedButtonIds: [...state.selectedButtonIds],
-      shortcutButtonIds: moveButtonId(state.shortcutButtonIds, source.buttonId, target.targetIndex),
+      layout: cloneLayout(state.layout),
+      shortcutKeyIds: moveKeyId(state.shortcutKeyIds, source.keyId, target.targetIndex),
     };
   }
 
   if (source.collection === "shortcut-library") return copyDropState(state);
+  const sourcePlacement = findPlacement(state.layout, source.keyId, source.rowId);
+  if (source.collection === "keyboard" && !sourcePlacement) return copyDropState(state);
+  if (!state.layout.rows.some((row) => row.id === target.rowId)) return copyDropState(state);
 
-  if (source.collection === "keyboard" && !state.selectedButtonIds.includes(source.buttonId)) {
-    return copyDropState(state);
-  }
-
+  const layout = removeKeyFromLayout(state.layout, source.keyId);
+  const placement = sourcePlacement?.placement ?? { keyId: source.keyId, density: "regular" as const };
   return {
-    selectedButtonIds: insertButtonIdBeforeTarget(state.selectedButtonIds, source.buttonId, target.targetButtonId),
-    shortcutButtonIds: [...state.shortcutButtonIds],
+    layout: insertPlacementBeforeTarget(layout, target.rowId, placement, target.targetKeyId),
+    shortcutKeyIds: [...state.shortcutKeyIds],
+  };
+}
+
+export function removeKeyFromLayout(layout: CustomKeyboardLayout, keyId: string): CustomKeyboardLayout {
+  return {
+    rows: layout.rows.map((row) => ({
+      ...row,
+      placements: row.placements.filter((placement) => placement.keyId !== keyId),
+    })),
+  };
+}
+
+function insertPlacementBeforeTarget(
+  layout: CustomKeyboardLayout,
+  rowId: string,
+  placement: CustomKeyboardLayoutPlacement,
+  targetKeyId: string | null,
+): CustomKeyboardLayout {
+  return {
+    rows: layout.rows.map((row) => {
+      if (row.id !== rowId) return { ...row, placements: [...row.placements] };
+      const placements = [...row.placements];
+      const targetIndex =
+        targetKeyId === null ? placements.length : placements.findIndex((item) => item.keyId === targetKeyId);
+      placements.splice(targetIndex < 0 ? placements.length : targetIndex, 0, { ...placement });
+      return { ...row, placements };
+    }),
+  };
+}
+
+function findPlacement(
+  layout: CustomKeyboardLayout,
+  keyId: string,
+  rowId?: string,
+): { row: CustomKeyboardLayoutRow; placement: CustomKeyboardLayoutPlacement } | null {
+  const rows = rowId ? layout.rows.filter((row) => row.id === rowId) : layout.rows;
+  for (const row of rows) {
+    const placement = row.placements.find((candidate) => candidate.keyId === keyId);
+    if (placement) return { row, placement };
+  }
+  return null;
+}
+
+function cloneLayout(layout: CustomKeyboardLayout): CustomKeyboardLayout {
+  return {
+    rows: layout.rows.map((row) => ({
+      ...row,
+      placements: row.placements.map((placement) => ({ ...placement })),
+    })),
   };
 }
 
 function copyDropState(state: CustomKeyboardDropState): CustomKeyboardDropState {
   return {
-    selectedButtonIds: [...state.selectedButtonIds],
-    shortcutButtonIds: [...state.shortcutButtonIds],
+    layout: cloneLayout(state.layout),
+    shortcutKeyIds: [...state.shortcutKeyIds],
   };
 }
 
-function moveButtonId(buttonIds: readonly string[], buttonId: string, targetIndex: number): string[] {
-  const next = [...buttonIds];
-  const sourceIndex = next.indexOf(buttonId);
+function moveKeyId(keyIds: readonly string[], keyId: string, targetIndex: number): string[] {
+  const next = [...keyIds];
+  const sourceIndex = next.indexOf(keyId);
   if (sourceIndex < 0) return next;
-  const [sourceButtonId] = next.splice(sourceIndex, 1);
-  if (!sourceButtonId) return next;
+  const [sourceKeyId] = next.splice(sourceIndex, 1);
+  if (!sourceKeyId) return next;
   const insertionIndex = Math.max(0, Math.min(next.length, targetIndex > sourceIndex ? targetIndex - 1 : targetIndex));
-  next.splice(insertionIndex, 0, sourceButtonId);
+  next.splice(insertionIndex, 0, sourceKeyId);
   return next;
 }

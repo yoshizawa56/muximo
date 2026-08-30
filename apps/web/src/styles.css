@@ -154,7 +154,7 @@
     padding-bottom: max(10px, calc(var(--safe-area-bottom) + 8px));
   }
 
-  .custom-keyboard-fixed-row {
+  .custom-keyboard-layout-row {
     container-type: inline-size;
   }
 
@@ -182,11 +182,6 @@
       min-width: 32px;
       max-width: 32px;
     }
-
-    .custom-keyboard-show-keyboard {
-      max-width: none;
-      min-width: 48px;
-    }
   }
 
   @container (max-width: 299px) {
@@ -200,10 +195,6 @@
       width: 30px;
       min-width: 30px;
       max-width: 30px;
-    }
-
-    .custom-keyboard-show-keyboard {
-      min-width: 44px;
     }
   }
 

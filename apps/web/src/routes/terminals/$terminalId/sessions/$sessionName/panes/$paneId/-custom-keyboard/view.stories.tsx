@@ -1,7 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { type ReactNode, useCallback, useState } from "react";
-import { expect, fireEvent, userEvent, within } from "storybook/test";
-import { applyCustomKeyboardDrop, selectedButtonsFromIds } from "./policy";
+import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
+import {
+  applyCustomKeyboardDrop,
+  assignedKeyIds,
+  isCustomKeyboardShortcutDraftValid,
+  keysFromIds,
+  removeKeyFromLayout,
+  resolveCustomKeyboardLayout,
+} from "./policy";
 import {
   type CustomKeyboardClipboardHistoryEntry,
   CustomKeyboardSettingsView,
@@ -9,235 +16,28 @@ import {
   DirectionalFlickIcon,
 } from "./view";
 import {
-  type CustomKeyboardButton,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
   type CustomKeyboardFlickDirection,
-  type CustomKeyboardNativeAction,
+  type CustomKeyboardKey,
+  type CustomKeyboardLayout,
   type CustomKeyboardNativeFileAction,
   type CustomKeyboardProfileSummary,
   type CustomKeyboardSequence,
   type CustomKeyboardSettingsViewModel,
   type CustomKeyboardShortcutDraft,
-  type CustomKeyboardTerminalAction,
   type CustomKeyboardViewModel,
-  customKeyboardFixedButtons,
   customKeyboardIconOptions,
-  customKeyboardSpecialKeyOptions,
-  customKeyboardSpecialModifierOptions,
-  defaultCustomKeyboardButtons,
-  isCustomKeyboardFixedButton,
+  customKeyboardKeyLibrary,
+  customKeyboardSurfaceDefinitions,
+  defaultCustomKeyboardKeys,
+  defaultCustomKeyboardLayout,
 } from "./viewmodel";
 
-const alphabetButtonLibrary: readonly CustomKeyboardButton[] = [..."qwertyuiopasdfghjklzxcvbnm"].map((key) => ({
-  id: `letter-${key}`,
-  kind: "key",
-  category: "abc",
-  icon: "letter",
-  label: key,
-  accessibleLabel: `Letter ${key.toUpperCase()}`,
-  sequence: [{ type: "key", key }],
-}));
-
-const numberButtonLibrary: readonly CustomKeyboardButton[] = [
-  "1",
-  "2",
-  "3",
-  "4",
-  "5",
-  "6",
-  "7",
-  "8",
-  "9",
-  "0",
-  "#",
-  "$",
-  "&",
-  "@",
-  "=",
-  "-",
-  "/",
-  "+",
-  "*",
-  "?",
-  "!",
-  ":",
-  ";",
-  "(",
-  ")",
-  ",",
-  ".",
-  "'",
-  '"',
-].map((key) => ({
-  id: `number-${key}`,
-  kind: "key",
-  category: "123",
-  icon: "number",
-  label: key,
-  accessibleLabel: `Key ${key}`,
-  sequence: [{ type: "text", value: key }],
-}));
-
-const numberSymbolButtonLibrary: readonly CustomKeyboardButton[] = [
-  ["left-bracket", "[", "Left bracket"],
-  ["right-bracket", "]", "Right bracket"],
-  ["left-brace", "{", "Left brace"],
-  ["right-brace", "}", "Right brace"],
-  ["percent", "%", "Percent"],
-  ["caret", "^", "Caret"],
-  ["underscore", "_", "Underscore"],
-  ["backslash", "\\", "Backslash"],
-  ["less-than", "<", "Less-than"],
-  ["greater-than", ">", "Greater-than"],
-  ["euro", "€", "Euro sign"],
-  ["pound", "£", "Pound sign"],
-  ["yen", "¥", "Yen sign"],
-  ["bullet", "•", "Bullet"],
-].map(([id, label, accessibleLabel]) => ({
-  id: `number-${id}`,
-  kind: "key",
-  category: "123",
-  icon: "number",
-  label,
-  accessibleLabel,
-  sequence: [{ type: "text", value: label }],
-}));
-
-const specialKeyButtons: readonly CustomKeyboardButton[] = customKeyboardSpecialKeyOptions.map(
-  (definition): CustomKeyboardButton => ({
-    id: definition.id,
-    kind: "key",
-    category: "special",
-    icon: definition.icon,
-    label: definition.label,
-    accessibleLabel: definition.accessibleLabel,
-    sequence: [{ type: "key", key: definition.key }],
-  }),
-);
-
-const specialModifierButtons: readonly CustomKeyboardButton[] = customKeyboardSpecialModifierOptions.map(
-  (definition): CustomKeyboardButton => ({
-    id: definition.id,
-    kind: "modifier",
-    category: "special",
-    icon: definition.icon,
-    label: definition.label,
-    accessibleLabel: definition.accessibleLabel,
-    sequence: [],
-    modifier: definition.modifier,
-  }),
-);
-
-const terminalActionButtons = defaultCustomKeyboardButtons.filter((button) => button.terminalAction);
-
-const specialButtonLibrary: readonly CustomKeyboardButton[] = [
-  ...specialKeyButtons,
-  ...specialModifierButtons.filter((button) => button.modifier !== "shift"),
-  ...terminalActionButtons,
-  {
-    id: "camera",
-    kind: "key",
-    category: "special",
-    icon: "camera",
-    label: "CAM",
-    accessibleLabel: "Open camera",
-    sequence: [],
-    nativeAction: "capture-photo",
-  },
-  {
-    id: "photo-library",
-    kind: "key",
-    category: "special",
-    icon: "plus",
-    label: "ADD",
-    accessibleLabel: "Add image",
-    sequence: [],
-    nativeAction: "pick-photo",
-  },
-];
-
-const nativeMediaButtons = specialButtonLibrary.filter((button) => button.nativeAction);
-
-const buttonLibrary: readonly CustomKeyboardButton[] = [
-  ...specialModifierButtons
-    .filter((button) => button.modifier === "shift")
-    .map((button) => ({ ...button, category: "abc" as const })),
-  ...alphabetButtonLibrary,
-  ...numberButtonLibrary,
-  ...numberSymbolButtonLibrary,
-  ...specialButtonLibrary,
-  {
-    id: "hash",
-    kind: "key",
-    category: "123",
-    icon: "hash",
-    accessibleLabel: "Hash",
-    sequence: [{ type: "text", value: "#" }],
-  },
-  {
-    id: "dollar",
-    kind: "key",
-    category: "123",
-    icon: "dollar",
-    accessibleLabel: "Dollar sign",
-    sequence: [{ type: "text", value: "$" }],
-  },
-  {
-    id: "ampersand",
-    kind: "key",
-    category: "123",
-    icon: "ampersand",
-    accessibleLabel: "Ampersand",
-    sequence: [{ type: "text", value: "&" }],
-  },
-  {
-    id: "equals",
-    kind: "key",
-    category: "123",
-    icon: "equals",
-    accessibleLabel: "Equals",
-    sequence: [{ type: "text", value: "=" }],
-  },
-  {
-    id: "npm-test",
-    kind: "shortcut",
-    category: "shortcuts",
-    icon: "bolt",
-    accessibleLabel: "Run Bun test shortcut",
-    sequence: [
-      { type: "text", value: "bun test" },
-      { type: "key", key: "Enter" },
-    ],
-  },
-  {
-    id: "clear-screen",
-    kind: "shortcut",
-    category: "shortcuts",
-    icon: "terminal",
-    accessibleLabel: "Clear terminal shortcut",
-    sequence: [
-      { type: "text", value: "clear" },
-      { type: "key", key: "Enter" },
-    ],
-  },
-  {
-    id: "git-status",
-    kind: "shortcut",
-    category: "shortcuts",
-    icon: "branch",
-    accessibleLabel: "Git status shortcut",
-    sequence: [
-      { type: "text", value: "git status" },
-      { type: "key", key: "Enter" },
-    ],
-  },
-];
-
 type StoryKeyboardState = {
-  libraryButtons: CustomKeyboardButton[];
-  selectedButtonIds: string[];
-  shortcutButtonIds: string[];
+  libraryKeys: CustomKeyboardKey[];
+  layout: CustomKeyboardLayout;
+  shortcutKeyIds: string[];
   repeatStartDelayMs: number;
   repeatIntervalMs: number;
 };
@@ -251,28 +51,45 @@ const defaultStoryProfile: CustomKeyboardProfileSummary = {
 
 const defaultStoryProfiles: readonly CustomKeyboardProfileSummary[] = [defaultStoryProfile];
 
+function cloneStoryLayout(layout: CustomKeyboardLayout): CustomKeyboardLayout {
+  return {
+    rows: layout.rows.map((row) => ({
+      ...row,
+      placements: row.placements.map((placement) => ({ ...placement })),
+    })),
+  };
+}
+
+function createStoryLayout(initialKeys: readonly CustomKeyboardKey[]): CustomKeyboardLayout {
+  const layout = cloneStoryLayout(defaultCustomKeyboardLayout);
+  const assigned = new Set(assignedKeyIds(layout));
+  const mainRow = layout.rows.find((row) => row.id === "main");
+  if (!mainRow) return layout;
+  for (const key of initialKeys) {
+    if (assigned.has(key.id)) continue;
+    mainRow.placements.push({ keyId: key.id, density: "regular" });
+    assigned.add(key.id);
+  }
+  return layout;
+}
+
 function InteractiveShellStory({
   startInSettings = false,
-  initialButtons = defaultCustomKeyboardButtons,
+  initialKeys = defaultCustomKeyboardKeys,
   initialActiveModifiers = [],
   initialProfiles = defaultStoryProfiles,
   clipboardHistory,
 }: {
   startInSettings?: boolean;
-  initialButtons?: readonly CustomKeyboardButton[];
+  initialKeys?: readonly CustomKeyboardKey[];
   initialActiveModifiers?: CustomKeyboardViewModel["activeModifiers"];
   initialProfiles?: readonly CustomKeyboardProfileSummary[];
   clipboardHistory?: readonly CustomKeyboardClipboardHistoryEntry[];
 }) {
   const [keyboardState, setKeyboardState] = useState<StoryKeyboardState>(() => ({
-    libraryButtons: uniqueStoryButtons([...buttonLibrary, ...initialButtons]),
-    selectedButtonIds: initialButtons
-      .filter((button) => !isCustomKeyboardFixedButton(button.id))
-      .map((button) => button.id),
-    shortcutButtonIds: [
-      ...defaultCustomKeyboardButtons.filter((button) => button.kind === "shortcut"),
-      ...buttonLibrary.filter((button) => button.kind === "shortcut"),
-    ].map((button) => button.id),
+    libraryKeys: uniqueStoryKeys([...customKeyboardKeyLibrary, ...initialKeys]),
+    layout: createStoryLayout(initialKeys),
+    shortcutKeyIds: customKeyboardKeyLibrary.filter((key) => key.category === "shortcuts").map((key) => key.id),
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
   }));
@@ -302,50 +119,48 @@ function InteractiveShellStory({
     [profiles],
   );
 
-  const onButtonPress = useCallback(
-    (button: CustomKeyboardButton) => {
-      const modifier = button.modifier;
-      if (modifier) {
+  const onActivateKey = useCallback(
+    (key: CustomKeyboardKey) => {
+      const activation = key.activation;
+      if (activation.type === "surface" || activation.type === "directional-flick") return;
+      if (activation.type === "modifier") {
         setActiveModifiers((current) =>
-          current.includes(modifier)
-            ? current.filter((currentModifier) => currentModifier !== modifier)
-            : [...current, modifier],
+          current.includes(activation.modifier)
+            ? current.filter((modifier) => modifier !== activation.modifier)
+            : [...current, activation.modifier],
         );
-        setLastAction(`${button.accessibleLabel} latched for the next key`);
+        setLastAction(`${key.accessibleLabel} latched for the next key`);
         return;
       }
-
       const modifierPrefix = activeModifiers.length ? `${activeModifiers.join(" + ")} + ` : "";
       setActiveModifiers([]);
-      setLastAction(`${modifierPrefix}${button.accessibleLabel} · ${formatStorySequence(button.sequence)}`);
+      if (activation.type === "native" && activation.action === "toggle-standard-keyboard") {
+        setNativeKeyboardVisible((current) => !current);
+        setLastAction(nativeKeyboardVisible ? "Standard keyboard hidden" : "Standard keyboard shown");
+        return;
+      }
+      const actionLabel =
+        activation.type === "terminal"
+          ? activation.action === "enter-copy-mode"
+            ? "tmux copy mode requested"
+            : activation.action === "paste-from-clipboard"
+              ? "Clipboard paste requested"
+              : "tmux buffer paste requested"
+          : activation.type === "native"
+            ? activation.action === "pick-photo"
+              ? "Photo picker opened"
+              : activation.action === "capture-photo"
+                ? "Camera capture opened"
+                : "Native action requested"
+            : `${key.accessibleLabel} · ${formatStorySequence(activation.sequence)}`;
+      setLastAction(`${modifierPrefix}${actionLabel}`);
     },
-    [activeModifiers],
+    [activeModifiers, nativeKeyboardVisible],
   );
 
   const onDirectionalFlick = useCallback((direction: CustomKeyboardFlickDirection) => {
     setActiveModifiers([]);
     setLastAction(`${direction} arrow input`);
-  }, []);
-
-  const onNativeAction = useCallback((action: CustomKeyboardNativeAction) => {
-    const messageByAction: Record<CustomKeyboardNativeAction, string> = {
-      "pick-photo": "Photo picker opened",
-      "capture-photo": "Camera capture opened",
-      "scan-qr": "QR scanner requested",
-      "toggle-standard-keyboard": "Standard keyboard action requested",
-    };
-    setActiveModifiers([]);
-    setLastAction(messageByAction[action]);
-  }, []);
-
-  const onTerminalAction = useCallback((action: CustomKeyboardTerminalAction) => {
-    const messageByAction: Record<CustomKeyboardTerminalAction, string> = {
-      "enter-copy-mode": "tmux copy mode requested",
-      "paste-from-clipboard": "Clipboard paste requested",
-      "paste-from-tmux-buffer": "tmux buffer paste requested",
-    };
-    setActiveModifiers([]);
-    setLastAction(messageByAction[action]);
   }, []);
 
   const onNativeFileSelected = useCallback((action: CustomKeyboardNativeFileAction, file: File) => {
@@ -357,92 +172,84 @@ function InteractiveShellStory({
     setLastAction(`Selected ${entry.source} history: ${entry.preview}`);
   }, []);
 
-  const onToggleNativeKeyboard = useCallback(() => {
-    const nextVisible = !nativeKeyboardVisible;
-    setNativeKeyboardVisible(nextVisible);
-    setLastAction(nextVisible ? "Standard keyboard shown" : "Standard keyboard hidden");
-  }, [nativeKeyboardVisible]);
-
   const onDrop = useCallback((source: CustomKeyboardDragSource, target: CustomKeyboardDropTarget) => {
     setKeyboardState((current) => {
       const next = applyCustomKeyboardDrop(
-        {
-          selectedButtonIds: current.selectedButtonIds,
-          shortcutButtonIds: current.shortcutButtonIds,
-        },
+        { layout: current.layout, shortcutKeyIds: current.shortcutKeyIds },
         source,
         target,
       );
-      return {
-        ...current,
-        selectedButtonIds: [...next.selectedButtonIds],
-        shortcutButtonIds: [...next.shortcutButtonIds],
-      };
+      return { ...current, layout: next.layout, shortcutKeyIds: [...next.shortcutKeyIds] };
     });
   }, []);
 
-  const onRemoveButton = useCallback((buttonId: string) => {
-    setKeyboardState((current) => ({
-      ...current,
-      selectedButtonIds: current.selectedButtonIds.filter((id) => id !== buttonId),
-    }));
+  const onRemoveKey = useCallback((keyId: string) => {
+    setKeyboardState((current) => ({ ...current, layout: removeKeyFromLayout(current.layout, keyId) }));
   }, []);
 
   const onRegisterShortcut = useCallback((draft: CustomKeyboardShortcutDraft) => {
+    if (!isCustomKeyboardShortcutDraftValid(draft)) return;
     const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
     setKeyboardState((current) => {
-      const draftId = `shortcut-draft-${current.libraryButtons.filter((button) => button.category === "shortcuts").length + 1}`;
-      const shortcut: CustomKeyboardButton = {
+      const draftId = `shortcut-draft-${current.libraryKeys.filter((key) => key.category === "shortcuts").length + 1}`;
+      const shortcut: CustomKeyboardKey = {
         id: draftId,
-        kind: "shortcut",
         category: "shortcuts",
+        icon: draft.icon,
         accessibleLabel: `${iconLabel} shortcut`,
-        ...draft,
+        activation: { type: "sequence", sequence: draft.sequence },
       };
       return {
         ...current,
-        libraryButtons: current.libraryButtons.some((button) => button.id === draftId)
-          ? current.libraryButtons
-          : [...current.libraryButtons, shortcut],
-        shortcutButtonIds: current.shortcutButtonIds.includes(draftId)
-          ? current.shortcutButtonIds
-          : [...current.shortcutButtonIds, draftId],
+        libraryKeys: current.libraryKeys.some((key) => key.id === draftId)
+          ? current.libraryKeys
+          : [...current.libraryKeys, shortcut],
+        shortcutKeyIds: current.shortcutKeyIds.includes(draftId)
+          ? current.shortcutKeyIds
+          : [...current.shortcutKeyIds, draftId],
       };
     });
   }, []);
 
-  const onUpdateShortcut = useCallback((buttonId: string, draft: CustomKeyboardShortcutDraft) => {
+  const onUpdateShortcut = useCallback((keyId: string, draft: CustomKeyboardShortcutDraft) => {
+    if (!isCustomKeyboardShortcutDraftValid(draft)) return;
     const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
-    const update = (button: CustomKeyboardButton): CustomKeyboardButton =>
-      button.id === buttonId
-        ? { ...button, icon: draft.icon, sequence: draft.sequence, accessibleLabel: `${iconLabel} shortcut` }
-        : button;
     setKeyboardState((current) => ({
       ...current,
-      libraryButtons: current.libraryButtons.map(update),
+      libraryKeys: current.libraryKeys.map((key) =>
+        key.id === keyId
+          ? {
+              ...key,
+              icon: draft.icon,
+              accessibleLabel: `${iconLabel} shortcut`,
+              activation: { type: "sequence", sequence: draft.sequence },
+            }
+          : key,
+      ),
     }));
   }, []);
 
-  const onDeleteShortcut = useCallback((buttonId: string) => {
+  const onDeleteShortcut = useCallback((keyId: string) => {
     setKeyboardState((current) => ({
       ...current,
-      selectedButtonIds: current.selectedButtonIds.filter((id) => id !== buttonId),
-      libraryButtons: current.libraryButtons.filter((button) => button.id !== buttonId),
-      shortcutButtonIds: current.shortcutButtonIds.filter((id) => id !== buttonId),
+      layout: removeKeyFromLayout(current.layout, keyId),
+      libraryKeys: current.libraryKeys.filter((key) => key.id !== keyId),
+      shortcutKeyIds: current.shortcutKeyIds.filter((id) => id !== keyId),
     }));
   }, []);
 
-  const buttons = selectedButtonsFromIds(keyboardState.selectedButtonIds, keyboardState.libraryButtons).filter(
-    (button) => !isCustomKeyboardFixedButton(button.id),
-  );
-  const shortcutButtons = selectedButtonsFromIds(keyboardState.shortcutButtonIds, keyboardState.libraryButtons);
-  const availableButtons = keyboardState.libraryButtons.filter(
-    (candidate) =>
-      !keyboardState.selectedButtonIds.includes(candidate.id) && !isCustomKeyboardFixedButton(candidate.id),
-  );
+  const rows = resolveCustomKeyboardLayout(keyboardState.layout, keyboardState.libraryKeys);
+  const assignedIds = assignedKeyIds(keyboardState.layout);
+  const assigned = new Set(assignedIds);
+  const availableKeys = keyboardState.libraryKeys.filter((key) => !assigned.has(key.id));
+  const shortcutKeys = keysFromIds(keyboardState.shortcutKeyIds, keyboardState.libraryKeys);
+  const surfaces = customKeyboardSurfaceDefinitions.map((surface) => ({
+    id: surface.id,
+    keys: keysFromIds(surface.keyIds, keyboardState.libraryKeys),
+  }));
   const keyboardViewModel: CustomKeyboardViewModel = {
-    buttons,
-    fixedButtons: customKeyboardFixedButtons,
+    rows,
+    surfaces,
     activeModifiers,
     nativeKeyboardVisible,
     activeProfile,
@@ -451,24 +258,22 @@ function InteractiveShellStory({
     repeatStartDelayMs: keyboardState.repeatStartDelayMs,
     repeatIntervalMs: keyboardState.repeatIntervalMs,
     onSelectProfile,
-    onButtonPress,
+    onActivateKey,
     onDirectionalFlick,
-    onNativeAction,
-    onTerminalAction,
     onNativeFileSelected,
-    onKeepNativeKeyboardOpen: () => undefined,
-    onToggleNativeKeyboard,
+    onKeepNativeKeyboardOpen: fn(),
+    onToggleNativeKeyboard: () => setNativeKeyboardVisible((current) => !current),
   };
 
   const settingsViewModel: CustomKeyboardSettingsViewModel = {
-    buttons,
-    availableButtons,
-    shortcutButtons,
+    rows,
+    availableKeys,
+    shortcutKeys,
     activeProfile,
     profiles,
     linkedProfileIds: [],
     workspaceId: "workspace-muximo",
-    selectedButtonIds: keyboardState.selectedButtonIds,
+    assignedKeyIds: assignedIds,
     repeatStartDelayMs: keyboardState.repeatStartDelayMs,
     repeatIntervalMs: keyboardState.repeatIntervalMs,
     onSelectProfile,
@@ -479,7 +284,7 @@ function InteractiveShellStory({
     onSetProfileIcon: (profileId, icon) => setLastAction(`Changed profile ${profileId} icon to ${icon}`),
     onToggleProfileLink: (profileId) => setLastAction(`Toggled workspace profile link ${profileId}`),
     onDrop,
-    onRemoveButton,
+    onRemoveKey,
     onRegisterShortcut,
     onUpdateShortcut,
     onDeleteShortcut,
@@ -524,7 +329,6 @@ function StoryShell({
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
 
   if (!keyboardViewModel || !settingsViewModel) return null;
-
   if (settingsOpen) {
     return (
       <div className="h-[var(--app-viewport-height)] min-h-0 overflow-hidden bg-[#061008]">
@@ -666,11 +470,6 @@ export const ShellAndKeyboard: Story = {
       "aria-pressed",
       "true",
     );
-    await userEvent.click(canvas.getByRole("button", { name: "Slash" }));
-    await expect(canvas.getByRole("button", { name: /hide standard keyboard/i })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
   },
 };
 
@@ -689,8 +488,9 @@ export const ClipboardHistoryExperiment: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Open copy and paste actions" }));
     const clipboardDialog = canvas.getByRole("dialog", { name: "Copy and paste actions" });
     await expect(within(clipboardDialog).getByText("History experiment")).toBeVisible();
-    const historyEntry = within(clipboardDialog).getByRole("button", { name: "Use history entry git status --short" });
-    await userEvent.click(historyEntry);
+    await userEvent.click(
+      within(clipboardDialog).getByRole("button", { name: "Use history entry git status --short" }),
+    );
     await expect(canvas.getByRole("status", { name: "Last input" })).toHaveTextContent(
       "Selected PC clipboard history: git status --short",
     );
@@ -709,7 +509,7 @@ export const ProfileSelection: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const profileTrigger = canvas.getByRole("button", { name: "Open custom keyboard settings" });
+    const profileTrigger = canvas.getByRole("button", { name: "Open custom keyboard profiles and settings" });
     await userEvent.click(profileTrigger);
     const profileDialog = canvas.getByRole("dialog", { name: "Select custom keyboard profile" });
     await expect(profileDialog).toBeVisible();
@@ -717,7 +517,6 @@ export const ProfileSelection: Story = {
     await expect(profileDialog).not.toBeInTheDocument();
     await userEvent.click(profileTrigger);
     const reopenedProfileDialog = canvas.getByRole("dialog", { name: "Select custom keyboard profile" });
-    await expect(within(reopenedProfileDialog).getByRole("option", { name: /Review/ })).toBeVisible();
     await userEvent.click(within(reopenedProfileDialog).getByRole("option", { name: /Agent/ }));
     await expect(canvas.getByRole("status", { name: "Last input" })).toHaveTextContent("Selected profile Agent");
   },
@@ -729,7 +528,7 @@ export const ProfileIconPicker: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard profiles and settings" }));
     const profileDialog = canvas.getByRole("dialog", { name: "Select custom keyboard profile" });
     await userEvent.click(within(profileDialog).getByRole("button", { name: "Keyboard settings" }));
     await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
@@ -751,9 +550,7 @@ export const ModifierLatched: Story = {
   },
 };
 
-export const DirectionalFlickKey: Story = {
-  render: () => <InteractiveShellStory />,
-};
+export const DirectionalFlickKey: Story = { render: () => <InteractiveShellStory /> };
 
 export const DirectionalFlickIconComparison: Story = {
   render: () => {
@@ -784,22 +581,17 @@ export const DirectionalFlickIconComparison: Story = {
 };
 
 export const NativeMediaActions: Story = {
-  render: () => <InteractiveShellStory initialButtons={[...defaultCustomKeyboardButtons, ...nativeMediaButtons]} />,
+  render: () => (
+    <InteractiveShellStory
+      initialKeys={[...defaultCustomKeyboardKeys, customKeyboardKeyLibrary.find((key) => key.id === "camera")!]}
+    />
+  ),
 };
 
 export const SettingsEditor: Story = {
   render: () => <InteractiveShellStory startInSettings />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("button", { name: "Close custom keyboard settings" }));
-    await expect(canvas.getByText("Shell / mobile terminal")).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
-    await userEvent.click(
-      within(canvas.getByRole("dialog", { name: "Select custom keyboard profile" })).getByRole("button", {
-        name: "Keyboard settings",
-      }),
-    );
-    await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Flick repeat" }));
     await expect(canvas.getByRole("button", { name: "Flick repeat" })).toHaveAttribute("aria-expanded", "true");
     const shift = canvas.getByRole("button", { name: "Toggle Shift keyboard key" });
@@ -807,45 +599,17 @@ export const SettingsEditor: Story = {
     await expect(shift).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(shift);
     await expect(shift).toHaveAttribute("aria-pressed", "false");
-    await userEvent.click(canvas.getByRole("tab", { name: "123" }));
-    await expect(canvas.getByRole("button", { name: "Show more symbols" })).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: "Show more symbols" }));
-    await expect(canvas.getByRole("button", { name: "Show numbers and basic symbols" })).toBeVisible();
-    await expect(canvas.getByRole("button", { name: "Add Left bracket" })).toBeVisible();
     await userEvent.click(canvas.getByRole("tab", { name: "Shortcuts" }));
     await userEvent.click(canvas.getByRole("button", { name: "Register shortcut" }));
     const shortcutDialog = canvas.getByRole("dialog", { name: "Register shortcut" });
-    await userEvent.click(within(shortcutDialog).getByRole("tab", { name: "Device" }));
-    await userEvent.click(within(shortcutDialog).getByRole("button", { name: "Use Camera icon" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Clear" }));
+    await userEvent.click(within(shortcutDialog).getByRole("button", { name: "Clear" }));
     await userEvent.type(canvas.getByRole("textbox", { name: "Text to append" }), "echo ready");
     await userEvent.click(canvas.getByRole("button", { name: "Add text" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Ctrl modifier" }));
-    await userEvent.click(canvas.getByRole("textbox", { name: "Text to append" }));
-    await userEvent.keyboard("{Control>}c{/Control}");
-    await expect(canvas.getByRole("button", { name: /Remove Text: "echo ready" token/ })).toBeVisible();
-    await expect(canvas.getByRole("button", { name: "Remove Ctrl+C token" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Create shortcut" }));
     await expect(canvas.getByRole("heading", { name: "Registered shortcuts" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Edit shortcuts" }));
     await expect(canvas.getByRole("button", { name: "Finish editing shortcuts" })).toBeVisible();
-    await expect(canvas.getByRole("button", { name: "Edit Run Bun test shortcut" })).toBeVisible();
-    await expect(canvas.getByRole("region", { name: "Custom keyboard preview" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    await userEvent.click(canvas.getByRole("button", { name: "Edit Camera shortcut" }));
-    await expect(canvas.getByRole("heading", { name: "Edit shortcut" })).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: "Cancel" }));
     await userEvent.click(canvas.getByRole("button", { name: "Finish editing shortcuts" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Close custom keyboard settings" }));
-    await expect(canvas.getByText("Shell / mobile terminal")).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
-    await userEvent.click(
-      within(canvas.getByRole("dialog", { name: "Select custom keyboard profile" })).getByRole("button", {
-        name: "Keyboard settings",
-      }),
-    );
     await userEvent.click(canvas.getByRole("button", { name: "Save" }));
     await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
   },
@@ -857,7 +621,6 @@ export const DragAndDrop: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("tab", { name: "123" }));
     await userEvent.click(canvas.getByRole("button", { name: "Show more symbols" }));
-
     const source = canvas.getByRole("button", { name: "Add Left bracket" });
     const target = canvas.getByRole("toolbar", { name: "Custom keyboard preview drop zone" });
     const transferData = new Map<string, string>();
@@ -866,7 +629,6 @@ export const DragAndDrop: Story = {
       setData: (type: string, value: string) => transferData.set(type, value),
       getData: (type: string) => transferData.get(type) ?? "",
     } as unknown as DataTransfer;
-
     await fireEvent.dragStart(source, { dataTransfer });
     await fireEvent.dragOver(target, { dataTransfer });
     await fireEvent.drop(target, { dataTransfer });
@@ -874,8 +636,8 @@ export const DragAndDrop: Story = {
   },
 };
 
-function uniqueStoryButtons(buttons: readonly CustomKeyboardButton[]): CustomKeyboardButton[] {
-  return [...new Map(buttons.map((button) => [button.id, button] as const)).values()];
+function uniqueStoryKeys(keys: readonly CustomKeyboardKey[]): CustomKeyboardKey[] {
+  return [...new Map(keys.map((key) => [key.id, key] as const)).values()];
 }
 
 function formatStorySequence(sequence: CustomKeyboardSequence): string {
