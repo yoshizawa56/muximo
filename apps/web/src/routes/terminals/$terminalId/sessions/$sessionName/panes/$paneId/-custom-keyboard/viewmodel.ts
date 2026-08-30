@@ -92,16 +92,6 @@ export type CustomKeyboardIcon =
 
 export type CustomKeyboardIconCategory = "terminal" | "symbols" | "actions" | "device";
 
-export type CustomKeyboardProfileIcon =
-  | "terminal"
-  | "branch"
-  | "bolt"
-  | "spark"
-  | "command"
-  | "prompt"
-  | "shortcut"
-  | "keyboard";
-
 export type CustomKeyboardButton = {
   id: string;
   kind: "key" | "modifier" | "shortcut";
@@ -119,7 +109,7 @@ export type CustomKeyboardButton = {
 export type CustomKeyboardProfile = {
   id: string;
   name: string;
-  icon: CustomKeyboardProfileIcon;
+  icon: CustomKeyboardIcon;
   selectedButtonIds: string[];
   libraryButtons: CustomKeyboardButton[];
   shortcutButtonIds: string[];
@@ -130,7 +120,7 @@ export type CustomKeyboardProfile = {
 export type CustomKeyboardProfileSummary = {
   id: string;
   name: string;
-  icon: CustomKeyboardProfileIcon;
+  icon: CustomKeyboardIcon;
   linked: boolean;
 };
 
@@ -190,11 +180,11 @@ export type CustomKeyboardSettingsViewModel = {
   repeatStartDelayMs: number;
   repeatIntervalMs: number;
   onSelectProfile: (profileId: string) => void;
-  onCreateProfile: (input: { name: string; icon: CustomKeyboardProfileIcon }) => void;
+  onCreateProfile: (input: { name: string; icon: CustomKeyboardIcon }) => void;
   onDuplicateProfile: (profileId: string) => void;
   onRenameProfile: (profileId: string, name: string) => void;
   onDeleteProfile: (profileId: string) => void;
-  onSetProfileIcon: (profileId: string, icon: CustomKeyboardProfileIcon) => void;
+  onSetProfileIcon: (profileId: string, icon: CustomKeyboardIcon) => void;
   onToggleProfileLink: (profileId: string) => void;
   onDrop: (source: CustomKeyboardDragSource, target: CustomKeyboardDropTarget) => void;
   onRemoveButton: (buttonId: string) => void;
@@ -288,20 +278,6 @@ export const customKeyboardIconOptions: readonly {
 ];
 
 export const DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID = "default";
-
-export const customKeyboardProfileIconOptions: readonly {
-  value: CustomKeyboardProfileIcon;
-  label: string;
-}[] = [
-  { value: "terminal", label: "Terminal" },
-  { value: "branch", label: "Branch" },
-  { value: "bolt", label: "Bolt" },
-  { value: "spark", label: "Spark" },
-  { value: "command", label: "Command" },
-  { value: "prompt", label: "Prompt" },
-  { value: "shortcut", label: "Shortcut" },
-  { value: "keyboard", label: "Keyboard" },
-];
 
 export const customKeyboardIconCategories: readonly {
   value: CustomKeyboardIconCategory;
@@ -776,7 +752,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
   );
 
   const onCreateProfile = useCallback(
-    (input: { name: string; icon: CustomKeyboardProfileIcon }) => {
+    (input: { name: string; icon: CustomKeyboardIcon }) => {
       setState((current) => createCustomKeyboardProfile(current, options.workspaceId, input));
       updateActiveModifiers([]);
     },
@@ -806,7 +782,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     [updateActiveModifiers],
   );
 
-  const onSetProfileIcon = useCallback((profileId: string, icon: CustomKeyboardProfileIcon) => {
+  const onSetProfileIcon = useCallback((profileId: string, icon: CustomKeyboardIcon) => {
     setState((current) => updateCustomKeyboardProfile(current, profileId, (profile) => ({ ...profile, icon })));
   }, []);
 
@@ -1329,7 +1305,7 @@ export function selectCustomKeyboardProfile(
 export function createCustomKeyboardProfile(
   state: CustomKeyboardState,
   workspaceId: string | null,
-  input: { name: string; icon: CustomKeyboardProfileIcon },
+  input: { name: string; icon: CustomKeyboardIcon },
 ): CustomKeyboardState {
   if (!isCustomKeyboardProfileNameValid(input.name)) return state;
   const profile: CustomKeyboardProfile = {
@@ -1429,10 +1405,8 @@ export function toggleCustomKeyboardProfileLink(
   };
 }
 
-function validProfileIcon(value: unknown): CustomKeyboardProfileIcon | null {
-  return customKeyboardProfileIconOptions.some((option) => option.value === value)
-    ? (value as CustomKeyboardProfileIcon)
-    : null;
+function validProfileIcon(value: unknown): CustomKeyboardIcon | null {
+  return isCustomKeyboardIcon(value) ? value : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

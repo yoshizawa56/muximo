@@ -628,6 +628,13 @@ export const ShellAndKeyboard: Story = {
   render: () => <InteractiveShellStory />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    const clipboardPaste = canvas.getByRole("button", { name: "Paste from clipboard" });
+    const tmuxPaste = canvas.getByRole("button", { name: "Paste from tmux buffer" });
+    await expect(clipboardPaste).toHaveTextContent("clip");
+    await expect(tmuxPaste).toHaveTextContent("tmux");
+    const clipboardIcon = clipboardPaste.querySelector("svg");
+    await expect(clipboardIcon).not.toBeNull();
+    await expect(clipboardIcon).toHaveAttribute("width", "16");
     await userEvent.click(canvas.getByRole("button", { name: "Slash" }));
     await expect(canvas.getByRole("status", { name: "Last input" })).toHaveTextContent("Slash");
     await userEvent.click(canvas.getByRole("button", { name: /show standard keyboard/i }));
@@ -660,6 +667,21 @@ export const ProfileSelection: Story = {
     await expect(canvas.getByRole("option", { name: /Review/ })).toBeVisible();
     await userEvent.click(canvas.getByRole("option", { name: /Agent/ }));
     await expect(canvas.getByRole("button", { name: /current profile Agent/i })).toBeVisible();
+  },
+};
+
+export const ProfileIconPicker: Story = {
+  render: () => (
+    <InteractiveShellStory initialProfiles={[{ id: "agent", name: "Agent", icon: "terminal", linked: true }]} />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("tab", { name: "Device" }));
+    const camera = canvas.getByRole("button", { name: "Use Camera icon" });
+    await userEvent.click(camera);
+    await expect(camera).toHaveAttribute("aria-pressed", "true");
   },
 };
 
@@ -732,8 +754,9 @@ export const SettingsEditor: Story = {
     await expect(canvas.getByRole("button", { name: "Add Left bracket" })).toBeVisible();
     await userEvent.click(canvas.getByRole("tab", { name: "Shortcuts" }));
     await userEvent.click(canvas.getByRole("button", { name: "Register shortcut" }));
-    await userEvent.click(canvas.getByRole("tab", { name: "Device" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Use Camera icon" }));
+    const shortcutDialog = canvas.getByRole("dialog", { name: "Register shortcut" });
+    await userEvent.click(within(shortcutDialog).getByRole("tab", { name: "Device" }));
+    await userEvent.click(within(shortcutDialog).getByRole("button", { name: "Use Camera icon" }));
     await userEvent.click(canvas.getByRole("button", { name: "Clear" }));
     await userEvent.type(canvas.getByRole("textbox", { name: "Text to append" }), "echo ready");
     await userEvent.click(canvas.getByRole("button", { name: "Add text" }));

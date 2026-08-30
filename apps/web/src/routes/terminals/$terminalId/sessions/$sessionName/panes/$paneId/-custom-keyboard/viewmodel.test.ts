@@ -17,8 +17,8 @@ import {
   type CustomKeyboardButton,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
+  type CustomKeyboardIcon,
   type CustomKeyboardModifier,
-  type CustomKeyboardProfileIcon,
   type CustomKeyboardState,
   createCustomKeyboardProfile,
   customKeyboardButtonLibrary,
@@ -531,6 +531,7 @@ type ProfileStateParseObservation = {
   linkedProfileIds: readonly string[];
   defaultSelectedButtonIds: readonly string[];
   agentSelectedButtonIds: readonly string[];
+  agentIcon: CustomKeyboardIcon;
   defaultFixedButtonIds: readonly string[];
 };
 
@@ -542,7 +543,7 @@ const profileStateParseCases = [
         version: 2,
         profiles: [
           { id: "default", selectedButtonIds: ["copy-mode", "escape"] },
-          { id: "agent", name: "Agent", icon: "spark", selectedButtonIds: ["copy-mode", "git-status"] },
+          { id: "agent", name: "Agent", icon: "camera", selectedButtonIds: ["copy-mode", "git-status"] },
         ],
         workspaceProfileIds: { "workspace-1": ["agent"] },
         activeProfileIdsByWorkspace: { "workspace-1": "agent" },
@@ -556,6 +557,7 @@ const profileStateParseCases = [
         linkedProfileIds: ["agent"],
         defaultSelectedButtonIds: ["escape"],
         agentSelectedButtonIds: ["git-status"],
+        agentIcon: "camera",
         defaultFixedButtonIds: [],
       }),
     ],
@@ -581,6 +583,7 @@ const profileStateParseTable: OperationTable<
       linkedProfileIds: state.workspaceProfileIds["workspace-1"] ?? [],
       defaultSelectedButtonIds: defaultProfile?.selectedButtonIds ?? [],
       agentSelectedButtonIds: agentProfile?.selectedButtonIds ?? [],
+      agentIcon: agentProfile?.icon ?? "terminal",
       defaultFixedButtonIds: (defaultProfile?.selectedButtonIds ?? []).filter(isCustomKeyboardFixedButton),
     };
   },
@@ -594,7 +597,7 @@ const agentProfile = {
   ...defaultProfile,
   id: "agent",
   name: "Agent",
-  icon: "spark" as const,
+  icon: "camera" as const,
   selectedButtonIds: [...defaultProfile.selectedButtonIds, "git-status"],
 };
 const unlinkedProfileState: CustomKeyboardState = {
@@ -719,7 +722,7 @@ type ProfileMutationInput = {
   workspaceId: string | null;
   profileId?: string;
   name?: string;
-  icon?: CustomKeyboardProfileIcon;
+  icon?: CustomKeyboardIcon;
 };
 
 type ProfileMutationObservation = {

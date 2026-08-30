@@ -31,7 +31,6 @@ import {
   type CustomKeyboardIconCategory,
   type CustomKeyboardModifier,
   type CustomKeyboardNativeFileAction,
-  type CustomKeyboardProfileIcon,
   type CustomKeyboardSequence,
   type CustomKeyboardSequenceToken,
   type CustomKeyboardSettingsViewModel,
@@ -39,7 +38,6 @@ import {
   type CustomKeyboardViewModel,
   customKeyboardIconCategories,
   customKeyboardIconOptions,
-  customKeyboardProfileIconOptions,
   customKeyboardSpecialKeyOptions,
   customKeyboardSpecialModifierOptions,
   DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID,
@@ -474,6 +472,7 @@ function CustomKeyboardButtonView({
   const showValueAsPrimary = valueLabel !== undefined;
   const icon = button.icon;
   const showIcon = icon !== undefined && (compact || !showValueAsPrimary);
+  const compactLabel = compactTerminalActionLabel(button);
 
   return (
     <CustomKeyboardActionSurface
@@ -493,7 +492,15 @@ function CustomKeyboardButtonView({
     >
       {showIcon ? (
         <span className="text-[0.7rem] font-bold leading-none tracking-[-0.06em]" aria-hidden="true">
-          <CustomKeyboardIconView icon={icon} />
+          <CustomKeyboardIconView icon={icon} size={compactLabel ? 16 : 15} />
+        </span>
+      ) : null}
+      {compactLabel ? (
+        <span
+          className="max-w-full truncate text-[0.42rem] font-bold uppercase leading-none tracking-[0.02em]"
+          aria-hidden="true"
+        >
+          {compactLabel}
         </span>
       ) : null}
       {!compact && showValueAsPrimary ? (
@@ -631,10 +638,10 @@ export function CustomKeyboardSettingsView({
   const [editingShortcutId, setEditingShortcutId] = useState<string | null>(null);
   const [shortcutDraft, setShortcutDraft] = useState<CustomKeyboardShortcutDraft>(() => createShortcutDraft());
   const [profileNameDraft, setProfileNameDraft] = useState(viewModel.activeProfile.name);
-  const [profileIconDraft, setProfileIconDraft] = useState<CustomKeyboardProfileIcon>(viewModel.activeProfile.icon);
+  const [profileIconDraft, setProfileIconDraft] = useState<CustomKeyboardIcon>(viewModel.activeProfile.icon);
   const [newProfileOpen, setNewProfileOpen] = useState(false);
   const [newProfileName, setNewProfileName] = useState("New profile");
-  const [newProfileIcon, setNewProfileIcon] = useState<CustomKeyboardProfileIcon>("terminal");
+  const [newProfileIcon, setNewProfileIcon] = useState<CustomKeyboardIcon>("terminal");
   const activeProfile = viewModel.activeProfile;
   const pointerDragRef = useRef<PointerDragState | null>(null);
   const dragSourceRef = useRef<CustomKeyboardDragSource | null>(null);
@@ -939,7 +946,7 @@ export function CustomKeyboardSettingsView({
         </div>
         {newProfileOpen ? (
           <form
-            className="mt-2 grid gap-2 rounded-[8px] border border-[#285a33] bg-[#061008] p-2 sm:grid-cols-[minmax(0,1fr)_150px_auto] sm:items-end"
+            className="mt-2 grid gap-2 rounded-[8px] border border-[#285a33] bg-[#061008] p-2"
             onSubmit={(event) => {
               event.preventDefault();
               if (!isCustomKeyboardProfileNameValid(newProfileName)) return;
@@ -947,113 +954,97 @@ export function CustomKeyboardSettingsView({
               setNewProfileOpen(false);
             }}
           >
-            <label className="flex min-w-0 flex-col gap-1">
-              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
-                Profile name
-              </span>
-              <input
-                className="min-h-9 min-w-0 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a]"
-                value={newProfileName}
-                onChange={(event) => setNewProfileName(event.target.value)}
-                maxLength={40}
-                autoComplete="off"
-                aria-label="New profile name"
-              />
-            </label>
-            <label className="flex min-w-0 flex-col gap-1">
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+              <label className="flex min-w-0 flex-col gap-1">
+                <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
+                  Profile name
+                </span>
+                <input
+                  className="min-h-9 min-w-0 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a]"
+                  value={newProfileName}
+                  onChange={(event) => setNewProfileName(event.target.value)}
+                  maxLength={40}
+                  autoComplete="off"
+                  aria-label="New profile name"
+                />
+              </label>
+              <button
+                className="min-h-9 rounded-[6px] bg-[#8bff9a] px-2.5 font-mono text-[0.52rem] font-bold uppercase tracking-[0.06em] text-[#061008] disabled:opacity-35"
+                type="submit"
+                disabled={!isCustomKeyboardProfileNameValid(newProfileName)}
+              >
+                Create
+              </button>
+            </div>
+            <div className="min-w-0">
               <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
                 Profile icon
               </span>
-              <select
-                className="min-h-9 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a]"
-                value={newProfileIcon}
-                onChange={(event) => setNewProfileIcon(event.target.value as CustomKeyboardProfileIcon)}
-                aria-label="New profile icon"
-              >
-                {customKeyboardProfileIconOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              className="min-h-9 rounded-[6px] bg-[#8bff9a] px-2.5 font-mono text-[0.52rem] font-bold uppercase tracking-[0.06em] text-[#061008] disabled:opacity-35"
-              type="submit"
-              disabled={!isCustomKeyboardProfileNameValid(newProfileName)}
-            >
-              Create
-            </button>
+              <CustomKeyboardIconPicker value={newProfileIcon} onChange={setNewProfileIcon} />
+            </div>
           </form>
         ) : null}
-        <div className="mt-2 grid gap-2 rounded-[8px] border border-[#1d4325] bg-[#061008] p-2 sm:grid-cols-[minmax(0,1fr)_150px_auto] sm:items-end">
-          <label className="flex min-w-0 flex-col gap-1">
-            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
-              Active profile name
-            </span>
-            <input
-              className="min-h-9 min-w-0 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a] disabled:opacity-45"
-              value={profileNameDraft}
-              onChange={(event) => setProfileNameDraft(event.target.value)}
-              maxLength={40}
-              disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
-              autoComplete="off"
-              aria-label="Active profile name"
-            />
-          </label>
-          <label className="flex min-w-0 flex-col gap-1">
+        <div className="mt-2 grid gap-2 rounded-[8px] border border-[#1d4325] bg-[#061008] p-2">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <label className="flex min-w-0 flex-col gap-1">
+              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
+                Active profile name
+              </span>
+              <input
+                className="min-h-9 min-w-0 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a] disabled:opacity-45"
+                value={profileNameDraft}
+                onChange={(event) => setProfileNameDraft(event.target.value)}
+                maxLength={40}
+                disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
+                autoComplete="off"
+                aria-label="Active profile name"
+              />
+            </label>
+            <div className="flex min-h-9 items-stretch gap-1">
+              <button
+                className="rounded-[6px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#a9e8b1] disabled:opacity-35"
+                type="button"
+                onClick={() => viewModel.onRenameProfile(viewModel.activeProfile.id, profileNameDraft)}
+                disabled={
+                  viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID ||
+                  !isCustomKeyboardProfileNameValid(profileNameDraft)
+                }
+              >
+                Rename
+              </button>
+              <button
+                className="rounded-[6px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#a9e8b1]"
+                type="button"
+                onClick={() => viewModel.onDuplicateProfile(viewModel.activeProfile.id)}
+              >
+                Duplicate
+              </button>
+              <button
+                className="rounded-[6px] border border-red/40 bg-red/10 px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#ffb0aa] disabled:opacity-35"
+                type="button"
+                onClick={() => {
+                  if (window.confirm(`Delete profile "${viewModel.activeProfile.name}"?`)) {
+                    viewModel.onDeleteProfile(viewModel.activeProfile.id);
+                  }
+                }}
+                disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+          <div className="min-w-0">
             <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
               Active profile icon
             </span>
-            <select
-              className="min-h-9 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a] disabled:opacity-45"
+            <CustomKeyboardIconPicker
               value={profileIconDraft}
-              onChange={(event) => {
-                const icon = event.target.value as CustomKeyboardProfileIcon;
+              onChange={(icon) => {
                 setProfileIconDraft(icon);
                 viewModel.onSetProfileIcon(viewModel.activeProfile.id, icon);
               }}
               disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
-              aria-label="Active profile icon"
-            >
-              {customKeyboardProfileIconOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="flex min-h-9 items-stretch gap-1">
-            <button
-              className="rounded-[6px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#a9e8b1] disabled:opacity-35"
-              type="button"
-              onClick={() => viewModel.onRenameProfile(viewModel.activeProfile.id, profileNameDraft)}
-              disabled={
-                viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID ||
-                !isCustomKeyboardProfileNameValid(profileNameDraft)
-              }
-            >
-              Rename
-            </button>
-            <button
-              className="rounded-[6px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#a9e8b1]"
-              type="button"
-              onClick={() => viewModel.onDuplicateProfile(viewModel.activeProfile.id)}
-            >
-              Duplicate
-            </button>
-            <button
-              className="rounded-[6px] border border-red/40 bg-red/10 px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#ffb0aa] disabled:opacity-35"
-              type="button"
-              onClick={() => {
-                if (window.confirm(`Delete profile "${viewModel.activeProfile.name}"?`)) {
-                  viewModel.onDeleteProfile(viewModel.activeProfile.id);
-                }
-              }}
-              disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
-            >
-              Delete
-            </button>
+            />
           </div>
         </div>
         <p className="m-0 mt-1 font-mono text-[0.48rem] leading-[1.4] text-[#628168]">
@@ -1929,13 +1920,19 @@ function CustomKeyboardShortcutLibrary({
 function CustomKeyboardIconPicker({
   value,
   onChange,
+  disabled = false,
 }: {
   value: CustomKeyboardIcon;
   onChange: (icon: CustomKeyboardIcon) => void;
+  disabled?: boolean;
 }) {
   const selectedCategory = customKeyboardIconOptions.find((option) => option.value === value)?.category ?? "terminal";
   const [activeCategory, setActiveCategory] = useState<CustomKeyboardIconCategory>(selectedCategory);
   const visibleOptions = customKeyboardIconOptions.filter((option) => option.category === activeCategory);
+
+  useEffect(() => {
+    setActiveCategory(selectedCategory);
+  }, [selectedCategory]);
 
   return (
     <div className="mt-1.5">
@@ -1946,12 +1943,13 @@ function CustomKeyboardIconPicker({
       >
         {customKeyboardIconCategories.map((category) => (
           <button
-            className={`min-w-0 flex-1 rounded-[5px] px-1.5 py-1.5 font-mono text-[0.48rem] font-bold uppercase tracking-[0.06em] ${
+            className={`min-w-0 flex-1 rounded-[5px] px-1.5 py-1.5 font-mono text-[0.48rem] font-bold uppercase tracking-[0.06em] disabled:cursor-not-allowed disabled:opacity-45 ${
               activeCategory === category.value ? "bg-[#194d25] text-[#d9ffdd]" : "text-[#6fa677] hover:text-[#b9f4bf]"
             }`}
             key={category.value}
             type="button"
             onClick={() => setActiveCategory(category.value)}
+            disabled={disabled}
             role="tab"
             aria-selected={activeCategory === category.value}
           >
@@ -1962,7 +1960,7 @@ function CustomKeyboardIconPicker({
       <div className="mt-1.5 grid grid-cols-8 gap-1">
         {visibleOptions.map((option) => (
           <button
-            className={`grid size-8 place-items-center rounded-[6px] border font-mono text-[0.62rem] font-bold transition-colors ${
+            className={`grid size-8 place-items-center rounded-[6px] border font-mono text-[0.62rem] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
               value === option.value
                 ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd]"
                 : "border-[#244d2d] bg-[#0a1c0e] text-[#80b888] hover:border-[#70c27b] hover:bg-[#102d17]"
@@ -1970,6 +1968,7 @@ function CustomKeyboardIconPicker({
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
+            disabled={disabled}
             aria-label={`Use ${option.label} icon`}
             aria-pressed={value === option.value}
             title={option.label}
@@ -2331,6 +2330,14 @@ function CustomKeyboardIconView({ icon, size = 15 }: { icon: CustomKeyboardIcon;
           <path d="M5 10v9h14v-9M12 15V4m0 0 4 4m-4-4L8 8" />
         </svg>
       );
+    case "paste":
+      return (
+        <svg {...iconProps}>
+          <title>Paste</title>
+          <rect x="5.5" y="5.5" width="13" height="15" rx="2" />
+          <path d="M9 5.5V4h6v1.5M12 9v6m-3-3 3 3 3-3" />
+        </svg>
+      );
     case "clipboard":
       return (
         <svg {...iconProps}>
@@ -2404,6 +2411,17 @@ function CustomKeyboardIconView({ icon, size = 15 }: { icon: CustomKeyboardIcon;
 
 function keyboardIconGlyph(icon: CustomKeyboardIcon): string {
   return customKeyboardIconOptions.find((option) => option.value === icon)?.glyph ?? "?";
+}
+
+function compactTerminalActionLabel(button: CustomKeyboardButton): string | undefined {
+  switch (button.terminalAction) {
+    case "paste-from-clipboard":
+      return "clip";
+    case "paste-from-tmux-buffer":
+      return "tmux";
+    default:
+      return undefined;
+  }
 }
 
 function shortcutDisplayLabel(button: CustomKeyboardButton): string {
