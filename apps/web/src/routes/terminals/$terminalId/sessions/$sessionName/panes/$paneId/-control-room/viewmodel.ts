@@ -96,6 +96,7 @@ export function useControlRoomViewModel(): ControlRoomViewModel {
     [terminal.enterCopyMode, terminal.pasteFromClipboard, terminal.pasteFromTmuxBuffer],
   );
   const keyboardController = useCustomKeyboardViewModel({
+    workspaceId: selectedPane?.workspaceId ?? null,
     nativeKeyboardVisible: terminal.nativeKeyboardVisible,
     activeModifiers: activeKeyboardModifiers,
     onActiveModifiersChange: onActiveKeyboardModifiersChange,

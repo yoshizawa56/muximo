@@ -18,10 +18,20 @@ import {
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
   type CustomKeyboardModifier,
+  type CustomKeyboardProfileIcon,
+  type CustomKeyboardState,
+  createCustomKeyboardProfile,
   customKeyboardButtonLibrary,
   customKeyboardTerminalActionOptions,
   defaultCustomKeyboardButtons,
+  deleteCustomKeyboardProfile,
+  duplicateCustomKeyboardProfile,
+  isCustomKeyboardFixedButton,
+  isCustomKeyboardProfileNameValid,
   parseCustomKeyboardState,
+  resolveActiveProfileId,
+  selectCustomKeyboardProfile,
+  toggleCustomKeyboardProfileLink,
 } from "./viewmodel";
 
 type EmptyContext = {};
@@ -263,8 +273,18 @@ type DefaultButtonInput = {
 
 const defaultButtonCases = [
   {
+    name: "includes Enter in the default custom keyboard",
+    input: { buttonId: "enter" },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
     name: "includes Delete in the default custom keyboard",
     input: { buttonId: "delete" },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "includes the exclamation mark in the default custom keyboard",
+    input: { buttonId: "exclamation" },
     assert: [returns<EmptyContext, boolean>(true)],
   },
   {
@@ -286,6 +306,11 @@ const defaultButtonCases = [
     name: "includes tmux buffer paste in the default custom keyboard",
     input: { buttonId: "paste-tmux-buffer", terminalAction: "paste-from-tmux-buffer" },
     assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "keeps the Git status shortcut out of the default custom keyboard",
+    input: { buttonId: "git-status" },
+    assert: [returns<EmptyContext, boolean>(false)],
   },
 ] satisfies readonly OperationCase<"default", DefaultButtonInput, boolean, EmptyContext>[];
 
@@ -487,13 +512,361 @@ const parsedStateTable: OperationTable<
   cases: parsedStateCases,
   execute: (_fixture, input) => {
     const state = parseCustomKeyboardState(input.raw);
+    const profile = state.profiles.find((candidate) => candidate.id === "default");
     return {
-      selectedButtonIds: state.selectedButtonIds,
-      hasInvalidButton: state.libraryButtons.some((button) => button.id === "broken-shortcut"),
-      hasInvalidTerminalAction: state.libraryButtons.some((button) => button.id === "broken-terminal-action"),
-      hasEscapeButton: state.libraryButtons.some((button) => button.id === "escape"),
-      shiftCategory: state.libraryButtons.find((button) => button.id === "shift")?.category,
+      selectedButtonIds: profile?.selectedButtonIds ?? [],
+      hasInvalidButton: profile?.libraryButtons.some((button) => button.id === "broken-shortcut") ?? false,
+      hasInvalidTerminalAction:
+        profile?.libraryButtons.some((button) => button.id === "broken-terminal-action") ?? false,
+      hasEscapeButton: profile?.libraryButtons.some((button) => button.id === "escape") ?? false,
+      shiftCategory: profile?.libraryButtons.find((button) => button.id === "shift")?.category,
     };
+  },
+  observe: () => ({}),
+};
+
+type ProfileStateParseObservation = {
+  profileIds: readonly string[];
+  activeProfileId: string;
+  linkedProfileIds: readonly string[];
+  defaultSelectedButtonIds: readonly string[];
+  agentSelectedButtonIds: readonly string[];
+  defaultFixedButtonIds: readonly string[];
+};
+
+const profileStateParseCases = [
+  {
+    name: "restores multiple profiles and workspace mapping from version two state",
+    input: {
+      raw: JSON.stringify({
+        version: 2,
+        profiles: [
+          { id: "default", selectedButtonIds: ["copy-mode", "escape"] },
+          { id: "agent", name: "Agent", icon: "spark", selectedButtonIds: ["copy-mode", "git-status"] },
+        ],
+        workspaceProfileIds: { "workspace-1": ["agent"] },
+        activeProfileIdsByWorkspace: { "workspace-1": "agent" },
+        globalActiveProfileId: "default",
+      }),
+    },
+    assert: [
+      returns<EmptyContext, ProfileStateParseObservation>({
+        profileIds: ["default", "agent"],
+        activeProfileId: "agent",
+        linkedProfileIds: ["agent"],
+        defaultSelectedButtonIds: ["escape"],
+        agentSelectedButtonIds: ["git-status"],
+        defaultFixedButtonIds: [],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", { raw: string }, ProfileStateParseObservation, EmptyContext>[];
+
+const profileStateParseTable: OperationTable<
+  undefined,
+  "default",
+  { raw: string },
+  ProfileStateParseObservation,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: profileStateParseCases,
+  execute: (_fixture, input) => {
+    const state = parseCustomKeyboardState(input.raw);
+    const defaultProfile = state.profiles.find((profile) => profile.id === "default");
+    const agentProfile = state.profiles.find((profile) => profile.id === "agent");
+    return {
+      profileIds: state.profiles.map((profile) => profile.id),
+      activeProfileId: resolveActiveProfileId(state, "workspace-1"),
+      linkedProfileIds: state.workspaceProfileIds["workspace-1"] ?? [],
+      defaultSelectedButtonIds: defaultProfile?.selectedButtonIds ?? [],
+      agentSelectedButtonIds: agentProfile?.selectedButtonIds ?? [],
+      defaultFixedButtonIds: (defaultProfile?.selectedButtonIds ?? []).filter(isCustomKeyboardFixedButton),
+    };
+  },
+  observe: () => ({}),
+};
+
+const defaultProfileState = parseCustomKeyboardState(null);
+const defaultProfile = defaultProfileState.profiles[0];
+if (!defaultProfile) throw new Error("Default custom keyboard profile fixture is missing");
+const agentProfile = {
+  ...defaultProfile,
+  id: "agent",
+  name: "Agent",
+  icon: "spark" as const,
+  selectedButtonIds: [...defaultProfile.selectedButtonIds, "git-status"],
+};
+const unlinkedProfileState: CustomKeyboardState = {
+  ...defaultProfileState,
+  profiles: [defaultProfile, agentProfile],
+};
+const linkedProfileState: CustomKeyboardState = {
+  ...defaultProfileState,
+  profiles: [defaultProfile, agentProfile],
+  workspaceProfileIds: { "workspace-1": [agentProfile.id] },
+  activeProfileIdsByWorkspace: { "workspace-1": agentProfile.id },
+  globalActiveProfileId: defaultProfile.id,
+};
+
+type ProfileNameInput = { name: string };
+const profileNameCases = [
+  {
+    name: "accepts a short profile name",
+    input: { name: "Agent" },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "rejects an empty profile name",
+    input: { name: "   " },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+  {
+    name: "rejects a profile name containing a control character",
+    input: { name: "Agent\nProfile" },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+] satisfies readonly OperationCase<"default", ProfileNameInput, boolean, EmptyContext>[];
+
+const profileNameTable: OperationTable<undefined, "default", ProfileNameInput, boolean, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: profileNameCases,
+  execute: (_fixture, input) => isCustomKeyboardProfileNameValid(input.name),
+  observe: () => ({}),
+};
+
+type ProfileSelectionInput = {
+  state: CustomKeyboardState;
+  workspaceId: string | null;
+  profileId: string;
+};
+
+type ProfileSelectionObservation = {
+  activeProfileId: string;
+  linkedProfileIds: readonly string[];
+  workspaceOneLinkedProfileIds: readonly string[];
+};
+
+const profileSelectionCases = [
+  {
+    name: "selects a profile and links it to the workspace",
+    input: { state: unlinkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
+    assert: [
+      returns<EmptyContext, ProfileSelectionObservation>({
+        activeProfileId: agentProfile.id,
+        linkedProfileIds: [agentProfile.id],
+        workspaceOneLinkedProfileIds: [agentProfile.id],
+      }),
+    ],
+  },
+  {
+    name: "restores a linked profile when resolving the workspace selection",
+    input: { state: linkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
+    assert: [
+      returns<EmptyContext, ProfileSelectionObservation>({
+        activeProfileId: agentProfile.id,
+        linkedProfileIds: [agentProfile.id],
+        workspaceOneLinkedProfileIds: [agentProfile.id],
+      }),
+    ],
+  },
+  {
+    name: "falls back to Default when a workspace has no linked profile",
+    input: { state: defaultProfileState, workspaceId: "workspace-1", profileId: "missing" },
+    assert: [
+      returns<EmptyContext, ProfileSelectionObservation>({
+        activeProfileId: defaultProfile.id,
+        linkedProfileIds: [],
+        workspaceOneLinkedProfileIds: [],
+      }),
+    ],
+  },
+  {
+    name: "allows the same profile to be linked to multiple workspaces",
+    input: { state: linkedProfileState, workspaceId: "workspace-2", profileId: agentProfile.id },
+    assert: [
+      returns<EmptyContext, ProfileSelectionObservation>({
+        activeProfileId: agentProfile.id,
+        linkedProfileIds: [agentProfile.id],
+        workspaceOneLinkedProfileIds: [agentProfile.id],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", ProfileSelectionInput, ProfileSelectionObservation, EmptyContext>[];
+
+const profileSelectionTable: OperationTable<
+  undefined,
+  "default",
+  ProfileSelectionInput,
+  ProfileSelectionObservation,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: profileSelectionCases,
+  execute: (_fixture, input) => {
+    const state = selectCustomKeyboardProfile(input.state, input.workspaceId, input.profileId);
+    return {
+      activeProfileId: resolveActiveProfileId(state, input.workspaceId),
+      linkedProfileIds: input.workspaceId ? (state.workspaceProfileIds[input.workspaceId] ?? []) : [],
+      workspaceOneLinkedProfileIds: state.workspaceProfileIds["workspace-1"] ?? [],
+    };
+  },
+  observe: () => ({}),
+};
+
+type ProfileMutationInput = {
+  state: CustomKeyboardState;
+  workspaceId: string | null;
+  profileId?: string;
+  name?: string;
+  icon?: CustomKeyboardProfileIcon;
+};
+
+type ProfileMutationObservation = {
+  profileIds: readonly string[];
+  profileNames: readonly string[];
+  activeProfileId: string;
+  linkedProfileIds: readonly string[];
+  defaultSelectedButtonIds: readonly string[];
+};
+
+const profileCreationCases = [
+  {
+    name: "creates a profile with the chosen icon and selects it for the workspace",
+    input: { state: defaultProfileState, workspaceId: "workspace-1", name: "Agent", icon: "spark" as const },
+    assert: [
+      returns<EmptyContext, ProfileMutationObservation>({
+        profileIds: ["default", "custom-keyboard-profile-2"],
+        profileNames: ["Default", "Agent"],
+        activeProfileId: "custom-keyboard-profile-2",
+        linkedProfileIds: ["custom-keyboard-profile-2"],
+        defaultSelectedButtonIds: defaultProfile.selectedButtonIds,
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", ProfileMutationInput, ProfileMutationObservation, EmptyContext>[];
+
+const profileCreationTable: OperationTable<
+  undefined,
+  "default",
+  ProfileMutationInput,
+  ProfileMutationObservation,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: profileCreationCases,
+  execute: (_fixture, input) =>
+    observeProfileMutation(
+      createCustomKeyboardProfile(input.state, input.workspaceId, {
+        name: input.name ?? "",
+        icon: input.icon ?? "terminal",
+      }),
+      input.workspaceId,
+    ),
+  observe: () => ({}),
+};
+
+const profileDuplicationCases = [
+  {
+    name: "duplicates a linked profile and selects the copy",
+    input: { state: linkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
+    assert: [
+      returns<EmptyContext, ProfileMutationObservation>({
+        profileIds: ["default", "agent", "custom-keyboard-profile-3"],
+        profileNames: ["Default", "Agent", "Agent Copy"],
+        activeProfileId: "custom-keyboard-profile-3",
+        linkedProfileIds: ["agent", "custom-keyboard-profile-3"],
+        defaultSelectedButtonIds: defaultProfile.selectedButtonIds,
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", ProfileMutationInput, ProfileMutationObservation, EmptyContext>[];
+
+const profileDuplicationTable: OperationTable<
+  undefined,
+  "default",
+  ProfileMutationInput,
+  ProfileMutationObservation,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: profileDuplicationCases,
+  execute: (_fixture, input) =>
+    observeProfileMutation(
+      duplicateCustomKeyboardProfile(input.state, input.workspaceId, input.profileId ?? ""),
+      input.workspaceId,
+    ),
+  observe: () => ({}),
+};
+
+const profileDeletionCases = [
+  {
+    name: "deletes a linked profile and falls back to Default",
+    input: { state: linkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
+    assert: [
+      returns<EmptyContext, ProfileMutationObservation>({
+        profileIds: ["default"],
+        profileNames: ["Default"],
+        activeProfileId: "default",
+        linkedProfileIds: [],
+        defaultSelectedButtonIds: defaultProfile.selectedButtonIds,
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", ProfileMutationInput, ProfileMutationObservation, EmptyContext>[];
+
+const profileDeletionTable: OperationTable<
+  undefined,
+  "default",
+  ProfileMutationInput,
+  ProfileMutationObservation,
+  EmptyContext
+> = {
+  defaultFixture: noFixture(),
+  cases: profileDeletionCases,
+  execute: (_fixture, input) =>
+    observeProfileMutation(deleteCustomKeyboardProfile(input.state, input.profileId ?? ""), input.workspaceId),
+  observe: () => ({}),
+};
+
+function observeProfileMutation(state: CustomKeyboardState, workspaceId: string | null): ProfileMutationObservation {
+  const activeProfileId = resolveActiveProfileId(state, workspaceId);
+  const activeProfile = state.profiles.find((profile) => profile.id === activeProfileId);
+  return {
+    profileIds: state.profiles.map((profile) => profile.id),
+    profileNames: state.profiles.map((profile) => profile.name),
+    activeProfileId,
+    linkedProfileIds: workspaceId ? (state.workspaceProfileIds[workspaceId] ?? []) : [],
+    defaultSelectedButtonIds:
+      activeProfile?.id === defaultProfile.id ? activeProfile.selectedButtonIds : defaultProfile.selectedButtonIds,
+  };
+}
+
+type ProfileLinkInput = {
+  state: CustomKeyboardState;
+  workspaceId: string | null;
+  profileId: string;
+};
+
+const profileLinkCases = [
+  {
+    name: "links an unlinked profile to a workspace",
+    input: { state: unlinkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
+    assert: [returns<EmptyContext, readonly string[]>([agentProfile.id])],
+  },
+  {
+    name: "unlinks a linked profile from a workspace",
+    input: { state: linkedProfileState, workspaceId: "workspace-1", profileId: agentProfile.id },
+    assert: [returns<EmptyContext, readonly string[]>([])],
+  },
+] satisfies readonly OperationCase<"default", ProfileLinkInput, readonly string[], EmptyContext>[];
+
+const profileLinkTable: OperationTable<undefined, "default", ProfileLinkInput, readonly string[], EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: profileLinkCases,
+  execute: (_fixture, input) => {
+    const state = toggleCustomKeyboardProfileLink(input.state, input.workspaceId, input.profileId);
+    return input.workspaceId ? (state.workspaceProfileIds[input.workspaceId] ?? []) : [];
   },
   observe: () => ({}),
 };
@@ -509,4 +882,11 @@ describe("custom keyboard selection state", () => {
   runOperationTable(it, shortcutDraftTable);
   runOperationTable(it, shiftLibraryTable);
   runOperationTable(it, parsedStateTable);
+  runOperationTable(it, profileStateParseTable);
+  runOperationTable(it, profileNameTable);
+  runOperationTable(it, profileSelectionTable);
+  runOperationTable(it, profileCreationTable);
+  runOperationTable(it, profileDuplicationTable);
+  runOperationTable(it, profileDeletionTable);
+  runOperationTable(it, profileLinkTable);
 });

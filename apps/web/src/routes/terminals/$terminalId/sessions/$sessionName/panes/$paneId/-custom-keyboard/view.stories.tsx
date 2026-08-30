@@ -10,15 +10,18 @@ import {
   type CustomKeyboardFlickDirection,
   type CustomKeyboardNativeAction,
   type CustomKeyboardNativeFileAction,
+  type CustomKeyboardProfileSummary,
   type CustomKeyboardSequence,
   type CustomKeyboardSettingsViewModel,
   type CustomKeyboardShortcutDraft,
   type CustomKeyboardTerminalAction,
   type CustomKeyboardViewModel,
+  customKeyboardFixedButtons,
   customKeyboardIconOptions,
   customKeyboardSpecialKeyOptions,
   customKeyboardSpecialModifierOptions,
   defaultCustomKeyboardButtons,
+  isCustomKeyboardFixedButton,
 } from "./viewmodel";
 
 const alphabetButtonLibrary: readonly CustomKeyboardButton[] = [..."qwertyuiopasdfghjklzxcvbnm"].map((key) => ({
@@ -213,6 +216,17 @@ const buttonLibrary: readonly CustomKeyboardButton[] = [
       { type: "key", key: "Enter" },
     ],
   },
+  {
+    id: "git-status",
+    kind: "shortcut",
+    category: "shortcuts",
+    icon: "branch",
+    accessibleLabel: "Git status shortcut",
+    sequence: [
+      { type: "text", value: "git status" },
+      { type: "key", key: "Enter" },
+    ],
+  },
 ];
 
 type StoryKeyboardState = {
@@ -223,18 +237,31 @@ type StoryKeyboardState = {
   repeatIntervalMs: number;
 };
 
+const defaultStoryProfile: CustomKeyboardProfileSummary = {
+  id: "default",
+  name: "Default",
+  icon: "terminal",
+  linked: true,
+};
+
+const defaultStoryProfiles: readonly CustomKeyboardProfileSummary[] = [defaultStoryProfile];
+
 function InteractiveShellStory({
   startInSettings = false,
   initialButtons = defaultCustomKeyboardButtons,
   initialActiveModifiers = [],
+  initialProfiles = defaultStoryProfiles,
 }: {
   startInSettings?: boolean;
   initialButtons?: readonly CustomKeyboardButton[];
   initialActiveModifiers?: CustomKeyboardViewModel["activeModifiers"];
+  initialProfiles?: readonly CustomKeyboardProfileSummary[];
 }) {
   const [keyboardState, setKeyboardState] = useState<StoryKeyboardState>(() => ({
     libraryButtons: uniqueStoryButtons([...buttonLibrary, ...initialButtons]),
-    selectedButtonIds: initialButtons.map((button) => button.id),
+    selectedButtonIds: initialButtons
+      .filter((button) => !isCustomKeyboardFixedButton(button.id))
+      .map((button) => button.id),
     shortcutButtonIds: [
       ...defaultCustomKeyboardButtons.filter((button) => button.kind === "shortcut"),
       ...buttonLibrary.filter((button) => button.kind === "shortcut"),
@@ -247,6 +274,26 @@ function InteractiveShellStory({
   ]);
   const [nativeKeyboardVisible, setNativeKeyboardVisible] = useState(false);
   const [lastAction, setLastAction] = useState("Tap a custom key to preview its action.");
+  const [profiles, setProfiles] = useState<readonly CustomKeyboardProfileSummary[]>(() =>
+    initialProfiles.length > 0 ? [...initialProfiles] : defaultStoryProfiles,
+  );
+  const [activeProfileId, setActiveProfileId] = useState(() => initialProfiles[0]?.id ?? defaultStoryProfile.id);
+
+  const activeProfile =
+    profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0] ?? defaultStoryProfile;
+
+  const onSelectProfile = useCallback(
+    (profileId: string) => {
+      const profile = profiles.find((candidate) => candidate.id === profileId);
+      if (!profile) return;
+      setActiveProfileId(profileId);
+      setProfiles((current) =>
+        current.map((candidate) => (candidate.id === profileId ? { ...candidate, linked: true } : candidate)),
+      );
+      setLastAction(`Selected profile ${profile.name}`);
+    },
+    [profiles],
+  );
 
   const onButtonPress = useCallback(
     (button: CustomKeyboardButton) => {
@@ -374,17 +421,25 @@ function InteractiveShellStory({
     }));
   }, []);
 
-  const buttons = selectedButtonsFromIds(keyboardState.selectedButtonIds, keyboardState.libraryButtons);
+  const buttons = selectedButtonsFromIds(keyboardState.selectedButtonIds, keyboardState.libraryButtons).filter(
+    (button) => !isCustomKeyboardFixedButton(button.id),
+  );
   const shortcutButtons = selectedButtonsFromIds(keyboardState.shortcutButtonIds, keyboardState.libraryButtons);
   const availableButtons = keyboardState.libraryButtons.filter(
-    (candidate) => !keyboardState.selectedButtonIds.includes(candidate.id),
+    (candidate) =>
+      !keyboardState.selectedButtonIds.includes(candidate.id) && !isCustomKeyboardFixedButton(candidate.id),
   );
   const keyboardViewModel: CustomKeyboardViewModel = {
     buttons,
+    fixedButtons: customKeyboardFixedButtons,
     activeModifiers,
     nativeKeyboardVisible,
+    activeProfile,
+    profiles,
+    workspaceId: "workspace-muximo",
     repeatStartDelayMs: keyboardState.repeatStartDelayMs,
     repeatIntervalMs: keyboardState.repeatIntervalMs,
+    onSelectProfile,
     onButtonPress,
     onDirectionalFlick,
     onNativeAction,
@@ -398,9 +453,20 @@ function InteractiveShellStory({
     buttons,
     availableButtons,
     shortcutButtons,
+    activeProfile,
+    profiles,
+    linkedProfileIds: [],
+    workspaceId: "workspace-muximo",
     selectedButtonIds: keyboardState.selectedButtonIds,
     repeatStartDelayMs: keyboardState.repeatStartDelayMs,
     repeatIntervalMs: keyboardState.repeatIntervalMs,
+    onSelectProfile,
+    onCreateProfile: ({ name }) => setLastAction(`Created profile ${name}`),
+    onDuplicateProfile: (profileId) => setLastAction(`Duplicated profile ${profileId}`),
+    onRenameProfile: (profileId, name) => setLastAction(`Renamed profile ${profileId} to ${name}`),
+    onDeleteProfile: (profileId) => setLastAction(`Deleted profile ${profileId}`),
+    onSetProfileIcon: (profileId, icon) => setLastAction(`Changed profile ${profileId} icon to ${icon}`),
+    onToggleProfileLink: (profileId) => setLastAction(`Toggled workspace profile link ${profileId}`),
     onDrop,
     onRemoveButton,
     onRegisterShortcut,
@@ -574,6 +640,26 @@ export const ShellAndKeyboard: Story = {
       "aria-pressed",
       "true",
     );
+  },
+};
+
+export const ProfileSelection: Story = {
+  render: () => (
+    <InteractiveShellStory
+      initialProfiles={[
+        defaultStoryProfile,
+        { id: "agent", name: "Agent", icon: "spark", linked: true },
+        { id: "review", name: "Review", icon: "branch", linked: false },
+      ]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /select custom keyboard profile/i }));
+    await expect(canvas.getByRole("dialog", { name: "Select custom keyboard profile" })).toBeVisible();
+    await expect(canvas.getByRole("option", { name: /Review/ })).toBeVisible();
+    await userEvent.click(canvas.getByRole("option", { name: /Agent/ }));
+    await expect(canvas.getByRole("button", { name: /current profile Agent/i })).toBeVisible();
   },
 };
 

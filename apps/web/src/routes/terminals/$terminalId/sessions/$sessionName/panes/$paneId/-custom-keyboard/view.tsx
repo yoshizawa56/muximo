@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 import { AppIcon } from "../../../../../../../../app/components/app-icon";
+import { AppSafeAreaOverlay } from "../../../../../../../../app/components/app-layout";
 import { type CustomKeyboardDirectionalFlickPreview, installCustomKeyboardDirectionalFlickInput } from "./flick";
 import { isCustomKeyboardModifierKey } from "./input";
 import {
@@ -30,6 +31,7 @@ import {
   type CustomKeyboardIconCategory,
   type CustomKeyboardModifier,
   type CustomKeyboardNativeFileAction,
+  type CustomKeyboardProfileIcon,
   type CustomKeyboardSequence,
   type CustomKeyboardSequenceToken,
   type CustomKeyboardSettingsViewModel,
@@ -37,8 +39,11 @@ import {
   type CustomKeyboardViewModel,
   customKeyboardIconCategories,
   customKeyboardIconOptions,
+  customKeyboardProfileIconOptions,
   customKeyboardSpecialKeyOptions,
   customKeyboardSpecialModifierOptions,
+  DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID,
+  isCustomKeyboardProfileNameValid,
 } from "./viewmodel";
 
 type ShortcutDropIndicator = {
@@ -75,6 +80,7 @@ export function CustomKeyboardView({
   const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const pendingNativeFileActionRef = useRef<CustomKeyboardNativeFileAction | null>(null);
+  const [profilePickerOpen, setProfilePickerOpen] = useState(false);
 
   const openNativeFilePicker = useCallback((action: CustomKeyboardNativeFileAction) => {
     pendingNativeFileActionRef.current = action;
@@ -124,8 +130,24 @@ export function CustomKeyboardView({
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="relative flex min-h-0 flex-1 flex-col">{children}</div>
-      <CustomKeyboardBar viewModel={viewModel} onButtonPress={onButtonPress} onOpenSettings={onOpenSettings} />
+      <CustomKeyboardBar
+        viewModel={viewModel}
+        onButtonPress={onButtonPress}
+        onOpenProfilePicker={() => setProfilePickerOpen(true)}
+        profilePickerOpen={profilePickerOpen}
+        onOpenSettings={onOpenSettings}
+      />
       {viewModel.nativeKeyboardVisible ? nativeKeyboard : null}
+      {profilePickerOpen ? (
+        <CustomKeyboardProfilePicker
+          viewModel={viewModel}
+          onClose={() => setProfilePickerOpen(false)}
+          onOpenSettings={() => {
+            setProfilePickerOpen(false);
+            onOpenSettings();
+          }}
+        />
+      ) : null}
       <input
         ref={photoInputRef}
         className="sr-only"
@@ -153,21 +175,28 @@ export function CustomKeyboardBar({
   viewModel,
   onButtonPress = viewModel.onButtonPress,
   onKeepNativeKeyboardOpen = viewModel.onKeepNativeKeyboardOpen,
+  onOpenProfilePicker,
+  profilePickerOpen,
   onOpenSettings,
 }: {
   viewModel: CustomKeyboardViewModel;
   onButtonPress?: (button: CustomKeyboardButton) => void;
   onKeepNativeKeyboardOpen?: () => void;
+  onOpenProfilePicker: () => void;
+  profilePickerOpen: boolean;
   onOpenSettings: () => void;
 }) {
+  const arrowButton = viewModel.fixedButtons.find((button) => button.interaction === "directional-flick");
+  const commonFixedButtons = viewModel.fixedButtons.filter((button) => button.interaction !== "directional-flick");
+
   return (
     <div
-      className="shrink-0 border-t border-[#1c4a28] bg-[rgb(5_15_8_/_98%)] px-[max(5px,var(--safe-area-left))] pb-[max(4px,var(--safe-area-bottom))] pt-1 shadow-[0_-10px_24px_rgb(0_0_0_/_28%)]"
+      className="shrink-0 border-t border-[#1c4a28] bg-[rgb(5_15_8_/_98%)] pb-[max(4px,var(--safe-area-bottom))] pl-[max(5px,var(--safe-area-left))] pr-[max(5px,var(--safe-area-right))] pt-1 shadow-[0_-10px_24px_rgb(0_0_0_/_28%)]"
       role="toolbar"
       aria-label="Custom terminal keyboard"
     >
-      <div className="mx-auto flex min-w-0 max-w-[1560px] items-stretch gap-1">
-        <div className="min-w-0 flex-1 overflow-x-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="mx-auto flex min-w-0 max-w-[1560px] flex-col items-stretch gap-0.5">
+        <div className="min-w-0 overflow-x-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex min-w-max items-stretch gap-0.5">
             {viewModel.buttons.map((button) => (
               <CustomKeyboardButtonView
@@ -183,33 +212,184 @@ export function CustomKeyboardBar({
             ))}
           </div>
         </div>
-        <div className="flex shrink-0 items-stretch gap-0.5 border-l border-[#1c4a28] pl-1">
-          <CustomKeyboardActionSurface
-            className="grid size-[34px] place-items-center rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1 text-[#91d89b] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
-            onPress={onOpenSettings}
-            onInteractionStart={onKeepNativeKeyboardOpen}
-            preserveNativeKeyboardFocus
-            aria-label="Open custom keyboard settings"
-            title="Open custom keyboard settings"
+        <div className="custom-keyboard-fixed-row flex min-w-0 items-stretch gap-0.5 overflow-hidden">
+          <button
+            className="custom-keyboard-profile-button flex h-[34px] min-w-[34px] max-w-[96px] flex-1 shrink items-center gap-1 overflow-hidden rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1.5 text-[#a9e8b1] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
+            type="button"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              onKeepNativeKeyboardOpen?.();
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onKeepNativeKeyboardOpen?.();
+            }}
+            onClick={onOpenProfilePicker}
+            aria-haspopup="dialog"
+            aria-expanded={profilePickerOpen}
+            aria-label={`Select custom keyboard profile, current profile ${viewModel.activeProfile.name}`}
+            title={viewModel.activeProfile.name}
           >
-            <AppIcon name="sliders" size={16} />
-          </CustomKeyboardActionSurface>
-          <CustomKeyboardActionSurface
-            className={`grid size-[34px] place-items-center rounded-[6px] border px-1 transition-colors ${
-              viewModel.nativeKeyboardVisible
-                ? "border-[#78b7ff] bg-[#123052] text-[#a9d5ff]"
-                : "border-[#2a5c36] bg-[#0b2111] text-[#91d89b] hover:border-[#4f9e5e] hover:bg-[#12351a]"
-            }`}
-            onPress={viewModel.onToggleNativeKeyboard}
-            aria-pressed={viewModel.nativeKeyboardVisible}
-            aria-label={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
-            title={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
-          >
-            <CustomKeyboardIconView icon="keyboard" size={16} />
-          </CustomKeyboardActionSurface>
+            <CustomKeyboardIconView icon={viewModel.activeProfile.icon} size={15} />
+            <span className="custom-keyboard-profile-name min-w-0 truncate text-[0.54rem] font-bold">
+              {viewModel.activeProfile.name}
+            </span>
+            <span className="custom-keyboard-profile-chevron ml-auto text-[0.56rem]" aria-hidden="true">
+              ▾
+            </span>
+          </button>
+          <div className="ml-auto flex min-w-0 shrink-0 items-stretch gap-0.5">
+            {commonFixedButtons.map((button) => (
+              <CustomKeyboardButtonView
+                key={button.id}
+                button={button}
+                compact
+                active={false}
+                onPress={onButtonPress}
+                onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
+                onDirectionalFlick={viewModel.onDirectionalFlick}
+                repeatStartDelayMs={viewModel.repeatStartDelayMs}
+                repeatIntervalMs={viewModel.repeatIntervalMs}
+              />
+            ))}
+            {arrowButton ? (
+              <CustomKeyboardButtonView
+                button={arrowButton}
+                compact
+                active={false}
+                onPress={onButtonPress}
+                onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
+                onDirectionalFlick={viewModel.onDirectionalFlick}
+                repeatStartDelayMs={viewModel.repeatStartDelayMs}
+                repeatIntervalMs={viewModel.repeatIntervalMs}
+              />
+            ) : null}
+            <span className="mx-0.5 h-[34px] w-px shrink-0 bg-[#1c4a28]" aria-hidden="true" />
+            <CustomKeyboardActionSurface
+              className="custom-keyboard-compact-button grid size-[34px] place-items-center rounded-[6px] border border-[#2a5c36] bg-[#0b2111] px-1 text-[#91d89b] transition-colors hover:border-[#4f9e5e] hover:bg-[#12351a]"
+              onPress={onOpenSettings}
+              onInteractionStart={onKeepNativeKeyboardOpen}
+              preserveNativeKeyboardFocus
+              aria-label="Open custom keyboard settings"
+              title="Open custom keyboard settings"
+            >
+              <AppIcon name="sliders" size={16} />
+            </CustomKeyboardActionSurface>
+            <CustomKeyboardActionSurface
+              className={`custom-keyboard-compact-button grid size-[34px] place-items-center rounded-[6px] border px-1 transition-colors ${
+                viewModel.nativeKeyboardVisible
+                  ? "border-[#78b7ff] bg-[#123052] text-[#a9d5ff]"
+                  : "border-[#2a5c36] bg-[#0b2111] text-[#91d89b] hover:border-[#4f9e5e] hover:bg-[#12351a]"
+              }`}
+              onPress={viewModel.onToggleNativeKeyboard}
+              aria-pressed={viewModel.nativeKeyboardVisible}
+              aria-label={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
+              title={viewModel.nativeKeyboardVisible ? "Hide standard keyboard" : "Show standard keyboard"}
+            >
+              <CustomKeyboardIconView icon="keyboard" size={16} />
+            </CustomKeyboardActionSurface>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function CustomKeyboardProfilePicker({
+  viewModel,
+  onClose,
+  onOpenSettings,
+}: {
+  viewModel: CustomKeyboardViewModel;
+  onClose: () => void;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <AppSafeAreaOverlay className="z-40">
+      <div
+        className="flex h-full items-end justify-center bg-[rgb(0_0_0_/_48%)] p-3"
+        onPointerDown={onClose}
+        role="presentation"
+      >
+        <section
+          className="flex max-h-[min(72%,480px)] w-full max-w-[430px] flex-col overflow-hidden rounded-[14px] border border-[#2b6838] bg-[#071509] shadow-[0_20px_60px_rgb(0_0_0_/_55%)]"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Select custom keyboard profile"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#1d4325] px-3 py-2.5">
+            <div className="min-w-0">
+              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.14em] text-[#63ae6e]">
+                Profile
+              </span>
+              <h2 className="m-0 mt-0.5 truncate text-[0.82rem] font-bold">Choose keyboard profile</h2>
+            </div>
+            <button
+              className="grid size-8 shrink-0 place-items-center rounded-[7px] border border-[#2d5d37] bg-[#0b2111] text-[#a9e8b1]"
+              type="button"
+              onClick={onClose}
+              aria-label="Close profile picker"
+            >
+              <AppIcon name="close" size={15} />
+            </button>
+          </header>
+          <div className="min-h-0 overflow-y-auto p-2" role="listbox" aria-label="Custom keyboard profiles">
+            <div className="grid gap-1.5">
+              {viewModel.profiles.map((profile) => {
+                const active = profile.id === viewModel.activeProfile.id;
+                return (
+                  <button
+                    className={`flex min-h-11 items-center gap-2 rounded-[9px] border px-2.5 py-2 text-left transition-colors ${
+                      active
+                        ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd]"
+                        : "border-[#245631] bg-[#0b1c0f] text-[#b3eebc] hover:border-[#4e9d5d] hover:bg-[#12351a]"
+                    }`}
+                    key={profile.id}
+                    type="button"
+                    onClick={() => {
+                      viewModel.onSelectProfile(profile.id);
+                      onClose();
+                    }}
+                    role="option"
+                    aria-selected={active}
+                  >
+                    <span className="grid size-7 shrink-0 place-items-center rounded-[7px] bg-[#0b2411]">
+                      <CustomKeyboardIconView icon={profile.icon} size={15} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <strong className="block truncate text-[0.66rem]">{profile.name}</strong>
+                      <small className="block truncate text-[0.52rem] text-[#78ae80]">
+                        {profile.linked ? "Available in this workspace" : "Tap to add to this workspace"}
+                      </small>
+                    </span>
+                    {active ? (
+                      <span className="text-[0.8rem]" aria-hidden="true">
+                        ✓
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <footer className="flex shrink-0 items-center justify-between gap-2 border-t border-[#1d4325] px-2.5 py-2">
+            <span className="min-w-0 truncate font-mono text-[0.48rem] text-[#628168]">
+              {viewModel.workspaceId
+                ? "Profiles are remembered for this workspace."
+                : "Profiles are stored on this device."}
+            </span>
+            <button
+              className="shrink-0 rounded-[7px] border border-[#315f3a] bg-[#0b2411] px-2 py-1.5 font-mono text-[0.5rem] font-bold uppercase tracking-[0.05em] text-[#a9e8b1]"
+              type="button"
+              onClick={onOpenSettings}
+            >
+              Manage
+            </button>
+          </footer>
+        </section>
+      </div>
+    </AppSafeAreaOverlay>
   );
 }
 
@@ -260,6 +440,7 @@ function CustomKeyboardActionSurface({
 
 function CustomKeyboardButtonView({
   button,
+  compact = false,
   active,
   onPress,
   onKeepNativeKeyboardOpen,
@@ -268,6 +449,7 @@ function CustomKeyboardButtonView({
   repeatIntervalMs,
 }: {
   button: CustomKeyboardButton;
+  compact?: boolean;
   active: boolean;
   onPress: (button: CustomKeyboardButton) => void;
   onKeepNativeKeyboardOpen: () => void;
@@ -279,6 +461,7 @@ function CustomKeyboardButtonView({
     return (
       <CustomKeyboardDirectionalFlickButtonView
         button={button}
+        compact={compact}
         onDirection={onDirectionalFlick}
         onKeepNativeKeyboardOpen={onKeepNativeKeyboardOpen}
         repeatStartDelayMs={repeatStartDelayMs}
@@ -290,11 +473,11 @@ function CustomKeyboardButtonView({
   const valueLabel = keyboardButtonValueLabel(button);
   const showValueAsPrimary = valueLabel !== undefined;
   const icon = button.icon;
-  const showIcon = icon !== undefined && !showValueAsPrimary;
+  const showIcon = icon !== undefined && (compact || !showValueAsPrimary);
 
   return (
     <CustomKeyboardActionSurface
-      className={`group relative flex h-[34px] min-w-[34px] shrink-0 flex-col items-center justify-center gap-0 rounded-[6px] border px-1 font-mono transition-[border-color,background-color,transform] active:scale-[0.97] ${
+      className={`${compact ? "custom-keyboard-compact-button " : ""}group relative flex h-[34px] min-w-[34px] shrink-0 flex-col items-center justify-center gap-0 rounded-[6px] border px-1 font-mono transition-[border-color,background-color,transform] active:scale-[0.97] ${
         active
           ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd] shadow-[0_0_0_2px_rgb(139_255_154_/_14%)]"
           : button.kind === "shortcut"
@@ -313,9 +496,9 @@ function CustomKeyboardButtonView({
           <CustomKeyboardIconView icon={icon} />
         </span>
       ) : null}
-      {showValueAsPrimary ? (
+      {!compact && showValueAsPrimary ? (
         <span className="max-w-[42px] truncate text-[0.78rem] font-bold leading-none">{valueLabel}</span>
-      ) : displayLabel ? (
+      ) : !compact && displayLabel ? (
         <span className="max-w-[38px] truncate text-[0.4rem] font-bold leading-none">{displayLabel}</span>
       ) : null}
       {button.kind === "shortcut" ? (
@@ -327,12 +510,14 @@ function CustomKeyboardButtonView({
 
 function CustomKeyboardDirectionalFlickButtonView({
   button,
+  compact = false,
   onDirection,
   onKeepNativeKeyboardOpen,
   repeatStartDelayMs,
   repeatIntervalMs,
 }: {
   button: CustomKeyboardButton;
+  compact?: boolean;
   onDirection: (direction: CustomKeyboardFlickDirection) => void;
   onKeepNativeKeyboardOpen: () => void;
   repeatStartDelayMs: number;
@@ -355,7 +540,7 @@ function CustomKeyboardDirectionalFlickButtonView({
   return (
     <button
       ref={buttonRef}
-      className={`group relative grid h-[34px] min-w-[38px] shrink-0 place-items-center rounded-[6px] border px-1 font-mono transition-[border-color,background-color,transform] active:scale-[0.97] ${
+      className={`${compact ? "custom-keyboard-compact-button" : ""} group relative grid h-[34px] ${compact ? "w-[34px] min-w-[34px]" : "min-w-[38px]"} shrink-0 place-items-center rounded-[6px] border px-1 font-mono transition-[border-color,background-color,transform] active:scale-[0.97] ${
         preview
           ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd] shadow-[0_0_0_2px_rgb(139_255_154_/_14%)]"
           : "border-[#245631] bg-[#0b1c0f] text-[#b3eebc] hover:border-[#4e9d5d] hover:bg-[#12351a]"
@@ -445,10 +630,21 @@ export function CustomKeyboardSettingsView({
   const [shortcutEditMode, setShortcutEditMode] = useState(false);
   const [editingShortcutId, setEditingShortcutId] = useState<string | null>(null);
   const [shortcutDraft, setShortcutDraft] = useState<CustomKeyboardShortcutDraft>(() => createShortcutDraft());
+  const [profileNameDraft, setProfileNameDraft] = useState(viewModel.activeProfile.name);
+  const [profileIconDraft, setProfileIconDraft] = useState<CustomKeyboardProfileIcon>(viewModel.activeProfile.icon);
+  const [newProfileOpen, setNewProfileOpen] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("New profile");
+  const [newProfileIcon, setNewProfileIcon] = useState<CustomKeyboardProfileIcon>("terminal");
+  const activeProfile = viewModel.activeProfile;
   const pointerDragRef = useRef<PointerDragState | null>(null);
   const dragSourceRef = useRef<CustomKeyboardDragSource | null>(null);
   const suppressClickRef = useRef(false);
   const suppressClickTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setProfileNameDraft(activeProfile.name);
+    setProfileIconDraft(activeProfile.icon);
+  }, [activeProfile]);
 
   const addButton = useCallback(
     (button: CustomKeyboardButton) => {
@@ -676,6 +872,196 @@ export function CustomKeyboardSettingsView({
           Save
         </button>
       </header>
+
+      <section
+        className="shrink-0 border-b border-[#1d4927] bg-[rgb(7_20_10_/_94%)] px-3 py-2.5"
+        aria-label="Keyboard profiles"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.14em] text-[#63ae6e]">
+              Profiles
+            </span>
+            <h2 className="m-0 mt-0.5 truncate text-[0.82rem] font-bold">Workspace keyboard profiles</h2>
+          </div>
+          <button
+            className="shrink-0 rounded-[7px] border border-[#315f3a] bg-[#0b2411] px-2 py-1.5 font-mono text-[0.5rem] font-bold uppercase tracking-[0.05em] text-[#a9e8b1]"
+            type="button"
+            onClick={() => setNewProfileOpen((current) => !current)}
+            aria-expanded={newProfileOpen}
+          >
+            {newProfileOpen ? "Cancel" : "New profile"}
+          </button>
+        </div>
+        <div className="mt-2 flex min-w-0 gap-1.5 overflow-x-auto pb-0.5" role="listbox" aria-label="Keyboard profiles">
+          {viewModel.profiles.map((profile) => {
+            const active = profile.id === viewModel.activeProfile.id;
+            return (
+              <div className="flex shrink-0 items-stretch gap-0.5" key={profile.id}>
+                <button
+                  className={`flex min-h-9 max-w-[150px] min-w-[86px] items-center gap-1.5 rounded-[7px] border px-2 text-left ${
+                    active
+                      ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd]"
+                      : "border-[#245631] bg-[#0b1c0f] text-[#8fc998]"
+                  }`}
+                  type="button"
+                  onClick={() => viewModel.onSelectProfile(profile.id)}
+                  role="option"
+                  aria-selected={active}
+                  title={profile.name}
+                >
+                  <CustomKeyboardIconView icon={profile.icon} size={14} />
+                  <span className="min-w-0 flex-1 truncate text-[0.54rem] font-bold">{profile.name}</span>
+                  {active ? (
+                    <span className="text-[0.7rem]" aria-hidden="true">
+                      ✓
+                    </span>
+                  ) : null}
+                </button>
+                {viewModel.workspaceId && profile.id !== DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID ? (
+                  <button
+                    className={`min-h-9 rounded-[7px] border px-1.5 font-mono text-[0.44rem] font-bold uppercase tracking-[0.04em] ${
+                      profile.linked
+                        ? "border-[#4a9a57] bg-[#12351a] text-[#baffc1]"
+                        : "border-[#315f3a] bg-[#071509] text-[#719176]"
+                    }`}
+                    type="button"
+                    onClick={() => viewModel.onToggleProfileLink(profile.id)}
+                    aria-pressed={profile.linked}
+                    title={profile.linked ? "Remove profile from workspace" : "Add profile to workspace"}
+                  >
+                    {profile.linked ? "Linked" : "Link"}
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        {newProfileOpen ? (
+          <form
+            className="mt-2 grid gap-2 rounded-[8px] border border-[#285a33] bg-[#061008] p-2 sm:grid-cols-[minmax(0,1fr)_150px_auto] sm:items-end"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!isCustomKeyboardProfileNameValid(newProfileName)) return;
+              viewModel.onCreateProfile({ name: newProfileName, icon: newProfileIcon });
+              setNewProfileOpen(false);
+            }}
+          >
+            <label className="flex min-w-0 flex-col gap-1">
+              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
+                Profile name
+              </span>
+              <input
+                className="min-h-9 min-w-0 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a]"
+                value={newProfileName}
+                onChange={(event) => setNewProfileName(event.target.value)}
+                maxLength={40}
+                autoComplete="off"
+                aria-label="New profile name"
+              />
+            </label>
+            <label className="flex min-w-0 flex-col gap-1">
+              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
+                Profile icon
+              </span>
+              <select
+                className="min-h-9 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a]"
+                value={newProfileIcon}
+                onChange={(event) => setNewProfileIcon(event.target.value as CustomKeyboardProfileIcon)}
+                aria-label="New profile icon"
+              >
+                {customKeyboardProfileIconOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="min-h-9 rounded-[6px] bg-[#8bff9a] px-2.5 font-mono text-[0.52rem] font-bold uppercase tracking-[0.06em] text-[#061008] disabled:opacity-35"
+              type="submit"
+              disabled={!isCustomKeyboardProfileNameValid(newProfileName)}
+            >
+              Create
+            </button>
+          </form>
+        ) : null}
+        <div className="mt-2 grid gap-2 rounded-[8px] border border-[#1d4325] bg-[#061008] p-2 sm:grid-cols-[minmax(0,1fr)_150px_auto] sm:items-end">
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
+              Active profile name
+            </span>
+            <input
+              className="min-h-9 min-w-0 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a] disabled:opacity-45"
+              value={profileNameDraft}
+              onChange={(event) => setProfileNameDraft(event.target.value)}
+              maxLength={40}
+              disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
+              autoComplete="off"
+              aria-label="Active profile name"
+            />
+          </label>
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
+              Active profile icon
+            </span>
+            <select
+              className="min-h-9 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a] disabled:opacity-45"
+              value={profileIconDraft}
+              onChange={(event) => {
+                const icon = event.target.value as CustomKeyboardProfileIcon;
+                setProfileIconDraft(icon);
+                viewModel.onSetProfileIcon(viewModel.activeProfile.id, icon);
+              }}
+              disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
+              aria-label="Active profile icon"
+            >
+              {customKeyboardProfileIconOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex min-h-9 items-stretch gap-1">
+            <button
+              className="rounded-[6px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#a9e8b1] disabled:opacity-35"
+              type="button"
+              onClick={() => viewModel.onRenameProfile(viewModel.activeProfile.id, profileNameDraft)}
+              disabled={
+                viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID ||
+                !isCustomKeyboardProfileNameValid(profileNameDraft)
+              }
+            >
+              Rename
+            </button>
+            <button
+              className="rounded-[6px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#a9e8b1]"
+              type="button"
+              onClick={() => viewModel.onDuplicateProfile(viewModel.activeProfile.id)}
+            >
+              Duplicate
+            </button>
+            <button
+              className="rounded-[6px] border border-red/40 bg-red/10 px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#ffb0aa] disabled:opacity-35"
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Delete profile "${viewModel.activeProfile.name}"?`)) {
+                  viewModel.onDeleteProfile(viewModel.activeProfile.id);
+                }
+              }}
+              disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+        <p className="m-0 mt-1 font-mono text-[0.48rem] leading-[1.4] text-[#628168]">
+          {viewModel.workspaceId
+            ? "Select a profile to remember it for this workspace. Linked profiles remain available in the profile picker."
+            : "Profile data is stored locally on this device. Default keeps the shared terminal actions available."}
+        </p>
+      </section>
 
       <section
         className={`shrink-0 border-b border-[#1d4927] bg-[rgb(8_24_12_/_92%)] px-3 py-2.5 ${

@@ -1,4 +1,4 @@
-import type { GetOptions, SetOptions } from "@capacitor/preferences";
+import type { GetOptions, RemoveOptions, SetOptions } from "@capacitor/preferences";
 import {
   type FixtureHandle,
   hasObserved,
@@ -9,7 +9,12 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { CUSTOM_KEYBOARD_STORAGE_KEY, type CustomKeyboardStorage, createCustomKeyboardStorage } from "./storage";
+import {
+  CUSTOM_KEYBOARD_STORAGE_KEY,
+  type CustomKeyboardStorage,
+  createCustomKeyboardStorage,
+  LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY,
+} from "./storage";
 
 type LegacyStorage = {
   values: Map<string, string>;
@@ -52,7 +57,7 @@ function createStorageFixture(
   const preferenceGetKeys: string[] = [];
   const preferenceSetValues: string[] = [];
   const legacyValues = new Map<string, string>();
-  if (options.legacyValue !== undefined) legacyValues.set(CUSTOM_KEYBOARD_STORAGE_KEY, options.legacyValue);
+  if (options.legacyValue !== undefined) legacyValues.set(LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY, options.legacyValue);
   const legacyStorage: LegacyStorage = {
     values: legacyValues,
     getItem: (key) => legacyValues.get(key) ?? null,
@@ -69,6 +74,9 @@ function createStorageFixture(
       if (options.failPreferenceSet) throw new Error("preferences set unavailable");
       preferenceValues.set(key, value);
       preferenceSetValues.push(value);
+    },
+    remove: async ({ key }: RemoveOptions) => {
+      preferenceValues.delete(key);
     },
   };
 
@@ -128,7 +136,7 @@ const readTable: OperationTable<StorageFixture, ReadFixtureKey, {}, string | nul
   observe: (fixture) => ({
     preferenceGetKeys: fixture.preferenceGetKeys,
     preferenceSetValues: fixture.preferenceSetValues,
-    legacyValue: fixture.legacyStorage.getItem(CUSTOM_KEYBOARD_STORAGE_KEY),
+    legacyValue: fixture.legacyStorage.getItem(LEGACY_CUSTOM_KEYBOARD_STORAGE_KEY),
   }),
 };
 

@@ -2,8 +2,13 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { storyPanes } from "../../../../../../-story-fixtures";
-import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "../-custom-keyboard/viewmodel";
-import { defaultCustomKeyboardButtons } from "../-custom-keyboard/viewmodel";
+import {
+  type CustomKeyboardSettingsViewModel,
+  type CustomKeyboardViewModel,
+  customKeyboardFixedButtons,
+  defaultCustomKeyboardButtons,
+  isCustomKeyboardFixedButton,
+} from "../-custom-keyboard/viewmodel";
 import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
 import type { PaneViewModel } from "../-terminal/viewmodel";
 import { ControlRoomView } from "./view";
@@ -50,11 +55,16 @@ function createTerminal(overrides: Partial<PaneViewModel> = {}): PaneViewModel {
 
 function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): CustomKeyboardViewModel {
   return {
-    buttons: defaultCustomKeyboardButtons,
+    buttons: defaultCustomKeyboardButtons.filter((button) => !isCustomKeyboardFixedButton(button.id)),
+    fixedButtons: customKeyboardFixedButtons,
     activeModifiers: [],
     nativeKeyboardVisible: false,
+    activeProfile: { id: "default", name: "Default", icon: "terminal", linked: true },
+    profiles: [{ id: "default", name: "Default", icon: "terminal", linked: true }],
+    workspaceId: "muximo",
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
+    onSelectProfile: fn(),
     onButtonPress: fn(),
     onDirectionalFlick: fn(),
     onNativeAction: fn(),
@@ -68,12 +78,23 @@ function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): Custo
 
 function createKeyboardSettings(): CustomKeyboardSettingsViewModel {
   return {
-    buttons: defaultCustomKeyboardButtons,
+    buttons: defaultCustomKeyboardButtons.filter((button) => !isCustomKeyboardFixedButton(button.id)),
     availableButtons: [],
     shortcutButtons: [],
+    activeProfile: { id: "default", name: "Default", icon: "terminal", linked: true },
+    profiles: [{ id: "default", name: "Default", icon: "terminal", linked: true }],
+    linkedProfileIds: [],
+    workspaceId: "muximo",
     selectedButtonIds: [],
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
+    onSelectProfile: fn(),
+    onCreateProfile: fn(),
+    onDuplicateProfile: fn(),
+    onRenameProfile: fn(),
+    onDeleteProfile: fn(),
+    onSetProfileIcon: fn(),
+    onToggleProfileLink: fn(),
     onDrop: fn(),
     onRemoveButton: fn(),
     onRegisterShortcut: fn(),
