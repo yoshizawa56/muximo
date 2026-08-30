@@ -30,6 +30,10 @@ export function createHttpTestClient(connection: TestConnection) {
     createSession: (input: Parameters<RpcClient["sessions"]["create"]>[0]) => rpc.sessions.create(input),
     manageSession: (input: Parameters<RpcClient["sessions"]["manage"]>[0]) => rpc.sessions.manage(input),
     createPane: (input: Parameters<RpcClient["panes"]["create"]>[0]) => rpc.panes.create(input),
+    agentSessions: {
+      run: (input: Parameters<RpcClient["agentSessions"]["run"]>[0]) => rpc.agentSessions.run(input),
+      resume: (input: Parameters<RpcClient["agentSessions"]["resume"]>[0]) => rpc.agentSessions.resume(input),
+    },
     openEvents: () => rpc.events.subscribe({}),
   };
 }

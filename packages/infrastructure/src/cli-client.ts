@@ -1,5 +1,6 @@
 /** Host capabilities that may be used by the CLI client composition root. */
 
+export { AttachedAgentExecutionAdapter, type AttachedAgentExecutionLogger } from "./cli/agent-execution.js";
 export * from "./cli/doctor.js";
 export {
   isPathWithin,

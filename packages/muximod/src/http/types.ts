@@ -1,4 +1,5 @@
 import type {
+  AgentExecutionPort,
   TerminalHostHookEvent as ApplicationHookEvent,
   MuximodApplication,
   MuximodAuthContext,
@@ -26,6 +27,10 @@ export type MuximodOriginPolicy = {
 export type MuximodHttpDependencies = {
   auth: MuximodAuthPort;
   application: MuximodApplication;
+  /** Consumes a private CLI execution ticket before an agent lifecycle starts. */
+  agentExecution?: {
+    consume(input: { token: string; operation: "run" | "resume"; hostPaneId?: string }): Promise<AgentExecutionPort>;
+  };
   isReady?: () => boolean;
   configurationFingerprint: string;
   originPolicy: MuximodOriginPolicy;

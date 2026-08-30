@@ -326,7 +326,7 @@ function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
         return fixture.confirmCleanup;
       },
     },
-    processId: 700,
+    execution: { ownerPid: 700, execute: async () => fixture.processResult },
   });
 }
 
@@ -368,7 +368,7 @@ function createResumeUseCase(fixture: LifecycleFixture): ResumeAgentSession {
     },
     clock: clock(),
     logger: logger(),
-    processId: 700,
+    execution: { ownerPid: 700, execute: async () => fixture.processResult },
   });
 }
 

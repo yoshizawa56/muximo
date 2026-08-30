@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentSessionRepository } from "@muximo/application";
+import type { AgentExecutionPort, AgentSessionRepository } from "@muximo/application";
 import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
 import {
   AgentBackendAdapter,
@@ -18,6 +18,7 @@ import {
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
 import type { CodexSessionStateRepository } from "../agents/codex/state.js";
+import { spawnAttached } from "../process/process.js";
 
 type BackendFixture = {
   root: string;
@@ -34,6 +35,7 @@ type BackendFixture = {
   processCode?: number;
   adapter: AgentBackendAdapter;
   session: AgentSessionRecord;
+  execution: AgentExecutionPort;
 };
 
 type BackendResult = {
@@ -102,8 +104,8 @@ const table: OperationTable<BackendFixture, FixtureKey, Input, BackendResult, Ba
     const preparation = await fixture.adapter.prepareLaunch(fixture.session, ["--opaque"], false);
     const backendSessionId = preparation.sessionUpdate?.backendSessionId;
     fixture.sessionUpdate = typeof backendSessionId === "string" ? backendSessionId : undefined;
-    const first = await preparation.plan.run();
-    const second = await preparation.plan.run();
+    const first = await preparation.plan.run(fixture.execution);
+    const second = await preparation.plan.run(fixture.execution);
     fixture.processKeys = Object.keys(first.process);
     fixture.sameProcessResult = first === second;
     await preparation.plan.dispose();
@@ -180,6 +182,17 @@ function createBackendFixture(
     processKeys: [],
     adapter: undefined as unknown as AgentBackendAdapter,
     session,
+    execution: undefined as unknown as AgentExecutionPort,
+  };
+  fixture.execution = {
+    ownerPid: process.pid,
+    execute: async (input) => {
+      const executable = input.command[0];
+      if (!executable) throw new Error("test command executable is missing");
+      return spawnAttached(executable, [...input.command.slice(1)], input.cwd, input.environment, {
+        captureFailureDiagnostic: true,
+      });
+    },
   };
   const pluginRegistry = new AgentPluginRegistry();
   pluginRegistry.register(

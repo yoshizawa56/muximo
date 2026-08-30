@@ -1,5 +1,6 @@
 import { AgentSession, AgentSessionId, type AgentSessionRecord, clearPatch } from "@muximo/domain";
 import type {
+  AgentExecutionPort,
   HookPort,
   LaunchExecution,
   LaunchPlan,
@@ -34,14 +35,17 @@ export type RunAgentSessionDependencies = {
   clock: SessionClock;
   logger: SessionLogger;
   confirmCleanup: SessionCleanupConfirmationPort;
-  processId: number;
+  execution: AgentExecutionPort;
 };
 
 /** Application policy for creating, executing, finalizing, and optionally removing one session. */
 export class RunAgentSession {
   public constructor(private readonly deps: RunAgentSessionDependencies) {}
 
-  public async execute(input: StartAgentSessionInput): Promise<RunAgentSessionResult> {
+  public async execute(
+    input: StartAgentSessionInput,
+    execution: AgentExecutionPort = this.deps.execution,
+  ): Promise<RunAgentSessionResult> {
     const logger = this.deps.logger.child({ operation: "run", backend: input.backend });
     logger.debug("session.starting", {
       useWorktree: input.useWorktree,
@@ -93,7 +97,7 @@ export class RunAgentSession {
         setupRan: false,
         resuming: false,
         executionId: this.deps.clock.id(),
-        executionPid: this.deps.processId,
+        executionPid: execution.ownerPid,
         executionStartedAt: now,
         createdAt: now,
         updatedAt: now,
@@ -137,11 +141,11 @@ export class RunAgentSession {
       session = await this.persistIdentityUpdate(session, preparation.sessionUpdate);
 
       launchPlanStarted = true;
-      const execution = await this.executePlan(session, preparation.plan, input.hostPaneId);
+      const launchExecution = await this.executePlan(session, preparation.plan, input.hostPaneId, execution);
       executionCompleted = true;
       launchPlan = undefined;
-      session = await this.persistIdentityUpdate(session, execution.sessionUpdate);
-      const result = await this.finalize(session, execution.process);
+      session = await this.persistIdentityUpdate(session, launchExecution.sessionUpdate);
+      const result = await this.finalize(session, launchExecution.process);
       logger.debug("session.finished", { status: result.session.status, cleanup: result.cleanup.disposition });
       return result;
     } catch (error) {
@@ -156,17 +160,18 @@ export class RunAgentSession {
     session: AgentSessionRecord,
     plan: LaunchPlan,
     hostPaneId: string | undefined,
+    execution: AgentExecutionPort,
   ): Promise<LaunchExecution> {
     try {
       await this.deps.panes.adopt(session, hostPaneId);
       await this.deps.panes.publish(session, "running", hostPaneId);
-      const execution = await plan.run();
+      const launchExecution = await plan.run(execution);
       await this.deps.panes.publish(
         session,
-        execution.process.interrupted ? "stopped" : execution.process.code === 0 ? "completed" : "failed",
+        launchExecution.process.interrupted ? "stopped" : launchExecution.process.code === 0 ? "completed" : "failed",
         hostPaneId,
       );
-      return execution;
+      return launchExecution;
     } catch (error) {
       await this.deps.sessions
         .update(

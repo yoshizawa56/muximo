@@ -557,6 +557,87 @@ const pairingCases = [
     },
     assert: [isValid()],
   },
+  {
+    name: "accepts an agent execution reservation request",
+    input: {
+      kind: "request",
+      value: {
+        type: "reserve_agent_execution",
+        requestId: controlRequestId,
+        operation: "run",
+        hostPaneId: "%1",
+        ownerPid: 1234,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts an agent execution completion request",
+    input: {
+      kind: "request",
+      value: {
+        type: "complete_agent_execution",
+        requestId: controlRequestId,
+        executionRequestId: "execution-request-123456",
+        token: "a".repeat(43),
+        executionId: "execution-id-123456",
+        result: { started: true, code: 0, interrupted: false, signal: null, pid: 4321 },
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts an agent execution request from the daemon",
+    input: {
+      kind: "response",
+      value: {
+        type: "execute_agent_process",
+        requestId: controlRequestId,
+        token: "a".repeat(43),
+        executionId: "execution-id-123456",
+        sessionId: "session-id",
+        sessionName: "review",
+        backend: "codex",
+        cwd: "/workspace/review",
+        command: ["codex", "--opaque"],
+        environment: { MUXIMO_AGENT_SESSION_ID: "session-id" },
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "rejects an agent execution command without an executable",
+    input: {
+      kind: "response",
+      value: {
+        type: "execute_agent_process",
+        requestId: controlRequestId,
+        token: "a".repeat(43),
+        executionId: "execution-id-123456",
+        sessionId: "session-id",
+        sessionName: "review",
+        backend: "codex",
+        cwd: "/workspace/review",
+        command: [],
+        environment: {},
+      },
+    },
+    assert: [isInvalid(["command"])],
+  },
+  {
+    name: "accepts an agent execution completion response",
+    input: {
+      kind: "response",
+      value: {
+        type: "agent_execution_completed",
+        requestId: controlRequestId,
+        executionRequestId: "execution-request-123456",
+        token: "a".repeat(43),
+        executionId: "execution-id-123456",
+      },
+    },
+    assert: [isValid()],
+  },
 ] satisfies readonly OperationCase<"default", PairingInput, ValidationResult, EmptyContext>[];
 
 const pairingTable: OperationTable<undefined, "default", PairingInput, ValidationResult, EmptyContext> = {

@@ -6,6 +6,7 @@ import {
   decodeMuximodControlRequest,
   encodeMuximodControlResponse,
   type MuximodControlLogResult,
+  type MuximodControlRequest,
   type MuximodControlResponse,
   muximodControlMaxBufferedResponseBytes,
   muximodControlMaxPendingRequests,
@@ -14,6 +15,11 @@ import {
 } from "@muximo/contract/control";
 import { encodePairingCode } from "@muximo/contract/shared";
 import type { PaneState } from "@muximo/domain";
+import type {
+  AgentExecutionControlPeer,
+  AgentExecutionReservation,
+  AgentExecutionReservationInput,
+} from "./agent-execution.js";
 import { validateMuximodControlSocketPath } from "./client-paths.js";
 
 const maxControlChunkBytes = muximodControlMaxRequestBytes * muximodControlMaxPendingRequests;
@@ -29,6 +35,8 @@ type AgentSessionObservationRequest = AgentSessionControlRequest & {
   recentOutput?: string;
 };
 
+type AgentExecutionCompletionRequest = Extract<MuximodControlRequest, { type: "complete_agent_execution" }>;
+
 export type MuximodControlServerOptions = {
   socketPath: string;
   auth: MuximodAuthControlPort;
@@ -36,11 +44,22 @@ export type MuximodControlServerOptions = {
   adoptAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
   observeAgentSession?: (request: AgentSessionObservationRequest) => Promise<void>;
   releaseAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
+  reserveAgentExecution?: (
+    peer: AgentExecutionControlPeer,
+    request: AgentExecutionReservationInput,
+  ) => Promise<AgentExecutionReservation> | AgentExecutionReservation;
+  releaseAgentExecution?: (peer: AgentExecutionControlPeer, token: string) => Promise<void> | void;
+  completeAgentExecution?: (
+    peer: AgentExecutionControlPeer,
+    request: AgentExecutionCompletionRequest,
+  ) => Promise<void> | void;
+  closeAgentExecution?: (peer: AgentExecutionControlPeer) => Promise<void> | void;
 };
 
 export class MuximodControlServer {
   private readonly clients = new Set<Socket>();
   private readonly pairingOwners = new Map<string, Socket>();
+  private readonly peers = new Map<object, AgentExecutionControlPeer>();
   private server: Server | undefined;
   private socketPath: string | undefined;
   private started = false;
@@ -114,6 +133,7 @@ export class MuximodControlServer {
     for (const client of this.clients) client.destroy();
     this.clients.clear();
     this.pairingOwners.clear();
+    this.peers.clear();
     this.server = undefined;
     this.socketPath = undefined;
     this.started = false;
@@ -145,6 +165,7 @@ export class MuximodControlServer {
 
   private handleConnection(socket: Socket): void {
     this.clients.add(socket);
+    const peer = this.peerFor(socket);
     let buffer = "";
     let requestQueue = Promise.resolve();
     let pendingRequests = 0;
@@ -184,6 +205,8 @@ export class MuximodControlServer {
     });
     socket.on("close", () => {
       this.clients.delete(socket);
+      this.peers.delete(socket);
+      void this.options.closeAgentExecution?.(peer);
       for (const [pairingId, owner] of this.pairingOwners) {
         if (owner !== socket) continue;
         this.pairingOwners.delete(pairingId);
@@ -207,6 +230,7 @@ export class MuximodControlServer {
       return;
     }
     const request = parsedRequest.value;
+    const peer = this.peerFor(socket);
 
     try {
       if (request.type === "create_local_session") {
@@ -239,6 +263,46 @@ export class MuximodControlServer {
         if (!this.options.readLog) throw controlError("log_read_unavailable", "daemon log reading is unavailable");
         const result = await this.options.readLog(request.lines);
         this.send(socket, { type: "daemon_log", requestId: request.requestId, ...result, lines: [...result.lines] });
+        return;
+      }
+      if (request.type === "reserve_agent_execution") {
+        if (!this.options.reserveAgentExecution)
+          throw controlError("agent_execution_unavailable", "agent execution is unavailable");
+        const reservation = await this.options.reserveAgentExecution(peer, {
+          operation: request.operation,
+          ...(request.hostPaneId === undefined ? {} : { hostPaneId: request.hostPaneId }),
+          ownerPid: request.ownerPid,
+        });
+        this.send(socket, {
+          type: "agent_execution_reserved",
+          requestId: request.requestId,
+          token: reservation.token,
+          ownerPid: reservation.ownerPid,
+        });
+        return;
+      }
+      if (request.type === "release_agent_execution") {
+        if (!this.options.releaseAgentExecution)
+          throw controlError("agent_execution_unavailable", "agent execution is unavailable");
+        await this.options.releaseAgentExecution(peer, request.token);
+        this.send(socket, {
+          type: "agent_execution_released",
+          requestId: request.requestId,
+          token: request.token,
+        });
+        return;
+      }
+      if (request.type === "complete_agent_execution") {
+        if (!this.options.completeAgentExecution)
+          throw controlError("agent_execution_unavailable", "agent execution is unavailable");
+        await this.options.completeAgentExecution(peer, request);
+        this.send(socket, {
+          type: "agent_execution_completed",
+          requestId: request.requestId,
+          executionRequestId: request.executionRequestId,
+          token: request.token,
+          executionId: request.executionId,
+        });
         return;
       }
       if (request.type === "approve_pairing") {
@@ -331,6 +395,17 @@ export class MuximodControlServer {
       return;
     }
     socket.write(frame);
+  }
+
+  private peerFor(socket: Socket): AgentExecutionControlPeer {
+    const existing = this.peers.get(socket);
+    if (existing) return existing;
+    const peer: AgentExecutionControlPeer = {
+      isOpen: () => !socket.destroyed && !socket.writableEnded,
+      send: (response) => this.send(socket, response),
+    };
+    this.peers.set(socket, peer);
+    return peer;
   }
 }
 
