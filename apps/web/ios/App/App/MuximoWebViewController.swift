@@ -1,6 +1,16 @@
 import Capacitor
+import UIKit
 
 final class MuximoWebViewController: CAPBridgeViewController {
+    override func capacitorDidLoad() {
+        super.capacitorDidLoad()
+
+        guard let webView else { return }
+        let inputAssistantItem = webView.inputAssistantItem
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
+    }
+
     override func instanceDescriptor() -> InstanceDescriptor {
         let descriptor = super.instanceDescriptor()
 
