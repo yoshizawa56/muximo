@@ -42,6 +42,7 @@ const table: OperationTable<undefined, "default", Input, string, Context> = {
 type SelectionInput = {
   panes: readonly PaneSummary[];
   selectedPaneId?: string;
+  fallbackTarget?: string;
 };
 
 const selectionCases = [
@@ -51,16 +52,26 @@ const selectionCases = [
     assert: [returns<Context, string>("%1")],
   },
   {
+    name: "prefers a current host target over the retained target",
+    input: { panes: storyPanes, selectedPaneId: "pane-build", fallbackTarget: "%stale" },
+    assert: [returns<Context, string>("%1")],
+  },
+  {
     name: "returns an empty target while the route pane is unavailable",
     input: { panes: storyPanes, selectedPaneId: "missing-pane" },
     assert: [returns<Context, string>("")],
+  },
+  {
+    name: "retains the last known host target while the route pane is temporarily unavailable",
+    input: { panes: [], selectedPaneId: "pane-build", fallbackTarget: "%1" },
+    assert: [returns<Context, string>("%1")],
   },
 ] satisfies readonly OperationCase<"default", SelectionInput, string, Context>[];
 
 const selectionTable: OperationTable<undefined, "default", SelectionInput, string, Context> = {
   defaultFixture: noFixture(),
   cases: selectionCases,
-  execute: (_fixture, input) => selectedTargetFromPaneId(input.panes, input.selectedPaneId),
+  execute: (_fixture, input) => selectedTargetFromPaneId(input.panes, input.selectedPaneId, input.fallbackTarget),
   observe: () => ({}),
 };
 

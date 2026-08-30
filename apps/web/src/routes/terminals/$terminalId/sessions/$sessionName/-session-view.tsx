@@ -1,5 +1,5 @@
 import { MuximoLogo } from "../../../../../app/components/muximo-logo";
-import { PaneLayoutOverlay } from "./-pane-layout-overlay-view";
+import { PaneSelectionModal } from "./-pane-selection-modal-view";
 import type { SessionOverviewViewModel } from "./-session-viewmodel";
 
 export function SessionView({ viewModel }: { viewModel: SessionOverviewViewModel }) {
@@ -46,13 +46,6 @@ export function SessionView({ viewModel }: { viewModel: SessionOverviewViewModel
             <h1 className="my-[13px] mb-0 text-[clamp(1.6rem,5vw,2.05rem)] font-bold leading-[1.05] tracking-[-0.06em] text-[#dbffdf] max-[620px]:text-[1.62rem]">
               {viewModel.panes.length ? "Select a pane" : "No pane selected"}
             </h1>
-            <button
-              className="mb-1 shrink-0 rounded-md border border-[#3d8b4c] bg-lime/9 px-[9px] py-[7px] font-mono text-[0.54rem] text-lime transition-colors hover:bg-lime/18 max-[920px]:min-h-11"
-              type="button"
-              onClick={viewModel.onCreatePane}
-            >
-              + pane
-            </button>
           </div>
           <p className="m-0 max-w-[500px] text-[0.76rem] leading-[1.55] text-[#719176] max-[620px]:text-[0.88rem]">
             {viewModel.panes.length
@@ -60,30 +53,20 @@ export function SessionView({ viewModel }: { viewModel: SessionOverviewViewModel
               : "Create a shell or agent pane to start working in this session."}
           </p>
         </div>
-        <div className="relative h-[clamp(340px,56dvh,540px)] overflow-hidden rounded-[14px] border border-[#245a30] bg-[#07130a] shadow-[0_24px_70px_rgb(0_0_0_/_32%),inset_0_0_0_1px_rgb(139_255_154_/_3%)] max-[620px]:h-[min(54dvh,470px)] max-[620px]:min-h-[330px]">
-          {viewModel.status === "loading" ? (
-            <p className="grid size-full place-items-center font-mono text-[0.62rem] text-[#6d9d75]">
-              Reading tmux layout…
-            </p>
-          ) : null}
-          {viewModel.status === "error" ? (
-            <p className="grid size-full place-items-center font-mono text-[0.62rem] text-[#a45d51]">
-              {viewModel.errorMessage}
-            </p>
-          ) : null}
-          {viewModel.status !== "loading" && viewModel.status !== "error" ? (
-            <PaneLayoutOverlay
-              panes={viewModel.panes}
-              selectedTarget=""
-              onSelect={viewModel.onSelectPane}
-              variant="ghost"
-            />
-          ) : null}
-        </div>
         <p className="mt-3.5 flex items-center gap-2 font-mono text-[0.52rem] leading-[1.4] text-[#5d9168] max-[620px]:text-[0.72rem]">
           <span className="text-[0.8rem] text-lime-deep">⌁</span> The session stays alive while you switch panes.
         </p>
       </section>
+      <PaneSelectionModal
+        panes={viewModel.panes}
+        selectedTarget=""
+        status={viewModel.status ?? "loading"}
+        errorMessage={viewModel.errorMessage ?? null}
+        onSelect={viewModel.onSelectPane}
+        onClose={viewModel.onBack}
+        onRefresh={viewModel.onRefresh}
+        onCreatePane={viewModel.onCreatePane}
+      />
     </main>
   );
 }
