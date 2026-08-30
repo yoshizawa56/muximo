@@ -449,9 +449,21 @@ function CustomKeyboardPopoverFrame({
     };
   }, [updatePlacement]);
 
+  useEffect(() => {
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (panelRef.current?.contains(target) || anchor.element.contains(target)) return;
+      onClose();
+    };
+
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    return () => document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  }, [anchor.element, onClose]);
+
   return (
-    <AppSafeAreaOverlay className="z-40">
-      <div className="relative h-full w-full" onPointerDown={onClose} role="presentation">
+    <AppSafeAreaOverlay className="pointer-events-none z-40">
+      <div className="pointer-events-none relative h-full w-full" role="presentation">
         <section
           ref={panelRef}
           className={`pointer-events-auto fixed max-h-[min(62%,420px)] ${className}`}
@@ -813,7 +825,7 @@ function CustomKeyboardButtonView({
       ) : null}
       {!compact && showValueAsPrimary ? (
         <span
-          className={`max-w-full truncate font-bold leading-none ${button.category === "special" ? "text-[0.5rem]" : "text-[0.78rem]"}`}
+          className={`max-w-full font-bold leading-none ${button.category === "special" ? "whitespace-nowrap text-[0.4rem] tracking-[-0.04em]" : "truncate text-[0.78rem]"}`}
         >
           {valueLabel}
         </span>

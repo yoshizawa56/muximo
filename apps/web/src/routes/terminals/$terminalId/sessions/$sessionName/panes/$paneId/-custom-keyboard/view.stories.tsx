@@ -650,11 +650,15 @@ export const ShellAndKeyboard: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Open copy and paste actions" }));
     const clipboardDialog = canvas.getByRole("dialog", { name: "Copy and paste actions" });
     await expect(clipboardDialog).toBeVisible();
-    await expect(within(clipboardDialog).getByRole("button", { name: "Copy mode" })).toBeVisible();
-    await expect(within(clipboardDialog).getByRole("button", { name: "Paste from clipboard" })).toBeVisible();
-    await expect(within(clipboardDialog).getByRole("button", { name: "Paste from tmux buffer" })).toBeVisible();
-    await userEvent.click(within(clipboardDialog).getByRole("button", { name: "Paste from clipboard" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Open copy and paste actions" }));
     await expect(clipboardDialog).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("button", { name: "Open copy and paste actions" }));
+    const reopenedClipboardDialog = canvas.getByRole("dialog", { name: "Copy and paste actions" });
+    await expect(within(reopenedClipboardDialog).getByRole("button", { name: "Copy mode" })).toBeVisible();
+    await expect(within(reopenedClipboardDialog).getByRole("button", { name: "Paste from clipboard" })).toBeVisible();
+    await expect(within(reopenedClipboardDialog).getByRole("button", { name: "Paste from tmux buffer" })).toBeVisible();
+    await userEvent.click(within(reopenedClipboardDialog).getByRole("button", { name: "Paste from clipboard" }));
+    await expect(reopenedClipboardDialog).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Slash" }));
     await expect(canvas.getByRole("status", { name: "Last input" })).toHaveTextContent("Slash");
     await userEvent.click(canvas.getByRole("button", { name: /show standard keyboard/i }));
@@ -705,10 +709,16 @@ export const ProfileSelection: Story = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
-    await expect(canvas.getByRole("dialog", { name: "Select custom keyboard profile" })).toBeVisible();
-    await expect(canvas.getByRole("option", { name: /Review/ })).toBeVisible();
-    await userEvent.click(canvas.getByRole("option", { name: /Agent/ }));
+    const profileTrigger = canvas.getByRole("button", { name: "Open custom keyboard settings" });
+    await userEvent.click(profileTrigger);
+    const profileDialog = canvas.getByRole("dialog", { name: "Select custom keyboard profile" });
+    await expect(profileDialog).toBeVisible();
+    await userEvent.click(profileTrigger);
+    await expect(profileDialog).not.toBeInTheDocument();
+    await userEvent.click(profileTrigger);
+    const reopenedProfileDialog = canvas.getByRole("dialog", { name: "Select custom keyboard profile" });
+    await expect(within(reopenedProfileDialog).getByRole("option", { name: /Review/ })).toBeVisible();
+    await userEvent.click(within(reopenedProfileDialog).getByRole("option", { name: /Agent/ }));
     await expect(canvas.getByRole("status", { name: "Last input" })).toHaveTextContent("Selected profile Agent");
   },
 };
