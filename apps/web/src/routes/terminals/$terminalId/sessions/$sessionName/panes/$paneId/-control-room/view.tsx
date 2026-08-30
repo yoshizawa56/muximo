@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { AppIcon } from "../../../../../../../../app/components/app-icon";
 import { AppSafeAreaOverlay } from "../../../../../../../../app/components/app-layout";
 import { MuximoLogo } from "../../../../../../../../app/components/muximo-logo";
-import type { PaneLayoutOverlayVariant } from "../../../-pane-layout-overlay-view";
 import { CustomKeyboardSettingsView, CustomKeyboardView } from "../-custom-keyboard/view";
 import { PaneBoardView } from "../-pane-board/view";
 import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
@@ -14,11 +13,9 @@ import type { ControlRoomViewModel } from "./viewmodel";
 export function ControlRoomView({
   viewModel: controlRoomViewModel,
   paneId,
-  layoutVariant = "ghost",
 }: {
   viewModel: ControlRoomViewModel;
   paneId: string;
-  layoutVariant?: PaneLayoutOverlayVariant;
 }) {
   const viewModel: PaneViewModel = controlRoomViewModel.terminal;
   const keyboard = controlRoomViewModel.keyboard;
@@ -322,14 +319,7 @@ export function ControlRoomView({
 
         <aside className="min-w-0 min-h-0 max-[920px]:fixed max-[920px]:inset-0 max-[920px]:z-20 max-[920px]:pointer-events-none">
           <div className="h-full max-[920px]:pointer-events-none">
-            <PaneBoardView
-              viewModel={paneBoard}
-              isOpen={paneBoardOpen}
-              onClose={() => setPaneBoardOpen(false)}
-              layoutMode="deck"
-              showLayout={paneBoardOpen}
-              layoutVariant={layoutVariant}
-            />
+            <PaneBoardView viewModel={paneBoard} isOpen={paneBoardOpen} onClose={() => setPaneBoardOpen(false)} />
           </div>
         </aside>
       </div>

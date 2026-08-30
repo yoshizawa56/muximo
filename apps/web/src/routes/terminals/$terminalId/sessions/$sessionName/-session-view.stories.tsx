@@ -13,6 +13,7 @@ function buildViewModel(overrides: Partial<SessionOverviewViewModel> = {}): Sess
     errorMessage: null,
     onSelectPane: fn(),
     onCreatePane: fn(),
+    onRefresh: fn(),
     onBack: fn(),
     onDisconnect: fn(),
     ...overrides,

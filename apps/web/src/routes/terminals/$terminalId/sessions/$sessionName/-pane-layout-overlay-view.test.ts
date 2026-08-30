@@ -7,7 +7,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { hasPaneGeometry, isOverlayBackdropTarget, paneLayoutNeedsCompactTargets } from "./-pane-layout-overlay-view";
+import { hasPaneGeometry, paneLayoutNeedsCompactTargets } from "./-pane-layout-overlay-view";
 
 type Geometry = {
   left: number;
@@ -115,36 +115,7 @@ const compactTable: OperationTable<undefined, "default", CompactInput, boolean, 
   observe: () => ({}),
 };
 
-type BackdropInput = { target: unknown; currentTarget: unknown };
-const backdrop = {};
-const child = {};
-const backdropCases = [
-  {
-    name: "closes when the pointer lands on the overlay backdrop itself",
-    input: { target: backdrop, currentTarget: backdrop },
-    assert: [returns<Context, boolean>(true)],
-  },
-  {
-    name: "keeps the overlay open for a child control",
-    input: { target: child, currentTarget: backdrop },
-    assert: [returns<Context, boolean>(false)],
-  },
-  {
-    name: "does not close for an event without a target",
-    input: { target: null, currentTarget: backdrop },
-    assert: [returns<Context, boolean>(false)],
-  },
-] satisfies readonly OperationCase<"default", BackdropInput, boolean, Context>[];
-
-const backdropTable: OperationTable<undefined, "default", BackdropInput, boolean, Context> = {
-  defaultFixture: noFixture(),
-  cases: backdropCases,
-  execute: (_fixture, input) => isOverlayBackdropTarget(input.target, input.currentTarget),
-  observe: () => ({}),
-};
-
 describe("pane layout geometry", () => {
   runOperationTable(it as unknown as TestRegistrar, geometryTable);
   runOperationTable(it as unknown as TestRegistrar, compactTable);
-  runOperationTable(it as unknown as TestRegistrar, backdropTable);
 });
