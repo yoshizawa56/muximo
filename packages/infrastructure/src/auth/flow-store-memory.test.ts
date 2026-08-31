@@ -375,7 +375,9 @@ class FakeAuthenticatedSocket implements MuximodSocket {
     return this.closeListeners.size;
   }
 
-  public send(_data: MuximodSocketData): void {}
+  public send(_data: MuximodSocketData): number | undefined {
+    return undefined;
+  }
 
   public close(code?: number, reason?: string): void {
     this.closeCalls.push({ code, reason });

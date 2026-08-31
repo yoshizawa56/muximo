@@ -10,7 +10,7 @@ import { type RefCallback, useCallback, useEffect, useLayoutEffect, useRef, useS
 import { openMuximodTerminal } from "../../../../../../../../app/api/muximod-client";
 import type { MuximodConnection } from "../../../../../../../../app/api/muximod-client.js";
 import { isMockMode, mockTerminalOutputForTarget } from "../../../../../../../../mock/mock-data";
-import { muximoBridge } from "../../../../../../../../platform/muximo-bridge";
+import { type MuximoAppState, muximoBridge } from "../../../../../../../../platform/muximo-bridge";
 import { TERMINAL_FONT_FAMILY, waitForTerminalFont } from "./font";
 import {
   createPasteImageMessage,
@@ -114,7 +114,7 @@ export function usePaneViewModel({
   const socketRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const terminalInputQueueRef = useRef<TerminalInputQueue>(createTerminalInputQueue());
-  const socketInputQueueRef = useRef<TerminalInputQueue>(createTerminalInputQueue());
+  const socketInputQueueRef = useRef<TerminalInputQueue>(createTerminalInputQueue({ queueBeforeAttach: false }));
   const inputTransformRef = useRef(transformInput ?? identityInputTransform);
   const nativeKeyboardFocusPendingRef = useRef(false);
   const suppressNativeTouchRef = useRef(suppressNativeTouch);
@@ -122,10 +122,14 @@ export function usePaneViewModel({
   const detachRef = useRef<(() => void) | null>(null);
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<number | null>(null);
+  const retryScheduledRef = useRef(false);
   const resumeRef = useRef<PaneResumeState | null>(null);
   const terminalClosedRef = useRef(false);
+  const terminalReadyRef = useRef(false);
   const currentTargetRef = useRef(target);
   const pendingDetachRef = useRef<Promise<void> | null>(null);
+  const appStateRef = useRef<MuximoAppState>(muximoBridge.getAppState());
+  const sendResizeRef = useRef<(() => void) | null>(null);
   const [pasteState, setPasteState] = useState<PanePasteState>("idle");
   const [nativeKeyboardVisible, setNativeKeyboardVisible] = useState(false);
   const nativeKeyboardVisibleRef = useRef(false);
@@ -223,6 +227,7 @@ export function usePaneViewModel({
   );
 
   const clearRetryTimer = useCallback(() => {
+    retryScheduledRef.current = false;
     if (retryTimerRef.current === null) return;
     window.clearTimeout(retryTimerRef.current);
     retryTimerRef.current = null;
@@ -248,12 +253,23 @@ export function usePaneViewModel({
   }, [clearActionError, clearRetryTimer]);
 
   const claim = useCallback(() => {
-    sendControl(socketRef.current, { type: "claim", version: terminalProtocolVersion });
+    const terminal = terminalRef.current;
+    if (!terminal || !terminalReadyRef.current) return;
+    const { cols, rows } = terminalDimensions(terminal);
+    sendControl(socketRef.current, {
+      type: "claim",
+      version: terminalProtocolVersion,
+      cols,
+      rows,
+    });
   }, []);
 
   const enterCopyMode = useCallback(() => {
     clearActionError();
-    if (sendControl(socketRef.current, { type: "enter_copy_mode", version: terminalProtocolVersion })) {
+    if (
+      terminalReadyRef.current &&
+      sendControl(socketRef.current, { type: "enter_copy_mode", version: terminalProtocolVersion })
+    ) {
       focus();
       return;
     }
@@ -262,7 +278,11 @@ export function usePaneViewModel({
 
   const pasteFromTmuxBuffer = useCallback(() => {
     clearActionError();
-    if (sendControl(socketRef.current, { type: "paste_tmux_buffer", version: terminalProtocolVersion })) return;
+    if (
+      terminalReadyRef.current &&
+      sendControl(socketRef.current, { type: "paste_tmux_buffer", version: terminalProtocolVersion })
+    )
+      return;
     reportActionError("Terminal is not connected");
   }, [clearActionError, reportActionError]);
 
@@ -309,7 +329,7 @@ export function usePaneViewModel({
           return;
         }
         const socket = socketRef.current;
-        if (!socket || socket.readyState !== WebSocket.OPEN) {
+        if (!socket || socket.readyState !== WebSocket.OPEN || !terminalReadyRef.current) {
           setPasteState("failed");
           schedulePasteReset();
           return;
@@ -338,7 +358,14 @@ export function usePaneViewModel({
   useEffect(
     () =>
       muximoBridge.onAppStateChange((state) => {
-        if (state === "active" && !terminalClosedRef.current) reconnect();
+        appStateRef.current = state;
+        if (state === "active") {
+          if (!terminalClosedRef.current) reconnect();
+          // A geometry callback can be deferred while a native WebView is
+          // backgrounded. Reconcile once after foregrounding, but never let
+          // the callback itself transfer viewport ownership.
+          sendResizeRef.current?.();
+        }
       }),
     [reconnect],
   );
@@ -368,6 +395,7 @@ export function usePaneViewModel({
     terminal.loadAddon(fitAddon);
     terminal.open(container);
     terminalRef.current = terminal;
+    terminalReadyRef.current = false;
     const helperInput = terminal.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
     if (helperInput) helperInput.inputMode = "none";
     const visualViewport = window.visualViewport;
@@ -443,6 +471,11 @@ export function usePaneViewModel({
     fitAddon.fit();
     const terminalOutputScheduler = createTerminalOutputScheduler({
       write: (data) => terminal.write(data),
+      onOverflow: () => {
+        if (!terminalReadyRef.current) return;
+        terminal.reset();
+        sendControl(socketRef.current, { type: "redraw", version: terminalProtocolVersion });
+      },
     });
     let disposed = false;
     if (nativeKeyboardFocusPendingRef.current) {
@@ -459,8 +492,11 @@ export function usePaneViewModel({
     setStatus("connecting");
     setErrorMessage(null);
     let resizeFrame: number | null = null;
-    let retryScheduled = false;
+    let lastSentDimensions: { cols: number; rows: number } | null = null;
     let socketGeneration = 0;
+    let connectInFlight = false;
+    let connectAttemptGeneration = 0;
+    let activeAbortController: AbortController | null = null;
 
     void waitForTerminalFont(fontSize).then(() => {
       if (disposed) return;
@@ -469,190 +505,358 @@ export function usePaneViewModel({
     });
 
     const scheduleReconnect = () => {
-      if (disposed || terminalClosedRef.current || retryScheduled || retryCountRef.current >= 8) return;
-      retryScheduled = true;
-      const attempt = retryCountRef.current++;
+      if (disposed || terminalClosedRef.current || retryScheduledRef.current) return;
+      retryScheduledRef.current = true;
+      const attempt = Math.min(retryCountRef.current, 6);
+      retryCountRef.current = Math.min(retryCountRef.current + 1, 7);
       const delay = Math.min(1_000 * 2 ** attempt, 10_000);
       setStatus("connecting");
       retryTimerRef.current = window.setTimeout(() => {
         retryTimerRef.current = null;
-        retryScheduled = false;
+        retryScheduledRef.current = false;
         if (!disposed) connect();
       }, delay);
     };
 
     const sendResize = () => {
+      if (appStateRef.current !== "active" || !terminalReadyRef.current) return;
       if (resizeFrame !== null) return;
       resizeFrame = requestAnimationFrame(() => {
         resizeFrame = null;
-        if (disposed) return;
+        if (disposed || appStateRef.current !== "active" || !terminalReadyRef.current) return;
 
+        const surface = container.getBoundingClientRect();
+        // Hidden WebViews and transition overlays can briefly report a zero
+        // surface. Never publish a clamped 1x1 terminal size for that frame;
+        // the next ResizeObserver/foreground callback will retry after the
+        // surface is measurable again.
+        if (surface.width < 2 || surface.height < 2) return;
         fitAddon.fit();
-        sendControl(socketRef.current, {
+        const { cols, rows } = terminalDimensions(terminal);
+        if (lastSentDimensions?.cols === cols && lastSentDimensions.rows === rows) return;
+        const message = {
           type: "resize",
           version: terminalProtocolVersion,
-          cols: terminal.cols,
-          rows: terminal.rows,
-        });
+          cols,
+          rows,
+        } satisfies Extract<ClientControlMessage, { type: "resize" }>;
+        if (sendControl(socketRef.current, message)) lastSentDimensions = { cols, rows };
       });
     };
+    sendResizeRef.current = sendResize;
 
     const sendAttach = (socket: WebSocket) => {
       const resume = resumeRef.current?.target === target ? resumeRef.current : null;
+      const { cols, rows } = terminalDimensions(terminal);
       const message = createTerminalAttachMessage({
         target,
-        cols: terminal.cols,
-        rows: terminal.rows,
+        cols,
+        rows,
         resume,
       });
       socket.send(encodeClientControlFrame(message));
     };
 
     const connect = async () => {
-      if (disposed || terminalClosedRef.current) return;
+      if (disposed || terminalClosedRef.current || connectInFlight) return;
+      connectInFlight = true;
+      const attemptGeneration = ++connectAttemptGeneration;
+      const abortController = new AbortController();
+      activeAbortController = abortController;
 
-      const pendingDetach = pendingDetachRef.current;
-      if (pendingDetach) {
-        pendingDetachRef.current = null;
-        await pendingDetach;
-        if (disposed || terminalClosedRef.current) return;
-      }
-
-      if (!connection) return;
-
-      const previousSocket = socketRef.current;
-      if (
-        previousSocket &&
-        (previousSocket.readyState === WebSocket.OPEN || previousSocket.readyState === WebSocket.CONNECTING)
-      ) {
-        socketRef.current = null;
-        socketInputQueueRef.current.detach();
-        closeNetworkSocket(previousSocket);
-      }
-
-      let socket: WebSocket;
       try {
-        socket = await openMuximodTerminal(connection);
-      } catch {
-        if (!disposed && !terminalClosedRef.current) {
-          clearActionError();
-          setStatus("error");
-          setErrorMessage("muximod authentication failed");
-          scheduleReconnect();
+        const pendingDetach = pendingDetachRef.current;
+        if (pendingDetach) {
+          pendingDetachRef.current = null;
+          await pendingDetach;
+          if (disposed || terminalClosedRef.current || attemptGeneration !== connectAttemptGeneration) return;
         }
-        return;
-      }
-      if (disposed || terminalClosedRef.current) {
-        closeNetworkSocket(socket);
-        return;
-      }
-      const generation = ++socketGeneration;
-      const isCurrentSocket = () => !disposed && socketRef.current === socket && generation === socketGeneration;
-      const resumeAttempt = Boolean(resumeRef.current?.target === target);
-      let fallbackAttachSent = false;
 
-      socketRef.current = socket;
-      socket.binaryType = "arraybuffer";
-      setStatus("connecting");
-      setErrorMessage(null);
+        if (!connection) return;
 
-      socket.addEventListener("open", () => {
-        if (!isCurrentSocket()) return;
-        fitAddon.fit();
-        sendAttach(socket);
-      });
+        const previousSocket = socketRef.current;
+        if (
+          previousSocket &&
+          (previousSocket.readyState === WebSocket.OPEN || previousSocket.readyState === WebSocket.CONNECTING)
+        ) {
+          socketRef.current = null;
+          terminalReadyRef.current = false;
+          socketInputQueueRef.current.detach();
+          closeNetworkSocket(previousSocket);
+        }
 
-      socket.addEventListener("message", (event) => {
-        if (!isCurrentSocket()) return;
-        if (typeof event.data === "string") {
-          handleControlMessage(event.data, {
-            onReady: (message) => {
-              socketInputQueueRef.current.attach((data) => {
-                if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return;
-                socket.send(new TextEncoder().encode(data));
-              });
-              retryCountRef.current = 0;
-              terminalClosedRef.current = false;
-              setStatus("connected");
-              setErrorMessage(null);
-              clearActionError();
-              const nextResume = resumeStateFromReady(message, target);
-              resumeRef.current = nextResume;
-              terminalResumeStore.write(resumeKey, nextResume);
-            },
-            onClosed: (message) => {
-              socketInputQueueRef.current.detach(true);
-              resetNativeKeyboard();
-              terminalClosedRef.current = true;
-              terminalResumeStore.clear(resumeKey);
-              resumeRef.current = null;
-              setStatus("closed");
-              setErrorMessage(message.reason === "detached" ? "Terminal detached" : "Terminal session closed");
-              clearActionError();
-            },
-            onError: ({ code, message, retryable }) => {
-              if (code === "resume_not_found" && resumeAttempt && !fallbackAttachSent) {
-                fallbackAttachSent = true;
-                resumeRef.current = null;
-                terminalResumeStore.clear(resumeKey);
-                socketInputQueueRef.current.detach();
-                setStatus("connecting");
-                sendAttach(socket);
-                return;
-              }
-
-              if (terminalControlErrorDisposition(code, retryable) === "action") {
-                reportActionError(message);
-                return;
-              }
-
-              clearActionError();
-              setStatus("error");
-              setErrorMessage(message);
-              resetNativeKeyboard();
-              if (retryable) {
-                socketInputQueueRef.current.detach();
-                scheduleReconnect();
-              }
-            },
-            onViewport: (owner, reason) => {
-              setViewportOwner(owner);
-              setViewportReason(reason);
-            },
-          });
+        let ticketTimedOut = false;
+        const ticketTimer = connection.auth
+          ? window.setTimeout(() => {
+              ticketTimedOut = true;
+              abortController.abort();
+            }, TERMINAL_TICKET_TIMEOUT_MS)
+          : null;
+        let socket: WebSocket;
+        try {
+          socket = await openMuximodTerminal(connection, { signal: abortController.signal });
+        } catch {
+          if (
+            !disposed &&
+            !terminalClosedRef.current &&
+            attemptGeneration === connectAttemptGeneration &&
+            (!abortController.signal.aborted || ticketTimedOut)
+          ) {
+            clearActionError();
+            setStatus("error");
+            setErrorMessage(ticketTimedOut ? "muximod authentication timed out" : "Unable to connect to muximod");
+            scheduleReconnect();
+          }
+          return;
+        } finally {
+          if (ticketTimer !== null) window.clearTimeout(ticketTimer);
+        }
+        if (disposed || terminalClosedRef.current || attemptGeneration !== connectAttemptGeneration) {
+          closeNetworkSocket(socket);
           return;
         }
+        const generation = ++socketGeneration;
+        const isCurrentSocket = () => !disposed && socketRef.current === socket && generation === socketGeneration;
+        const resumeAttempt = Boolean(resumeRef.current?.target === target);
+        let fallbackAttachSent = false;
+        let handshakeTimer: number | null = null;
+        let heartbeatTimer: number | null = null;
+        let heartbeatTimeout: number | null = null;
+        let heartbeatNonce = 0;
+        let pendingHeartbeatNonce: string | null = null;
+        let opened = false;
 
-        terminalOutputScheduler.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
-      });
+        const clearHandshakeTimer = () => {
+          if (handshakeTimer === null) return;
+          window.clearTimeout(handshakeTimer);
+          handshakeTimer = null;
+        };
+        const stopHeartbeat = () => {
+          if (heartbeatTimer !== null) {
+            window.clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
+          if (heartbeatTimeout !== null) {
+            window.clearTimeout(heartbeatTimeout);
+            heartbeatTimeout = null;
+          }
+          pendingHeartbeatNonce = null;
+        };
+        const failHandshake = (message: string) => {
+          if (!isCurrentSocket()) return;
+          clearHandshakeTimer();
+          stopHeartbeat();
+          socketInputQueueRef.current.detach();
+          terminalReadyRef.current = false;
+          resetNativeKeyboard();
+          clearActionError();
+          setStatus("error");
+          setErrorMessage(message);
+          closeNetworkSocket(socket, "handshake-timeout");
+          scheduleReconnect();
+        };
+        const startHeartbeat = () => {
+          stopHeartbeat();
+          heartbeatTimer = window.setInterval(() => {
+            if (!isCurrentSocket() || !terminalReadyRef.current || appStateRef.current !== "active") return;
+            if (heartbeatTimeout !== null) return;
+            const nonce = `heartbeat-${++heartbeatNonce}`;
+            if (!sendControl(socket, { type: "ping", version: terminalProtocolVersion, nonce })) {
+              failHandshake("Terminal heartbeat could not be sent");
+              return;
+            }
+            pendingHeartbeatNonce = nonce;
+            heartbeatTimeout = window.setTimeout(() => {
+              heartbeatTimeout = null;
+              if (pendingHeartbeatNonce !== nonce) return;
+              pendingHeartbeatNonce = null;
+              failHandshake("Terminal heartbeat timed out");
+            }, TERMINAL_HEARTBEAT_TIMEOUT_MS);
+          }, TERMINAL_HEARTBEAT_INTERVAL_MS);
+        };
 
-      socket.addEventListener("error", () => {
-        if (!isCurrentSocket() || terminalClosedRef.current) return;
-        socketInputQueueRef.current.detach();
-        resetNativeKeyboard();
-        clearActionError();
-        setStatus("error");
-        setErrorMessage("WebSocket connection failed");
-        scheduleReconnect();
-      });
+        const handleOpen = () => {
+          if (!isCurrentSocket() || opened) return;
+          opened = true;
+          clearHandshakeTimer();
+          fitAddon.fit();
+          try {
+            sendAttach(socket);
+          } catch {
+            failHandshake("Terminal attach could not be sent");
+            return;
+          }
+          handshakeTimer = window.setTimeout(
+            () => failHandshake("Terminal attach timed out"),
+            TERMINAL_ATTACH_TIMEOUT_MS,
+          );
+        };
 
-      socket.addEventListener("close", () => {
-        if (!isCurrentSocket()) return;
-        socketInputQueueRef.current.detach();
-        resetNativeKeyboard();
-        clearActionError();
-        socketRef.current = null;
-        if (terminalClosedRef.current) return;
+        socketRef.current = socket;
+        socket.binaryType = "arraybuffer";
         setStatus("connecting");
-        scheduleReconnect();
-      });
+        setErrorMessage(null);
+        handshakeTimer = window.setTimeout(
+          () => failHandshake("WebSocket connection timed out"),
+          TERMINAL_SOCKET_OPEN_TIMEOUT_MS,
+        );
+
+        socket.addEventListener("open", handleOpen);
+
+        socket.addEventListener("message", (event) => {
+          if (!isCurrentSocket()) return;
+          if (typeof event.data === "string") {
+            handleControlMessage(event.data, {
+              onReady: (message) => {
+                clearHandshakeTimer();
+                terminalReadyRef.current = true;
+                if (message.sync === "redraw") terminal.reset();
+                socketInputQueueRef.current.attach((data) => {
+                  if (
+                    socketRef.current !== socket ||
+                    socket.readyState !== WebSocket.OPEN ||
+                    socket.bufferedAmount > TERMINAL_CLIENT_MAX_BUFFERED_BYTES
+                  )
+                    return;
+                  try {
+                    socket.send(new TextEncoder().encode(data));
+                  } catch {
+                    // The close/error listeners will schedule a bounded retry.
+                  }
+                });
+                setViewportOwner(message.owner);
+                setViewportReason(message.resumed ? "resumed" : "attached");
+                retryCountRef.current = 0;
+                terminalClosedRef.current = false;
+                setStatus("connected");
+                setErrorMessage(null);
+                clearActionError();
+                const nextResume = resumeStateFromReady(message, target);
+                resumeRef.current = nextResume;
+                terminalResumeStore.write(resumeKey, nextResume);
+                sendResize();
+                startHeartbeat();
+              },
+              onClosed: (message) => {
+                clearHandshakeTimer();
+                stopHeartbeat();
+                terminalReadyRef.current = false;
+                socketInputQueueRef.current.detach(true);
+                resetNativeKeyboard();
+                terminalClosedRef.current = true;
+                terminalResumeStore.clear(resumeKey);
+                resumeRef.current = null;
+                setStatus("closed");
+                setErrorMessage(message.reason === "detached" ? "Terminal detached" : "Terminal session closed");
+                clearActionError();
+              },
+              onError: ({ code, message, retryable }) => {
+                if (code === "resume_not_found" && resumeAttempt && !fallbackAttachSent) {
+                  fallbackAttachSent = true;
+                  resumeRef.current = null;
+                  terminalResumeStore.clear(resumeKey);
+                  socketInputQueueRef.current.detach();
+                  setStatus("connecting");
+                  try {
+                    sendAttach(socket);
+                  } catch {
+                    failHandshake("Terminal attach could not be sent");
+                  }
+                  return;
+                }
+
+                if (terminalControlErrorDisposition(code, retryable) === "action") {
+                  reportActionError(message);
+                  return;
+                }
+
+                clearHandshakeTimer();
+                stopHeartbeat();
+                clearActionError();
+                terminalReadyRef.current = false;
+                setStatus("error");
+                setErrorMessage(message);
+                resetNativeKeyboard();
+                if (retryable) {
+                  socketInputQueueRef.current.detach();
+                  closeNetworkSocket(socket, "retryable-terminal-error");
+                  scheduleReconnect();
+                }
+              },
+              onViewport: (owner, reason) => {
+                setViewportOwner(owner);
+                setViewportReason(reason);
+              },
+              onPong: (nonce) => {
+                if (pendingHeartbeatNonce !== nonce) return;
+                pendingHeartbeatNonce = null;
+                if (heartbeatTimeout !== null) {
+                  window.clearTimeout(heartbeatTimeout);
+                  heartbeatTimeout = null;
+                }
+              },
+            });
+            return;
+          }
+
+          terminalOutputScheduler.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
+        });
+
+        socket.addEventListener("error", () => {
+          if (!isCurrentSocket() || terminalClosedRef.current) return;
+          clearHandshakeTimer();
+          stopHeartbeat();
+          terminalReadyRef.current = false;
+          socketInputQueueRef.current.detach();
+          resetNativeKeyboard();
+          clearActionError();
+          setStatus("error");
+          setErrorMessage("WebSocket connection failed");
+          scheduleReconnect();
+        });
+
+        socket.addEventListener("close", () => {
+          if (!isCurrentSocket()) return;
+          clearHandshakeTimer();
+          stopHeartbeat();
+          terminalReadyRef.current = false;
+          socketInputQueueRef.current.detach();
+          resetNativeKeyboard();
+          clearActionError();
+          socketRef.current = null;
+          if (terminalClosedRef.current) return;
+          setStatus("connecting");
+          scheduleReconnect();
+        });
+
+        if (socket.readyState === WebSocket.OPEN) handleOpen();
+      } finally {
+        if (activeAbortController === abortController) activeAbortController = null;
+        connectInFlight = false;
+      }
     };
 
     connectRef.current = () => {
       void connect();
     };
+    const cancelConnectAttempt = () => {
+      connectAttemptGeneration += 1;
+      activeAbortController?.abort();
+      activeAbortController = null;
+    };
+    const handleOnline = () => {
+      if (disposed || terminalClosedRef.current) return;
+      retryCountRef.current = 0;
+      clearRetryTimer();
+      setStatus("connecting");
+      setErrorMessage(null);
+      void connect();
+    };
+    window.addEventListener("online", handleOnline);
     detachRef.current = () => {
       const socket = socketRef.current;
+      cancelConnectAttempt();
+      terminalReadyRef.current = false;
       resumeRef.current = null;
       terminalResumeStore.clear(resumeKey);
       if (socket?.readyState === WebSocket.OPEN) {
@@ -724,11 +928,15 @@ export function usePaneViewModel({
         disposed = true;
         connectRef.current = null;
         detachRef.current = null;
+        cancelConnectAttempt();
+        terminalReadyRef.current = false;
         resetNativeKeyboard();
         if (resetNativeKeyboardRef.current === resetNativeKeyboard) resetNativeKeyboardRef.current = null;
         clearRetryTimer();
+        if (sendResizeRef.current === sendResize) sendResizeRef.current = null;
         resizeObserver.disconnect();
         window.removeEventListener("resize", sendResize);
+        window.removeEventListener("online", handleOnline);
         window.removeEventListener("resize", syncNativeKeyboardVisibility);
         visualViewport?.removeEventListener("resize", syncNativeKeyboardVisibility);
         helperInput?.removeEventListener("focus", handleKeyboardFocus);
@@ -756,18 +964,19 @@ export function usePaneViewModel({
     const binaryInputDisposable = terminal.onBinary((data) => {
       scrollInputBatcher.flush();
       const socket = socketRef.current;
-      if (socket?.readyState === WebSocket.OPEN) socket.send(binaryStringToBytes(data));
+      if (
+        terminalReadyRef.current &&
+        socket?.readyState === WebSocket.OPEN &&
+        socket.bufferedAmount <= TERMINAL_CLIENT_MAX_BUFFERED_BYTES
+      ) {
+        try {
+          socket.send(binaryStringToBytes(data));
+        } catch {
+          // The close/error listeners will schedule a bounded retry.
+        }
+      }
     });
     const touchCleanup = installTerminalTouchInput(container, touchOptions);
-    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
-      sendControl(socketRef.current, { type: "resize", version: terminalProtocolVersion, cols, rows });
-    });
-
-    const claimWhenVisible = () => {
-      if (document.visibilityState === "visible") claim();
-    };
-    document.addEventListener("visibilitychange", claimWhenVisible);
-    window.addEventListener("focus", claimWhenVisible);
     sendResize();
     void connect();
 
@@ -775,14 +984,16 @@ export function usePaneViewModel({
       disposed = true;
       connectRef.current = null;
       detachRef.current = null;
+      cancelConnectAttempt();
+      terminalReadyRef.current = false;
       resetNativeKeyboard();
       if (resetNativeKeyboardRef.current === resetNativeKeyboard) resetNativeKeyboardRef.current = null;
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       clearRetryTimer();
-      document.removeEventListener("visibilitychange", claimWhenVisible);
-      window.removeEventListener("focus", claimWhenVisible);
+      if (sendResizeRef.current === sendResize) sendResizeRef.current = null;
       resizeObserver.disconnect();
       window.removeEventListener("resize", sendResize);
+      window.removeEventListener("online", handleOnline);
       window.removeEventListener("resize", syncNativeKeyboardVisibility);
       visualViewport?.removeEventListener("resize", syncNativeKeyboardVisibility);
       helperInput?.removeEventListener("focus", handleKeyboardFocus);
@@ -792,7 +1003,6 @@ export function usePaneViewModel({
       touchCleanup();
       scrollInputBatcher.dispose();
       terminalOutputScheduler.dispose();
-      resizeDisposable.dispose();
       const cleanupMode = terminalSessionCleanupMode(target, currentTargetRef.current);
       terminalInputQueueRef.current.detach(cleanupMode === "detach");
       socketInputQueueRef.current.detach(cleanupMode === "detach");
@@ -814,7 +1024,7 @@ export function usePaneViewModel({
       }
       terminal.dispose();
     };
-  }, [claim, clearActionError, clearRetryTimer, connection, focus, reportActionError, target, terminalContainer]);
+  }, [clearActionError, clearRetryTimer, connection, focus, reportActionError, target, terminalContainer]);
 
   return {
     target,
@@ -874,6 +1084,12 @@ function binaryStringToBytes(data: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+const TERMINAL_TICKET_TIMEOUT_MS = 8_000;
+const TERMINAL_SOCKET_OPEN_TIMEOUT_MS = 8_000;
+const TERMINAL_ATTACH_TIMEOUT_MS = 8_000;
+const TERMINAL_HEARTBEAT_INTERVAL_MS = 15_000;
+const TERMINAL_HEARTBEAT_TIMEOUT_MS = 10_000;
+const TERMINAL_CLIENT_MAX_BUFFERED_BYTES = 256 * 1024;
 const TERMINAL_DETACH_TIMEOUT_MS = 2_000;
 const PASTE_NOTICE_DURATION_MS = 3_000;
 
@@ -927,6 +1143,13 @@ function closeNetworkSocket(socket: WebSocket, reason?: string): void {
 
 function terminalResumeKey(endpoint: string, target: string): string {
   return `muximo:terminal-resume:${endpoint}:${target}`;
+}
+
+function terminalDimensions(terminal: Terminal): { cols: number; rows: number } {
+  return {
+    cols: Math.min(500, Math.max(1, terminal.cols)),
+    rows: Math.min(300, Math.max(1, terminal.rows)),
+  };
 }
 
 function terminalFontSize(): number {

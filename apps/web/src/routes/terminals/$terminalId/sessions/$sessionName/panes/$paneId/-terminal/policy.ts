@@ -29,6 +29,7 @@ const terminalActionErrorCodes: ReadonlySet<string> = new Set([
   "mobile_claim_failed",
   "copy_mode_failed",
   "paste_tmux_buffer_failed",
+  "redraw_failed",
   "resize_failed",
   "paste_image_too_large",
   "paste_image_unavailable",
@@ -102,6 +103,7 @@ export function handleControlMessage(
     onClosed: (message: Extract<ServerControlMessage, { type: "closed" }>) => void;
     onError: (message: { code: string; message: string; retryable: boolean }) => void;
     onViewport: (owner: PaneViewportOwner, reason: string) => void;
+    onPong?: (nonce: string) => void;
   },
 ): void {
   const decoded = decodeServerControlFrame(rawMessage);
@@ -120,4 +122,5 @@ export function handleControlMessage(
   if (message.type === "error")
     handlers.onError({ code: message.code, message: message.message, retryable: message.retryable ?? false });
   if (message.type === "viewport") handlers.onViewport(message.owner, message.reason);
+  if (message.type === "pong") handlers.onPong?.(message.nonce);
 }

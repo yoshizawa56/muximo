@@ -311,11 +311,17 @@ export class TmuxViewportManager {
       paneId: record.pane.paneId,
       windowId: record.pane.windowId,
       sessionName: record.pane.sessionName,
+      get owner() {
+        return record.owner;
+      },
       claimMobile: async (cols, rows) => {
         this.claimMobile(record, cols, rows);
       },
       resize: async (cols, rows) => {
         this.resizeMobile(record, cols ?? record.mobileCols, rows ?? record.mobileRows);
+      },
+      refresh: async () => {
+        this.refreshMobile(record);
       },
       enterCopyMode: async () => {
         this.enterCopyMode(record);
@@ -417,12 +423,22 @@ export class TmuxViewportManager {
 
   private resizeMobile(record: LeaseRecord, cols: number, rows: number): void {
     if (record.released) return;
-    if (record.owner !== "mobile") {
-      this.claimMobile(record, cols, rows);
-      return;
-    }
-    if (cols === record.mobileCols && rows === record.mobileRows) return;
-    this.reconcileMobileViewport(record, cols, rows);
+    const clamped = clampViewportSize(cols, rows);
+    const sizeChanged = clamped.cols !== record.mobileCols || clamped.rows !== record.mobileRows;
+    record.mobileCols = clamped.cols;
+    record.mobileRows = clamped.rows;
+
+    // Geometry is a measurement, not an ownership intent. A backgrounded
+    // mobile client can still observe layout changes after a desktop takeover;
+    // remember those dimensions for the next explicit mobile claim without
+    // touching the shared tmux window while desktop owns it.
+    if (record.owner !== "mobile" || !sizeChanged) return;
+    this.reconcileMobileViewport(record, clamped.cols, clamped.rows);
+  }
+
+  private refreshMobile(record: LeaseRecord): void {
+    if (record.released || !record.mobileClient) return;
+    this.adapter.refreshClient(record.mobileClient.name);
   }
 
   private enterCopyMode(record: LeaseRecord): void {

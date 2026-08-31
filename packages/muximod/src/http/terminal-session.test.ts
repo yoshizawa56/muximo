@@ -27,7 +27,12 @@ type SessionStep =
   | { type: "raw-connect"; socket: "first" | "second" }
   | { type: "network-close"; socket: "first" | "second" }
   | { type: "detach"; socket: "first" | "second" }
+  | { type: "resize"; cols: number; rows: number }
+  | { type: "redraw" }
+  | { type: "ping"; nonce: string }
+  | { type: "backpressure"; socket: "first" | "second" }
   | { type: "emit-output"; value: string }
+  | { type: "refresh-output"; value: string }
   | { type: "send-input"; value: string }
   | { type: "enter-copy-mode" }
   | { type: "paste-tmux-buffer" }
@@ -41,7 +46,9 @@ type SessionContext = {
   registrySize: number;
   secondResumed: boolean;
   secondReady: boolean;
+  secondSyncModes: readonly string[];
   secondErrors: readonly string[];
+  firstPongs: readonly string[];
   firstClosedReasons: readonly string[];
   firstErrors: readonly string[];
   binaryFrames: readonly string[];
@@ -52,8 +59,10 @@ type SessionContext = {
   copyModeCalls: number;
   pasteTmuxBufferCalls: number;
   events: readonly string[];
+  leaseResizeCalls: readonly (readonly [number | undefined, number | undefined])[];
+  leaseRefreshCalls: number;
 };
-type SessionFixtureKey = "pasteFailure";
+type SessionFixtureKey = "pasteFailure" | "sameDevice";
 type SessionFixture = ReturnType<typeof createHarness> & { sockets: Partial<Record<"first" | "second", FakeSocket>> };
 
 const sessionFixture = (): FixtureHandle<SessionFixture> => {
@@ -71,6 +80,18 @@ const sessionFixture = (): FixtureHandle<SessionFixture> => {
 const pasteFailureFixture = (): FixtureHandle<SessionFixture> => {
   vi.useFakeTimers();
   const harness = createHarness({ resumeGraceMs: 100 }, true);
+  return {
+    fixture: { ...harness, sockets: {} },
+    cleanup: () => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    },
+  };
+};
+
+const sameDeviceFixture = (): FixtureHandle<SessionFixture> => {
+  vi.useFakeTimers();
+  const harness = createHarness({ resumeGraceMs: 100, authDeviceId: "device-1" });
   return {
     fixture: { ...harness, sockets: {} },
     cleanup: () => {
@@ -113,6 +134,92 @@ const cases = [
       hasObserved<SessionContext, undefined>("releaseCalls", 1),
       hasObserved<SessionContext, undefined>("killed", 1),
       hasObserved<SessionContext, undefined>("registrySize", 0),
+    ],
+  },
+  {
+    name: "resumes a parked transport without claiming mobile ownership",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondResumed", true),
+      hasObserved<SessionContext, undefined>("leaseClaimCalls", 0),
+      hasObserved<SessionContext, undefined>("leaseResizeCalls", [[80, 24]]),
+    ],
+  },
+  {
+    name: "updates geometry without claiming mobile ownership",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "resize", cols: 90, rows: 30 },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("leaseClaimCalls", 0),
+      hasObserved<SessionContext, undefined>("leaseResizeCalls", [[90, 30]]),
+    ],
+  },
+  {
+    name: "refreshes the mobile client without claiming the viewport",
+    steps: [{ type: "connect", socket: "first" }, { type: "redraw" }],
+    assert: [
+      hasObserved<SessionContext, undefined>("leaseClaimCalls", 0),
+      hasObserved<SessionContext, undefined>("leaseRefreshCalls", 1),
+      hasObserved<SessionContext, undefined>("firstErrors", []),
+    ],
+  },
+  {
+    name: "answers a heartbeat without changing viewport ownership",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "ping", nonce: "heartbeat-1" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("firstPongs", ["heartbeat-1"]),
+      hasObserved<SessionContext, undefined>("leaseClaimCalls", 0),
+    ],
+  },
+  {
+    name: "replays bounded PTY output produced during a parked transport",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "network-close", socket: "first" },
+      { type: "emit-output", value: "output during gap" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondSyncModes", ["replay"]),
+      hasObserved<SessionContext, undefined>("binaryFrames", ["output during gap"]),
+      hasObserved<SessionContext, undefined>("leaseRefreshCalls", 0),
+    ],
+  },
+  {
+    name: "uses an authoritative redraw when parked output exceeds the gap limit",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "network-close", socket: "first" },
+      { type: "emit-output", value: "A".repeat(128 * 1024 + 1) },
+      { type: "refresh-output", value: "authoritative redraw" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondSyncModes", ["redraw"]),
+      hasObserved<SessionContext, undefined>("binaryFrames", ["authoritative redraw"]),
+      hasObserved<SessionContext, undefined>("leaseRefreshCalls", 1),
+    ],
+  },
+  {
+    name: "recovers with a redraw after the transport reports backpressure",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "backpressure", socket: "first" },
+      { type: "emit-output", value: "dropped output" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondSyncModes", ["redraw"]),
+      hasObserved<SessionContext, undefined>("leaseRefreshCalls", 1),
     ],
   },
   {
@@ -165,6 +272,23 @@ const cases = [
       hasObserved<SessionContext, undefined>("spawnCalls", 1),
       hasObserved<SessionContext, undefined>("releaseCalls", 0),
       hasObserved<SessionContext, undefined>("secondErrors", ["attach_failed"]),
+    ],
+  },
+  {
+    name: "replaces its own parked session on a same-target fresh attach",
+    fixture: "sameDevice",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("prepareCalls", 3),
+      hasObserved<SessionContext, undefined>("spawnCalls", 2),
+      hasObserved<SessionContext, undefined>("releaseCalls", 1),
+      hasObserved<SessionContext, undefined>("secondReady", true),
+      hasObserved<SessionContext, undefined>("secondErrors", []),
+      hasObserved<SessionContext, undefined>("registrySize", 1),
     ],
   },
   {
@@ -250,7 +374,7 @@ const cases = [
 
 const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undefined, SessionContext> = {
   defaultFixture: sessionFixture,
-  fixtures: { pasteFailure: pasteFailureFixture },
+  fixtures: { pasteFailure: pasteFailureFixture, sameDevice: sameDeviceFixture },
   cases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
@@ -276,11 +400,37 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
         fixture.sockets[step.socket]?.networkClose();
         await flush();
       }
+      if (step.type === "resize") {
+        fixture.sockets.first?.receive(
+          JSON.stringify({ type: "resize", version: terminalProtocolVersion, cols: step.cols, rows: step.rows }),
+        );
+        await flush();
+      }
+      if (step.type === "redraw") {
+        fixture.sockets.first?.receive(JSON.stringify({ type: "redraw", version: terminalProtocolVersion }));
+        await flush();
+      }
+      if (step.type === "ping") {
+        fixture.sockets.first?.receive(
+          JSON.stringify({ type: "ping", version: terminalProtocolVersion, nonce: step.nonce }),
+        );
+        await flush();
+      }
+      if (step.type === "backpressure") {
+        const socket = fixture.sockets[step.socket];
+        if (!socket) throw new Error(`socket ${step.socket} is not connected`);
+        socket.sendStatus = -1;
+      }
       if (step.type === "detach") {
         fixture.sockets[step.socket]?.receive(JSON.stringify({ type: "detach", version: terminalProtocolVersion }));
         await flush();
       }
       if (step.type === "emit-output") fixture.pty.emitOutput(step.value);
+      if (step.type === "refresh-output") {
+        fixture.lease.refresh.mockImplementationOnce(async () => {
+          fixture.pty.emitOutput(step.value);
+        });
+      }
       if (step.type === "send-input") {
         fixture.sockets.second?.receive(Buffer.from(step.value), true);
         await flush();
@@ -320,11 +470,21 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
     secondResumed:
       fixture.sockets.second?.controls().some((message) => message.type === "ready" && message.resumed) ?? false,
     secondReady: fixture.sockets.second?.controls().some((message) => message.type === "ready") ?? false,
+    secondSyncModes:
+      fixture.sockets.second
+        ?.controls()
+        .filter((message) => message.type === "ready")
+        .map((message) => message.sync) ?? [],
     secondErrors:
       fixture.sockets.second
         ?.controls()
         .filter((message) => message.type === "error")
         .map((message) => message.code) ?? [],
+    firstPongs:
+      fixture.sockets.first
+        ?.controls()
+        .filter((message) => message.type === "pong")
+        .map((message) => message.nonce) ?? [],
     firstClosedReasons:
       fixture.sockets.first
         ?.controls()
@@ -343,6 +503,8 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
     copyModeCalls: fixture.lease.enterCopyMode.mock.calls.length,
     pasteTmuxBufferCalls: fixture.lease.pasteTmuxBuffer.mock.calls.length,
     leaseClaimCalls: fixture.lease.claimMobile.mock.calls.length,
+    leaseResizeCalls: fixture.lease.resize.mock.calls.map(([cols, rows]) => [cols, rows]),
+    leaseRefreshCalls: fixture.lease.refresh.mock.calls.length,
     events: [...fixture.events],
   }),
 };
@@ -360,8 +522,10 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
     paneId: "%0",
     windowId: "@0",
     sessionName: "muximod",
+    owner: "mobile" as const,
     claimMobile: vi.fn(async () => undefined),
-    resize: vi.fn(async () => undefined),
+    resize: vi.fn(async (_cols?: number, _rows?: number) => undefined),
+    refresh: vi.fn(async () => undefined),
     enterCopyMode: vi.fn(async () => undefined),
     pasteTmuxBuffer: vi.fn(async () => undefined),
     release: vi.fn(async () => undefined),
@@ -428,10 +592,12 @@ async function flush(): Promise<void> {
 
 class FakeSocket extends EventEmitter {
   public readyState: number = muximodSocketReadyState.open;
+  public sendStatus: number | undefined;
   public readonly sent: Array<string | Uint8Array> = [];
-  public send(data: string | Uint8Array): void {
+  public send(data: string | Uint8Array): number | undefined {
     if (this.readyState !== muximodSocketReadyState.open) throw new Error("socket is closed");
     this.sent.push(data);
+    return this.sendStatus;
   }
   public receive(data: MuximodSocketData, isBinary = false): void {
     this.emit("message", data, isBinary);

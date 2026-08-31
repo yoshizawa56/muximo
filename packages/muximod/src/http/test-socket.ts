@@ -16,8 +16,8 @@ export class TestMuximodSocketAdapter implements MuximodSocketAdapter {
     return this.transport.readyState;
   }
 
-  public send(data: MuximodSocketData): void {
-    this.transport.send(data);
+  public send(data: MuximodSocketData): number | undefined {
+    return this.transport.send(data);
   }
 
   public close(code?: number, reason?: string): void {
