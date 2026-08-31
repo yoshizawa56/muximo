@@ -1,7 +1,6 @@
 import type { SessionBaselineResult, SessionIdentityUpdate } from "@muximo/application";
 import type { AgentSessionRecord } from "@muximo/domain";
 import { timestamp } from "../../cli/filesystem.js";
-import { errorFields } from "../../logging/index.js";
 import { stringEnvironment } from "../../process/process.js";
 import type {
   AgentBackendLaunch,
@@ -11,7 +10,6 @@ import type {
 } from "../backend.js";
 import { buildOpenCodeResumeCommand, buildOpenCodeRunCommand, resolveOpenCodeCommand } from "./launch.js";
 import { openCodeMonitorActions } from "./monitor.js";
-import { defaultOpenCodeRegistryFile, OpenCodeServerManager } from "./server.js";
 
 export class OpenCodeBackendProvider implements AgentBackendProvider {
   public readonly backend = "opencode" as const;
@@ -53,11 +51,9 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     return undefined;
   }
 
-  public async disposeLaunch(_session: AgentSessionRecord, runDir: string): Promise<void> {
-    await new OpenCodeServerManager({
-      environment: this.options.environment,
-      registryFile: this.options.opencodeRegistryFile ?? defaultOpenCodeRegistryFile(this.options.environment),
-    }).dispose(runDir);
+  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {
+    // OpenCode servers are shared service references. Releasing a session must
+    // never terminate a server that may be used by another daemon or client.
   }
 
   public async archive(_session: AgentSessionRecord): Promise<boolean> {
@@ -68,25 +64,8 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     return true;
   }
 
-  public async releaseIfUnused(session: AgentSessionRecord, remaining: readonly AgentSessionRecord[]): Promise<void> {
-    const runDir = session.worktreePath ?? session.workspaceRoot;
-    if (
-      remaining.some(
-        (candidate) =>
-          candidate.backend === this.backend && (candidate.worktreePath ?? candidate.workspaceRoot) === runDir,
-      )
-    ) {
-      return;
-    }
-    try {
-      await new OpenCodeServerManager({
-        environment: this.options.environment,
-        registryFile: this.options.opencodeRegistryFile ?? defaultOpenCodeRegistryFile(this.options.environment),
-      }).dispose(runDir);
-    } catch (error) {
-      this.options.logger.warn("opencode.server_release_failed", { runDir, ...errorFields(error) });
-      throw error;
-    }
+  public async releaseIfUnused(_session: AgentSessionRecord, _remaining: readonly AgentSessionRecord[]): Promise<void> {
+    // OpenCode server lifetime is independent from agent-session cleanup.
   }
 
   private async preparePluginLaunch(

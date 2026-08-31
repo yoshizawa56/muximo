@@ -1,5 +1,5 @@
 /**
- * SSE-backed observer for an owned OpenCode server.
+ * SSE-backed observer for a shared OpenCode server.
  *
  * State mapping follows the OpenCode V1 event bus:
  *   `session.status` busy/retry/idle  -> running / running / waiting_input

@@ -1,15 +1,25 @@
 /**
- * Owns the OpenCode V1 server sidecars started by Muximo.
+ * Discovers and bootstraps OpenCode V1 server connections.
  *
- * One server is started lazily per project root (the resolved workspace or
- * worktree directory the server is launched in) and reused by every OpenCode
- * session in that project. Ownership metadata is persisted so a later
- * `muximo run opencode` can reuse or restart the server.
+ * One connection is recorded per project root (the resolved workspace or
+ * worktree directory the server is serving). The registry is shared by all
+ * Muximo environments in one state root, so a daemon restart or a different
+ * daemon can reuse the same server. Muximo never treats a server reference as
+ * a process ownership lease and never sends a termination signal to it.
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer as createNetServer, type Server } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -18,10 +28,12 @@ import { type OpenCodeLog, type OpenCodeRequest, openCodeRequestTimeoutMs, reque
 
 export type OpenCodeServerEntry = {
   workspaceRoot: string;
-  pid: number;
+  /** Present only when the connection was bootstrapped by a Muximo process. */
+  pid?: number;
   port: number;
   version: string;
-  startedAt: string;
+  /** Present only with the optional bootstrap PID identity. */
+  startedAt?: string;
 };
 
 export type OpenCodeServerRegistry = Record<string, OpenCodeServerEntry>;
@@ -34,14 +46,11 @@ type RegistryLockRecord = {
 
 export type SpawnedChild = {
   pid: number;
-  kill(signal?: NodeJS.Signals | number): boolean;
   unref(): void;
-  on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
 };
 
 export type ProcessSignaller = {
   observe(pid: number, expectedStartedAt?: string): ProcessLiveness;
-  kill(pid: number, signal: NodeJS.Signals, expectedStartedAt?: string): void;
 };
 
 export class OpenCodeRegistryLockTimeoutError extends Error {
@@ -57,26 +66,25 @@ export class OpenCodeRegistryLockTimeoutError extends Error {
   }
 }
 
-export type OpenCodeProcessDisposalErrorCode = "opencode_process_disposal_failed" | "opencode_process_disposal_timeout";
+export class OpenCodeServerUnavailableError extends Error {
+  public readonly code = "opencode_server_unavailable" as const;
+  public readonly retryable = true;
 
-export class OpenCodeServerDisposalError extends Error {
   public constructor(
-    message: string,
-    public readonly code: OpenCodeProcessDisposalErrorCode,
-    public readonly pid: number,
-    public readonly signal: NodeJS.Signals | undefined,
-    public readonly retryable: boolean,
+    public readonly workspaceRoot: string,
+    public readonly port: number,
     cause?: unknown,
   ) {
-    super(message);
-    this.name = "OpenCodeServerDisposalError";
-    if (cause !== undefined) Object.defineProperty(this, "cause", { configurable: true, value: cause });
+    super(`OpenCode server for ${workspaceRoot} is unavailable on port ${port}`, { cause });
+    this.name = "OpenCodeServerUnavailableError";
   }
 }
 
 export type OpenCodeServerManagerOptions = {
   registryFile: string;
   environment?: NodeJS.ProcessEnv;
+  /** Connect to this local server instead of bootstrapping one. */
+  serverUrl?: string;
   executable?: string;
   spawn?: (
     command: string,
@@ -88,9 +96,6 @@ export type OpenCodeServerManagerOptions = {
   probePort?: (port: number) => Promise<boolean>;
   healthPollIntervalMs?: number;
   startupTimeoutMs?: number;
-  shutdownTimeoutMs?: number;
-  shutdownGracePeriodMs?: number;
-  shutdownPollIntervalMs?: number;
   registryLockTimeoutMs?: number;
   registryLockPollIntervalMs?: number;
   requestTimeoutMs?: number;
@@ -103,20 +108,33 @@ export type OpenCodeServerManagerOptions = {
 
 export const openCodeServerDefaultTimeoutMs = 15_000;
 export const openCodeServerHealthPollMs = 100;
-export const openCodeServerShutdownTimeoutMs = 3_000;
-export const openCodeServerShutdownGracePeriodMs = 2_000;
-export const openCodeServerShutdownPollMs = 50;
-// Registry mutations include starting or stopping a server. Leave enough time
-// for the bounded server lifecycle to finish before reporting contention.
+// Registry mutations include starting a server. Leave enough time for the
+// bounded startup lifecycle to finish before reporting contention.
 export const openCodeRegistryLockTimeoutMs = 30_000;
 export const openCodeRegistryLockPollMs = 50;
 
 export function defaultOpenCodeRegistryFile(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.MUXIMO_OPENCODE_REGISTRY_FILE?.trim();
+  if (configured) return configured;
+
+  const stateRoot = env.MUXIMO_STATE_ROOT?.trim();
+  if (stateRoot) return join(stateRoot, "opencode-servers.json");
+
   const instanceDirectory = env.MUXIMOD_INSTANCE_DIR?.trim()
     ? env.MUXIMOD_INSTANCE_DIR.trim()
     : join(env.HOME ?? homedir(), ".local", "state", "muximo");
   return join(instanceDirectory, "opencode-servers.json");
 }
+
+type OpenCodeHealth = {
+  healthy: true;
+  version: string;
+};
+
+type ParsedServerUrl = {
+  baseUrl: string;
+  port: number;
+};
 
 export class OpenCodeServerManager {
   private readonly executable: string;
@@ -126,9 +144,6 @@ export class OpenCodeServerManager {
   private readonly probePort: (port: number) => Promise<boolean>;
   private readonly healthPollIntervalMs: number;
   private readonly startupTimeoutMs: number;
-  private readonly shutdownTimeoutMs: number;
-  private readonly shutdownGracePeriodMs: number;
-  private readonly shutdownPollIntervalMs: number;
   private readonly registryLockTimeoutMs: number;
   private readonly registryLockPollIntervalMs: number;
   private readonly requestTimeoutMs: number;
@@ -138,7 +153,7 @@ export class OpenCodeServerManager {
   private readonly signaller: ProcessSignaller;
   private readonly onLog: OpenCodeLog | undefined;
   private readonly processStartedAt: string | undefined;
-  private readonly children = new Set<SpawnedChild>();
+  private readonly configuredServer: ParsedServerUrl | undefined;
 
   public constructor(private readonly options: OpenCodeServerManagerOptions) {
     this.executable = options.executable ?? options.environment?.MUXIMO_OPENCODE_BIN ?? "opencode";
@@ -148,9 +163,6 @@ export class OpenCodeServerManager {
     this.probePort = options.probePort ?? probeLoopbackPort;
     this.healthPollIntervalMs = options.healthPollIntervalMs ?? openCodeServerHealthPollMs;
     this.startupTimeoutMs = options.startupTimeoutMs ?? openCodeServerDefaultTimeoutMs;
-    this.shutdownTimeoutMs = Math.max(0, options.shutdownTimeoutMs ?? openCodeServerShutdownTimeoutMs);
-    this.shutdownGracePeriodMs = Math.max(0, options.shutdownGracePeriodMs ?? openCodeServerShutdownGracePeriodMs);
-    this.shutdownPollIntervalMs = Math.max(1, options.shutdownPollIntervalMs ?? openCodeServerShutdownPollMs);
     this.registryLockTimeoutMs = Math.max(0, options.registryLockTimeoutMs ?? openCodeRegistryLockTimeoutMs);
     this.registryLockPollIntervalMs = Math.max(1, options.registryLockPollIntervalMs ?? openCodeRegistryLockPollMs);
     this.requestTimeoutMs = Math.max(0, options.requestTimeoutMs ?? openCodeRequestTimeoutMs);
@@ -160,128 +172,97 @@ export class OpenCodeServerManager {
     this.signaller = options.signaller ?? defaultSignaller;
     this.onLog = options.onLog;
     this.processStartedAt = currentProcessStartedAt();
+    const configuredServerUrl = options.serverUrl ?? options.environment?.MUXIMO_OPENCODE_SERVER_URL;
+    this.configuredServer =
+      configuredServerUrl === undefined || configuredServerUrl.trim().length === 0
+        ? undefined
+        : parseConfiguredServerUrl(configuredServerUrl);
   }
 
   /**
-   * Return the owned server for a project root, starting or restarting it as
-   * needed. A replacement server prefers the port previously recorded for the
-   * root so clients holding the server URL keep working. Never stops a server
-   * whose pid is not owned by this registry.
+   * Return a healthy connection for a project root. Existing healthy
+   * connections are reused; dead references are replaced without signalling
+   * their old processes. When no external URL is configured, Muximo starts a
+   * detached OpenCode server as a bootstrap operation and leaves it running
+   * after this manager exits.
    */
   public async ensure(workspaceRoot: string, signal?: AbortSignal): Promise<OpenCodeServerEntry> {
+    if (this.configuredServer !== undefined) {
+      throwIfAborted(signal);
+      const health = await this.readHealth(this.configuredServer.baseUrl, workspaceRoot, signal);
+      throwIfAborted(signal);
+      if (health === undefined) {
+        throw new OpenCodeServerUnavailableError(workspaceRoot, this.configuredServer.port);
+      }
+      return {
+        workspaceRoot,
+        port: this.configuredServer.port,
+        version: health.version,
+      };
+    }
+
     return this.withFileLock(async () => {
       const registry = this.readRegistry();
+
       const existing = registry[workspaceRoot];
-      if (existing) {
-        const existingLiveness = this.observe(existing.pid, existing.startedAt);
-        if (existingLiveness === "unknown") throw unknownProcessIdentity(existing.pid);
-        if (existingLiveness === "alive" && (await this.isHealthy(existing.port, signal))) {
-          return existing;
+      if (existing !== undefined) {
+        try {
+          const health = await this.waitForHealth(existing.port, workspaceRoot, existing.pid, signal);
+          const refreshed =
+            existing.pid !== undefined && this.observe(existing.pid, existing.startedAt) === "dead"
+              ? removeProcessIdentity(existing)
+              : { ...existing, version: health.version };
+          if (refreshed.version !== existing.version || refreshed.pid !== existing.pid) {
+            registry[workspaceRoot] = refreshed;
+            this.writeRegistry(registry);
+          }
+          return refreshed;
+        } catch (error) {
+          throwIfAborted(signal);
+          const liveness = existing.pid === undefined ? undefined : this.observe(existing.pid, existing.startedAt);
+          const portAvailable = liveness === "dead" ? true : await this.probePort(existing.port);
+          if (liveness === "alive" || (liveness !== "dead" && !portAvailable)) {
+            throw new OpenCodeServerUnavailableError(workspaceRoot, existing.port, error);
+          }
+          delete registry[workspaceRoot];
         }
-        throwIfAborted(signal);
-        await this.disposeEntry(existing);
-        delete registry[workspaceRoot];
       }
 
       throwIfAborted(signal);
-      const port = existing ? await this.allocatePreferredPort(existing.port) : await this.allocatePort();
+      const port = existing === undefined ? await this.allocatePort() : await this.allocatePreferredPort(existing.port);
       throwIfAborted(signal);
       const child = this.spawnServer(workspaceRoot, port);
-      let health: { healthy: boolean; version: string } | undefined;
-      try {
-        health = await this.waitForHealth(port, child.pid, signal);
-      } catch (error) {
-        try {
-          await this.disposeChild(child);
-        } catch (cleanupError) {
-          this.onLog?.("warn", "opencode.server_cleanup_failed", {
-            pid: child.pid,
-            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-          });
-          throw cleanupError;
-        }
-        throw error;
-      }
-      const entry: OpenCodeServerEntry = {
+      const startingEntry: OpenCodeServerEntry = {
         workspaceRoot,
         pid: child.pid,
         port,
-        version: health.version,
+        version: "starting",
         startedAt: new Date(this.now()).toISOString(),
       };
-      registry[workspaceRoot] = entry;
+      // Record the reference before waiting so a timeout does not turn a
+      // detached bootstrap process into an unreferenced duplicate on retry.
+      registry[workspaceRoot] = startingEntry;
       this.writeRegistry(registry);
-      return entry;
+
+      try {
+        const health = await this.waitForHealth(port, workspaceRoot, child.pid, signal);
+        const entry: OpenCodeServerEntry = { ...startingEntry, version: health.version };
+        registry[workspaceRoot] = entry;
+        this.writeRegistry(registry);
+        return entry;
+      } catch (error) {
+        this.onLog?.("warn", "opencode.server_startup_incomplete", {
+          pid: child.pid,
+          port,
+          workspaceRoot,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
     }, signal);
   }
 
-  /**
-   * Restart every owned server on the port it already uses, so configuration
-   * and environment changes made outside Muximo are picked up while the
-   * server URLs stay stable. A root whose server cannot be restarted is dropped
-   * from the registry.
-   */
-  public async refreshAll(): Promise<void> {
-    await this.withFileLock(async () => {
-      const registry = this.readRegistry();
-      for (const [workspaceRoot, entry] of Object.entries(registry)) {
-        const refreshed = await this.restartOnPort(workspaceRoot, entry);
-        if (refreshed) registry[workspaceRoot] = refreshed;
-        else delete registry[workspaceRoot];
-      }
-      this.writeRegistry(registry);
-    });
-  }
-
-  public async isHealthy(port: number, signal?: AbortSignal): Promise<boolean> {
-    try {
-      const response = await requestWithTimeout(
-        this.request,
-        `http://127.0.0.1:${port}/global/health`,
-        signal === undefined ? undefined : { signal },
-        this.requestTimeoutMs,
-      );
-      if (!response.ok) return false;
-      const body: unknown = await response.json().catch(() => undefined);
-      return Boolean(body && typeof body === "object" && (body as { healthy?: unknown }).healthy === true);
-    } catch {
-      return false;
-    }
-  }
-
-  public async dispose(workspaceRoot: string): Promise<boolean> {
-    return this.withFileLock(async () => {
-      const registry = this.readRegistry();
-      const entry = registry[workspaceRoot];
-      if (!entry) return false;
-      await this.disposeEntry(entry);
-      delete registry[workspaceRoot];
-      this.writeRegistry(registry);
-      return true;
-    });
-  }
-
-  public async disposeAll(): Promise<void> {
-    await this.withFileLock(async () => {
-      const registry = this.readRegistry();
-      const failures: unknown[] = [];
-      const remaining: OpenCodeServerRegistry = {};
-      for (const [workspaceRoot, entry] of Object.entries(registry)) {
-        try {
-          await this.disposeEntry(entry);
-        } catch (error) {
-          remaining[workspaceRoot] = entry;
-          failures.push(error);
-        }
-      }
-      this.writeRegistry(remaining);
-      if (failures.length === 1) throw failures[0];
-      if (failures.length > 1) {
-        throw new AggregateError(failures, "OpenCode server disposal failed for multiple registered processes");
-      }
-    });
-  }
-
+  /** Returns all connection references without probing or mutating them. */
   public list(): OpenCodeServerEntry[] {
     return Object.values(this.readRegistry());
   }
@@ -316,6 +297,8 @@ export class OpenCodeServerManager {
   }
 
   private writeRegistry(registry: OpenCodeServerRegistry): void {
+    const directory = dirnameOf(this.options.registryFile);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.options.registryFile}.tmp`;
     writeFileSync(temporary, JSON.stringify(registry, null, 2), { mode: 0o600 });
     renameSync(temporary, this.options.registryFile);
@@ -331,28 +314,25 @@ export class OpenCodeServerManager {
       detached: true,
       logFile,
     });
-    this.onLog?.("debug", "opencode.server_started", { pid: child.pid, port, workspaceRoot });
-    child.unref?.();
-    this.children.add(child);
-    child.on("exit", () => {
-      this.children.delete(child);
-    });
+    this.onLog?.("debug", "opencode.server_bootstrapped", { pid: child.pid, port, workspaceRoot });
+    child.unref();
     return child;
   }
 
   private async waitForHealth(
     port: number,
-    pid: number,
+    workspaceRoot: string,
+    pid: number | undefined,
     signal?: AbortSignal,
-  ): Promise<{ healthy: boolean; version: string }> {
+  ): Promise<OpenCodeHealth> {
     const deadline = this.now() + this.startupTimeoutMs;
     for (;;) {
       throwIfAborted(signal);
-      if (this.observe(pid) === "dead") {
+      const health = await this.readHealth(baseUrlForPort(port), workspaceRoot, signal);
+      if (health !== undefined) return health;
+      if (pid !== undefined && this.observe(pid) === "dead") {
         throw new Error(`opencode serve exited before it became healthy (${this.executable} serve --port ${port})`);
       }
-      const health = await this.isHealthy(port, signal);
-      if (health) return { healthy: true, version: await this.readVersion(port, signal) };
       if (this.now() >= deadline) {
         throw new Error(
           `opencode serve did not become healthy within ${this.startupTimeoutMs}ms (${this.executable} serve --port ${port})`,
@@ -362,163 +342,30 @@ export class OpenCodeServerManager {
     }
   }
 
-  private async readVersion(port: number, signal?: AbortSignal): Promise<string> {
-    const response = await requestWithTimeout(
-      this.request,
-      `http://127.0.0.1:${port}/global/health`,
-      signal === undefined ? undefined : { signal },
-      this.requestTimeoutMs,
-    );
-    if (!response.ok) throw new Error(`OpenCode health endpoint returned ${response.status} while reading its version`);
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch (error) {
-      throw new Error("OpenCode health endpoint returned invalid JSON while reading its version", { cause: error });
-    }
-    if (!isRecord(body) || typeof body.version !== "string" || body.version.length === 0) {
-      throw new Error("OpenCode health endpoint returned an invalid version");
-    }
-    return body.version;
-  }
-
-  private async disposeEntry(entry: OpenCodeServerEntry): Promise<void> {
-    this.onLog?.("debug", "opencode.server_disposing", { pid: entry.pid, port: entry.port });
-    await this.signalAndWaitExit(
-      entry.pid,
-      (signal) => this.signaller.kill(entry.pid, signal, entry.startedAt),
-      entry.startedAt,
-    );
-  }
-
-  /**
-   * Stop one registered server and start a replacement on the same port. Waits
-   * for the old process to release the port; falls back to a fresh port when
-   * the recorded one is taken by another process. Returns undefined when the
-   * replacement never becomes healthy.
-   */
-  private async restartOnPort(
+  private async readHealth(
+    baseUrl: string,
     workspaceRoot: string,
-    entry: OpenCodeServerEntry,
-  ): Promise<OpenCodeServerEntry | undefined> {
-    this.onLog?.("debug", "opencode.server_refreshing", { workspaceRoot, pid: entry.pid, port: entry.port });
-    await this.signalAndWaitExit(
-      entry.pid,
-      (signal) => this.signaller.kill(entry.pid, signal, entry.startedAt),
-      entry.startedAt,
-    );
-    const port = await this.allocatePreferredPort(entry.port);
-    const child = this.spawnServer(workspaceRoot, port);
+    signal?: AbortSignal,
+  ): Promise<OpenCodeHealth | undefined> {
     try {
-      const health = await this.waitForHealth(port, child.pid);
-      return {
-        workspaceRoot,
-        pid: child.pid,
-        port,
-        version: health.version,
-        startedAt: new Date(this.now()).toISOString(),
-      };
-    } catch (error) {
-      try {
-        await this.disposeChild(child);
-      } catch (cleanupError) {
-        this.onLog?.("warn", "opencode.server_cleanup_failed", {
-          workspaceRoot,
-          pid: child.pid,
-          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-        });
-        throw cleanupError;
-      }
-      this.onLog?.("warn", "opencode.server_refresh_failed", {
-        workspaceRoot,
-        port,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return undefined;
-    }
-  }
-
-  private async signalAndWaitExit(
-    pid: number,
-    sendSignal: (signal: NodeJS.Signals) => void,
-    expectedStartedAt?: string,
-  ): Promise<void> {
-    const initialLiveness = this.observe(pid, expectedStartedAt);
-    if (initialLiveness === "dead") {
-      this.forgetChildrenForPid(pid);
-      return;
-    }
-    if (initialLiveness === "unknown") throw unknownProcessIdentity(pid);
-
-    let signal: NodeJS.Signals = "SIGTERM";
-    try {
-      sendSignal(signal);
-    } catch (error) {
-      const liveness = this.observe(pid, expectedStartedAt);
-      if (liveness === "dead") {
-        this.forgetChildrenForPid(pid);
-        return;
-      }
-      if (liveness === "unknown") throw unknownProcessIdentity(pid, signal);
-      this.onLog?.("warn", "opencode.server_not_owned", { pid });
-      throw new OpenCodeServerDisposalError(
-        `OpenCode process ${pid} could not be terminated; the resource may still be running`,
-        "opencode_process_disposal_failed",
-        pid,
-        signal,
-        false,
-        error,
+      const response = await requestWithTimeout(
+        this.request,
+        `${baseUrl}/global/health`,
+        {
+          headers: { "x-opencode-directory": workspaceRoot },
+          ...(signal === undefined ? {} : { signal }),
+        },
+        this.requestTimeoutMs,
       );
-    }
-
-    const startedAt = this.now();
-    const deadline = startedAt + this.shutdownTimeoutMs;
-    const forceAt = startedAt + Math.min(this.shutdownGracePeriodMs, this.shutdownTimeoutMs);
-    let forceSent = false;
-    for (;;) {
-      const liveness = this.observe(pid, expectedStartedAt);
-      if (liveness === "dead") {
-        this.forgetChildrenForPid(pid);
-        return;
+      if (!response.ok) return undefined;
+      const body: unknown = await response.json().catch(() => undefined);
+      if (!isRecord(body) || body.healthy !== true) return undefined;
+      if (typeof body.version !== "string" || body.version.length === 0) {
+        throw new Error("OpenCode health endpoint returned an invalid version");
       }
-      if (liveness === "unknown") throw unknownProcessIdentity(pid, signal);
-      const now = this.now();
-      if (!forceSent && now >= forceAt) {
-        signal = "SIGKILL";
-        try {
-          sendSignal(signal);
-        } catch (error) {
-          const liveness = this.observe(pid, expectedStartedAt);
-          if (liveness === "alive") {
-            throw new OpenCodeServerDisposalError(
-              `OpenCode process ${pid} could not be force-terminated; the resource may still be running`,
-              "opencode_process_disposal_failed",
-              pid,
-              signal,
-              false,
-              error,
-            );
-          }
-          if (liveness === "unknown") throw unknownProcessIdentity(pid, signal);
-        }
-        forceSent = true;
-        const liveness = this.observe(pid, expectedStartedAt);
-        if (liveness === "dead") {
-          this.forgetChildrenForPid(pid);
-          return;
-        }
-        if (liveness === "unknown") throw unknownProcessIdentity(pid, signal);
-      }
-      if (this.now() >= deadline) {
-        throw new OpenCodeServerDisposalError(
-          `OpenCode process ${pid} did not exit within ${this.shutdownTimeoutMs}ms after termination; retry cleanup`,
-          "opencode_process_disposal_timeout",
-          pid,
-          signal,
-          true,
-        );
-      }
-      await this.sleep(Math.min(this.shutdownPollIntervalMs, Math.max(1, deadline - this.now())));
+      return { healthy: true, version: body.version };
+    } catch {
+      return undefined;
     }
   }
 
@@ -527,33 +374,17 @@ export class OpenCodeServerManager {
     return this.allocatePort();
   }
 
-  private async disposeChild(child: SpawnedChild): Promise<void> {
-    await this.signalAndWaitExit(child.pid, (signal) => {
-      if (!child.kill(signal) && this.observe(child.pid) === "alive") {
-        throw new Error(`child process ${child.pid} rejected ${signal}`);
-      }
-    });
-    this.children.delete(child);
-  }
-
-  private forgetChildrenForPid(pid: number): void {
-    for (const child of this.children) {
-      if (child.pid === pid) this.children.delete(child);
-    }
-  }
-
   private observe(pid: number, expectedStartedAt?: string): ProcessLiveness {
     return this.signaller.observe(pid, expectedStartedAt);
   }
 
   /**
-   * Serialize registry mutations across `muximo run` processes in the same
-   * instance so two panes starting concurrently share one server. Stale locks
-   * (dead owner) are broken; a lock that stays contended returns a retryable
-   * error and never runs the mutation without ownership.
+   * Serialize registry mutations across `muximo run` processes. The lock is a
+   * coordination barrier for the registry only; it grants no process control.
    */
   private async withFileLock<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const lockPath = `${this.options.registryFile}.lock`;
+    mkdirSync(dirnameOf(lockPath), { recursive: true, mode: 0o700 });
     const deadline = this.now() + this.registryLockTimeoutMs;
     for (;;) {
       throwIfAborted(signal);
@@ -690,6 +521,7 @@ function spawnServe(
 ): SpawnedChild {
   let logFd: number | undefined;
   try {
+    mkdirSync(dirnameOf(options.logFile), { recursive: true, mode: 0o700 });
     logFd = openSync(options.logFile, "a", 0o600);
   } catch {
     // Logging is best effort; the server still runs.
@@ -704,12 +536,35 @@ function spawnServe(
   });
   return {
     pid: child.pid ?? 0,
-    kill: (signal) => child.kill(signal),
     unref: () => child.unref(),
-    on: (event, listener) => {
-      child.on(event, listener);
-    },
   };
+}
+
+function parseConfiguredServerUrl(value: string): ParsedServerUrl {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    throw new Error(`MUXIMO_OPENCODE_SERVER_URL must be a valid URL: ${value}`, { cause: error });
+  }
+  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.username || url.password) {
+    throw new Error("MUXIMO_OPENCODE_SERVER_URL must use an unauthenticated http://127.0.0.1 URL");
+  }
+  if (!url.port || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("MUXIMO_OPENCODE_SERVER_URL must include a port and must not include a path or query");
+  }
+  const port = Number.parseInt(url.port, 10);
+  if (!isPort(port)) throw new Error(`MUXIMO_OPENCODE_SERVER_URL has an invalid port: ${value}`);
+  return { baseUrl: `http://127.0.0.1:${port}`, port };
+}
+
+function baseUrlForPort(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+function removeProcessIdentity(entry: OpenCodeServerEntry): OpenCodeServerEntry {
+  const { pid: _pid, startedAt: _startedAt, ...reference } = entry;
+  return reference;
 }
 
 function dirnameOf(path: string): string {
@@ -802,15 +657,16 @@ function isFileNotFoundError(error: unknown): boolean {
 function isOpenCodeServerEntry(value: unknown, workspaceRoot: string): value is OpenCodeServerEntry {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value).sort();
-  if (keys.join(",") !== ["pid", "port", "startedAt", "version", "workspaceRoot"].join(",")) return false;
+  const allowed = ["pid", "port", "startedAt", "version", "workspaceRoot"];
+  if (keys.some((key) => !allowed.includes(key))) return false;
+  if (value.workspaceRoot !== workspaceRoot || !isPort(value.port)) return false;
+  if (typeof value.version !== "string" || value.version.length === 0) return false;
+  const hasPid = value.pid !== undefined;
+  const hasStartedAt = value.startedAt !== undefined;
+  if (hasPid !== hasStartedAt) return false;
   return (
-    value.workspaceRoot === workspaceRoot &&
-    isPositiveInteger(value.pid) &&
-    isPort(value.port) &&
-    typeof value.version === "string" &&
-    value.version.length > 0 &&
-    typeof value.startedAt === "string" &&
-    isIsoTimestamp(value.startedAt)
+    (!hasPid || isPositiveInteger(value.pid)) &&
+    (!hasStartedAt || (typeof value.startedAt === "string" && isIsoTimestamp(value.startedAt)))
   );
 }
 
@@ -834,14 +690,6 @@ function isIsoTimestamp(value: string): boolean {
 const defaultSignaller: ProcessSignaller = {
   observe(pid: number, expectedStartedAt?: string): ProcessLiveness {
     return observeProcessLiveness(pid, expectedStartedAt);
-  },
-  kill(pid: number, signal: NodeJS.Signals, expectedStartedAt?: string): void {
-    if (expectedStartedAt !== undefined && observeProcessLiveness(pid, expectedStartedAt) !== "alive") return;
-    try {
-      process.kill(pid, signal);
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
-    }
   },
 };
 
@@ -875,14 +723,4 @@ async function sleepWithAbort(
   } finally {
     if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
   }
-}
-
-function unknownProcessIdentity(pid: number, signal?: NodeJS.Signals): OpenCodeServerDisposalError {
-  return new OpenCodeServerDisposalError(
-    `OpenCode process ${pid} could not be verified; refusing to terminate or release its registry entry`,
-    "opencode_process_disposal_failed",
-    pid,
-    signal,
-    true,
-  );
 }

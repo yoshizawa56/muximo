@@ -43,6 +43,8 @@ export type OpenCodeRequest = (url: string, init?: RequestInit) => Promise<Respo
 export type OpenCodeClientOptions = {
   request?: OpenCodeRequest;
   onLog?: OpenCodeLog;
+  /** Routes requests to the OpenCode instance for this workspace. */
+  directory?: string;
   /** Maximum duration for one short-lived JSON request. */
   requestTimeoutMs?: number;
 };
@@ -201,7 +203,7 @@ export class OpenCodeClient {
   public async createSession(title?: string, signal?: AbortSignal): Promise<string | undefined> {
     const response = await this.requestWithTimeout(`${this.baseUrl}/session`, {
       method: "POST",
-      headers: openCodeJsonHeaders,
+      headers: this.headers(openCodeJsonHeaders),
       body: title ? JSON.stringify({ title }) : "{}",
       ...(signal === undefined ? {} : { signal }),
     });
@@ -214,7 +216,7 @@ export class OpenCodeClient {
   public async setSessionTitle(sessionId: string, title: string, signal?: AbortSignal): Promise<boolean> {
     const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
-      headers: openCodeJsonHeaders,
+      headers: this.headers(openCodeJsonHeaders),
       body: JSON.stringify({ title }),
       ...(signal === undefined ? {} : { signal }),
     });
@@ -242,7 +244,7 @@ export class OpenCodeClient {
   public async abortSession(sessionId: string, signal?: AbortSignal): Promise<boolean> {
     const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}/abort`, {
       method: "POST",
-      headers: openCodeJsonHeaders,
+      headers: this.headers(openCodeJsonHeaders),
       ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) return false;
@@ -261,7 +263,7 @@ export class OpenCodeClient {
       `${this.baseUrl}/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`,
       {
         method: "POST",
-        headers: openCodeJsonHeaders,
+        headers: this.headers(openCodeJsonHeaders),
         body: JSON.stringify({ response, remember }),
         ...(signal === undefined ? {} : { signal }),
       },
@@ -274,7 +276,7 @@ export class OpenCodeClient {
   public async forkSession(sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
     const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}/fork`, {
       method: "POST",
-      headers: openCodeJsonHeaders,
+      headers: this.headers(openCodeJsonHeaders),
       body: "{}",
       ...(signal === undefined ? {} : { signal }),
     });
@@ -291,7 +293,7 @@ export class OpenCodeClient {
    */
   public async *events(signal?: AbortSignal): AsyncGenerator<OpenCodeEvent> {
     const response = await this.request(`${this.baseUrl}/global/event`, {
-      headers: { Accept: "text/event-stream" },
+      headers: this.headers({ Accept: "text/event-stream" }),
       ...(signal ? { signal } : {}),
     });
     if (!response.ok) {
@@ -331,7 +333,7 @@ export class OpenCodeClient {
   private async get(path: string, signal?: AbortSignal): Promise<Response> {
     try {
       return await this.requestWithTimeout(`${this.baseUrl}${path}`, {
-        headers: openCodeJsonHeaders,
+        headers: this.headers(openCodeJsonHeaders),
         ...(signal === undefined ? {} : { signal }),
       });
     } catch (error) {
@@ -345,6 +347,12 @@ export class OpenCodeClient {
 
   private requestWithTimeout(url: string, init: RequestInit): Promise<Response> {
     return requestWithTimeout(this.request, url, init, this.requestTimeoutMs);
+  }
+
+  private headers(headers: Record<string, string>): Record<string, string> {
+    return this.options.directory === undefined
+      ? headers
+      : { ...headers, "x-opencode-directory": this.options.directory };
   }
 }
 

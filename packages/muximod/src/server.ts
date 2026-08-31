@@ -207,11 +207,9 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const agentPane = createAgentPanePublication(applicationForAgentPane, logger, environment);
   const backendOptions = {
     environment,
-    opencodeRegistryFile: join(options.instanceDirectory, "opencode-servers.json"),
     plugins: createDefaultAgentPluginRegistry({
       opencode: {
         environment,
-        registryFile: join(options.instanceDirectory, "opencode-servers.json"),
       },
     }),
     sessions: agentSessionRepository,

@@ -91,6 +91,7 @@ function applyRuntimeEnvironment(environment: NodeJS.ProcessEnv, runtime: Muximo
   const resolved: NodeJS.ProcessEnv = {
     ...environment,
     MUXIMOD_INSTANCE_DIR: runtime.muximodInstanceDirectory,
+    MUXIMO_OPENCODE_REGISTRY_FILE: join(runtime.stateRoot, "opencode-servers.json"),
     MUXIMOD_HOST: runtime.muximodHost,
     MUXIMOD_PORT: String(runtime.muximodPort),
     MUXIMO_MUXIMOD_SERVE_PORT: String(runtime.muximodServePort),

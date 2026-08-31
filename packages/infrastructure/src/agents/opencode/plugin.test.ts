@@ -26,7 +26,6 @@ const serverEntry: OpenCodeServerEntry = {
 
 function fakeManager(
   overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown>; afterEnsure?: () => void } = {},
-  onDispose: () => void = () => undefined,
 ): OpenCodeServerManager {
   return {
     ensure: async (root: string) => {
@@ -34,12 +33,6 @@ function fakeManager(
       overrides.afterEnsure?.();
       return { ...serverEntry, workspaceRoot: root };
     },
-    isHealthy: async () => true,
-    dispose: async () => {
-      onDispose();
-      return true;
-    },
-    disposeAll: async () => undefined,
     list: () => [serverEntry],
   } as unknown as OpenCodeServerManager;
 }
@@ -104,7 +97,7 @@ const cases = [
     ],
   },
   {
-    name: "prepares a launch that attaches the TUI to the owned server",
+    name: "prepares a launch that attaches the TUI to the shared server",
     input: { kind: "prepare" as const },
     assert: [
       returns<EmptyContext, PluginResult>({
@@ -115,7 +108,7 @@ const cases = [
           cwd: "/workspace",
           backendSessionId: "session-created",
           monitorPresent: true,
-          sidecarKinds: ["opencode-serve"],
+          sidecarKinds: [],
         },
         titleCalls: { createdTitles: [undefined], renamedSessions: [] },
       }),
@@ -133,7 +126,7 @@ const cases = [
           cwd: "/workspace",
           backendSessionId: "session-created",
           monitorPresent: true,
-          sidecarKinds: ["opencode-serve"],
+          sidecarKinds: [],
         },
         titleCalls: { createdTitles: ["review"], renamedSessions: [] },
       }),
@@ -151,7 +144,7 @@ const cases = [
           cwd: "/workspace",
           backendSessionId: "session-resumed",
           monitorPresent: true,
-          sidecarKinds: ["opencode-serve"],
+          sidecarKinds: [],
         },
         titleCalls: { createdTitles: [], renamedSessions: [] },
       }),
@@ -169,7 +162,7 @@ const cases = [
           cwd: "/workspace",
           backendSessionId: "session-resumed",
           monitorPresent: true,
-          sidecarKinds: ["opencode-serve"],
+          sidecarKinds: [],
         },
         titleCalls: { createdTitles: [], renamedSessions: [{ sessionId: "session-resumed", title: "review" }] },
       }),
@@ -272,26 +265,26 @@ type LifecycleFixture = {
 
 const lifecycleCases = [
   {
-    name: "shares one disposal between the sidecar and launch plan hooks",
+    name: "does not dispose the shared server when the launch plan is released",
     input: "release" as const,
-    assert: [hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1)],
+    assert: [hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 0)],
   },
   {
-    name: "releases a prepared server when session preparation fails",
+    name: "does not dispose the shared server when session preparation fails",
     fixture: "prepare-failure" as const,
     input: "prepare-failure" as const,
     assert: [
       hasError<LifecycleContext, LifecycleResult>({ code: "opencode_session_not_found" }),
-      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1),
+      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 0),
     ],
   },
   {
-    name: "releases a server when cancellation arrives after server preparation",
+    name: "does not dispose the shared server when cancellation arrives after preparation",
     fixture: "cancel-after-ensure" as const,
     input: "cancel-after-ensure" as const,
     assert: [
       hasError<LifecycleContext, LifecycleResult>({ message: /aborted/i }),
-      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1),
+      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 0),
     ],
   },
 ] satisfies readonly OperationCase<LifecycleFixtureKey, LifecycleInput, LifecycleResult, LifecycleContext>[];
@@ -325,9 +318,7 @@ const lifecycleTable: OperationTable<
       resumeSessionId: input === "prepare-failure" ? "session-gone" : null,
       signal: fixture.signal,
     });
-    if (input === "release") {
-      await Promise.all([plan.sidecars?.[0]?.stop(), plan.dispose?.()]);
-    }
+    void plan;
   },
   observe: (fixture) => ({ disposeCalls: fixture.disposeCalls.count }),
 };
@@ -338,9 +329,6 @@ function createLifecycleFixture(sessionExists: boolean, cancelAfterEnsure = fals
   const plugin = createOpenCodePlugin({
     serverManager: fakeManager(
       cancelAfterEnsure ? { afterEnsure: () => controller?.abort(new Error("aborted after server preparation")) } : {},
-      () => {
-        disposeCalls.count += 1;
-      },
     ),
     clientFactory: () =>
       fakeClient({ createdTitles: [], renamedSessions: [] }, sessionExists ? { "session-resumed": {} } : {}),

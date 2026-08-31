@@ -1,10 +1,12 @@
 /**
- * OpenCode V1 plugin: owns one `opencode serve` sidecar per project root and
- * drives a managed `opencode attach` TUI as the primary process.
+ * OpenCode V1 plugin: discovers or bootstraps one OpenCode server per project
+ * root and drives a managed `opencode attach` TUI as the primary process.
  *
  * The plugin never touches OpenCode configuration; it only passes lifecycle
  * and transport arguments (worktree, loopback host, port, session id) and
- * mirrors the agent session name onto the OpenCode session title.
+ * mirrors the agent session name onto the OpenCode session title. The server
+ * is a shared service reference, never a launch-plan sidecar owned by a
+ * session.
  */
 
 import type {
@@ -25,10 +27,11 @@ import { defaultOpenCodeRegistryFile, type OpenCodeServerEntry, OpenCodeServerMa
 
 export type OpenCodePluginOptions = {
   serverManager?: OpenCodeServerManager;
-  clientFactory?: (baseUrl: string) => OpenCodeClient;
+  clientFactory?: (baseUrl: string, directory: string) => OpenCodeClient;
   monitorFactory?: (options: OpenCodeMonitorOptions) => AgentMonitor;
   environment?: NodeJS.ProcessEnv;
   registryFile?: string;
+  serverUrl?: string;
   executable?: string;
   attachExecutable?: string;
   onLog?: OpenCodeLog;
@@ -50,6 +53,7 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
     new OpenCodeServerManager({
       registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(options.environment),
       environment: options.environment,
+      serverUrl: options.serverUrl,
       executable: options.executable,
     });
 
@@ -68,7 +72,7 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
 
     async launch(_input: LaunchInput): Promise<LaunchSpec> {
       throw new OpenCodePluginError(
-        "OpenCode panes need a prepared sidecar server; use prepareLaunch",
+        "OpenCode panes need a prepared server connection; use prepareLaunch",
         "opencode_requires_prepare",
       );
     },
@@ -94,76 +98,34 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
       },
     ): Promise<LaunchPlan> {
       const root = input.cwd;
-      let disposed = false;
-      let disposal: Promise<void> | undefined;
-      const disposeOwnedServer = (): Promise<void> => {
-        if (disposed) return Promise.resolve();
-        if (disposal) return disposal;
-        // A host may release a sidecar through both the sidecar hook and the
-        // plan hook. Share one promise so the owned process is disposed once.
-        disposal = manager
-          .dispose(root)
-          .then(() => {
-            disposed = true;
-          })
-          .catch((error) => {
-            disposal = undefined;
-            throw error;
-          });
-        return disposal;
-      };
-
-      let serverAcquired = false;
-      try {
-        input.signal?.throwIfAborted();
-        const entry = await manager.ensure(root, input.signal);
-        serverAcquired = true;
-        input.signal?.throwIfAborted();
-        const baseUrl = `http://127.0.0.1:${entry.port}`;
-        const client = options.clientFactory?.(baseUrl) ?? new OpenCodeClient(baseUrl, { onLog: options.onLog });
-        const sessionId = await resolveSessionId(
+      input.signal?.throwIfAborted();
+      const entry = await manager.ensure(root, input.signal);
+      input.signal?.throwIfAborted();
+      const baseUrl = `http://127.0.0.1:${entry.port}`;
+      const client =
+        options.clientFactory?.(baseUrl, root) ??
+        new OpenCodeClient(baseUrl, { onLog: options.onLog, directory: root });
+      const sessionId = await resolveSessionId(client, entry, input.resumeSessionId ?? null, input.name, input.signal);
+      input.signal?.throwIfAborted();
+      const monitor =
+        options.monitorFactory?.({
+          baseUrl,
+          sessionId,
+          workspaceRoot: root,
           client,
-          entry,
-          input.resumeSessionId ?? null,
-          input.name,
-          input.signal,
-        );
-        input.signal?.throwIfAborted();
-        const monitor =
-          options.monitorFactory?.({
-            baseUrl,
-            sessionId,
-            workspaceRoot: root,
-            client,
-          }) ?? new OpenCodeMonitor({ baseUrl, sessionId, workspaceRoot: root, client });
-        const attachExecutable = options.attachExecutable ?? "opencode";
+        }) ?? new OpenCodeMonitor({ baseUrl, sessionId, workspaceRoot: root, client });
+      const attachExecutable = options.attachExecutable ?? "opencode";
 
-        return {
-          primary: {
-            command: attachExecutable,
-            args: ["attach", baseUrl, "--dir", root, "--session", sessionId],
-            cwd: root,
-            environment: { ...input.environment },
-          },
-          monitor,
-          backendSessionId: sessionId,
-          sidecars: [
-            {
-              kind: "opencode-serve",
-              pid: entry.pid,
-              health: () => manager.isHealthy(entry.port),
-              stop: disposeOwnedServer,
-            },
-          ],
-          dispose: disposeOwnedServer,
-        };
-      } catch (error) {
-        // Preparation owns the server until a plan is returned. If plan
-        // construction fails, release that ownership before propagating the
-        // preparation error.
-        if (serverAcquired) await disposeOwnedServer();
-        throw error;
-      }
+      return {
+        primary: {
+          command: attachExecutable,
+          args: ["attach", baseUrl, "--dir", root, "--session", sessionId],
+          cwd: root,
+          environment: { ...input.environment },
+        },
+        monitor,
+        backendSessionId: sessionId,
+      };
     },
 
     actions() {
@@ -191,7 +153,7 @@ async function resolveSessionId(
   const exists = await client.sessionExists(resumeSessionId, signal);
   if (!exists) {
     throw new OpenCodePluginError(
-      `OpenCode session ${resumeSessionId} no longer exists on the owned server; start a new session instead of resuming`,
+      `OpenCode session ${resumeSessionId} no longer exists on the OpenCode server; start a new session instead of resuming`,
       "opencode_session_not_found",
     );
   }
