@@ -783,6 +783,19 @@ export const clientControlMessageSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("redraw"),
+      ...terminalFrameVersionSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("ping"),
+      ...terminalFrameVersionSchema.shape,
+      nonce: z.string().min(1).max(128),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("detach"),
       ...terminalFrameVersionSchema.shape,
       sessionId: terminalSessionIdSchema.optional(),
@@ -792,6 +805,7 @@ export const clientControlMessageSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("claim"),
       ...terminalFrameVersionSchema.shape,
+      ...dimensionsSchema.shape,
     })
     .strict(),
   z
@@ -1008,6 +1022,8 @@ export const serverControlMessageSchema = z.discriminatedUnion("type", [
       target: z.string(),
       paneId: z.string(),
       windowId: z.string(),
+      owner: z.enum(["mobile", "desktop"]),
+      sync: z.enum(["live", "replay", "redraw"]),
       ...dimensionsSchema.shape,
     })
     .strict(),
@@ -1017,6 +1033,13 @@ export const serverControlMessageSchema = z.discriminatedUnion("type", [
       ...terminalFrameVersionSchema.shape,
       owner: z.enum(["mobile", "desktop"]),
       reason: z.enum(["attached", "mobile_claim", "desktop_activity", "desktop_resize", "desktop_focus", "detached"]),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("pong"),
+      ...terminalFrameVersionSchema.shape,
+      nonce: z.string().min(1).max(128),
     })
     .strict(),
   z

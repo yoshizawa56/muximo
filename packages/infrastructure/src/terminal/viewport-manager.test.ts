@@ -262,6 +262,38 @@ const cases = [
       hasObserved<ViewportContext, undefined>("refreshes", ["/dev/mobile", "/dev/desktop", "/dev/mobile"]),
     ],
   },
+  {
+    name: "records mobile geometry without reclaiming a desktop-owned viewport",
+    steps: [prepare, attach, { type: "hook", event: "client-active" }, { type: "resize", cols: 90, rows: 30 }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("width", 120),
+      hasObserved<ViewportContext, undefined>("height", 40),
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "desktop_activity" },
+      ]),
+      hasObserved<ViewportContext, undefined>("refreshes", ["/dev/mobile", "/dev/desktop"]),
+    ],
+  },
+  {
+    name: "uses recorded mobile geometry only after an explicit reclaim",
+    steps: [
+      prepare,
+      attach,
+      { type: "hook", event: "client-active" },
+      { type: "resize", cols: 90, rows: 30 },
+      { type: "claim" },
+    ],
+    assert: [
+      hasObserved<ViewportContext, undefined>("width", 90),
+      hasObserved<ViewportContext, undefined>("height", 30),
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "desktop_activity" },
+        { owner: "mobile", reason: "mobile_claim" },
+      ]),
+    ],
+  },
 ] satisfies readonly ScenarioCase<ViewportFixtureKey, ViewportStep, undefined, ViewportContext>[];
 
 const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, undefined, ViewportContext> = {
