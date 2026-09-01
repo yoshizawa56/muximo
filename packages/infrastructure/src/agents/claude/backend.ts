@@ -17,6 +17,7 @@ export class ClaudeBackendProvider implements AgentBackendProvider {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    _signal?: AbortSignal,
   ): Promise<AgentBackendProviderPreparation> {
     let effective = session;
     let sessionUpdate: SessionIdentityUpdate | undefined;
@@ -38,6 +39,8 @@ export class ClaudeBackendProvider implements AgentBackendProvider {
   ): Promise<SessionIdentityUpdate | undefined> {
     return undefined;
   }
+
+  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {}
 
   public async archive(_session: AgentSessionRecord): Promise<boolean> {
     return true;

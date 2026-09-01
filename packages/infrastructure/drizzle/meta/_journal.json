@@ -57,6 +57,20 @@
       "when": 1788008698188,
       "tag": "0007_remarkable_mac_gargan",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788088549300,
+      "tag": "0008_demonic_slapstick",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788094815174,
+      "tag": "0009_material_the_spike",
+      "breakpoints": true
     }
   ]
 }

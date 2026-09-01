@@ -34,8 +34,30 @@ export type ClaimExecutionInput = {
   id: AgentSessionId;
   expectedExecutionPid: number | null;
   executionId: string;
+  executionPid: number | null;
+  executionStartedAt: string;
+  executionOwnerPid: number | null;
+  executionOwnerStartedAt: string | null;
+  updatedAt: string;
+};
+
+export type AttachExecutionInput = {
+  id: AgentSessionId;
+  executionId: string;
+  expectedExecutionOwnerPid: number | null;
+  expectedExecutionOwnerStartedAt: string | null;
   executionPid: number;
   executionStartedAt: string;
+  updatedAt: string;
+};
+
+export type ClaimAbandonedExecutionInput = {
+  id: AgentSessionId;
+  executionId: string;
+  expectedExecutionPid: number | null;
+  expectedExecutionStartedAt: string | null;
+  expectedExecutionOwnerPid: number | null;
+  expectedExecutionOwnerStartedAt: string | null;
   updatedAt: string;
 };
 
@@ -46,6 +68,8 @@ export interface AgentSessionRepository {
   insert(record: AgentSessionRecord): Promise<void>;
   update(record: AgentSessionRecord): Promise<void>;
   claimExecution(input: ClaimExecutionInput): Promise<boolean>;
+  claimAbandonedExecution(input: ClaimAbandonedExecutionInput): Promise<boolean>;
+  attachExecution(input: AttachExecutionInput): Promise<boolean>;
   setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean>;
   delete(id: AgentSessionId): Promise<void>;
 }

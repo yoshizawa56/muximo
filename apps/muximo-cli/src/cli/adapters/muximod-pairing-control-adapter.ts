@@ -18,11 +18,16 @@ import {
   type MuximodControlResponse,
   muximodControlMaxResponseBytes,
 } from "@muximo/contract/control";
-import { sanitizeProcessDiagnostic } from "@muximo/infrastructure/cli-client";
 
 type AgentStatus = Extract<MuximodControlRequest, { type: "observe_agent_session" }>["state"];
-type AgentExecutionStart = Extract<MuximodControlResponse, { type: "execute_agent_process" }>;
-type AgentExecutionResult = Extract<MuximodControlRequest, { type: "complete_agent_execution" }>["result"];
+type AgentExecutionPrepareRequest = Extract<MuximodControlRequest, { type: "prepare_agent_execution" }>;
+type AgentExecutionAttachRequest = Extract<MuximodControlRequest, { type: "attach_agent_execution" }>;
+type AgentExecutionCompleteRequest = Extract<MuximodControlRequest, { type: "complete_agent_execution" }>;
+type AgentExecutionPrepareCommand =
+  | Omit<Extract<AgentExecutionPrepareRequest, { operation: "run" }>, "type" | "requestId">
+  | Omit<Extract<AgentExecutionPrepareRequest, { operation: "resume" }>, "type" | "requestId">;
+type AgentExecutionPreparedResponse = Extract<MuximodControlResponse, { type: "agent_execution_prepared" }>;
+type AgentExecutionCompletedResponse = Extract<MuximodControlResponse, { type: "agent_execution_completed" }>;
 type MuximodControlCommand = MuximodControlRequest extends infer Request
   ? Request extends { requestId: string }
     ? Omit<Request, "requestId">
@@ -31,6 +36,13 @@ type MuximodControlCommand = MuximodControlRequest extends infer Request
 type ResponseWaiter = {
   resolve(response: MuximodControlResponse): void;
   reject(error: PairingControlError): void;
+};
+
+export const muximodControlRequestTimeoutMs = 30_000;
+export const muximodControlConnectTimeoutMs = 5_000;
+
+export type MuximodPairingControlAdapterOptions = {
+  requestTimeoutMs?: number;
 };
 
 export class PairingControlError extends Error {
@@ -43,26 +55,23 @@ export class PairingControlError extends Error {
   }
 }
 
-export type MuximodPairingControlAdapterOptions = {
-  onAgentExecution?: (request: AgentExecutionStart, signal: AbortSignal) => Promise<AgentExecutionResult>;
-};
-
 /** Unix-socket adapter for muximod's private pairing and pane control protocol. */
 export class MuximodPairingControlAdapter implements PairingControlPort {
   private readonly reader: Interface;
   private readonly responses: AsyncIterableIterator<string>;
   private requestQueue: Promise<void> = Promise.resolve();
   private readonly pendingClaims: Extract<MuximodControlResponse, { type: "pairing_claimed" }>[] = [];
-  private readonly activeAgentExecutions = new Map<string, AbortController>();
   private readonly responseQueue: MuximodControlResponse[] = [];
   private readonly responseWaiters: ResponseWaiter[] = [];
   private socketError: PairingControlError | undefined;
   private closed = false;
+  private readonly requestTimeoutMs: number;
 
   private constructor(
     private readonly socket: Socket,
-    private readonly options: MuximodPairingControlAdapterOptions = {},
+    options: MuximodPairingControlAdapterOptions = {},
   ) {
+    this.requestTimeoutMs = Math.max(0, options.requestTimeoutMs ?? muximodControlRequestTimeoutMs);
     socket.on("error", (error) => {
       const failure = new PairingControlError(
         `muximod control socket failed: ${error.message}`,
@@ -74,8 +83,6 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     this.responses = this.reader[Symbol.asyncIterator]();
     socket.on("close", () => {
       this.closed = true;
-      for (const controller of this.activeAgentExecutions.values()) controller.abort();
-      this.activeAgentExecutions.clear();
       this.failResponses(new PairingControlError("muximod control socket closed", "control_socket_closed"));
     });
     void this.readResponses();
@@ -115,23 +122,45 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     return response;
   }
 
-  public async reserveAgentExecution(input: {
-    operation: "run" | "resume";
-    hostPaneId?: string;
-    ownerPid: number;
-  }): Promise<{ token: string; ownerPid: number }> {
-    const response = await this.request({ type: "reserve_agent_execution", ...input });
-    if (response.type !== "agent_execution_reserved") {
-      throw unexpectedResponse("agent_execution_reserved", response.type);
+  public async prepareAgentExecution(input: AgentExecutionPrepareCommand): Promise<AgentExecutionPreparedResponse> {
+    const response = await this.request({ type: "prepare_agent_execution", ...input });
+    if (
+      response.type !== "agent_execution_prepared" ||
+      response.operation !== input.operation ||
+      response.agentSessionId !== response.session.id ||
+      response.executionId !== response.session.executionId
+    ) {
+      throw unexpectedResponse("agent_execution_prepared", response.type);
     }
-    return { token: response.token, ownerPid: response.ownerPid };
+    return response;
   }
 
-  public async releaseAgentExecution(token: string): Promise<void> {
-    const response = await this.request({ type: "release_agent_execution", token });
-    if (response.type !== "agent_execution_released" || response.token !== token) {
-      throw unexpectedResponse("agent_execution_released", response.type);
+  public async attachAgentExecution(input: Omit<AgentExecutionAttachRequest, "type" | "requestId">): Promise<void> {
+    const response = await this.request({ type: "attach_agent_execution", ...input });
+    if (
+      response.type !== "agent_execution_attached" ||
+      response.agentSessionId !== input.agentSessionId ||
+      response.executionId !== input.executionId ||
+      response.executionPid !== input.executionPid ||
+      response.executionStartedAt !== input.executionStartedAt
+    ) {
+      throw unexpectedResponse("agent_execution_attached", response.type);
     }
+  }
+
+  public async completeAgentExecution(
+    input: Omit<AgentExecutionCompleteRequest, "type" | "requestId">,
+  ): Promise<AgentExecutionCompletedResponse> {
+    const response = await this.request({ type: "complete_agent_execution", ...input });
+    if (
+      response.type !== "agent_execution_completed" ||
+      response.operation !== input.operation ||
+      response.agentSessionId !== input.agentSessionId ||
+      response.executionId !== input.executionId
+    ) {
+      throw unexpectedResponse("agent_execution_completed", response.type);
+    }
+    return response;
   }
 
   public async waitForClaim(pairingId: string): Promise<PairingClaim> {
@@ -225,8 +254,6 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
 
   public close(): void {
     this.closed = true;
-    for (const controller of this.activeAgentExecutions.values()) controller.abort();
-    this.activeAgentExecutions.clear();
     this.failResponses(new PairingControlError("muximod control socket closed", "control_socket_closed"));
     this.reader.close();
     this.socket.destroy();
@@ -235,6 +262,9 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
   private async request(request: MuximodControlCommand): Promise<MuximodControlResponse> {
     const requestWithId = { ...request, requestId: randomUUID() } as MuximodControlRequest;
     const operation = this.requestQueue.then(async () => {
+      if (this.closed || this.socket.destroyed || this.socket.writableEnded) {
+        throw new PairingControlError("muximod control socket is closed", "control_socket_closed");
+      }
       this.socket.write(`${encodeMuximodControlRequest(requestWithId)}\n`);
       const response = await this.nextResponseFor(requestWithId.requestId);
       if (response.type === "error") throw controlError(response);
@@ -244,7 +274,7 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
       () => undefined,
       () => undefined,
     );
-    return operation;
+    return withRequestTimeout(operation, this.requestTimeoutMs, () => this.close());
   }
 
   private async nextResponseFor(requestId: string): Promise<MuximodControlResponse> {
@@ -267,42 +297,6 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
         );
       }
       return response;
-    }
-  }
-
-  private async handleAgentExecution(request: AgentExecutionStart): Promise<void> {
-    const controller = new AbortController();
-    this.activeAgentExecutions.set(request.requestId, controller);
-    let result: AgentExecutionResult;
-    try {
-      if (!this.options.onAgentExecution) throw new Error("no agent execution handler is registered");
-      result = await this.options.onAgentExecution(request, controller.signal);
-    } catch (error) {
-      result = {
-        started: false,
-        code: 127,
-        interrupted: controller.signal.aborted,
-        signal: null,
-        failureDiagnostic:
-          sanitizeProcessDiagnostic(error instanceof Error ? error.message : String(error)) ?? "agent execution failed",
-      };
-    }
-    if (this.closed || this.socket.destroyed) {
-      this.activeAgentExecutions.delete(request.requestId);
-      return;
-    }
-    try {
-      await this.request({
-        type: "complete_agent_execution",
-        executionRequestId: request.requestId,
-        token: request.token,
-        executionId: request.executionId,
-        result,
-      });
-    } catch (error) {
-      this.socket.destroy(error instanceof Error ? error : new Error(String(error)));
-    } finally {
-      this.activeAgentExecutions.delete(request.requestId);
     }
   }
 
@@ -330,21 +324,6 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
             `muximod control socket returned ${parsed.message}`,
             "invalid_control_response",
           );
-        }
-        if (parsed.value.type === "execute_agent_process") {
-          // AgentExecutionBroker allows one reservation per control peer. Keep
-          // the same invariant here and fail closed if the daemon violates it.
-          if (this.activeAgentExecutions.size > 0) {
-            this.socket.destroy(
-              new PairingControlError(
-                "muximod sent concurrent agent execution requests on one control connection",
-                "concurrent_agent_execution",
-              ),
-            );
-            continue;
-          }
-          void this.handleAgentExecution(parsed.value);
-          continue;
         }
         const waiter = this.responseWaiters.shift();
         if (waiter) waiter.resolve(parsed.value);
@@ -377,8 +356,18 @@ function connectControlSocket(path: string): Promise<Socket> {
       return;
     }
     const socket = createConnection(path);
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(
+        new PairingControlError(
+          `connecting to muximod control socket timed out after ${muximodControlConnectTimeoutMs}ms`,
+          "control_socket_connect_timeout",
+        ),
+      );
+    }, muximodControlConnectTimeoutMs);
     const onError = (error: Error) =>
       (() => {
+        clearTimeout(timeout);
         socket.destroy();
         reject(
           new PairingControlError(
@@ -388,10 +377,36 @@ function connectControlSocket(path: string): Promise<Socket> {
         );
       })();
     socket.once("connect", () => {
+      clearTimeout(timeout);
       socket.off("error", onError);
       resolve(socket);
     });
     socket.once("error", onError);
+  });
+}
+
+function withRequestTimeout<Result>(
+  operation: Promise<Result>,
+  timeoutMs: number,
+  onTimeout: () => void,
+): Promise<Result> {
+  return new Promise<Result>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      onTimeout();
+      reject(
+        new PairingControlError(`muximod control request timed out after ${timeoutMs}ms`, "control_request_timeout"),
+      );
+    }, timeoutMs);
+    operation.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
   });
 }
 

@@ -27,7 +27,6 @@ export type AgentBackendProviderPreparation = {
 
 export type AgentBackendProviderOptions = {
   environment: NodeJS.ProcessEnv;
-  opencodeRegistryFile?: string;
   plugins: AgentPluginRegistry;
   sessions: AgentSessionRepository;
   audit: SessionAuditPort;
@@ -43,8 +42,12 @@ export interface AgentBackendProvider {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    signal?: AbortSignal,
   ): Promise<AgentBackendProviderPreparation>;
+  /** Reconstructs daemon-side observation for a process that survived a daemon restart. */
+  restoreLaunch?(session: AgentSessionRecord): Promise<AgentBackendLaunch | undefined>;
   afterRun(session: AgentSessionRecord, runDir: string, startedAt: number): Promise<SessionIdentityUpdate | undefined>;
+  disposeLaunch(session: AgentSessionRecord, runDir: string): Promise<void>;
   archive(session: AgentSessionRecord): Promise<boolean>;
   restore(session: AgentSessionRecord): Promise<boolean>;
   releaseIfUnused(session: AgentSessionRecord, remaining: readonly AgentSessionRecord[]): Promise<void>;

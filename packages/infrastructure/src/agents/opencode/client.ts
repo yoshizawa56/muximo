@@ -43,6 +43,10 @@ export type OpenCodeRequest = (url: string, init?: RequestInit) => Promise<Respo
 export type OpenCodeClientOptions = {
   request?: OpenCodeRequest;
   onLog?: OpenCodeLog;
+  /** Routes requests to the OpenCode instance for this workspace. */
+  directory?: string;
+  /** Maximum duration for one short-lived JSON request. */
+  requestTimeoutMs?: number;
 };
 
 /** Thrown when the SSE stream is closed or the server becomes unreachable. */
@@ -56,19 +60,138 @@ export class OpenCodeStreamClosedError extends Error {
 }
 
 const openCodeJsonHeaders = { Accept: "application/json", "Content-Type": "application/json" };
+export const openCodeRequestTimeoutMs = 5_000;
+export const openCodeResponseMaxBytes = 4 * 1024 * 1024;
+
+export class OpenCodeRequestTimeoutError extends Error {
+  public readonly retryable = true;
+
+  public constructor(
+    public readonly url: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(`OpenCode request timed out after ${timeoutMs}ms: ${url}`);
+    this.name = "OpenCodeRequestTimeoutError";
+  }
+}
+
+export class OpenCodeResponseTooLargeError extends Error {
+  public readonly retryable = false;
+
+  public constructor(
+    public readonly url: string,
+    public readonly maxBytes: number,
+  ) {
+    super(`OpenCode response exceeded the ${maxBytes}-byte limit: ${url}`);
+    this.name = "OpenCodeResponseTooLargeError";
+  }
+}
+
+/**
+ * Bounds a short-lived request and aborts the underlying fetch when possible.
+ * The promise race also protects callers that inject a request implementation
+ * which does not observe AbortSignal.
+ */
+export async function requestWithTimeout(
+  request: OpenCodeRequest,
+  url: string,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const sourceSignal = init?.signal ?? undefined;
+  let abortSource: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const abortPromise =
+    sourceSignal === undefined
+      ? undefined
+      : new Promise<never>((_, reject) => {
+          abortSource = () => {
+            controller.abort(sourceSignal.reason);
+            reject(sourceSignal.reason instanceof Error ? sourceSignal.reason : new Error("OpenCode request aborted"));
+          };
+          if (sourceSignal.aborted) abortSource();
+          else sourceSignal.addEventListener("abort", abortSource, { once: true });
+        });
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => {
+        controller.abort();
+        reject(new OpenCodeRequestTimeoutError(url, timeoutMs));
+      },
+      Math.max(0, timeoutMs),
+    );
+  });
+  const requestPromise = (async () => {
+    const response = await request(url, { ...init, signal: controller.signal });
+    const body = await readResponseBody(response, url);
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  })();
+  try {
+    return await Promise.race(
+      abortPromise === undefined ? [requestPromise, timeoutPromise] : [requestPromise, timeoutPromise, abortPromise],
+    );
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (abortSource !== undefined) sourceSignal?.removeEventListener("abort", abortSource);
+    controller.abort();
+  }
+}
+
+async function readResponseBody(response: Response, url: string): Promise<ArrayBuffer> {
+  if (!response.body) {
+    const body = await response.arrayBuffer();
+    if (body.byteLength > openCodeResponseMaxBytes) {
+      throw new OpenCodeResponseTooLargeError(url, openCodeResponseMaxBytes);
+    }
+    return body;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      size += value.byteLength;
+      if (size > openCodeResponseMaxBytes) {
+        await reader.cancel();
+        throw new OpenCodeResponseTooLargeError(url, openCodeResponseMaxBytes);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new ArrayBuffer(size);
+  const view = new Uint8Array(body);
+  let offset = 0;
+  for (const chunk of chunks) {
+    view.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
 
 export class OpenCodeClient {
   private readonly request: OpenCodeRequest;
+  private readonly requestTimeoutMs: number;
 
   public constructor(
     private readonly baseUrl: string,
     private readonly options: OpenCodeClientOptions = {},
   ) {
     this.request = options.request ?? ((url, init) => fetch(url, init));
+    this.requestTimeoutMs = Math.max(0, options.requestTimeoutMs ?? openCodeRequestTimeoutMs);
   }
 
-  public async health(): Promise<OpenCodeHealth | undefined> {
-    const response = await this.get("/global/health");
+  public async health(signal?: AbortSignal): Promise<OpenCodeHealth | undefined> {
+    const response = await this.get("/global/health", signal);
     if (!response.ok) return undefined;
     const body = await safeJson(response);
     const healthy = objectValue(body)?.healthy === true;
@@ -77,11 +200,12 @@ export class OpenCodeClient {
   }
 
   /** Creates a session and optionally sets its title. */
-  public async createSession(title?: string): Promise<string | undefined> {
-    const response = await this.request(`${this.baseUrl}/session`, {
+  public async createSession(title?: string, signal?: AbortSignal): Promise<string | undefined> {
+    const response = await this.requestWithTimeout(`${this.baseUrl}/session`, {
       method: "POST",
-      headers: openCodeJsonHeaders,
+      headers: this.headers(openCodeJsonHeaders),
       body: title ? JSON.stringify({ title }) : "{}",
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) return undefined;
     const body = await safeJson(response);
@@ -89,11 +213,12 @@ export class OpenCodeClient {
   }
 
   /** Renames an existing session. */
-  public async setSessionTitle(sessionId: string, title: string): Promise<boolean> {
-    const response = await this.request(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}`, {
+  public async setSessionTitle(sessionId: string, title: string, signal?: AbortSignal): Promise<boolean> {
+    const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
-      headers: openCodeJsonHeaders,
+      headers: this.headers(openCodeJsonHeaders),
       body: JSON.stringify({ title }),
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) {
       this.options.onLog?.("warn", "opencode.session_title_update_failed", { sessionId });
@@ -102,24 +227,25 @@ export class OpenCodeClient {
     return true;
   }
 
-  public async sessionExists(sessionId: string): Promise<boolean> {
-    const response = await this.get(`/session/${encodeURIComponent(sessionId)}`);
+  public async sessionExists(sessionId: string, signal?: AbortSignal): Promise<boolean> {
+    const response = await this.get(`/session/${encodeURIComponent(sessionId)}`, signal);
     return response.ok;
   }
 
   /** Current status of one session, or `undefined` when it cannot be determined. */
-  public async sessionStatus(sessionId: string): Promise<OpenCodeSessionStatus | undefined> {
-    const response = await this.get("/session/status");
+  public async sessionStatus(sessionId: string, signal?: AbortSignal): Promise<OpenCodeSessionStatus | undefined> {
+    const response = await this.get("/session/status", signal);
     if (!response.ok) return undefined;
     const body = await safeJson(response);
     const entry = objectValue(body)?.[sessionId];
     return sessionStatusValue(entry);
   }
 
-  public async abortSession(sessionId: string): Promise<boolean> {
-    const response = await this.request(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}/abort`, {
+  public async abortSession(sessionId: string, signal?: AbortSignal): Promise<boolean> {
+    const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}/abort`, {
       method: "POST",
-      headers: openCodeJsonHeaders,
+      headers: this.headers(openCodeJsonHeaders),
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) return false;
     const body = await safeJson(response);
@@ -131,13 +257,15 @@ export class OpenCodeClient {
     permissionId: string,
     response: "allow" | "deny",
     remember = false,
+    signal?: AbortSignal,
   ): Promise<boolean> {
-    const result = await this.request(
+    const result = await this.requestWithTimeout(
       `${this.baseUrl}/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`,
       {
         method: "POST",
-        headers: openCodeJsonHeaders,
+        headers: this.headers(openCodeJsonHeaders),
         body: JSON.stringify({ response, remember }),
+        ...(signal === undefined ? {} : { signal }),
       },
     );
     if (!result.ok) return false;
@@ -145,11 +273,12 @@ export class OpenCodeClient {
     return body === true;
   }
 
-  public async forkSession(sessionId: string): Promise<string | undefined> {
-    const response = await this.request(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}/fork`, {
+  public async forkSession(sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
+    const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}/fork`, {
       method: "POST",
-      headers: openCodeJsonHeaders,
+      headers: this.headers(openCodeJsonHeaders),
       body: "{}",
+      ...(signal === undefined ? {} : { signal }),
     });
     if (!response.ok) return undefined;
     const body = await safeJson(response);
@@ -164,7 +293,7 @@ export class OpenCodeClient {
    */
   public async *events(signal?: AbortSignal): AsyncGenerator<OpenCodeEvent> {
     const response = await this.request(`${this.baseUrl}/global/event`, {
-      headers: { Accept: "text/event-stream" },
+      headers: this.headers({ Accept: "text/event-stream" }),
       ...(signal ? { signal } : {}),
     });
     if (!response.ok) {
@@ -201,9 +330,12 @@ export class OpenCodeClient {
     throw new OpenCodeStreamClosedError("OpenCode event stream ended");
   }
 
-  private async get(path: string): Promise<Response> {
+  private async get(path: string, signal?: AbortSignal): Promise<Response> {
     try {
-      return await this.request(`${this.baseUrl}${path}`, { headers: openCodeJsonHeaders });
+      return await this.requestWithTimeout(`${this.baseUrl}${path}`, {
+        headers: this.headers(openCodeJsonHeaders),
+        ...(signal === undefined ? {} : { signal }),
+      });
     } catch (error) {
       this.options.onLog?.("debug", "opencode.request_failed", {
         path,
@@ -211,6 +343,16 @@ export class OpenCodeClient {
       });
       throw error;
     }
+  }
+
+  private requestWithTimeout(url: string, init: RequestInit): Promise<Response> {
+    return requestWithTimeout(this.request, url, init, this.requestTimeoutMs);
+  }
+
+  private headers(headers: Record<string, string>): Record<string, string> {
+    return this.options.directory === undefined
+      ? headers
+      : { ...headers, "x-opencode-directory": this.options.directory };
   }
 }
 

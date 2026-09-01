@@ -1,11 +1,10 @@
+import type { ResumeAgentSessionInput, StartAgentSessionInput } from "@muximo/application";
 import type {
   AgentSessionListResponse,
   CleanupAgentSessionRequest,
   CleanupAgentSessionResponse,
   ListAgentSessionsRequest,
-  ResumeAgentSessionRequest,
   ResumeAgentSessionResponse,
-  RunAgentSessionRequest,
   RunAgentSessionResponse,
 } from "@muximo/contract/api";
 import type {
@@ -26,8 +25,8 @@ type AsyncExecutor<Input, Result> = {
   execute(input: Input): Promise<Result>;
 };
 
-type CliRunRequest = Omit<RunAgentSessionRequest, "executionToken">;
-type CliResumeRequest = Omit<ResumeAgentSessionRequest, "executionToken">;
+type CliRunRequest = StartAgentSessionInput;
+type CliResumeRequest = ResumeAgentSessionInput;
 
 export type SessionHandlerDependencies = {
   run: AsyncExecutor<CliRunRequest, RunAgentSessionResponse>;

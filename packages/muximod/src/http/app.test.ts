@@ -103,10 +103,19 @@ const fixture = (): FixtureHandle<SocketFixture> => {
   };
   const application: MuximodApplication = {
     agentSessions: {
-      run: async () => {
+      prepareRun: async () => {
         throw new Error("not used");
       },
-      resume: async () => {
+      prepareResume: async () => {
+        throw new Error("not used");
+      },
+      attach: async () => {
+        throw new Error("not used");
+      },
+      completeRun: async () => {
+        throw new Error("not used");
+      },
+      completeResume: async () => {
         throw new Error("not used");
       },
       cleanup: async () => {

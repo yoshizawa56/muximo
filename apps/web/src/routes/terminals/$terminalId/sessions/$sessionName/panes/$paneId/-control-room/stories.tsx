@@ -2,8 +2,14 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { storyPanes } from "../../../../../../-story-fixtures";
-import type { CustomKeyboardSettingsViewModel, CustomKeyboardViewModel } from "../-custom-keyboard/viewmodel";
-import { defaultCustomKeyboardButtons } from "../-custom-keyboard/viewmodel";
+import { keysFromIds, resolveCustomKeyboardLayout } from "../-custom-keyboard/policy";
+import {
+  type CustomKeyboardSettingsViewModel,
+  type CustomKeyboardViewModel,
+  customKeyboardKeyLibrary,
+  customKeyboardSurfaceDefinitions,
+  defaultCustomKeyboardLayout,
+} from "../-custom-keyboard/viewmodel";
 import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
 import type { PaneViewModel } from "../-terminal/viewmodel";
 import { ControlRoomView } from "./view";
@@ -49,16 +55,23 @@ function createTerminal(overrides: Partial<PaneViewModel> = {}): PaneViewModel {
 }
 
 function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): CustomKeyboardViewModel {
+  const rows = resolveCustomKeyboardLayout(defaultCustomKeyboardLayout, customKeyboardKeyLibrary);
   return {
-    buttons: defaultCustomKeyboardButtons,
+    rows,
+    surfaces: customKeyboardSurfaceDefinitions.map((surface) => ({
+      id: surface.id,
+      keys: keysFromIds(surface.keyIds, customKeyboardKeyLibrary),
+    })),
     activeModifiers: [],
     nativeKeyboardVisible: false,
+    activeProfile: { id: "default", name: "Default", icon: "terminal", linked: true },
+    profiles: [{ id: "default", name: "Default", icon: "terminal", linked: true }],
+    workspaceId: "muximo",
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
-    onButtonPress: fn(),
+    onSelectProfile: fn(),
+    onActivateKey: fn(),
     onDirectionalFlick: fn(),
-    onNativeAction: fn(),
-    onTerminalAction: fn(),
     onNativeFileSelected: fn(),
     onKeepNativeKeyboardOpen: fn(),
     onToggleNativeKeyboard: fn(),
@@ -67,15 +80,32 @@ function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): Custo
 }
 
 function createKeyboardSettings(): CustomKeyboardSettingsViewModel {
+  const rows = resolveCustomKeyboardLayout(defaultCustomKeyboardLayout, customKeyboardKeyLibrary);
+  const assignedKeyIds = rows.flatMap((row) => row.items.map((item) => item.key.id));
+  const assigned = new Set(assignedKeyIds);
   return {
-    buttons: defaultCustomKeyboardButtons,
-    availableButtons: [],
-    shortcutButtons: [],
-    selectedButtonIds: [],
+    rows,
+    availableKeys: customKeyboardKeyLibrary.filter((key) => !assigned.has(key.id)),
+    shortcutKeys: keysFromIds(
+      customKeyboardKeyLibrary.filter((key) => key.category === "shortcuts").map((key) => key.id),
+      customKeyboardKeyLibrary,
+    ),
+    activeProfile: { id: "default", name: "Default", icon: "terminal", linked: true },
+    profiles: [{ id: "default", name: "Default", icon: "terminal", linked: true }],
+    linkedProfileIds: [],
+    workspaceId: "muximo",
+    assignedKeyIds,
     repeatStartDelayMs: 420,
     repeatIntervalMs: 180,
+    onSelectProfile: fn(),
+    onCreateProfile: fn(),
+    onDuplicateProfile: fn(),
+    onRenameProfile: fn(),
+    onDeleteProfile: fn(),
+    onSetProfileIcon: fn(),
+    onToggleProfileLink: fn(),
     onDrop: fn(),
-    onRemoveButton: fn(),
+    onRemoveKey: fn(),
     onRegisterShortcut: fn(),
     onUpdateShortcut: fn(),
     onDeleteShortcut: fn(),

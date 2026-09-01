@@ -1,13 +1,7 @@
-import type {
-  CreatePaneInput,
-  CreateSessionInput,
-  ManageSessionInput,
-  MuximodApplication,
-  StartAgentSessionInput,
-} from "@muximo/application";
+import type { CreatePaneInput, CreateSessionInput, ManageSessionInput, MuximodApplication } from "@muximo/application";
 import { type AuthInfo, muximodHealthSchema } from "@muximo/contract/api";
 import { protocolVersion } from "@muximo/contract/shared";
-import { AgentSession, AgentSessionId, Pane, PaneId, WorkspaceId } from "@muximo/domain";
+import { Pane, PaneId } from "@muximo/domain";
 import {
   type Assertion,
   type FixtureHandle,
@@ -67,28 +61,12 @@ const pane = Pane.create({
   title: undefined,
   lastSeenAt: "2026-08-15T00:00:00.000Z",
 });
-const agentSession = AgentSession.create({
-  id: AgentSessionId.create("agent-session-http-test"),
-  name: "integration",
-  backend: "codex",
-  status: "exited",
-  workspaceId: WorkspaceId.create("workspace-1"),
-  workspaceRoot: "/work/muximo",
-  workspaceName: "muximo",
-  useWorktree: false,
-  setupRan: false,
-  resuming: false,
-  createdAt: "2026-08-15T00:00:00.000Z",
-  updatedAt: "2026-08-15T00:00:00.000Z",
-});
-
 type AppFixture = {
   app: MuximodApp;
   events: Array<{ event: string; client: string }>;
   sessionInputs: CreateSessionInput[];
   managedSessionInputs: ManageSessionInput[];
   paneInputs: CreatePaneInput[];
-  agentRunInputs: StartAgentSessionInput[];
   originalFetch: typeof globalThis.fetch;
 };
 type HttpResult = { status: number; body: unknown; allowOrigin: string | null; vary: string | null };
@@ -98,7 +76,6 @@ type HttpInput =
   | { operation: "preflight"; origin: "allowed" | "capacitor" | "denied" };
 type RpcInput =
   | { operation: "info" | "authorized-sessions" | "unauthorized-sessions" }
-  | { operation: "run-with-host-pid" }
   | { operation: "list-panes" }
   | {
       operation: "create-session";
@@ -125,7 +102,6 @@ type RpcContext = {
   sessionInputs: readonly CreateSessionInput[];
   managedSessionInputs: readonly ManageSessionInput[];
   paneInputs: readonly CreatePaneInput[];
-  agentRunInputs: readonly StartAgentSessionInput[];
 };
 
 const responseMatches = (
@@ -149,7 +125,6 @@ const appFixture =
     const sessionInputs: CreateSessionInput[] = [];
     const managedSessionInputs: ManageSessionInput[] = [];
     const paneInputs: CreatePaneInput[] = [];
-    const agentRunInputs: StartAgentSessionInput[] = [];
     const originalFetch = globalThis.fetch;
     const app = createMuximodApp({
       auth: testAuth,
@@ -157,14 +132,7 @@ const appFixture =
         sessionInputs,
         managedSessionInputs,
         paneInputs,
-        agentRunInputs,
       }),
-      agentExecution: {
-        consume: async () => ({
-          ownerPid: 4321,
-          execute: async () => ({ started: true, code: 0, interrupted: false, signal: null, pid: 4321 }),
-        }),
-      },
       configurationFingerprint: "0".repeat(64),
       isReady: () => ready,
       originPolicy: createOriginPolicy({ allowedOrigins: ["http://web.example"], allowNoOrigin: true }),
@@ -176,7 +144,7 @@ const appFixture =
       return response ?? new Response(null, { status: 101 });
     }) as typeof globalThis.fetch;
     return {
-      fixture: { app, events, sessionInputs, managedSessionInputs, paneInputs, agentRunInputs, originalFetch },
+      fixture: { app, events, sessionInputs, managedSessionInputs, paneInputs, originalFetch },
       cleanup: () => {
         globalThis.fetch = originalFetch;
       },
@@ -409,39 +377,6 @@ const rpcCases = [
       },
     ],
   },
-  {
-    name: "normalizes a host process result before strict RPC validation",
-    input: { operation: "run-with-host-pid" },
-    assert: [
-      {
-        name: "does not expose the host executor pid in the public process DTO",
-        check: (_context, result) => {
-          if (!result.ok) throw result.error;
-          expect(result.value).toEqual(
-            expect.objectContaining({
-              process: { started: true, code: 0, interrupted: false, signal: null },
-            }),
-          );
-          expect((result.value as { process: Record<string, unknown> }).process).not.toHaveProperty("pid");
-        },
-      },
-      {
-        name: "removes the private execution token before invoking the application",
-        check: (context, result) => {
-          if (!result.ok) throw result.error;
-          expect(context.agentRunInputs).toEqual([
-            {
-              backend: "codex",
-              useWorktree: false,
-              setupHookExplicit: false,
-              cleanupHookExplicit: false,
-              backendArgs: [],
-            },
-          ]);
-        },
-      },
-    ],
-  },
 ] satisfies readonly OperationCase<"default", RpcInput, unknown, RpcContext>[];
 
 const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcContext> = {
@@ -455,8 +390,7 @@ const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcCont
       input.operation === "list-panes" ||
       input.operation === "create-session" ||
       input.operation === "manage-session" ||
-      input.operation === "create-pane" ||
-      input.operation === "run-with-host-pid"
+      input.operation === "create-pane"
         ? { auth: { getAccessToken: async () => "test-token" } }
         : {}),
     };
@@ -468,22 +402,12 @@ const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcCont
     if (input.operation === "create-session") return client.createSession(input.input);
     if (input.operation === "manage-session") return (await client.manageSession(input.input)).session;
     if (input.operation === "create-pane") return client.createPane(input.input);
-    if (input.operation === "run-with-host-pid")
-      return client.agentSessions.run({
-        executionToken: "a".repeat(43),
-        backend: "codex",
-        useWorktree: false,
-        setupHookExplicit: false,
-        cleanupHookExplicit: false,
-        backendArgs: [],
-      });
     throw new Error(`unsupported RPC test operation: ${input.operation}`);
   },
   observe: (fixture) => ({
     sessionInputs: [...fixture.sessionInputs],
     managedSessionInputs: [...fixture.managedSessionInputs],
     paneInputs: [...fixture.paneInputs],
-    agentRunInputs: [...fixture.agentRunInputs],
   }),
 };
 
@@ -520,20 +444,23 @@ function createTestApplication(
     sessionInputs: CreateSessionInput[];
     managedSessionInputs: ManageSessionInput[];
     paneInputs: CreatePaneInput[];
-    agentRunInputs: StartAgentSessionInput[];
   },
 ): MuximodApplication {
   return {
     agentSessions: {
-      run: async (input) => {
-        calls.agentRunInputs.push(input);
-        return {
-          process: { started: true, code: 0, interrupted: false, signal: null, pid: 4321 },
-          session: agentSession,
-          cleanup: { disposition: "not_requested", reason: "no_worktree" },
-        };
+      prepareRun: async () => {
+        throw new Error("not used");
       },
-      resume: async () => {
+      prepareResume: async () => {
+        throw new Error("not used");
+      },
+      attach: async () => {
+        throw new Error("not used");
+      },
+      completeRun: async () => {
+        throw new Error("not used");
+      },
+      completeResume: async () => {
         throw new Error("not used");
       },
       cleanup: async () => {

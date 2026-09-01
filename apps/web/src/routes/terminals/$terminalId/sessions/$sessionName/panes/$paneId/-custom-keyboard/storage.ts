@@ -1,8 +1,8 @@
 import { Preferences, type PreferencesPlugin } from "@capacitor/preferences";
 
-export const CUSTOM_KEYBOARD_STORAGE_KEY = "muximo.custom-keyboard.v1";
+export const CUSTOM_KEYBOARD_STORAGE_KEY = "muximo.custom-keyboard";
 
-type LegacyStorage = Pick<Storage, "getItem" | "removeItem" | "setItem">;
+type BrowserStorage = Pick<Storage, "getItem" | "setItem">;
 type PreferencesStore = Pick<PreferencesPlugin, "get" | "set">;
 
 export type CustomKeyboardStorage = {
@@ -12,34 +12,20 @@ export type CustomKeyboardStorage = {
 
 export function createCustomKeyboardStorage(
   preferences: PreferencesStore = Preferences,
-  legacyStorage: LegacyStorage | undefined = getLegacyStorage(),
+  browserStorage: BrowserStorage | undefined = getBrowserStorage(),
 ): CustomKeyboardStorage {
   return {
     async read() {
-      try {
-        const current = await preferences.get({ key: CUSTOM_KEYBOARD_STORAGE_KEY });
-        if (current.value !== null) return current.value;
-      } catch {
-        // Fall back to the legacy browser storage when the native plugin is unavailable.
-      }
-
-      const legacyValue = readLegacyValue(legacyStorage);
-      if (legacyValue === null) return null;
-
-      try {
-        await preferences.set({ key: CUSTOM_KEYBOARD_STORAGE_KEY, value: legacyValue });
-        legacyStorage?.removeItem(CUSTOM_KEYBOARD_STORAGE_KEY);
-      } catch {
-        // Keep the legacy value available when migration cannot be completed yet.
-      }
-      return legacyValue;
+      const currentPreferenceValue = await readPreferenceValue(preferences, CUSTOM_KEYBOARD_STORAGE_KEY);
+      if (currentPreferenceValue !== null) return currentPreferenceValue;
+      return readBrowserValue(browserStorage, CUSTOM_KEYBOARD_STORAGE_KEY);
     },
     async write(value) {
       try {
         await preferences.set({ key: CUSTOM_KEYBOARD_STORAGE_KEY, value });
       } catch {
         try {
-          legacyStorage?.setItem(CUSTOM_KEYBOARD_STORAGE_KEY, value);
+          browserStorage?.setItem(CUSTOM_KEYBOARD_STORAGE_KEY, value);
         } catch {
           // Storage may be unavailable in private browsing or an embedded webview.
         }
@@ -48,16 +34,24 @@ export function createCustomKeyboardStorage(
   };
 }
 
-function readLegacyValue(storage: LegacyStorage | undefined): string | null {
-  if (!storage) return null;
+async function readPreferenceValue(preferences: PreferencesStore, key: string): Promise<string | null> {
   try {
-    return storage.getItem(CUSTOM_KEYBOARD_STORAGE_KEY);
+    return (await preferences.get({ key })).value;
   } catch {
     return null;
   }
 }
 
-function getLegacyStorage(): LegacyStorage | undefined {
+function readBrowserValue(storage: BrowserStorage | undefined, key: string): string | null {
+  if (!storage) return null;
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function getBrowserStorage(): BrowserStorage | undefined {
   if (typeof window === "undefined") return undefined;
   try {
     return window.localStorage;

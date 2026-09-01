@@ -21,7 +21,7 @@ export const sessionListPolicy = {
   longRunningThresholdMs: 30 * 24 * 60 * 60 * 1_000,
 } as const;
 
-const activeStates = new Set<AgentSessionState>(["running", "resuming"]);
+const activeStates = new Set<AgentSessionState>(["running", "resuming", "recovering"]);
 const resumableStates = new Set<AgentSessionState>(["exited", "interrupted"]);
 
 /** Application policy for projecting and filtering managed agent sessions. */
@@ -82,7 +82,8 @@ function classifyExecutionHealth(
 
   const reference = session.executionStartedAt ?? session.updatedAt;
   const age = ageMs(reference, observation.now);
-  if (observation.processAlive === false || (observation.processAlive === undefined && session.executionPid == null)) {
+  if (session.executionPid === undefined) return "unknown";
+  if (observation.processAlive === false) {
     return age === null || age >= sessionListPolicy.staleExecutionGraceMs ? "stale" : "unknown";
   }
   if (observation.processAlive === undefined) return "unknown";

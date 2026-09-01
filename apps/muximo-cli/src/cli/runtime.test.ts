@@ -25,6 +25,7 @@ type RuntimeContext = {
   host: string | null;
   port: number | null;
   instanceDirectory: string | null;
+  opencodeRegistryFile: string | null;
   webPort: string | null;
 };
 
@@ -39,6 +40,10 @@ const cases = [
       hasObserved<RuntimeContext, RuntimeResult>("host", "127.0.0.1"),
       hasObserved<RuntimeContext, RuntimeResult>("port", 4317),
       hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "<home>/.local/state/muximo/muximod"),
+      hasObserved<RuntimeContext, RuntimeResult>(
+        "opencodeRegistryFile",
+        "<home>/.local/state/muximo/opencode-servers.json",
+      ),
     ],
   },
   {
@@ -60,6 +65,10 @@ const cases = [
       hasObserved<RuntimeContext, RuntimeResult>("host", "192.168.50.10"),
       hasObserved<RuntimeContext, RuntimeResult>("port", 4327),
       hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "<home>/.local/state/muximo/dev/muximod"),
+      hasObserved<RuntimeContext, RuntimeResult>(
+        "opencodeRegistryFile",
+        "<home>/.local/state/muximo/opencode-servers.json",
+      ),
       hasObserved<RuntimeContext, RuntimeResult>("webPort", "5999"),
     ],
   },
@@ -125,6 +134,8 @@ const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, R
           host: result.value.runtime.muximodHost,
           port: result.value.runtime.muximodPort,
           instanceDirectory: result.value.runtime.muximodInstanceDirectory.replace("/home/test", "<home>"),
+          opencodeRegistryFile:
+            result.value.environment.MUXIMO_OPENCODE_REGISTRY_FILE?.replace("/home/test", "<home>") ?? null,
           webPort: result.value.environment.MUXIMO_WEB_PORT ?? null,
         }
       : {
@@ -134,6 +145,7 @@ const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, R
           host: null,
           port: null,
           instanceDirectory: null,
+          opencodeRegistryFile: null,
           webPort: null,
         },
 };

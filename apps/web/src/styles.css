@@ -146,6 +146,58 @@
     min-height: 0;
   }
 
+  .custom-keyboard-bar {
+    padding-bottom: max(4px, var(--safe-area-bottom));
+  }
+
+  .custom-keyboard-bar--custom {
+    padding-bottom: max(10px, calc(var(--safe-area-bottom) + 8px));
+  }
+
+  .custom-keyboard-layout-row {
+    container-type: inline-size;
+  }
+
+  .custom-keyboard-key-button {
+    width: 34px;
+    min-width: 34px;
+    max-width: 34px;
+  }
+
+  .custom-keyboard-compact-button {
+    width: 34px;
+    min-width: 34px;
+    max-width: 34px;
+  }
+
+  @container (max-width: 359px) {
+    .custom-keyboard-key-button {
+      width: 32px;
+      min-width: 32px;
+      max-width: 32px;
+    }
+
+    .custom-keyboard-compact-button {
+      width: 32px;
+      min-width: 32px;
+      max-width: 32px;
+    }
+  }
+
+  @container (max-width: 299px) {
+    .custom-keyboard-key-button {
+      width: 30px;
+      min-width: 30px;
+      max-width: 30px;
+    }
+
+    .custom-keyboard-compact-button {
+      width: 30px;
+      min-width: 30px;
+      max-width: 30px;
+    }
+  }
+
   /* xterm owns these elements, so its integration keeps a small CSS boundary. */
   .terminal-container .xterm {
     min-width: 0;

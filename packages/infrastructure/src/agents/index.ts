@@ -128,7 +128,11 @@ export interface AgentPluginV1 {
    * over `launch` + `createMonitor`.
    */
   prepareLaunch?(
-    input: LaunchInput & { monitorContext: AgentMonitorContext; resumeSessionId?: string | null },
+    input: LaunchInput & {
+      monitorContext: AgentMonitorContext;
+      resumeSessionId?: string | null;
+      signal?: AbortSignal;
+    },
   ): Promise<LaunchPlan>;
   actions(): ActionDescriptor[];
 }

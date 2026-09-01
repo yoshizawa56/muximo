@@ -3,7 +3,14 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
-import { type DaemonOptions, PairDevice, RunShell } from "@muximo/application";
+import {
+  type DaemonOptions,
+  PairDevice,
+  type ResumeAgentSessionInput,
+  RunShell,
+  type StartAgentSessionInput,
+} from "@muximo/application";
+import type { ResumeAgentSessionResponse, RunAgentSessionResponse } from "@muximo/contract/api";
 import { AgentSession } from "@muximo/domain";
 import {
   AttachedAgentExecutionAdapter,
@@ -38,12 +45,13 @@ import { BrowserPairingPresenter, PairCommand, TerminalPairingPresenter } from "
 import { connectMuximodApi, type MuximodApiClient, readMuximodDaemonLog } from "./adapters/muximod-api-client.js";
 import {
   MuximodPairingControlAdapter,
-  type MuximodPairingControlAdapterOptions,
+  muximodControlRequestTimeoutMs,
+  PairingControlError,
 } from "./adapters/muximod-pairing-control-adapter.js";
 import { MuximodShellSessionWorktreeLookup, MuximodShellWorkspaceResolver } from "./adapters/muximod-shell-context.js";
 import { resolvePairMuximodBaseUrl } from "./adapters/pair-route.js";
 import { type CliApp, createCliApp } from "./app.js";
-import type { CliHandlers, CliIo } from "./commands/types.js";
+import type { CliHandlers, CliIo, CliRunInput } from "./commands/types.js";
 import { createInteractiveHandlers } from "./handlers/interactive.js";
 import { createPairHandler } from "./handlers/pair.js";
 import { createSessionHandlers } from "./handlers/session.js";
@@ -209,63 +217,167 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   };
   const serveStatePath = join(runtime.muximodInstanceDirectory, "serve.json");
   const attachedAgentExecution = new AttachedAgentExecutionAdapter(logger);
-  const executeAgentProcess: NonNullable<MuximodPairingControlAdapterOptions["onAgentExecution"]> = async (
-    request,
-    signal,
-  ) => {
-    return attachedAgentExecution.execute({ ...request, signal });
-  };
-  const openAgentExecution = async (operation: "run" | "resume", requestedPaneId?: string) => {
+  const agentExecutionPrepareTimeoutMs = muximodControlRequestTimeoutMs * 2;
+  const agentExecutionAttachTimeoutMs = 5_000;
+  type AgentExecutionPreparation =
+    | { operation: "run"; input: StartAgentSessionInput }
+    | { operation: "resume"; input: ResumeAgentSessionInput };
+  const prepareAgentExecution = async (request: AgentExecutionPreparation) => {
     if (!hasInteractiveTerminal()) {
       throw new Error("agent execution requires an interactive terminal (stdin, stdout, and stderr must be TTYs)");
     }
     const daemon = await ensureLocalDaemon();
     const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
-      onAgentExecution: executeAgentProcess,
+      requestTimeoutMs: agentExecutionPrepareTimeoutMs,
     });
     try {
-      const reservation = await control.reserveAgentExecution({
-        operation,
-        ...(requestedPaneId === undefined ? {} : { hostPaneId: requestedPaneId }),
-        ownerPid: process.pid,
+      if (request.operation === "run") {
+        return await control.prepareAgentExecution({
+          operation: "run",
+          input: { ...request.input, executionOwnerPid: process.pid, backendArgs: [...request.input.backendArgs] },
+        });
+      }
+      return await control.prepareAgentExecution({
+        operation: "resume",
+        input: { ...request.input, executionOwnerPid: process.pid, backendArgs: [...request.input.backendArgs] },
       });
-      return { control, reservation };
-    } catch (error) {
+    } finally {
       control.close();
-      throw error;
     }
   };
-  const runAgentSession = async (
-    input: Omit<Parameters<MuximodApiClient["agentSessions"]["run"]>[0], "executionToken">,
+
+  const attachAgentExecution = async (input: {
+    agentSessionId: string;
+    executionId: string;
+    executionPid: number;
+    executionStartedAt: string;
+    executionOwnerPid?: number;
+    executionOwnerStartedAt?: string;
+    hostPaneId?: string;
+  }): Promise<void> => {
+    await withControlRecovery(async () => {
+      const daemon = await ensureLocalDaemon();
+      const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+        requestTimeoutMs: agentExecutionAttachTimeoutMs,
+      });
+      try {
+        await control.attachAgentExecution(input);
+      } finally {
+        control.close();
+      }
+    }, ensureLocalDaemon);
+  };
+
+  const completeAgentExecution = async (
+    input: Parameters<MuximodPairingControlAdapter["completeAgentExecution"]>[0],
   ) => {
-    const effectiveHostPaneId = input.hostPaneId ?? hostPaneId;
-    const execution = await openAgentExecution("run", effectiveHostPaneId);
-    try {
-      const api = await ensureApi();
-      const result = await api.agentSessions.run({
+    return withControlRecovery(async () => {
+      const daemon = await ensureLocalDaemon();
+      const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+        requestTimeoutMs: agentExecutionPrepareTimeoutMs,
+      });
+      try {
+        return await control.completeAgentExecution(input);
+      } finally {
+        control.close();
+      }
+    }, ensureLocalDaemon);
+  };
+
+  const executePreparedAgent = async (
+    prepared: Awaited<ReturnType<typeof prepareAgentExecution>>,
+    operation: "run" | "resume",
+    hostPaneId?: string,
+  ) => {
+    let attachError: unknown;
+    let attachmentPromise: Promise<void> | undefined;
+    const process = await attachedAgentExecution.execute(prepared.execution, {
+      onStarted: (executionPid, executionStartedAt) => {
+        attachmentPromise = attachAgentExecution({
+          agentSessionId: prepared.agentSessionId,
+          executionId: prepared.executionId,
+          executionPid,
+          executionStartedAt,
+          executionOwnerPid: prepared.session.executionOwnerPid,
+          executionOwnerStartedAt: prepared.session.executionOwnerStartedAt,
+          ...(hostPaneId === undefined ? {} : { hostPaneId }),
+        }).catch((error) => {
+          attachError = error;
+          logger.warn("agent.execution_attach_failed", {
+            sessionId: prepared.agentSessionId,
+            executionId: prepared.executionId,
+            error,
+          });
+        });
+      },
+    });
+    if (attachmentPromise) {
+      const attachmentSettled = await Promise.race([
+        attachmentPromise.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), agentExecutionAttachTimeoutMs)),
+      ]);
+      if (!attachmentSettled) {
+        logger.warn("agent.execution_attachment_pending", {
+          sessionId: prepared.agentSessionId,
+          executionId: prepared.executionId,
+          timeoutMs: agentExecutionAttachTimeoutMs,
+        });
+      }
+    }
+    if (attachError !== undefined) {
+      logger.warn("agent.execution_running_without_daemon_attachment", {
+        sessionId: prepared.agentSessionId,
+        executionId: prepared.executionId,
+        error: attachError,
+      });
+    }
+    return completeAgentExecution({
+      operation,
+      agentSessionId: prepared.agentSessionId,
+      executionId: prepared.executionId,
+      ...(hostPaneId === undefined ? {} : { hostPaneId }),
+      result: process,
+    });
+  };
+
+  const runAgentSession = async (input: CliRunInput): Promise<RunAgentSessionResponse> => {
+    const effectiveHostPaneId = hostPaneId;
+    const prepared = await prepareAgentExecution({
+      operation: "run",
+      input: {
         ...input,
         ...(effectiveHostPaneId === undefined ? {} : { hostPaneId: effectiveHostPaneId }),
-        cwd: input.cwd ?? cwd,
-        executionToken: execution.reservation.token,
-      });
-      if (
-        result.cleanup.disposition !== "retained" ||
-        result.cleanup.reason !== "cleanup_declined" ||
-        !result.session.useWorktree
-      ) {
-        return result;
-      }
-      if (!(await confirmCleanup(environment, result.session))) return result;
-      const cleanup = await api.agentSessions.cleanup({
-        workspaceScope: "current",
-        force: true,
-        reference: result.session.name,
-      });
-      return { ...result, session: cleanup.session, cleanup: cleanup.cleanup };
-    } finally {
-      await execution.control.releaseAgentExecution(execution.reservation.token).catch(() => undefined);
-      execution.control.close();
+        cwd,
+        backendArgs: [...input.backendArgs],
+      },
+    });
+    const completed = await executePreparedAgent(prepared, "run", effectiveHostPaneId);
+    const result: RunAgentSessionResponse = {
+      process: stripExecutionPid(completed.process),
+      session: completed.session,
+      cleanup:
+        completed.cleanup ??
+        (completed.process.interrupted || completed.process.code === 130 || completed.process.code === 143
+          ? { disposition: "not_requested", reason: "interrupted" }
+          : completed.session.useWorktree
+            ? { disposition: "retained", reason: "cleanup_declined" }
+            : { disposition: "not_requested", reason: "no_worktree" }),
+    };
+    if (
+      result.cleanup.disposition !== "retained" ||
+      result.cleanup.reason !== "cleanup_declined" ||
+      !result.session.useWorktree
+    ) {
+      return result;
     }
+    if (!(await confirmCleanup(environment, result.session))) return result;
+    const api = await ensureApi();
+    const cleanup = await api.agentSessions.cleanup({
+      workspaceScope: "current",
+      force: true,
+      reference: result.session.name,
+    });
+    return { ...result, session: cleanup.session, cleanup: cleanup.cleanup };
   };
   const cleanupAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["cleanup"]>[0]) => {
     const api = await ensureApi();
@@ -379,20 +491,18 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     ...createSessionHandlers({
       run: { execute: runAgentSession },
       resume: {
-        execute: async (input) => {
+        execute: async (input): Promise<ResumeAgentSessionResponse> => {
           const effectiveHostPaneId = input.hostPaneId ?? hostPaneId;
-          const execution = await openAgentExecution("resume", effectiveHostPaneId);
-          try {
-            const api = await ensureApi();
-            return await api.agentSessions.resume({
+          const prepared = await prepareAgentExecution({
+            operation: "resume",
+            input: {
               ...input,
               ...(effectiveHostPaneId === undefined ? {} : { hostPaneId: effectiveHostPaneId }),
-              executionToken: execution.reservation.token,
-            });
-          } finally {
-            await execution.control.releaseAgentExecution(execution.reservation.token).catch(() => undefined);
-            execution.control.close();
-          }
+              backendArgs: [...input.backendArgs],
+            },
+          });
+          const completed = await executePreparedAgent(prepared, "resume", effectiveHostPaneId);
+          return { process: stripExecutionPid(completed.process), session: completed.session };
         },
       },
       cleanup: { execute: cleanupAgentSession },
@@ -476,6 +586,59 @@ function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
  */
 function hasInteractiveTerminal(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true && process.stderr.isTTY === true;
+}
+
+function stripExecutionPid(processResult: {
+  pid?: number;
+  started: boolean;
+  code: number;
+  interrupted: boolean;
+  signal?: string | null;
+  failureDiagnostic?: string;
+}) {
+  return {
+    started: processResult.started,
+    code: processResult.code,
+    interrupted: processResult.interrupted,
+    ...(processResult.signal === undefined ? {} : { signal: processResult.signal }),
+    ...(processResult.failureDiagnostic === undefined ? {} : { failureDiagnostic: processResult.failureDiagnostic }),
+  };
+}
+
+async function withControlRecovery<Result>(
+  operation: () => Promise<Result>,
+  ensureDaemon: () => Promise<unknown>,
+  attempts = 5,
+): Promise<Result> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isControlConnectionError(error) || attempt + 1 >= attempts) throw error;
+      await ensureDaemon();
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function isControlConnectionError(error: unknown): boolean {
+  if (error instanceof PairingControlError) {
+    return [
+      "control_socket_missing",
+      "control_socket_connect_failed",
+      "control_socket_connect_timeout",
+      "control_socket_closed",
+      "control_socket_error",
+    ].includes(error.code);
+  }
+  if (!error || typeof error !== "object") return false;
+  const value = error as { code?: unknown; cause?: unknown; message?: unknown };
+  if (["ECONNREFUSED", "ECONNRESET", "EPIPE"].includes(String(value.code))) return true;
+  if (value.cause && isControlConnectionError(value.cause)) return true;
+  return typeof value.message === "string" && /fetch failed|connection refused|socket closed/iu.test(value.message);
 }
 
 async function withApiInvalidation<Result>(operation: () => Promise<Result>, invalidate: () => void): Promise<Result> {

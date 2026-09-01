@@ -11,53 +11,52 @@ import {
 import { describe, it } from "vitest";
 import { CUSTOM_KEYBOARD_STORAGE_KEY, type CustomKeyboardStorage, createCustomKeyboardStorage } from "./storage";
 
-type LegacyStorage = {
+type BrowserStorage = {
   values: Map<string, string>;
   getItem(key: string): string | null;
-  removeItem(key: string): void;
   setItem(key: string, value: string): void;
 };
 
 type StorageFixture = {
   storage: CustomKeyboardStorage;
-  preferenceValues: Map<string, string>;
   preferenceGetKeys: string[];
   preferenceSetValues: string[];
-  legacyStorage: LegacyStorage;
-  failPreferenceGet: boolean;
-  failPreferenceSet: boolean;
+  browserStorage: BrowserStorage;
 };
 
 type ReadContext = {
   preferenceGetKeys: readonly string[];
   preferenceSetValues: readonly string[];
-  legacyValue: string | null;
+  browserValue: string | null;
 };
 
 type WriteContext = {
   preferenceSetValues: readonly string[];
-  legacyValue: string | null;
+  browserValue: string | null;
 };
 
 function createStorageFixture(
   options: {
     preferenceValue?: string;
-    legacyValue?: string;
+    browserValue?: string;
     failPreferenceGet?: boolean;
     failPreferenceSet?: boolean;
   } = {},
 ): FixtureHandle<StorageFixture> {
   const preferenceValues = new Map<string, string>();
-  if (options.preferenceValue !== undefined) preferenceValues.set(CUSTOM_KEYBOARD_STORAGE_KEY, options.preferenceValue);
+  if (options.preferenceValue !== undefined) {
+    preferenceValues.set(CUSTOM_KEYBOARD_STORAGE_KEY, options.preferenceValue);
+  }
   const preferenceGetKeys: string[] = [];
   const preferenceSetValues: string[] = [];
-  const legacyValues = new Map<string, string>();
-  if (options.legacyValue !== undefined) legacyValues.set(CUSTOM_KEYBOARD_STORAGE_KEY, options.legacyValue);
-  const legacyStorage: LegacyStorage = {
-    values: legacyValues,
-    getItem: (key) => legacyValues.get(key) ?? null,
-    removeItem: (key) => legacyValues.delete(key),
-    setItem: (key, value) => legacyValues.set(key, value),
+  const browserValues = new Map<string, string>();
+  if (options.browserValue !== undefined) {
+    browserValues.set(CUSTOM_KEYBOARD_STORAGE_KEY, options.browserValue);
+  }
+  const browserStorage: BrowserStorage = {
+    values: browserValues,
+    getItem: (key) => browserValues.get(key) ?? null,
+    setItem: (key, value) => browserValues.set(key, value),
   };
   const preferences = {
     get: async ({ key }: GetOptions) => {
@@ -74,38 +73,45 @@ function createStorageFixture(
 
   return {
     fixture: {
-      storage: createCustomKeyboardStorage(preferences, legacyStorage),
-      preferenceValues,
+      storage: createCustomKeyboardStorage(preferences, browserStorage),
       preferenceGetKeys,
       preferenceSetValues,
-      legacyStorage,
-      failPreferenceGet: options.failPreferenceGet ?? false,
-      failPreferenceSet: options.failPreferenceSet ?? false,
+      browserStorage,
     },
   };
 }
 
-type ReadFixtureKey = "current" | "legacy" | "empty";
+type ReadFixtureKey = "preferences" | "browser" | "browser-fallback" | "empty";
 const readCases = [
   {
-    name: "reads the current Preferences value without touching legacy storage",
-    fixture: "current",
+    name: "reads the current Preferences value without reading browser storage",
+    fixture: "preferences",
     input: {},
     assert: [
-      returns<ReadContext, string | null>("current-value"),
+      returns<ReadContext, string | null>("preference-value"),
       hasObserved<ReadContext, string | null>("preferenceGetKeys", [CUSTOM_KEYBOARD_STORAGE_KEY]),
       hasObserved<ReadContext, string | null>("preferenceSetValues", []),
-      hasObserved<ReadContext, string | null>("legacyValue", "legacy-value"),
+      hasObserved<ReadContext, string | null>("browserValue", "browser-value"),
     ],
   },
   {
-    name: "migrates the legacy value into Preferences",
-    fixture: "legacy",
+    name: "reads the current browser value when Preferences is empty",
+    fixture: "browser",
     input: {},
     assert: [
-      returns<ReadContext, string | null>("legacy-value"),
-      hasObserved<ReadContext, string | null>("preferenceSetValues", ["legacy-value"]),
-      hasObserved<ReadContext, string | null>("legacyValue", null),
+      returns<ReadContext, string | null>("browser-value"),
+      hasObserved<ReadContext, string | null>("preferenceGetKeys", [CUSTOM_KEYBOARD_STORAGE_KEY]),
+      hasObserved<ReadContext, string | null>("preferenceSetValues", []),
+    ],
+  },
+  {
+    name: "reads the current browser value when Preferences is unavailable",
+    fixture: "browser-fallback",
+    input: {},
+    assert: [
+      returns<ReadContext, string | null>("browser-value"),
+      hasObserved<ReadContext, string | null>("preferenceGetKeys", [CUSTOM_KEYBOARD_STORAGE_KEY]),
+      hasObserved<ReadContext, string | null>("preferenceSetValues", []),
     ],
   },
   {
@@ -119,8 +125,9 @@ const readCases = [
 const readTable: OperationTable<StorageFixture, ReadFixtureKey, {}, string | null, ReadContext> = {
   defaultFixture: () => createStorageFixture(),
   fixtures: {
-    current: () => createStorageFixture({ preferenceValue: "current-value", legacyValue: "legacy-value" }),
-    legacy: () => createStorageFixture({ legacyValue: "legacy-value" }),
+    preferences: () => createStorageFixture({ preferenceValue: "preference-value", browserValue: "browser-value" }),
+    browser: () => createStorageFixture({ browserValue: "browser-value" }),
+    "browser-fallback": () => createStorageFixture({ browserValue: "browser-value", failPreferenceGet: true }),
     empty: () => createStorageFixture(),
   },
   cases: readCases,
@@ -128,11 +135,11 @@ const readTable: OperationTable<StorageFixture, ReadFixtureKey, {}, string | nul
   observe: (fixture) => ({
     preferenceGetKeys: fixture.preferenceGetKeys,
     preferenceSetValues: fixture.preferenceSetValues,
-    legacyValue: fixture.legacyStorage.getItem(CUSTOM_KEYBOARD_STORAGE_KEY),
+    browserValue: fixture.browserStorage.getItem(CUSTOM_KEYBOARD_STORAGE_KEY),
   }),
 };
 
-type WriteFixtureKey = "preferences" | "legacy-fallback";
+type WriteFixtureKey = "preferences" | "browser-fallback";
 const writeCases = [
   {
     name: "writes through Preferences",
@@ -141,17 +148,17 @@ const writeCases = [
     assert: [
       returns<WriteContext, void>(undefined),
       hasObserved<WriteContext, void>("preferenceSetValues", ["serialized-keyboard-state"]),
-      hasObserved<WriteContext, void>("legacyValue", null),
+      hasObserved<WriteContext, void>("browserValue", null),
     ],
   },
   {
-    name: "falls back to legacy storage when Preferences is unavailable",
-    fixture: "legacy-fallback",
+    name: "falls back to browser storage when Preferences is unavailable",
+    fixture: "browser-fallback",
     input: { value: "serialized-keyboard-state" },
     assert: [
       returns<WriteContext, void>(undefined),
       hasObserved<WriteContext, void>("preferenceSetValues", []),
-      hasObserved<WriteContext, void>("legacyValue", "serialized-keyboard-state"),
+      hasObserved<WriteContext, void>("browserValue", "serialized-keyboard-state"),
     ],
   },
 ] satisfies readonly OperationCase<WriteFixtureKey, { value: string }, void, WriteContext>[];
@@ -160,13 +167,13 @@ const writeTable: OperationTable<StorageFixture, WriteFixtureKey, { value: strin
   defaultFixture: () => createStorageFixture(),
   fixtures: {
     preferences: () => createStorageFixture(),
-    "legacy-fallback": () => createStorageFixture({ failPreferenceSet: true }),
+    "browser-fallback": () => createStorageFixture({ failPreferenceSet: true }),
   },
   cases: writeCases,
   execute: (fixture, input) => fixture.storage.write(input.value),
   observe: (fixture) => ({
     preferenceSetValues: fixture.preferenceSetValues,
-    legacyValue: fixture.legacyStorage.getItem(CUSTOM_KEYBOARD_STORAGE_KEY),
+    browserValue: fixture.browserStorage.getItem(CUSTOM_KEYBOARD_STORAGE_KEY),
   }),
 };
 

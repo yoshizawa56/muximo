@@ -37,11 +37,40 @@ export class CleanupAgentSession {
       reference: input.reference,
       workspaceScope: input.workspaceScope,
     });
-    if (
-      session.executionPid !== undefined &&
-      (await this.deps.process.isAlive(session.executionPid, session.executionStartedAt))
-    )
+    if (session.status === "recovering") {
+      throw new Error(`session '${session.name}' is being recovered`);
+    }
+    const providerLiveness =
+      session.executionPid === undefined
+        ? undefined
+        : await this.deps.process.observe(session.executionPid, session.executionStartedAt);
+    if (providerLiveness === "alive") {
       throw new Error(`session '${session.name}' is still running (pid ${session.executionPid})`);
+    }
+    if (providerLiveness === "unknown") {
+      throw new Error(`could not verify whether session '${session.name}' is still running`);
+    }
+    const ownerLiveness =
+      session.executionOwnerPid === undefined
+        ? undefined
+        : await this.deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
+    if (session.executionOwnerPid !== undefined && isLiveExecutionState(session.status) && ownerLiveness === "alive") {
+      throw new Error(`session '${session.name}' is still owned by its CLI process (pid ${session.executionOwnerPid})`);
+    }
+    if (
+      session.executionOwnerPid !== undefined &&
+      isLiveExecutionState(session.status) &&
+      ownerLiveness === "unknown"
+    ) {
+      throw new Error(`could not verify whether session '${session.name}' is still owned by its CLI process`);
+    }
+    if (
+      isActiveState(session.status) &&
+      session.executionPid === undefined &&
+      session.executionOwnerPid === undefined
+    ) {
+      throw new Error(`session '${session.name}' has an active execution that has not attached a process`);
+    }
     if (session.useWorktree && session.worktreePath && !(await this.deps.worktrees.isRegistered(session))) {
       throw new Error(
         `managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`,
@@ -89,4 +118,12 @@ export class CleanupAgentSession {
     await this.deps.resources.releaseIfUnused(updated, remaining);
     return result;
   }
+}
+
+function isActiveState(status: AgentSessionRecord["status"]): boolean {
+  return status === "running" || status === "resuming";
+}
+
+function isLiveExecutionState(status: AgentSessionRecord["status"]): boolean {
+  return status !== "interrupted" && status !== "exited";
 }
