@@ -40,7 +40,7 @@
     "prepare": "lefthook install"
   },
   "devDependencies": {
-    "@babel/parser": "^7.29.8",
+    "@babel/parser": "^8.0.4",
     "@biomejs/biome": "^2.5.8",
     "@muximo/infrastructure": "workspace:*",
     "@muximo/profile": "workspace:*",
