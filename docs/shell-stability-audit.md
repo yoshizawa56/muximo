@@ -487,8 +487,8 @@ desktop-size failure and reduces tmux churn.
 
 ## Implemented in this worktree
 
-The `codex/shell-stability-audit` worktree now contains the first stability
-release candidate from the delivery plan:
+This worktree now contains the first stability release candidate from the
+delivery plan:
 
 - `resize` records mobile geometry only; `claim` is the explicit ownership
   transfer and includes dimensions. Resume preserves the current owner.

@@ -710,7 +710,10 @@ export function usePaneViewModel({
               onReady: (message) => {
                 clearHandshakeTimer();
                 terminalReadyRef.current = true;
-                if (message.sync === "redraw") terminal.reset();
+                if (message.sync === "redraw") {
+                  terminalOutputScheduler.clear();
+                  terminal.reset();
+                }
                 socketInputQueueRef.current.attach((data) => {
                   if (
                     socketRef.current !== socket ||
