@@ -40,7 +40,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@capacitor/cli": "8.4.2",
+    "@capacitor/cli": "8.5.0",
     "@muximo/test-support": "workspace:*",
     "@types/node": "^26.1.2",
     "@orpc/server": "^1.15.0",
