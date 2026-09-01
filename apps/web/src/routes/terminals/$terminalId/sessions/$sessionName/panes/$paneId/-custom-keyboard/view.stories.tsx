@@ -27,9 +27,11 @@ import {
   type CustomKeyboardSettingsViewModel,
   type CustomKeyboardShortcutDraft,
   type CustomKeyboardViewModel,
+  customKeyboardFixedKeyIds,
   customKeyboardIconOptions,
   customKeyboardKeyLibrary,
   customKeyboardSurfaceDefinitions,
+  defaultCustomKeyboardFixedLayout,
   defaultCustomKeyboardKeys,
   defaultCustomKeyboardLayout,
 } from "./viewmodel";
@@ -66,6 +68,7 @@ function createStoryLayout(initialKeys: readonly CustomKeyboardKey[]): CustomKey
   const mainRow = layout.rows.find((row) => row.id === "main");
   if (!mainRow) return layout;
   for (const key of initialKeys) {
+    if (customKeyboardFixedKeyIds.includes(key.id)) continue;
     if (assigned.has(key.id)) continue;
     mainRow.placements.push({ keyId: key.id, density: "regular" });
     assigned.add(key.id);
@@ -238,10 +241,14 @@ function InteractiveShellStory({
     }));
   }, []);
 
-  const rows = resolveCustomKeyboardLayout(keyboardState.layout, keyboardState.libraryKeys);
+  const editableRows = resolveCustomKeyboardLayout(keyboardState.layout, keyboardState.libraryKeys);
+  const fixedRows = resolveCustomKeyboardLayout(defaultCustomKeyboardFixedLayout, customKeyboardKeyLibrary);
+  const rows = [...editableRows, ...fixedRows];
   const assignedIds = assignedKeyIds(keyboardState.layout);
   const assigned = new Set(assignedIds);
-  const availableKeys = keyboardState.libraryKeys.filter((key) => !assigned.has(key.id));
+  const availableKeys = keyboardState.libraryKeys.filter(
+    (key) => !assigned.has(key.id) && !customKeyboardFixedKeyIds.includes(key.id),
+  );
   const shortcutKeys = keysFromIds(keyboardState.shortcutKeyIds, keyboardState.libraryKeys);
   const surfaces = customKeyboardSurfaceDefinitions.map((surface) => ({
     id: surface.id,
@@ -266,7 +273,7 @@ function InteractiveShellStory({
   };
 
   const settingsViewModel: CustomKeyboardSettingsViewModel = {
-    rows,
+    rows: editableRows,
     availableKeys,
     shortcutKeys,
     activeProfile,
@@ -592,6 +599,13 @@ export const SettingsEditor: Story = {
   render: () => <InteractiveShellStory startInSettings />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("tab", { name: "Special" }));
+    await expect(
+      canvas.queryByRole("button", { name: "Open custom keyboard profiles and settings" }),
+    ).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "Show or hide the standard keyboard" })).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("tab", { name: "ABC" }));
+    await expect(canvas.queryByText("main", { exact: true })).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Flick repeat" }));
     await expect(canvas.getByRole("button", { name: "Flick repeat" })).toHaveAttribute("aria-expanded", "true");
     const shift = canvas.getByRole("button", { name: "Toggle Shift keyboard key" });
@@ -623,15 +637,23 @@ export const DragAndDrop: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Show more symbols" }));
     const source = canvas.getByRole("button", { name: "Add Left bracket" });
     const target = canvas.getByRole("toolbar", { name: "Custom keyboard preview drop zone" });
-    const transferData = new Map<string, string>();
-    const dataTransfer = {
-      effectAllowed: "none",
-      setData: (type: string, value: string) => transferData.set(type, value),
-      getData: (type: string) => transferData.get(type) ?? "",
-    } as unknown as DataTransfer;
-    await fireEvent.dragStart(source, { dataTransfer });
-    await fireEvent.dragOver(target, { dataTransfer });
-    await fireEvent.drop(target, { dataTransfer });
+    const sourceRect = source.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    await fireEvent.mouseDown(source, {
+      button: 0,
+      clientX: sourceRect.left + sourceRect.width / 2,
+      clientY: sourceRect.top + sourceRect.height / 2,
+    });
+    await fireEvent.mouseMove(document, {
+      buttons: 1,
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+    });
+    await fireEvent.mouseUp(document, {
+      button: 0,
+      clientX: targetRect.left + targetRect.width / 2,
+      clientY: targetRect.top + targetRect.height / 2,
+    });
     await expect(canvas.getByLabelText("Left bracket")).toBeVisible();
   },
 };

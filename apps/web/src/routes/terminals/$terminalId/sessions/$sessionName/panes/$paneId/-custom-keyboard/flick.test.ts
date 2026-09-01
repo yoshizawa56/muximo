@@ -67,13 +67,16 @@ type FlickContext = {
 };
 type FlickFixture = {
   container: HTMLElement;
+  eventSurface: EventTarget;
   directions: string[];
   previews: Array<CustomKeyboardDirectionalFlickPreview | null>;
   advanceTimers: (milliseconds: number) => void;
 };
+type FlickFixtureKey = "document";
 
-const flickFixture = (): { fixture: FlickFixture; cleanup: () => void } => {
-  const container = createPointerSurface();
+const flickFixture = (captureEventsOnOwnerDocument = false): { fixture: FlickFixture; cleanup: () => void } => {
+  const eventSurface = captureEventsOnOwnerDocument ? new EventTarget() : undefined;
+  const container = createPointerSurface(eventSurface, !captureEventsOnOwnerDocument);
   const directions: string[] = [];
   const previews: Array<CustomKeyboardDirectionalFlickPreview | null> = [];
   vi.useFakeTimers();
@@ -84,6 +87,7 @@ const flickFixture = (): { fixture: FlickFixture; cleanup: () => void } => {
   return {
     fixture: {
       container,
+      eventSurface: eventSurface ?? container,
       directions,
       previews,
       advanceTimers: (milliseconds) => vi.advanceTimersByTime(milliseconds),
@@ -185,10 +189,26 @@ const gestureCases = [
       ]),
     ],
   },
-] satisfies readonly ScenarioCase<"default", FlickStep, undefined, FlickContext>[];
+  {
+    name: "continues a flick when pointer capture is unavailable outside the button",
+    fixture: "document",
+    steps: [
+      { type: "pointerdown", values: { pointerId: 1, clientX: 40, clientY: 40 } },
+      { type: "pointermove", values: { pointerId: 1, clientX: 40, clientY: 24 } },
+      { type: "pointerup", values: { pointerId: 1, clientX: 40, clientY: 24 } },
+    ],
+    assert: [
+      hasObserved<FlickContext, undefined>("directions", ["up"]),
+      hasObserved<FlickContext, undefined>("previewStates", ["up:false", "clear"]),
+    ],
+  },
+] satisfies readonly ScenarioCase<FlickFixtureKey, FlickStep, undefined, FlickContext>[];
 
-const gestureTable: ScenarioTable<FlickFixture, "default", FlickStep, undefined, FlickContext> = {
-  defaultFixture: flickFixture,
+const gestureTable: ScenarioTable<FlickFixture, FlickFixtureKey, FlickStep, undefined, FlickContext> = {
+  defaultFixture: () => flickFixture(false),
+  fixtures: {
+    document: () => flickFixture(true),
+  },
   cases: gestureCases,
   execute: (fixture, steps) => {
     for (const step of steps) {
@@ -196,7 +216,8 @@ const gestureTable: ScenarioTable<FlickFixture, "default", FlickStep, undefined,
         fixture.advanceTimers(step.ms);
         continue;
       }
-      dispatchPointer(fixture.container, step.type, step.values);
+      const target = step.type === "pointerdown" ? fixture.container : fixture.eventSurface;
+      dispatchPointer(target, step.type, step.values);
     }
   },
   observe: (fixture) => ({
@@ -211,13 +232,18 @@ describe("custom keyboard directional flick", () => {
   runScenarioTable(register, gestureTable);
 });
 
-function createPointerSurface(): HTMLElement {
+function createPointerSurface(ownerDocument?: EventTarget, pointerCaptureAvailable = true): HTMLElement {
   const surface = new EventTarget() as EventTarget & Partial<HTMLElement>;
-  surface.setPointerCapture = vi.fn();
+  if (ownerDocument) Object.defineProperty(surface, "ownerDocument", { value: ownerDocument });
+  surface.setPointerCapture = pointerCaptureAvailable
+    ? vi.fn()
+    : () => {
+        throw new Error("Pointer capture unavailable");
+      };
   return surface as HTMLElement;
 }
 
-function dispatchPointer(surface: HTMLElement, type: string, values: PointerValues): void {
+function dispatchPointer(surface: EventTarget, type: string, values: PointerValues): void {
   const event = new Event(type, { cancelable: true });
   Object.defineProperties(event, {
     pointerId: { value: values.pointerId },

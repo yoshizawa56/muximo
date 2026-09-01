@@ -40,6 +40,7 @@ export function installCustomKeyboardDirectionalFlickInput(
   container: HTMLElement,
   options: CustomKeyboardDirectionalFlickInputOptions,
 ): () => void {
+  const eventSurface: EventTarget = container.ownerDocument ?? container;
   let gesture: {
     pointerId: number;
     x: number;
@@ -185,15 +186,21 @@ export function installCustomKeyboardDirectionalFlickInput(
   };
 
   container.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
-  container.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
-  container.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
-  container.addEventListener("pointercancel", onPointerCancel, { capture: true, passive: false });
+  eventSurface.addEventListener("pointermove", onPointerMove as EventListener, {
+    capture: true,
+    passive: false,
+  });
+  eventSurface.addEventListener("pointerup", onPointerUp as EventListener, { capture: true, passive: false });
+  eventSurface.addEventListener("pointercancel", onPointerCancel as EventListener, {
+    capture: true,
+    passive: false,
+  });
 
   return () => {
     container.removeEventListener("pointerdown", onPointerDown, true);
-    container.removeEventListener("pointermove", onPointerMove, true);
-    container.removeEventListener("pointerup", onPointerUp, true);
-    container.removeEventListener("pointercancel", onPointerCancel, true);
+    eventSurface.removeEventListener("pointermove", onPointerMove as EventListener, true);
+    eventSurface.removeEventListener("pointerup", onPointerUp as EventListener, true);
+    eventSurface.removeEventListener("pointercancel", onPointerCancel as EventListener, true);
     activePointers.clear();
     clearGesture();
   };

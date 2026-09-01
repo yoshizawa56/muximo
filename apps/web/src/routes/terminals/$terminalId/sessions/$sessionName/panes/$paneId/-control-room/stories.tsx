@@ -6,8 +6,10 @@ import { keysFromIds, resolveCustomKeyboardLayout } from "../-custom-keyboard/po
 import {
   type CustomKeyboardSettingsViewModel,
   type CustomKeyboardViewModel,
+  customKeyboardFixedKeyIds,
   customKeyboardKeyLibrary,
   customKeyboardSurfaceDefinitions,
+  defaultCustomKeyboardFixedLayout,
   defaultCustomKeyboardLayout,
 } from "../-custom-keyboard/viewmodel";
 import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
@@ -55,7 +57,10 @@ function createTerminal(overrides: Partial<PaneViewModel> = {}): PaneViewModel {
 }
 
 function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): CustomKeyboardViewModel {
-  const rows = resolveCustomKeyboardLayout(defaultCustomKeyboardLayout, customKeyboardKeyLibrary);
+  const rows = [
+    ...resolveCustomKeyboardLayout(defaultCustomKeyboardLayout, customKeyboardKeyLibrary),
+    ...resolveCustomKeyboardLayout(defaultCustomKeyboardFixedLayout, customKeyboardKeyLibrary),
+  ];
   return {
     rows,
     surfaces: customKeyboardSurfaceDefinitions.map((surface) => ({
@@ -79,13 +84,17 @@ function createKeyboard(overrides: Partial<CustomKeyboardViewModel> = {}): Custo
   };
 }
 
-function createKeyboardSettings(): CustomKeyboardSettingsViewModel {
+function createKeyboardSettings(
+  overrides: Partial<CustomKeyboardSettingsViewModel> = {},
+): CustomKeyboardSettingsViewModel {
   const rows = resolveCustomKeyboardLayout(defaultCustomKeyboardLayout, customKeyboardKeyLibrary);
   const assignedKeyIds = rows.flatMap((row) => row.items.map((item) => item.key.id));
   const assigned = new Set(assignedKeyIds);
   return {
     rows,
-    availableKeys: customKeyboardKeyLibrary.filter((key) => !assigned.has(key.id)),
+    availableKeys: customKeyboardKeyLibrary.filter(
+      (key) => !assigned.has(key.id) && !customKeyboardFixedKeyIds.includes(key.id),
+    ),
     shortcutKeys: keysFromIds(
       customKeyboardKeyLibrary.filter((key) => key.category === "shortcuts").map((key) => key.id),
       customKeyboardKeyLibrary,
@@ -111,6 +120,7 @@ function createKeyboardSettings(): CustomKeyboardSettingsViewModel {
     onDeleteShortcut: fn(),
     onRepeatStartDelayChange: fn(),
     onRepeatIntervalChange: fn(),
+    ...overrides,
   };
 }
 
@@ -161,6 +171,17 @@ const controlRoomScenarios = {
   imagePasted: () => buildViewModel({ terminal: createTerminal({ pasteState: "pasted" }) }),
   imagePasteFailed: () => buildViewModel({ terminal: createTerminal({ pasteState: "failed" }) }),
   standardKeyboardOpen: () => buildViewModel({ keyboard: createKeyboard({ nativeKeyboardVisible: true }) }),
+  keyboardSettingsProfiles: () =>
+    buildViewModel({
+      keyboardSettings: createKeyboardSettings({
+        activeProfile: { id: "development", name: "Development", icon: "branch", linked: true },
+        profiles: [
+          { id: "default", name: "Default", icon: "terminal", linked: true },
+          { id: "development", name: "Development", icon: "branch", linked: true },
+        ],
+        linkedProfileIds: ["development"],
+      }),
+    }),
   loadingPanes: () => buildViewModel({ paneBoard: createPaneBoard({ panes: [], status: "loading" }) }),
   paneListError: () =>
     buildViewModel({
@@ -294,6 +315,39 @@ export const KeyboardSettings: Story = {
     await expect(canvas.getByRole("heading", { name: "Keyboard settings" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Save" }));
     await expect(canvas.queryByRole("heading", { name: "Keyboard settings" })).not.toBeInTheDocument();
+  },
+};
+
+export const KeyboardProfileManagement: Story = {
+  args: { viewModel: controlRoomScenarios.keyboardSettingsProfiles() },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Open custom keyboard settings" }));
+    const profileSelect = canvas.getByRole("combobox", { name: "Keyboard profile" });
+    await expect(profileSelect).toHaveValue("development");
+
+    await userEvent.click(canvas.getByRole("button", { name: "Edit keyboard profile" }));
+    const editDialog = canvas.getByRole("dialog", { name: "Edit profile" });
+    const editCanvas = within(editDialog);
+    await expect(editCanvas.getByRole("textbox", { name: "Profile name" })).toHaveValue("Development");
+    await userEvent.clear(editCanvas.getByRole("textbox", { name: "Profile name" }));
+    await userEvent.type(editCanvas.getByRole("textbox", { name: "Profile name" }), "Development mobile");
+    await userEvent.click(editCanvas.getByRole("button", { name: "Save profile" }));
+    await expect(args.viewModel.keyboardSettings.onRenameProfile).toHaveBeenCalledWith(
+      "development",
+      "Development mobile",
+    );
+
+    await userEvent.click(canvas.getByRole("button", { name: "Add keyboard profile" }));
+    const addDialog = canvas.getByRole("dialog", { name: "Add profile" });
+    const addCanvas = within(addDialog);
+    await userEvent.clear(addCanvas.getByRole("textbox", { name: "Profile name" }));
+    await userEvent.type(addCanvas.getByRole("textbox", { name: "Profile name" }), "Release");
+    await userEvent.click(addCanvas.getByRole("button", { name: "Add profile" }));
+    await expect(args.viewModel.keyboardSettings.onCreateProfile).toHaveBeenCalledWith({
+      name: "Release",
+      icon: "terminal",
+    });
   },
 };
 
