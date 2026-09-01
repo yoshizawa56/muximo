@@ -151,11 +151,63 @@ function toMuximodApiError(error: unknown): unknown {
   return new MuximodApiError(error.message, error.status, typeof data.code === "string" ? data.code : null, details);
 }
 
-export async function openMuximodTerminal(connection: MuximodConnection): Promise<WebSocket> {
+export type OpenMuximodTerminalOptions = {
+  signal?: AbortSignal;
+};
+
+export async function openMuximodTerminal(
+  connection: MuximodConnection,
+  options: OpenMuximodTerminalOptions = {},
+): Promise<WebSocket> {
+  if (options.signal?.aborted) throw new DOMException("Terminal connection was cancelled", "AbortError");
   if (!connection.auth) return new WebSocket(connection.websocketUrl);
   const url = new URL(connection.websocketUrl);
-  url.searchParams.set("ticket", await connection.auth.getWebSocketTicket("terminal"));
-  return new WebSocket(url.toString());
+  url.searchParams.set("ticket", await waitForAbort(connection.auth.getWebSocketTicket("terminal"), options.signal));
+  if (options.signal?.aborted) throw new DOMException("Terminal connection was cancelled", "AbortError");
+  const socket = new WebSocket(url.toString());
+  if (!options.signal) return socket;
+
+  const closeOnAbort = () => {
+    try {
+      socket.close(1000, "connection-cancelled");
+    } catch {
+      // The socket may have completed its close handshake already.
+    }
+  };
+  options.signal.addEventListener("abort", closeOnAbort, { once: true });
+  socket.addEventListener("close", () => options.signal?.removeEventListener("abort", closeOnAbort), { once: true });
+  return socket;
+}
+
+function waitForAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new DOMException("Terminal connection was cancelled", "AbortError"));
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new DOMException("Terminal connection was cancelled", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 /**

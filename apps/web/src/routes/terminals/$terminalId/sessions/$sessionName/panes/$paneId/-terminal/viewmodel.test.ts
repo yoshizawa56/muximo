@@ -144,6 +144,8 @@ const readyMessage: ReadyMessage = {
   target: "%3",
   paneId: "%3",
   windowId: "@1",
+  owner: "mobile",
+  sync: "replay",
   cols: 80,
   rows: 24,
 };

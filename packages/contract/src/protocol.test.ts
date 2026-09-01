@@ -83,8 +83,18 @@ const clientCases = [
   },
   {
     name: "accepts a mobile claim request",
-    input: { type: "claim", version: terminalProtocolVersion },
-    assert: [isValid({ type: "claim", version: terminalProtocolVersion })],
+    input: { type: "claim", version: terminalProtocolVersion, cols: 80, rows: 24 },
+    assert: [isValid({ type: "claim", version: terminalProtocolVersion, cols: 80, rows: 24 })],
+  },
+  {
+    name: "accepts an authoritative redraw request",
+    input: { type: "redraw", version: terminalProtocolVersion },
+    assert: [isValid({ type: "redraw", version: terminalProtocolVersion })],
+  },
+  {
+    name: "accepts a terminal heartbeat",
+    input: { type: "ping", version: terminalProtocolVersion, nonce: "heartbeat-1" },
+    assert: [isValid({ type: "ping", version: terminalProtocolVersion, nonce: "heartbeat-1" })],
   },
   {
     name: "accepts a request to enter tmux copy mode",
@@ -216,6 +226,8 @@ const serverCases = [
       target: "project:0.1",
       paneId: "%3",
       windowId: "@1",
+      owner: "mobile",
+      sync: "live",
       cols: 80,
       rows: 24,
     },
@@ -224,6 +236,11 @@ const serverCases = [
   {
     name: "describes a desktop takeover",
     input: { type: "viewport", version: terminalProtocolVersion, owner: "desktop", reason: "desktop_activity" },
+    assert: [isValid()],
+  },
+  {
+    name: "describes a terminal heartbeat response",
+    input: { type: "pong", version: terminalProtocolVersion, nonce: "heartbeat-1" },
     assert: [isValid()],
   },
   {
@@ -873,13 +890,18 @@ type FrameResult = ReturnType<typeof decodeClientControlFrame>;
 const clientFrame = {
   type: "claim",
   version: terminalProtocolVersion,
+  cols: 80,
+  rows: 24,
 } as const;
 const frameCases = [
   {
     name: "decodes a UTF-8 text control frame at the protocol boundary",
     input: { data: new TextEncoder().encode(encodeClientControlFrame(clientFrame)) },
     assert: [
-      returns<EmptyContext, FrameResult>({ ok: true, message: { type: "claim", version: terminalProtocolVersion } }),
+      returns<EmptyContext, FrameResult>({
+        ok: true,
+        message: { type: "claim", version: terminalProtocolVersion, cols: 80, rows: 24 },
+      }),
     ],
   },
   {
