@@ -36,6 +36,7 @@ type OutputFixture = {
 
 type OutputStep =
   | { type: "write"; data: string }
+  | { type: "clear" }
   | { type: "mark-scroll" }
   | { type: "run-frame" }
   | { type: "run-timer"; delayMs: number };
@@ -98,6 +99,14 @@ const outputCases = [
       hasObserved<OutputContext, undefined>("pendingTimerDelays", []),
     ],
   },
+  {
+    name: "clears stale output before an authoritative redraw",
+    steps: [{ type: "write", data: "stale output" }, { type: "clear" }],
+    assert: [
+      hasObserved<OutputContext, undefined>("output", []),
+      hasObserved<OutputContext, undefined>("pendingTimerDelays", []),
+    ],
+  },
 ] satisfies readonly ScenarioCase<"default", OutputStep, undefined, OutputContext>[];
 
 const outputTable: ScenarioTable<OutputFixture, "default", OutputStep, undefined, OutputContext> = {
@@ -108,6 +117,9 @@ const outputTable: ScenarioTable<OutputFixture, "default", OutputStep, undefined
       switch (step.type) {
         case "write":
           fixture.terminal.write(step.data);
+          break;
+        case "clear":
+          fixture.terminal.clear();
           break;
         case "mark-scroll":
           fixture.terminal.markScroll();

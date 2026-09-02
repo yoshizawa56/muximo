@@ -3,6 +3,7 @@ export type TerminalData = string | Uint8Array;
 export type TerminalOutputScheduler = {
   write: (data: TerminalData) => void;
   markScroll: () => void;
+  clear: () => void;
   dispose: () => void;
 };
 
@@ -113,6 +114,12 @@ export function createTerminalOutputScheduler(options: TerminalOutputSchedulerOp
     scheduleFlush();
   };
 
+  const clear = () => {
+    pending = [];
+    pendingBytes = 0;
+    clearFlushSchedule();
+  };
+
   const markScroll = () => {
     if (disposed) return;
     scrolling = true;
@@ -133,16 +140,14 @@ export function createTerminalOutputScheduler(options: TerminalOutputSchedulerOp
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    pending = [];
-    pendingBytes = 0;
-    clearFlushSchedule();
+    clear();
     if (scrollIdleTimer !== null) {
       clearTimeout(scrollIdleTimer);
       scrollIdleTimer = null;
     }
   };
 
-  return { write, markScroll, dispose };
+  return { write, markScroll, clear, dispose };
 }
 
 export function createTerminalInputBatcher(
