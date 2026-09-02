@@ -38,7 +38,7 @@ export function createMuximodConfigResolver(
       pidFile: paths.pidFile,
       controlSocket: paths.controlSocket,
       allowedOrigins: [...allowedOrigins],
-      allowedRoots: allowedRootsFromEnvironment(options.environment, workingDirectory).map((root) =>
+      allowedRoots: allowedRootsFromEnvironment(options.environment).map((root) =>
         resolveConfiguredPath(root, workingDirectory),
       ),
       logLevel,

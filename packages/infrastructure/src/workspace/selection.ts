@@ -186,7 +186,10 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
   }
 }
 
-export function allowedRootsFromEnvironment(env: NodeJS.ProcessEnv = process.env, fallback = process.cwd()): string[] {
+export function allowedRootsFromEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+  fallback = env.HOME?.trim() || homedir(),
+): string[] {
   const configured = env.MUXIMOD_WORKSPACE_ROOTS?.trim();
   return configured
     ? configured
