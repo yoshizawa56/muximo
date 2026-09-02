@@ -327,13 +327,12 @@ const authMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHandle
   return { fixture: { database, root, claimResults: [], backendResults: [], abandonedClaimResults: [] } };
 };
 
-const matchesObserved = <Result>(
-  key: keyof DatabaseContext,
-  expected: unknown,
-): Assertion<DatabaseContext, Result> => ({
-  name: `matches observed ${String(key)}`,
-  check: (ctx) => expect(ctx[key]).toMatchObject(expected as object),
-});
+function matchesObserved<Result>(key: keyof DatabaseContext, expected: unknown): Assertion<DatabaseContext, Result> {
+  return {
+    name: `matches observed ${String(key)}`,
+    check: (ctx) => expect(ctx[key]).toMatchObject(expected as object),
+  };
+}
 
 const cases = [
   {

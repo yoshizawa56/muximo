@@ -41,14 +41,16 @@ type Context = {
   authTables: readonly string[];
 };
 
-const errorContains = <Result>(name: string, text: string): Assertion<Context, Result> => ({
-  name,
-  allowsOutcomeError: true,
-  check: (_context, outcome) => {
-    if (outcome.ok) throw new Error("expected the operation to fail");
-    assert.match(outcome.error instanceof Error ? outcome.error.message : String(outcome.error), new RegExp(text));
-  },
-});
+function errorContains<Result>(name: string, text: string): Assertion<Context, Result> {
+  return {
+    name,
+    allowsOutcomeError: true,
+    check: (_context, outcome) => {
+      if (outcome.ok) throw new Error("expected the operation to fail");
+      assert.match(outcome.error instanceof Error ? outcome.error.message : String(outcome.error), new RegExp(text));
+    },
+  };
+}
 
 const cases = [
   {
