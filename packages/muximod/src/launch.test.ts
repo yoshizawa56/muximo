@@ -96,7 +96,12 @@ describe("muximod process bootstrap", () => {
   runOperationTable(register, bootstrapSizeTable);
 });
 
-type FingerprintInput = "same" | "different-origin" | "different-runtime" | "different-schema-mode";
+type FingerprintInput =
+  | "same"
+  | "different-origin"
+  | "different-runtime"
+  | "different-schema-mode"
+  | "different-tmux-pane";
 type FingerprintResult = { first: string; second: string };
 type FingerprintContext = { equal: boolean; length: number };
 
@@ -121,6 +126,11 @@ const fingerprintCases = [
     input: "different-runtime" as const,
     assert: [hasObserved<FingerprintContext, FingerprintResult>("equal", false)],
   },
+  {
+    name: "keeps the daemon reusable across tmux panes",
+    input: "different-tmux-pane" as const,
+    assert: [hasObserved<FingerprintContext, FingerprintResult>("equal", true)],
+  },
 ] satisfies readonly OperationCase<"default", FingerprintInput, FingerprintResult, FingerprintContext>[];
 
 const fingerprintTable: OperationTable<undefined, "default", FingerprintInput, FingerprintResult, FingerprintContext> =
@@ -142,7 +152,15 @@ const fingerprintTable: OperationTable<undefined, "default", FingerprintInput, F
                     runtimeEnvironment: { ...bootstrapOptions.config.runtimeEnvironment, codexRemote: "https://codex" },
                   },
                 }
-              : { schemaMode: "push" as const, config: bootstrapOptions.config };
+              : input === "different-tmux-pane"
+                ? {
+                    ...bootstrapOptions,
+                    config: {
+                      ...bootstrapOptions.config,
+                      runtimeEnvironment: { ...bootstrapOptions.config.runtimeEnvironment, tmuxPane: "%42" },
+                    },
+                  }
+                : { schemaMode: "push" as const, config: bootstrapOptions.config };
       const second = muximodConfigurationFingerprint(secondOptions);
       return { first, second };
     },

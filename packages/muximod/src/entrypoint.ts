@@ -1,19 +1,11 @@
-import { join } from "node:path";
 import {
   createLogger,
   createMigrationSchemaSynchronizer,
   createPushSchemaSynchronizer,
-  disposeOwnedOpenCodeServers,
   errorFields,
-  refreshOwnedOpenCodeServers,
 } from "@muximo/infrastructure/runtime";
 import { type MuximodLaunchOptions, muximodConfigurationFingerprint } from "./launch.js";
-import {
-  consumeMuximodRestartMarker,
-  hasMuximodRestartMarker,
-  removeMuximodPidRecord,
-  writeMuximodPidRecord,
-} from "./process-files.js";
+import { consumeMuximodRestartMarker, removeMuximodPidRecord, writeMuximodPidRecord } from "./process-files.js";
 import { createMuximodServer, resolveMuximodEnvironment } from "./server.js";
 
 export type MuximodEntrypointOptions = MuximodLaunchOptions;
@@ -49,7 +41,6 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
   const shutdown = (): Promise<void> => {
     if (shutdownPromise) return shutdownPromise;
     const promise = (async () => {
-      const restarting = hasMuximodRestartMarker(config.pidFile);
       const cleanupErrors: unknown[] = [];
       try {
         await server?.stop();
@@ -60,17 +51,6 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
         removeMuximodPidRecord(config.pidFile, process.pid);
       } catch (error) {
         cleanupErrors.push(error);
-      }
-      if (!restarting) {
-        try {
-          await disposeOwnedOpenCodeServers({
-            environment,
-            logger,
-            registryFile: join(config.instanceDirectory, "opencode-servers.json"),
-          });
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
       }
       if (cleanupErrors.length > 0) throw cleanupErrors[0];
     })();
@@ -97,13 +77,10 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
       port: config.port,
       startedAt: new Date().toISOString(),
     });
-    if (consumeMuximodRestartMarker(config.pidFile) === true) {
-      await refreshOwnedOpenCodeServers({
-        environment,
-        logger,
-        registryFile: join(config.instanceDirectory, "opencode-servers.json"),
-      });
-    }
+    // Restart markers are retained for daemon launch coordination only. An
+    // OpenCode server is a shared service reference and must not be refreshed
+    // or stopped as part of daemon lifecycle.
+    consumeMuximodRestartMarker(config.pidFile);
   } catch (error) {
     logger.error("process.unhandled_error", {
       message: `unexpected error: ${error instanceof Error ? error.message : String(error)}`,
@@ -118,17 +95,6 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
       removeMuximodPidRecord(config.pidFile, process.pid);
     } catch {
       // Preserve the startup error after attempting to remove the pid record.
-    }
-    if (server && !hasMuximodRestartMarker(config.pidFile)) {
-      try {
-        await disposeOwnedOpenCodeServers({
-          environment,
-          logger,
-          registryFile: join(config.instanceDirectory, "opencode-servers.json"),
-        });
-      } catch (cleanupError) {
-        logger.warn("process.sidecar_cleanup_failed", errorFields(cleanupError));
-      }
     }
     closeLogger();
     process.off("SIGINT", onSignal);

@@ -13,6 +13,7 @@ export const agentSessionStates = [
   "ready",
   "running",
   "resuming",
+  "recovering",
   "interrupted",
   "exited",
 ] as const;
@@ -57,6 +58,8 @@ const agentSessionSchema = z
     executionId: z.string().min(1).optional(),
     executionPid: z.number().int().positive().optional(),
     executionStartedAt: z.string().min(1).optional(),
+    executionOwnerPid: z.number().int().positive().optional(),
+    executionOwnerStartedAt: z.string().min(1).optional(),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
   })
@@ -101,7 +104,10 @@ export const AgentSession = {
   normalizeName: normalizeAgentSessionName,
   hasActiveExecution(entity: AgentSession): boolean {
     const current = parseAgentSession(entity);
-    return (current.status === "running" || current.status === "resuming") && current.executionPid !== undefined;
+    return (
+      (current.status === "running" || current.status === "resuming" || current.status === "recovering") &&
+      current.executionId !== undefined
+    );
   },
 } as const;
 

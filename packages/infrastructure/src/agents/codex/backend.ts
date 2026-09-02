@@ -41,6 +41,7 @@ export class CodexBackendProvider implements AgentBackendProvider {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    _signal?: AbortSignal,
   ): Promise<AgentBackendProviderPreparation> {
     let effective = session;
     let sessionUpdate: SessionIdentityUpdate | undefined;
@@ -87,6 +88,8 @@ export class CodexBackendProvider implements AgentBackendProvider {
     await this.manageRemoteOperation({ ...session, backendSessionId: discovery.selectedId }, "name");
     return sessionUpdate;
   }
+
+  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {}
 
   public archive(session: AgentSessionRecord): Promise<boolean> {
     return this.manageRemoteOperation(session, "archive");

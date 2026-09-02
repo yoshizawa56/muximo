@@ -1,7 +1,9 @@
+import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuthService } from "@muximo/application";
+import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
 import {
   AuthStore,
   createAgentDatabase,
@@ -12,6 +14,7 @@ import {
   nodeAuthCrypto,
 } from "@muximo/infrastructure/runtime";
 import {
+  type CleanupRegistrar,
   type FixtureHandle,
   hasObserved,
   runScenarioTable,
@@ -23,18 +26,24 @@ import { describe, it } from "vitest";
 import { MuximodControlServer } from "./control.js";
 
 type ControlRequest = { agentSessionId: string; hostPaneId: string; executionId: string };
-type ControlStep = { type: "adopt" | "observe" | "release" } | { type: "read-log"; lines: number };
+type ControlStep =
+  | { type: "adopt" | "observe" | "release" }
+  | { type: "read-log"; lines: number }
+  | { type: "prepare-execution" | "attach-execution" | "complete-execution" }
+  | { type: "cancel-prepare" };
 type ControlFixture = {
   server: MuximodControlServer;
-  handleRequest: (line: string) => void;
+  handleRequest: (line: string, signal?: AbortSignal) => void;
+  connect: () => void;
   request: ControlRequest;
   responses: string[];
   calls: string[];
   applicationRequests: unknown[];
   observations: string[];
   logReads: number[];
-  socket: { destroyed: boolean; write(data: string): void };
+  socket: ControlTestSocket;
   database: ReturnType<typeof createAgentDatabase>;
+  prepareCancelled: boolean;
 };
 type ControlContext = {
   responses: readonly unknown[];
@@ -43,11 +52,69 @@ type ControlContext = {
   applicationRequests: readonly unknown[];
   observations: readonly string[];
   logReads: readonly number[];
+  prepareCancelled: boolean;
 };
 
 const request: ControlRequest = { agentSessionId: "session-id", hostPaneId: "%1", executionId: "execution-id-123456" };
+const executionSession = AgentSession.create({
+  id: AgentSessionId.create(request.agentSessionId),
+  name: "review",
+  backend: "codex",
+  status: "running",
+  workspaceId: WorkspaceId.create("workspace-id"),
+  workspaceRoot: "/workspace/review",
+  workspaceName: "workspace",
+  useWorktree: false,
+  setupRan: false,
+  resuming: false,
+  executionId: request.executionId,
+  createdAt: "2026-08-30T00:00:00.000Z",
+  updatedAt: "2026-08-30T00:00:00.000Z",
+});
+const execution = {
+  sessionId: request.agentSessionId,
+  executionId: request.executionId,
+  sessionName: executionSession.name,
+  backend: "codex" as const,
+  command: ["codex"],
+  cwd: "/workspace/review",
+  environment: {},
+};
+const executionProcess = { started: true, code: 0, interrupted: false, signal: null, pid: 456 };
+const executionStartedAt = "2026-08-30T00:00:01.000Z";
 
-const fixture = (): FixtureHandle<ControlFixture> => {
+class ControlTestSocket extends EventEmitter {
+  public destroyed = false;
+  public writableEnded = false;
+  public writableLength = 0;
+
+  public constructor(private readonly onWrite: (data: string) => void) {
+    super();
+  }
+
+  public setEncoding(_encoding: BufferEncoding): this {
+    return this;
+  }
+
+  public write(data: string): boolean {
+    if (this.destroyed) return false;
+    this.onWrite(data);
+    return true;
+  }
+
+  public destroy(_error?: Error): this {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.writableEnded = true;
+    this.emit("close");
+    return this;
+  }
+}
+
+const fixture = (
+  _registerCleanup?: CleanupRegistrar,
+  waitForPrepareCancellation = false,
+): FixtureHandle<ControlFixture> => {
   const instanceDirectory = mkdtempSync(join(tmpdir(), "muximod-control-test-"));
   const database = createAgentDatabase(join(instanceDirectory, "muximod.sqlite"), {
     instanceDirectory,
@@ -70,6 +137,7 @@ const fixture = (): FixtureHandle<ControlFixture> => {
   const observations: string[] = [];
   const logReads: number[] = [];
   const responses: string[] = [];
+  let prepareCancelled = false;
   const server = new MuximodControlServer({
     socketPath: "/tmp/muximod-control-test.sock",
     auth,
@@ -91,22 +159,68 @@ const fixture = (): FixtureHandle<ControlFixture> => {
       applicationRequests.push({ operation: "release", ...input });
       calls.push(`release:${input.agentSessionId}:${input.hostPaneId}:${input.executionId}`);
     },
-  });
-  const socket = {
-    destroyed: false,
-    write(data: string) {
-      responses.push(data);
+    prepareAgentExecution: async (input, signal) => {
+      calls.push(`prepare:${input.operation}`);
+      if (waitForPrepareCancellation) {
+        await new Promise<void>((resolvePromise) => {
+          if (signal.aborted) {
+            prepareCancelled = true;
+            resolvePromise();
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => {
+              prepareCancelled = true;
+              resolvePromise();
+            },
+            { once: true },
+          );
+        });
+        throw new Error("muximod control request cancelled");
+      }
+      return {
+        operation: input.operation,
+        agentSessionId: executionSession.id,
+        executionId: request.executionId,
+        hostPaneId: input.input.hostPaneId,
+        session: executionSession,
+        execution,
+      };
     },
-  };
+    attachAgentExecution: async (input) => {
+      calls.push(`attach:${input.agentSessionId}:${input.executionPid}:${input.executionStartedAt}`);
+    },
+    completeAgentExecution: async (input) => {
+      calls.push(`complete:${input.operation}:${input.agentSessionId}:${input.result.code}`);
+      return {
+        operation: input.operation,
+        agentSessionId: input.agentSessionId,
+        executionId: input.executionId,
+        process: input.result,
+        session: executionSession,
+        cleanup: { disposition: "not_requested" as const, reason: "no_worktree" as const },
+      };
+    },
+  });
+  const socket = new ControlTestSocket((data) => responses.push(data));
   const handleRequest = (
     server as unknown as {
-      handleRequest: (client: typeof socket, line: string) => void;
+      handleRequest: (client: typeof socket, line: string, signal?: AbortSignal) => Promise<void>;
     }
   ).handleRequest.bind(server);
+  const handleConnection = (
+    server as unknown as {
+      handleConnection: (client: typeof socket) => void;
+    }
+  ).handleConnection.bind(server);
   return {
     fixture: {
       server,
-      handleRequest: (line) => handleRequest(socket, line),
+      connect: () => handleConnection(socket),
+      handleRequest: (line, signal) => {
+        void handleRequest(socket, line, signal);
+      },
       request,
       responses,
       calls,
@@ -115,6 +229,9 @@ const fixture = (): FixtureHandle<ControlFixture> => {
       logReads,
       socket,
       database,
+      get prepareCancelled() {
+        return prepareCancelled;
+      },
     },
     cleanup: async () => {
       await server.stop();
@@ -181,13 +298,82 @@ const cases = [
       hasObserved<ControlContext, undefined>("logReads", [2]),
     ],
   },
-] satisfies readonly ScenarioCase<"default", ControlStep, undefined, ControlContext>[];
+  {
+    name: "dispatches host-owned execution lifecycle operations without a socket ownership lease",
+    steps: [{ type: "prepare-execution" }, { type: "attach-execution" }, { type: "complete-execution" }],
+    assert: [
+      hasObserved<ControlContext, undefined>("responses", [
+        {
+          type: "agent_execution_prepared",
+          operation: "run",
+          agentSessionId: request.agentSessionId,
+          executionId: request.executionId,
+          hostPaneId: request.hostPaneId,
+          session: executionSession,
+          execution,
+        },
+        {
+          type: "agent_execution_attached",
+          agentSessionId: request.agentSessionId,
+          executionId: request.executionId,
+          executionPid: 456,
+          executionStartedAt,
+        },
+        {
+          type: "agent_execution_completed",
+          operation: "run",
+          agentSessionId: request.agentSessionId,
+          executionId: request.executionId,
+          process: executionProcess,
+          session: executionSession,
+          cleanup: { disposition: "not_requested", reason: "no_worktree" },
+        },
+      ]),
+      hasObserved<ControlContext, undefined>("calls", [
+        "prepare:run",
+        `attach:${request.agentSessionId}:456:${executionStartedAt}`,
+        `complete:run:${request.agentSessionId}:0`,
+      ]),
+    ],
+  },
+  {
+    name: "forwards a disconnected execution preparation cancellation",
+    fixture: "cancel" as const,
+    steps: [{ type: "cancel-prepare" }],
+    assert: [hasObserved<ControlContext, undefined>("prepareCancelled", true)],
+  },
+] satisfies readonly ScenarioCase<"cancel", ControlStep, undefined, ControlContext>[];
 
-const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, ControlContext> = {
+const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, ControlContext> = {
   defaultFixture: fixture,
+  fixtures: { cancel: (registerCleanup) => fixture(registerCleanup, true) },
   cases,
   execute: async (testFixture, steps) => {
     for (const step of steps) {
+      if (step.type === "cancel-prepare") {
+        testFixture.connect();
+        testFixture.socket.emit(
+          "data",
+          `${JSON.stringify({
+            type: "prepare_agent_execution",
+            requestId: `control-request-${testFixture.responses.length + 1}`,
+            operation: "run",
+            input: {
+              backend: "codex",
+              hostPaneId: request.hostPaneId,
+              cwd: execution.cwd,
+              useWorktree: false,
+              setupHookExplicit: false,
+              cleanupHookExplicit: false,
+              backendArgs: [],
+            },
+          })}\n`,
+        );
+        await waitFor(() => testFixture.calls.includes("prepare:run"));
+        testFixture.socket.destroy();
+        await waitFor(() => testFixture.prepareCancelled);
+        continue;
+      }
       const type =
         step.type === "adopt"
           ? "adopt_agent_session"
@@ -195,7 +381,13 @@ const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, Co
             ? "observe_agent_session"
             : step.type === "release"
               ? "release_agent_session"
-              : "read_log";
+              : step.type === "read-log"
+                ? "read_log"
+                : step.type === "prepare-execution"
+                  ? "prepare_agent_execution"
+                  : step.type === "attach-execution"
+                    ? "attach_agent_execution"
+                    : "complete_agent_execution";
       const expectedCount = testFixture.responses.length + 1;
       testFixture.handleRequest(
         JSON.stringify({
@@ -203,10 +395,27 @@ const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, Co
           requestId: `control-request-${expectedCount}`,
           ...(step.type === "read-log"
             ? { lines: step.lines }
-            : {
-                ...testFixture.request,
-                ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
-              }),
+            : step.type === "prepare-execution"
+              ? {
+                  operation: "run",
+                  input: {
+                    backend: "codex",
+                    hostPaneId: request.hostPaneId,
+                    cwd: execution.cwd,
+                    useWorktree: false,
+                    setupHookExplicit: false,
+                    cleanupHookExplicit: false,
+                    backendArgs: [],
+                  },
+                }
+              : step.type === "attach-execution"
+                ? { ...testFixture.request, executionPid: 456, executionStartedAt }
+                : step.type === "complete-execution"
+                  ? { ...testFixture.request, operation: "run", result: executionProcess }
+                  : {
+                      ...testFixture.request,
+                      ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
+                    }),
         }),
       );
       await waitFor(() => testFixture.responses.length === expectedCount);
@@ -223,6 +432,7 @@ const table: ScenarioTable<ControlFixture, "default", ControlStep, undefined, Co
     applicationRequests: [...testFixture.applicationRequests],
     observations: [...testFixture.observations],
     logReads: [...testFixture.logReads],
+    prepareCancelled: testFixture.prepareCancelled,
   }),
 };
 

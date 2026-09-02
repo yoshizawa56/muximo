@@ -2,6 +2,7 @@ import { Database as BunDatabase } from "bun:sqlite";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentExecutionReceipt } from "@muximo/application";
 import {
   AgentSession,
   AgentSessionId,
@@ -100,6 +101,9 @@ type DatabaseFixture = {
   currentPaneAfterMigration?: PaneRecord;
   claimResults: boolean[];
   backendResults: boolean[];
+  ownerAttachResult?: boolean;
+  abandonedClaimResults: boolean[];
+  abandonedAttachResult?: boolean;
 };
 type DatabaseKey = "default" | "pending" | "restart" | "legacy-pane-migration" | "auth-migration";
 type DatabaseStep =
@@ -113,7 +117,11 @@ type DatabaseStep =
   | { type: "verify-agent-association" }
   | { type: "verify-auth-migration" }
   | { type: "verify-execution-claim" }
-  | { type: "verify-atomic-claim-timestamp" };
+  | { type: "verify-atomic-claim-timestamp" }
+  | { type: "verify-execution-owner" }
+  | { type: "verify-abandoned-execution-claim" }
+  | { type: "verify-execution-receipt" }
+  | { type: "verify-execution-receipt-retention" };
 type DatabaseResult = undefined;
 type DatabaseContext = {
   pane: PaneRecord | undefined;
@@ -137,14 +145,26 @@ type DatabaseContext = {
   authPairingColumns: readonly string[];
   authPairingCount: number;
   claimSession: AgentSessionRecord | undefined;
+  ownerAttachResult: boolean | undefined;
+  ownerSession: AgentSessionRecord | undefined;
+  abandonedClaimResults: readonly boolean[];
+  abandonedAttachResult: boolean | undefined;
+  abandonedSession: AgentSessionRecord | undefined;
   timestampWorkspace: { name: string; createdAt: string; updatedAt: string } | undefined;
   timestampSession: { name: string; createdAt: string; updatedAt: string } | undefined;
   tmuxServerDefault: string | null | undefined;
+  receipt: AgentExecutionReceipt | undefined;
+  currentReceipt: AgentExecutionReceipt | undefined;
+  expiredReceipt: AgentExecutionReceipt | undefined;
+  receiptCount: number;
 };
 
 const normalFixture = (): FixtureHandle<DatabaseFixture> => {
   const database = createAgentDatabase(":memory:", { schemaSynchronizer: migrationSchemaSynchronizer });
-  return { fixture: { database, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
+  return {
+    fixture: { database, claimResults: [], backendResults: [], abandonedClaimResults: [] },
+    cleanup: () => database.close(),
+  };
 };
 
 const restartFixture = async (registerCleanup?: CleanupRegistrar): Promise<FixtureHandle<DatabaseFixture>> => {
@@ -174,7 +194,10 @@ const restartFixture = async (registerCleanup?: CleanupRegistrar): Promise<Fixtu
     beforeRestart.close();
   }
   const database = createAgentDatabase(file, { schemaSynchronizer: migrationSchemaSynchronizer });
-  return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
+  return {
+    fixture: { database, root, claimResults: [], backendResults: [], abandonedClaimResults: [] },
+    cleanup: () => database.close(),
+  };
 };
 
 const legacyPaneMigrationFixture = async (
@@ -213,7 +236,10 @@ const legacyPaneMigrationFixture = async (
   }
 
   const database = createAgentDatabase(file, { schemaSynchronizer: migrationSchemaSynchronizer });
-  return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
+  return {
+    fixture: { database, root, claimResults: [], backendResults: [], abandonedClaimResults: [] },
+    cleanup: () => database.close(),
+  };
 };
 
 const pendingMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHandle<DatabaseFixture> => {
@@ -242,7 +268,10 @@ const pendingMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHan
     migrationsFolder,
     schemaSynchronizer: migrationSchemaSynchronizer,
   });
-  return { fixture: { database, root, claimResults: [], backendResults: [] }, cleanup: () => database.close() };
+  return {
+    fixture: { database, root, claimResults: [], backendResults: [], abandonedClaimResults: [] },
+    cleanup: () => database.close(),
+  };
 };
 
 const authMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHandle<DatabaseFixture> => {
@@ -295,7 +324,7 @@ const authMigrationFixture = (registerCleanup?: CleanupRegistrar): FixtureHandle
     database.close();
     rmSync(root, { recursive: true, force: true });
   });
-  return { fixture: { database, root, claimResults: [], backendResults: [] } };
+  return { fixture: { database, root, claimResults: [], backendResults: [], abandonedClaimResults: [] } };
 };
 
 const matchesObserved = <Result>(
@@ -316,7 +345,7 @@ const cases = [
       hasObserved<DatabaseContext, DatabaseResult>("workspace", workspace),
       hasObserved<DatabaseContext, DatabaseResult>("session", session),
       hasObserved<DatabaseContext, DatabaseResult>("auditCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 10),
     ],
   },
   {
@@ -341,7 +370,7 @@ const cases = [
     steps: [{ type: "verify-pending" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("probeCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 9),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 11),
     ],
   },
   {
@@ -350,7 +379,7 @@ const cases = [
     steps: [{ type: "verify-restart" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 10),
       hasObserved<DatabaseContext, DatabaseResult>("tmuxServerDefault", null),
     ],
   },
@@ -361,7 +390,7 @@ const cases = [
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("legacyPaneAfterMigration", undefined),
       matchesObserved<DatabaseResult>("currentPaneAfterMigration", { id: "pane-current-migrated" }),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 8),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 10),
     ],
   },
   {
@@ -443,6 +472,56 @@ const cases = [
         executionStartedAt: "2026-08-14T12:02:00.000Z",
         updatedAt: "2026-08-14T12:02:01.000Z",
       }),
+    ],
+  },
+  {
+    name: "round-trips and atomically matches the CLI execution owner during attach",
+    steps: [{ type: "verify-execution-owner" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("ownerAttachResult", true),
+      matchesObserved<DatabaseResult>("ownerSession", {
+        executionId: "execution-owner",
+        executionPid: 1004,
+        executionStartedAt: "2026-08-14T12:04:00.000Z",
+        executionOwnerPid: 701,
+        executionOwnerStartedAt: "2026-08-14T12:03:00.000Z",
+      }),
+    ],
+  },
+  {
+    name: "claims abandoned executions before disposal and rejects a late attach",
+    steps: [{ type: "verify-abandoned-execution-claim" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("abandonedClaimResults", [true, false]),
+      hasObserved<DatabaseContext, DatabaseResult>("abandonedAttachResult", false),
+      matchesObserved<DatabaseResult>("abandonedSession", {
+        status: "recovering",
+        executionId: "execution-abandoned",
+        executionPid: 1005,
+        executionOwnerPid: 701,
+      }),
+    ],
+  },
+  {
+    name: "retains a completion receipt after the session is finalized",
+    steps: [{ type: "verify-execution-receipt" }],
+    assert: [
+      matchesObserved<DatabaseResult>("receipt", {
+        operation: "run",
+        agentSessionId: session.id,
+        executionId: "execution-receipt",
+        process: { started: true, code: 0, interrupted: false },
+        cleanup: { disposition: "not_requested", reason: "no_worktree" },
+      }),
+    ],
+  },
+  {
+    name: "prunes completion receipts older than the replay retention window",
+    steps: [{ type: "verify-execution-receipt-retention" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("expiredReceipt", undefined),
+      matchesObserved<DatabaseResult>("currentReceipt", { executionId: "execution-receipt-current" }),
+      hasObserved<DatabaseContext, DatabaseResult>("receiptCount", 1),
     ],
   },
 ] satisfies readonly ScenarioCase<DatabaseKey, DatabaseStep, DatabaseResult, DatabaseContext>[];
@@ -567,6 +646,8 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
             await sessions.claimExecution({
               id: session.id,
               expectedExecutionPid: null,
+              executionOwnerPid: null,
+              executionOwnerStartedAt: null,
               executionId: "execution-1",
               executionPid: 1001,
               executionStartedAt: "2026-08-14T12:00:00.000Z",
@@ -577,6 +658,8 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
             await sessions.claimExecution({
               id: session.id,
               expectedExecutionPid: null,
+              executionOwnerPid: null,
+              executionOwnerStartedAt: null,
               executionId: "execution-2",
               executionPid: 1002,
               executionStartedAt: "2026-08-14T12:01:00.000Z",
@@ -594,12 +677,121 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
             await sessions.claimExecution({
               id: session.id,
               expectedExecutionPid: null,
+              executionOwnerPid: null,
+              executionOwnerStartedAt: null,
               executionId: "execution-timestamped",
               executionPid: 1003,
               executionStartedAt: "2026-08-14T12:02:00.000Z",
               updatedAt: "2026-08-14T12:02:01.000Z",
             }),
           );
+          break;
+        }
+        case "verify-execution-owner": {
+          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const pending = AgentSession.create({
+            ...session,
+            id: AgentSessionId.create("session-owner"),
+            name: "owner",
+            executionId: "execution-owner",
+            executionStartedAt: "2026-08-14T12:03:00.000Z",
+            executionOwnerPid: 701,
+            executionOwnerStartedAt: "2026-08-14T12:03:00.000Z",
+          });
+          await sessions.insert(pending);
+          fixture.ownerAttachResult = await sessions.attachExecution({
+            id: pending.id,
+            executionId: pending.executionId ?? "",
+            expectedExecutionOwnerPid: pending.executionOwnerPid ?? null,
+            expectedExecutionOwnerStartedAt: pending.executionOwnerStartedAt ?? null,
+            executionPid: 1004,
+            executionStartedAt: "2026-08-14T12:04:00.000Z",
+            updatedAt: "2026-08-14T12:04:01.000Z",
+          });
+          break;
+        }
+        case "verify-abandoned-execution-claim": {
+          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const abandoned = AgentSession.create({
+            ...session,
+            id: AgentSessionId.create("session-abandoned"),
+            name: "abandoned",
+            executionId: "execution-abandoned",
+            executionPid: 1005,
+            executionStartedAt: "2026-08-14T12:05:00.000Z",
+            executionOwnerPid: 701,
+            executionOwnerStartedAt: "2026-08-14T12:04:00.000Z",
+          });
+          await sessions.insert(abandoned);
+          const claim = {
+            id: abandoned.id,
+            executionId: abandoned.executionId ?? "",
+            expectedExecutionPid: abandoned.executionPid ?? null,
+            expectedExecutionStartedAt: abandoned.executionStartedAt ?? null,
+            expectedExecutionOwnerPid: abandoned.executionOwnerPid ?? null,
+            expectedExecutionOwnerStartedAt: abandoned.executionOwnerStartedAt ?? null,
+            updatedAt: "2026-08-14T12:06:00.000Z",
+          };
+          fixture.abandonedClaimResults.push(await sessions.claimAbandonedExecution(claim));
+          fixture.abandonedClaimResults.push(await sessions.claimAbandonedExecution(claim));
+          fixture.abandonedAttachResult = await sessions.attachExecution({
+            id: abandoned.id,
+            executionId: abandoned.executionId ?? "",
+            expectedExecutionOwnerPid: abandoned.executionOwnerPid ?? null,
+            expectedExecutionOwnerStartedAt: abandoned.executionOwnerStartedAt ?? null,
+            executionPid: 1006,
+            executionStartedAt: "2026-08-14T12:06:01.000Z",
+            updatedAt: "2026-08-14T12:06:01.000Z",
+          });
+          break;
+        }
+        case "verify-execution-receipt": {
+          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const finalized = AgentSession.update(session, {
+            status: "exited",
+            lastExitStatus: 0,
+            updatedAt: "2026-08-14T12:03:00.000Z",
+          });
+          await sessions.saveExecutionReceipt({
+            operation: "run",
+            agentSessionId: finalized.id,
+            executionId: "execution-receipt",
+            process: { started: true, code: 0, interrupted: false },
+            session: finalized,
+            cleanup: { disposition: "not_requested", reason: "no_worktree" },
+          });
+          break;
+        }
+        case "verify-execution-receipt-retention": {
+          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const expiredSession = AgentSession.create({
+            ...session,
+            id: AgentSessionId.create("session-receipt-expired"),
+            name: "expired-receipt",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          });
+          const currentSession = AgentSession.create({
+            ...session,
+            id: AgentSessionId.create("session-receipt-current"),
+            name: "current-receipt",
+            updatedAt: "2026-08-14T00:00:00.000Z",
+          });
+          await sessions.saveExecutionReceipt({
+            operation: "run",
+            agentSessionId: expiredSession.id,
+            executionId: "execution-receipt-expired",
+            process: { started: true, code: 0, interrupted: false },
+            session: expiredSession,
+            cleanup: { disposition: "not_requested", reason: "no_worktree" },
+          });
+          await sessions.saveExecutionReceipt({
+            operation: "run",
+            agentSessionId: currentSession.id,
+            executionId: "execution-receipt-current",
+            process: { started: true, code: 0, interrupted: false },
+            session: currentSession,
+            cleanup: { disposition: "not_requested", reason: "no_worktree" },
+          });
           break;
         }
         default:
@@ -639,11 +831,22 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
         database.sqlite.query("SELECT COUNT(*) AS count FROM auth_pairings").get() as { count: number }
       ).count,
       claimSession: await sessions.findById(session.id),
+      ownerAttachResult: fixture.ownerAttachResult,
+      ownerSession: await sessions.findById(AgentSessionId.create("session-owner")),
+      abandonedClaimResults: [...fixture.abandonedClaimResults],
+      abandonedAttachResult: fixture.abandonedAttachResult,
+      abandonedSession: await sessions.findById(AgentSessionId.create("session-abandoned")),
       timestampWorkspace: await readWorkspaceTimestamps(database, "workspace-timestamps"),
       timestampSession: await readSessionTimestamps(database, "session-timestamps"),
       tmuxServerDefault: (
         database.sqlite.query("PRAGMA table_info(panes)").all() as Array<{ name: string; dflt_value: string | null }>
       ).find((column) => column.name === "tmux_server_id")?.dflt_value,
+      receipt: await sessions.findExecutionReceipt("execution-receipt"),
+      currentReceipt: await sessions.findExecutionReceipt("execution-receipt-current"),
+      expiredReceipt: await sessions.findExecutionReceipt("execution-receipt-expired"),
+      receiptCount: (
+        database.sqlite.query("SELECT COUNT(*) AS count FROM agent_execution_receipts").get() as { count: number }
+      ).count,
     };
   },
 };

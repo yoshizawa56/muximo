@@ -136,7 +136,13 @@ export function muximodConfigurationFingerprint(options: MuximodLaunchOptions): 
       logLevel: config.logLevel,
       logFile: config.logFile === undefined ? null : resolve(config.logFile),
       workingDirectory: resolve(config.workingDirectory),
-      runtimeEnvironment: config.runtimeEnvironment,
+      runtimeEnvironment: {
+        ...config.runtimeEnvironment,
+        // TMUX_PANE identifies the CLI that selected this launch, not the
+        // daemon environment. A daemon started from one pane must be reusable
+        // by a run invoked from another pane.
+        tmuxPane: null,
+      },
       authSweepIntervalMs: config.authSweepIntervalMs ?? null,
       tmuxPollIntervalMs: config.tmuxPollIntervalMs ?? null,
       paneCleanupIntervalMs: config.paneCleanupIntervalMs ?? null,

@@ -2,7 +2,7 @@
 export const embeddedMigrationFiles = [
   {
     "path": "meta/_journal.json",
-    "contents": "{\n  \"version\": \"7\",\n  \"dialect\": \"sqlite\",\n  \"entries\": [\n    {\n      \"idx\": 0,\n      \"version\": \"6\",\n      \"when\": 1786542385624,\n      \"tag\": \"0000_fair_shinko_yamashiro\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 1,\n      \"version\": \"6\",\n      \"when\": 1786617782309,\n      \"tag\": \"0001_adorable_omega_sentinel\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 2,\n      \"version\": \"6\",\n      \"when\": 1786668549000,\n      \"tag\": \"0002_tmux_server_identity\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 3,\n      \"version\": \"6\",\n      \"when\": 1786672149000,\n      \"tag\": \"0003_agent_session_adoption\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 4,\n      \"version\": \"6\",\n      \"when\": 1786797339000,\n      \"tag\": \"0004_remove_legacy_runs\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 5,\n      \"version\": \"6\",\n      \"when\": 1787000000000,\n      \"tag\": \"0005_codex_session_state\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 6,\n      \"version\": \"6\",\n      \"when\": 1787679734346,\n      \"tag\": \"0006_remove_tmux_server_default\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 7,\n      \"version\": \"6\",\n      \"when\": 1788008698188,\n      \"tag\": \"0007_remarkable_mac_gargan\",\n      \"breakpoints\": true\n    }\n  ]\n}"
+    "contents": "{\n  \"version\": \"7\",\n  \"dialect\": \"sqlite\",\n  \"entries\": [\n    {\n      \"idx\": 0,\n      \"version\": \"6\",\n      \"when\": 1786542385624,\n      \"tag\": \"0000_fair_shinko_yamashiro\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 1,\n      \"version\": \"6\",\n      \"when\": 1786617782309,\n      \"tag\": \"0001_adorable_omega_sentinel\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 2,\n      \"version\": \"6\",\n      \"when\": 1786668549000,\n      \"tag\": \"0002_tmux_server_identity\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 3,\n      \"version\": \"6\",\n      \"when\": 1786672149000,\n      \"tag\": \"0003_agent_session_adoption\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 4,\n      \"version\": \"6\",\n      \"when\": 1786797339000,\n      \"tag\": \"0004_remove_legacy_runs\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 5,\n      \"version\": \"6\",\n      \"when\": 1787000000000,\n      \"tag\": \"0005_codex_session_state\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 6,\n      \"version\": \"6\",\n      \"when\": 1787679734346,\n      \"tag\": \"0006_remove_tmux_server_default\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 7,\n      \"version\": \"6\",\n      \"when\": 1788008698188,\n      \"tag\": \"0007_remarkable_mac_gargan\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 8,\n      \"version\": \"6\",\n      \"when\": 1788088549300,\n      \"tag\": \"0008_demonic_slapstick\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 9,\n      \"version\": \"6\",\n      \"when\": 1788094815174,\n      \"tag\": \"0009_material_the_spike\",\n      \"breakpoints\": true\n    }\n  ]\n}"
   },
   {
     "path": "0000_fair_shinko_yamashiro.sql",
@@ -35,5 +35,13 @@ export const embeddedMigrationFiles = [
   {
     "path": "0007_remarkable_mac_gargan.sql",
     "contents": "ALTER TABLE `workspaces` DROP COLUMN `worktree_copy_patterns`;"
+  },
+  {
+    "path": "0008_demonic_slapstick.sql",
+    "contents": "CREATE TABLE `agent_execution_receipts` (\n\t`execution_id` text PRIMARY KEY NOT NULL,\n\t`agent_session_id` text NOT NULL,\n\t`operation` text NOT NULL,\n\t`process` text NOT NULL,\n\t`session` text NOT NULL,\n\t`cleanup` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n);\n"
+  },
+  {
+    "path": "0009_material_the_spike.sql",
+    "contents": "ALTER TABLE `agent_sessions` ADD `execution_owner_pid` integer;--> statement-breakpoint\nALTER TABLE `agent_sessions` ADD `execution_owner_started_at` text;"
   }
 ] as const;

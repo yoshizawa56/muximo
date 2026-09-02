@@ -1,7 +1,9 @@
+import { Database as BunDatabase } from "bun:sqlite";
 import { strict as assert } from "node:assert";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type Assertion,
   hasNoError,
@@ -20,7 +22,7 @@ import {
   PushSchemaSynchronizer,
 } from "./index.js";
 
-type FixtureKey = "migration" | "push" | "push-memory";
+type FixtureKey = "migration" | "push" | "push-existing-receipt" | "push-memory";
 type Input = { operation: "create-database" };
 type PushCall = { command: string; args: readonly string[]; options: PushCommandOptions };
 type Fixture = {
@@ -34,6 +36,7 @@ type Context = {
   callCount: number;
   pushCommand: string | undefined;
   pushArgs: readonly string[];
+  receiptTables: readonly string[];
   migrationTables: readonly string[];
   authTables: readonly string[];
 };
@@ -81,6 +84,16 @@ const cases = [
     input: { operation: "create-database" },
     assert: [errorContains("reports the file-backed requirement", "file-backed SQLite database")],
   },
+  {
+    name: "pushes a database with an existing execution receipt table",
+    fixture: "push-existing-receipt",
+    input: { operation: "create-database" },
+    assert: [
+      hasNoError<Context, unknown>(),
+      hasObserved<Context, unknown>("receiptTables", ["agent_execution_receipts"]),
+      hasObserved<Context, unknown>("migrationTables", []),
+    ],
+  },
 ] satisfies readonly OperationCase<FixtureKey, Input, unknown, Context>[];
 
 const table: OperationTable<Fixture, FixtureKey, Input, unknown, Context> = {
@@ -88,6 +101,7 @@ const table: OperationTable<Fixture, FixtureKey, Input, unknown, Context> = {
   fixtures: {
     migration: () => createFixture("migration"),
     push: () => createFixture("push"),
+    "push-existing-receipt": () => createFixture("push-existing-receipt"),
     "push-memory": () => createFixture("push-memory"),
   },
   cases,
@@ -109,6 +123,7 @@ const table: OperationTable<Fixture, FixtureKey, Input, unknown, Context> = {
       callCount: fixture.calls.length,
       pushCommand: fixture.calls[0]?.command,
       pushArgs: fixture.calls[0]?.args ?? [],
+      receiptTables: tableNames.filter((name) => name === "agent_execution_receipts"),
       migrationTables: tableNames.filter((name) => name === "__drizzle_migrations"),
       authTables: tableNames.filter((name) => name.startsWith("auth_")).sort(),
     };
@@ -122,18 +137,36 @@ describe("database schema synchronization", () => {
 function createFixture(key: FixtureKey): { fixture: Fixture; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "muximo-schema-sync-test-"));
   const calls: PushCall[] = [];
-  const workingDirectory = join("/repo", "packages/infrastructure");
+  const infrastructureDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+  const workingDirectory =
+    key === "push-existing-receipt" ? infrastructureDirectory : join("/repo", "packages/infrastructure");
+  const databaseFile =
+    key === "push" || key === "push-existing-receipt" ? join(root, "target", "muximod.sqlite") : ":memory:";
+  const environment =
+    key === "push-existing-receipt"
+      ? {
+          ...process.env,
+          MUXIMOD_INSTANCE_DIR: join(root, "instance"),
+          MUXIMOD_DB_FILE: undefined,
+          MUXIMO_DATABASE_FILE: undefined,
+        }
+      : undefined;
+  const pushOptions = {
+    configFile: join(workingDirectory, "drizzle.dev.config.ts"),
+    workingDirectory,
+    environment,
+    force: true,
+  };
   const synchronizer =
     key === "migration"
       ? createMigrationSchemaSynchronizer()
-      : new PushSchemaSynchronizer({
-          configFile: join(workingDirectory, "drizzle.dev.config.ts"),
-          workingDirectory,
-          force: true,
-          run: (command, args, options) => calls.push({ command, args, options }),
-        });
-  const databaseFile = key === "push" ? join(root, "muximod.sqlite") : ":memory:";
+      : new PushSchemaSynchronizer(
+          key === "push-existing-receipt"
+            ? pushOptions
+            : { ...pushOptions, run: (command, args, options) => calls.push({ command, args, options }) },
+        );
   const fixture: Fixture = { root, calls, databases: [], databaseFile, synchronizer };
+  if (key === "push-existing-receipt") seedExecutionReceiptTable(databaseFile);
   return {
     fixture,
     cleanup: () => {
@@ -141,4 +174,22 @@ function createFixture(key: FixtureKey): { fixture: Fixture; cleanup: () => void
       rmSync(root, { recursive: true, force: true });
     },
   };
+}
+
+function seedExecutionReceiptTable(databaseFile: string): void {
+  mkdirSync(dirname(databaseFile), { recursive: true });
+  const sqlite = new BunDatabase(databaseFile);
+  sqlite.exec(`
+    CREATE TABLE "agent_execution_receipts" (
+      "execution_id" text PRIMARY KEY NOT NULL,
+      "agent_session_id" text NOT NULL,
+      "operation" text NOT NULL,
+      "process" text NOT NULL,
+      "session" text NOT NULL,
+      "cleanup" text,
+      "created_at" text NOT NULL,
+      "updated_at" text NOT NULL
+    )
+  `);
+  sqlite.close();
 }

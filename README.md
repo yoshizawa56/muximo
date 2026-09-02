@@ -145,6 +145,16 @@ muximo tmux new-session -s project -c ~/work/project
 muximo doctor --verbose
 ```
 
+OpenCode server connections are shared across Muximo environments under the
+same state root. Muximo reuses a healthy server and starts one only when no
+connection is available; stopping or restarting `muximod` does not stop it.
+To use an OpenCode server started outside Muximo, set its local URL before
+running the session:
+
+```sh
+MUXIMO_OPENCODE_SERVER_URL=http://127.0.0.1:4096 muximo run opencode
+```
+
 The selected environment is shared by all worktrees on the host. Generate an
 ignored profile with the interactive setup command:
 

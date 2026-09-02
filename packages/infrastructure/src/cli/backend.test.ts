@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentExecutionPort, AgentSessionRepository } from "@muximo/application";
+import type { AgentSessionRepository } from "@muximo/application";
 import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
 import {
   AgentBackendAdapter,
@@ -25,17 +25,18 @@ type BackendFixture = {
   executable: string;
   log: string;
   observations: Array<{ state: string; recentOutput?: string }>;
+  monitorStarts: number;
   disposeCount: number;
   prepareInput?: { name?: string; cwd: string; resumeSessionId?: string | null };
   runCount: number;
   sessionUpdate?: string;
   processKeys: string[];
-  sameProcessResult?: boolean;
   failureDiagnostic?: string;
   processCode?: number;
+  restoreAfterRestart: boolean;
+  concurrentStart: boolean;
   adapter: AgentBackendAdapter;
   session: AgentSessionRecord;
-  execution: AgentExecutionPort;
 };
 
 type BackendResult = {
@@ -44,13 +45,14 @@ type BackendResult = {
   observations: readonly { state: string; recentOutput?: string }[];
   sessionUpdate: string | undefined;
   processKeys: readonly string[];
-  sameProcessResult: boolean;
   preparedCwd: string | undefined;
   processCode: number;
   failureDiagnostic: string | undefined;
+  restoreAfterRestart: boolean;
+  monitorStarts: number;
 };
 
-type FixtureKey = "success" | "failure";
+type FixtureKey = "success" | "failure" | "restore" | "concurrent";
 type Input = {};
 
 const cases = [
@@ -65,10 +67,10 @@ const cases = [
       hasObserved<BackendResult, BackendResult>("observations", [
         { state: "waiting_input", recentOutput: "Need input" },
       ]),
-      hasObserved<BackendResult, BackendResult>("sameProcessResult", true),
-      hasObserved<BackendResult, BackendResult>("processKeys", ["started", "code", "interrupted", "signal"]),
+      hasObserved<BackendResult, BackendResult>("processKeys", ["started", "code", "interrupted", "pid", "signal"]),
       hasObserved<BackendResult, BackendResult>("processCode", 0),
       hasObserved<BackendResult, BackendResult>("failureDiagnostic", undefined),
+      hasObserved<BackendResult, BackendResult>("monitorStarts", 1),
       {
         name: "passes the session working directory to the provider",
         check: (context: BackendResult) => expect(context.preparedCwd).toContain("backend-adapter-"),
@@ -82,13 +84,38 @@ const cases = [
     assert: [
       hasObserved<BackendResult, BackendResult>("processCode", 1),
       hasObserved<BackendResult, BackendResult>("failureDiagnostic", "backend failed: stdin is not a terminal"),
+      hasObserved<BackendResult, BackendResult>("monitorStarts", 1),
       hasObserved<BackendResult, BackendResult>("processKeys", [
         "started",
         "code",
         "interrupted",
+        "pid",
         "signal",
         "failureDiagnostic",
       ]),
+    ],
+  },
+  {
+    name: "rebuilds provider observation after daemon-side launch state is lost",
+    fixture: "restore" as const,
+    input: {},
+    assert: [
+      hasObserved<BackendResult, BackendResult>("restoreAfterRestart", true),
+      hasObserved<BackendResult, BackendResult>("runCount", 1),
+      hasObserved<BackendResult, BackendResult>("disposeCount", 1),
+      hasObserved<BackendResult, BackendResult>("observations", [
+        { state: "waiting_input", recentOutput: "Need input" },
+      ]),
+    ],
+  },
+  {
+    name: "coalesces concurrent monitor starts for one execution",
+    fixture: "concurrent" as const,
+    input: {},
+    assert: [
+      hasObserved<BackendResult, BackendResult>("monitorStarts", 1),
+      hasObserved<BackendResult, BackendResult>("runCount", 1),
+      hasObserved<BackendResult, BackendResult>("disposeCount", 1),
     ],
   },
 ] satisfies readonly OperationCase<FixtureKey, Input, BackendResult, BackendResult>[];
@@ -98,31 +125,52 @@ const table: OperationTable<BackendFixture, FixtureKey, Input, BackendResult, Ba
   fixtures: {
     success: (registerCleanup) => createBackendFixture("success", registerCleanup),
     failure: (registerCleanup) => createBackendFixture("failure", registerCleanup),
+    restore: (registerCleanup) => createBackendFixture("restore", registerCleanup),
+    concurrent: (registerCleanup) => createBackendFixture("concurrent", registerCleanup),
   },
   cases,
   execute: async (fixture) => {
     const preparation = await fixture.adapter.prepareLaunch(fixture.session, ["--opaque"], false);
     const backendSessionId = preparation.sessionUpdate?.backendSessionId;
     fixture.sessionUpdate = typeof backendSessionId === "string" ? backendSessionId : undefined;
-    const first = await preparation.plan.run(fixture.execution);
-    const second = await preparation.plan.run(fixture.execution);
-    fixture.processKeys = Object.keys(first.process);
-    fixture.sameProcessResult = first === second;
-    await preparation.plan.dispose();
-    await preparation.plan.dispose();
+    if (!fixture.restoreAfterRestart) {
+      if (fixture.concurrentStart) {
+        await Promise.all([fixture.adapter.startLaunch(fixture.session), fixture.adapter.startLaunch(fixture.session)]);
+      } else await fixture.adapter.startLaunch(fixture.session);
+    } else {
+      await fixture.adapter.close();
+      fixture.session = AgentSession.update(fixture.session, {
+        backendSessionId: "provider-session",
+        executionPid: process.pid,
+        executionStartedAt: new Date(Date.now() - 1_000).toISOString(),
+      });
+      await fixture.adapter.restoreActiveLaunches();
+    }
+    const executable = preparation.execution.command[0];
+    if (!executable) throw new Error("test command executable is missing");
+    const first = await spawnAttached(
+      executable,
+      [...preparation.execution.command.slice(1)],
+      preparation.execution.cwd,
+      preparation.execution.environment,
+      { captureFailureDiagnostic: true },
+    );
+    await fixture.adapter.completeLaunch(fixture.session, first);
+    fixture.processKeys = Object.keys(first);
     fixture.runCount = readInvocationCount(fixture.log);
-    fixture.processCode = first.process.code;
-    fixture.failureDiagnostic = first.process.failureDiagnostic;
+    fixture.processCode = first.code;
+    fixture.failureDiagnostic = first.failureDiagnostic;
     return {
       runCount: fixture.runCount,
       disposeCount: fixture.disposeCount,
       observations: fixture.observations,
       sessionUpdate: fixture.sessionUpdate,
       processKeys: fixture.processKeys,
-      sameProcessResult: fixture.sameProcessResult,
       preparedCwd: fixture.prepareInput?.cwd,
       processCode: fixture.processCode,
       failureDiagnostic: fixture.failureDiagnostic,
+      restoreAfterRestart: fixture.restoreAfterRestart,
+      monitorStarts: fixture.monitorStarts,
     };
   },
   observe: (fixture) => ({
@@ -131,10 +179,11 @@ const table: OperationTable<BackendFixture, FixtureKey, Input, BackendResult, Ba
     observations: fixture.observations,
     sessionUpdate: fixture.sessionUpdate,
     processKeys: fixture.processKeys,
-    sameProcessResult: fixture.sameProcessResult ?? false,
     preparedCwd: fixture.prepareInput?.cwd,
     processCode: fixture.processCode ?? -1,
     failureDiagnostic: fixture.failureDiagnostic,
+    restoreAfterRestart: fixture.restoreAfterRestart,
+    monitorStarts: fixture.monitorStarts,
   }),
 };
 
@@ -177,22 +226,14 @@ function createBackendFixture(
     executable,
     log,
     observations: [],
+    monitorStarts: 0,
     disposeCount,
     runCount: 0,
     processKeys: [],
+    restoreAfterRestart: key === "restore",
+    concurrentStart: key === "concurrent",
     adapter: undefined as unknown as AgentBackendAdapter,
     session,
-    execution: undefined as unknown as AgentExecutionPort,
-  };
-  fixture.execution = {
-    ownerPid: process.pid,
-    execute: async (input) => {
-      const executable = input.command[0];
-      if (!executable) throw new Error("test command executable is missing");
-      return spawnAttached(executable, [...input.command.slice(1)], input.cwd, input.environment, {
-        captureFailureDiagnostic: true,
-      });
-    },
   };
   const pluginRegistry = new AgentPluginRegistry();
   pluginRegistry.register(
@@ -204,12 +245,15 @@ function createBackendFixture(
       () => {
         fixture.disposeCount += 1;
       },
+      () => {
+        fixture.monitorStarts += 1;
+      },
     ),
   );
   const adapterOptions = {
     environment,
     plugins: pluginRegistry,
-    sessions: emptySessionRepository(),
+    sessions: emptySessionRepository(() => [fixture.session]),
     audit: { record: async () => undefined },
     logger: {
       debug: () => undefined,
@@ -245,6 +289,7 @@ function createPlugin(
   executable: string,
   onPrepare: (input: { name?: string; cwd: string; resumeSessionId?: string | null }) => void,
   onDispose: () => void,
+  onStart: () => void,
 ): AgentPluginV1 {
   return {
     manifest: { id: "opencode", version: "test", displayName: "Test OpenCode", capabilities: ["input"] },
@@ -253,6 +298,7 @@ function createPlugin(
     createObserver: () => ({ onOutput: () => [], onExit: () => [] }),
     createMonitor: () => ({
       start: async (sink) => {
+        onStart();
         await sink({ type: "state_changed", state: "waiting_input", recentOutput: "Need input" });
       },
       stop: async () => undefined,
@@ -269,14 +315,16 @@ function createPlugin(
   };
 }
 
-function emptySessionRepository(): AgentSessionRepository {
+function emptySessionRepository(listSessions: () => readonly AgentSessionRecord[] = () => []): AgentSessionRepository {
   return {
     findById: async () => undefined,
     findByName: async () => undefined,
-    list: async () => [],
+    list: async () => [...listSessions()],
     insert: async () => undefined,
     update: async () => undefined,
     claimExecution: async () => false,
+    claimAbandonedExecution: async () => false,
+    attachExecution: async () => false,
     setBackendSessionIdIfMissing: async () => false,
     delete: async () => undefined,
   };

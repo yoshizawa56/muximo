@@ -1,7 +1,13 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import type { AuthPairingClaimNotification, MuximodAuthControlPort } from "@muximo/application";
+import type {
+  AgentExecutionResult,
+  AgentExecutionSpec,
+  AuthPairingClaimNotification,
+  MuximodAuthControlPort,
+  RunAgentSessionResult,
+} from "@muximo/application";
 import {
   decodeMuximodControlRequest,
   encodeMuximodControlResponse,
@@ -14,12 +20,7 @@ import {
   muximodControlMaxResponseBytes,
 } from "@muximo/contract/control";
 import { encodePairingCode } from "@muximo/contract/shared";
-import type { PaneState } from "@muximo/domain";
-import type {
-  AgentExecutionControlPeer,
-  AgentExecutionReservation,
-  AgentExecutionReservationInput,
-} from "./agent-execution.js";
+import type { AgentSessionRecord, PaneState } from "@muximo/domain";
 import { validateMuximodControlSocketPath } from "./client-paths.js";
 
 const maxControlChunkBytes = muximodControlMaxRequestBytes * muximodControlMaxPendingRequests;
@@ -35,7 +36,27 @@ type AgentSessionObservationRequest = AgentSessionControlRequest & {
   recentOutput?: string;
 };
 
-type AgentExecutionCompletionRequest = Extract<MuximodControlRequest, { type: "complete_agent_execution" }>;
+type AgentExecutionPrepareRequest = Extract<MuximodControlRequest, { type: "prepare_agent_execution" }>;
+type AgentExecutionAttachRequest = Extract<MuximodControlRequest, { type: "attach_agent_execution" }>;
+type AgentExecutionCompleteRequest = Extract<MuximodControlRequest, { type: "complete_agent_execution" }>;
+
+export type PreparedAgentExecution = {
+  operation: AgentExecutionPrepareRequest["operation"];
+  agentSessionId: string;
+  executionId: string;
+  hostPaneId?: string;
+  session: AgentSessionRecord;
+  execution: AgentExecutionSpec;
+};
+
+export type CompletedAgentExecution = {
+  operation: AgentExecutionCompleteRequest["operation"];
+  agentSessionId: string;
+  executionId: string;
+  process: AgentExecutionResult;
+  session: AgentSessionRecord;
+  cleanup?: RunAgentSessionResult["cleanup"];
+};
 
 export type MuximodControlServerOptions = {
   socketPath: string;
@@ -44,22 +65,17 @@ export type MuximodControlServerOptions = {
   adoptAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
   observeAgentSession?: (request: AgentSessionObservationRequest) => Promise<void>;
   releaseAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
-  reserveAgentExecution?: (
-    peer: AgentExecutionControlPeer,
-    request: AgentExecutionReservationInput,
-  ) => Promise<AgentExecutionReservation> | AgentExecutionReservation;
-  releaseAgentExecution?: (peer: AgentExecutionControlPeer, token: string) => Promise<void> | void;
-  completeAgentExecution?: (
-    peer: AgentExecutionControlPeer,
-    request: AgentExecutionCompletionRequest,
-  ) => Promise<void> | void;
-  closeAgentExecution?: (peer: AgentExecutionControlPeer) => Promise<void> | void;
+  prepareAgentExecution?: (
+    request: AgentExecutionPrepareRequest,
+    signal: AbortSignal,
+  ) => Promise<PreparedAgentExecution>;
+  attachAgentExecution?: (request: AgentExecutionAttachRequest) => Promise<void>;
+  completeAgentExecution?: (request: AgentExecutionCompleteRequest) => Promise<CompletedAgentExecution>;
 };
 
 export class MuximodControlServer {
   private readonly clients = new Set<Socket>();
   private readonly pairingOwners = new Map<string, Socket>();
-  private readonly peers = new Map<object, AgentExecutionControlPeer>();
   private server: Server | undefined;
   private socketPath: string | undefined;
   private started = false;
@@ -133,7 +149,6 @@ export class MuximodControlServer {
     for (const client of this.clients) client.destroy();
     this.clients.clear();
     this.pairingOwners.clear();
-    this.peers.clear();
     this.server = undefined;
     this.socketPath = undefined;
     this.started = false;
@@ -165,10 +180,10 @@ export class MuximodControlServer {
 
   private handleConnection(socket: Socket): void {
     this.clients.add(socket);
-    const peer = this.peerFor(socket);
     let buffer = "";
     let requestQueue = Promise.resolve();
     let pendingRequests = 0;
+    const requestControllers = new Set<AbortController>();
     socket.setEncoding("utf8");
     socket.on("data", (chunk: string) => {
       if (Buffer.byteLength(chunk, "utf8") > maxControlChunkBytes) {
@@ -190,12 +205,15 @@ export class MuximodControlServer {
             socket.destroy(new Error("too many pending muximod control requests"));
             return;
           }
+          const controller = new AbortController();
+          requestControllers.add(controller);
           pendingRequests += 1;
           requestQueue = requestQueue
-            .then(() => this.handleRequest(socket, line))
+            .then(() => this.handleRequest(socket, line, controller.signal))
             .catch(() => undefined)
             .finally(() => {
               pendingRequests -= 1;
+              requestControllers.delete(controller);
             });
         }
       }
@@ -204,9 +222,9 @@ export class MuximodControlServer {
       }
     });
     socket.on("close", () => {
+      for (const controller of requestControllers) controller.abort(new Error("muximod control client disconnected"));
+      requestControllers.clear();
       this.clients.delete(socket);
-      this.peers.delete(socket);
-      void this.options.closeAgentExecution?.(peer);
       for (const [pairingId, owner] of this.pairingOwners) {
         if (owner !== socket) continue;
         this.pairingOwners.delete(pairingId);
@@ -218,8 +236,8 @@ export class MuximodControlServer {
     socket.on("error", () => socket.destroy());
   }
 
-  private async handleRequest(socket: Socket, line: string): Promise<void> {
-    if (socket.destroyed || socket.writableEnded) return;
+  private async handleRequest(socket: Socket, line: string, signal = new AbortController().signal): Promise<void> {
+    if (socket.destroyed || socket.writableEnded || signal.aborted) return;
     const parsedRequest = decodeMuximodControlRequest(line);
     if (!parsedRequest.ok) {
       this.send(socket, {
@@ -230,8 +248,6 @@ export class MuximodControlServer {
       return;
     }
     const request = parsedRequest.value;
-    const peer = this.peerFor(socket);
-
     try {
       if (request.type === "create_local_session") {
         this.send(socket, {
@@ -265,43 +281,53 @@ export class MuximodControlServer {
         this.send(socket, { type: "daemon_log", requestId: request.requestId, ...result, lines: [...result.lines] });
         return;
       }
-      if (request.type === "reserve_agent_execution") {
-        if (!this.options.reserveAgentExecution)
+      if (request.type === "prepare_agent_execution") {
+        if (!this.options.prepareAgentExecution)
           throw controlError("agent_execution_unavailable", "agent execution is unavailable");
-        const reservation = await this.options.reserveAgentExecution(peer, {
-          operation: request.operation,
-          ...(request.hostPaneId === undefined ? {} : { hostPaneId: request.hostPaneId }),
-          ownerPid: request.ownerPid,
-        });
+        const prepared = await this.options.prepareAgentExecution(request, signal);
         this.send(socket, {
-          type: "agent_execution_reserved",
+          type: "agent_execution_prepared",
           requestId: request.requestId,
-          token: reservation.token,
-          ownerPid: reservation.ownerPid,
+          operation: prepared.operation,
+          agentSessionId: prepared.agentSessionId,
+          executionId: prepared.executionId,
+          ...(prepared.hostPaneId === undefined ? {} : { hostPaneId: prepared.hostPaneId }),
+          session: prepared.session,
+          execution: {
+            ...prepared.execution,
+            command: [...prepared.execution.command],
+            environment: { ...prepared.execution.environment },
+          },
         });
         return;
       }
-      if (request.type === "release_agent_execution") {
-        if (!this.options.releaseAgentExecution)
+      if (request.type === "attach_agent_execution") {
+        if (!this.options.attachAgentExecution)
           throw controlError("agent_execution_unavailable", "agent execution is unavailable");
-        await this.options.releaseAgentExecution(peer, request.token);
+        await this.options.attachAgentExecution(request);
         this.send(socket, {
-          type: "agent_execution_released",
+          type: "agent_execution_attached",
           requestId: request.requestId,
-          token: request.token,
+          agentSessionId: request.agentSessionId,
+          executionId: request.executionId,
+          executionPid: request.executionPid,
+          executionStartedAt: request.executionStartedAt,
         });
         return;
       }
       if (request.type === "complete_agent_execution") {
         if (!this.options.completeAgentExecution)
           throw controlError("agent_execution_unavailable", "agent execution is unavailable");
-        await this.options.completeAgentExecution(peer, request);
+        const completed = await this.options.completeAgentExecution(request);
         this.send(socket, {
           type: "agent_execution_completed",
           requestId: request.requestId,
-          executionRequestId: request.executionRequestId,
-          token: request.token,
-          executionId: request.executionId,
+          operation: completed.operation,
+          agentSessionId: completed.agentSessionId,
+          executionId: completed.executionId,
+          process: completed.process,
+          session: completed.session,
+          ...(completed.cleanup === undefined ? {} : { cleanup: completed.cleanup }),
         });
         return;
       }
@@ -395,17 +421,6 @@ export class MuximodControlServer {
       return;
     }
     socket.write(frame);
-  }
-
-  private peerFor(socket: Socket): AgentExecutionControlPeer {
-    const existing = this.peers.get(socket);
-    if (existing) return existing;
-    const peer: AgentExecutionControlPeer = {
-      isOpen: () => !socket.destroyed && !socket.writableEnded,
-      send: (response) => this.send(socket, response),
-    };
-    this.peers.set(socket, peer);
-    return peer;
   }
 }
 

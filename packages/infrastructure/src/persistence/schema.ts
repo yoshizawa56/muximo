@@ -58,7 +58,17 @@ export const agentSessions = sqliteTable(
     name: text("name").notNull(),
     backend: text("backend", { enum: ["codex", "claude", "opencode"] }).notNull(),
     status: text("status", {
-      enum: ["starting", "setup", "setup_failed", "ready", "running", "resuming", "interrupted", "exited"],
+      enum: [
+        "starting",
+        "setup",
+        "setup_failed",
+        "ready",
+        "running",
+        "resuming",
+        "recovering",
+        "interrupted",
+        "exited",
+      ],
     }).notNull(),
     workspaceId: text("workspace_id").notNull(),
     workspaceRoot: text("workspace_root").notNull(),
@@ -80,6 +90,8 @@ export const agentSessions = sqliteTable(
     executionId: text("execution_id"),
     executionPid: integer("execution_pid"),
     executionStartedAt: text("execution_started_at"),
+    executionOwnerPid: integer("execution_owner_pid"),
+    executionOwnerStartedAt: text("execution_owner_started_at"),
     ...timestamps,
   },
   (table) => ({
@@ -87,6 +99,17 @@ export const agentSessions = sqliteTable(
     workspaceIndex: index("agent_sessions_workspace_index").on(table.workspaceId),
   }),
 );
+
+/** Retains the final response for a host-owned execution after its session may be deleted. */
+export const agentExecutionReceipts = sqliteTable("agent_execution_receipts", {
+  executionId: text("execution_id").primaryKey(),
+  agentSessionId: text("agent_session_id").notNull(),
+  operation: text("operation", { enum: ["run", "resume"] }).notNull(),
+  process: text("process").notNull(),
+  session: text("session").notNull(),
+  cleanup: text("cleanup"),
+  ...timestamps,
+});
 
 /** Provider-owned Codex implementation state; it is intentionally outside the domain aggregate. */
 export const codexSessionStates = sqliteTable("codex_session_states", {

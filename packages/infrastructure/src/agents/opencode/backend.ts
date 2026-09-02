@@ -1,7 +1,6 @@
 import type { SessionBaselineResult, SessionIdentityUpdate } from "@muximo/application";
 import type { AgentSessionRecord } from "@muximo/domain";
 import { timestamp } from "../../cli/filesystem.js";
-import { errorFields } from "../../logging/index.js";
 import { stringEnvironment } from "../../process/process.js";
 import type {
   AgentBackendLaunch,
@@ -11,7 +10,6 @@ import type {
 } from "../backend.js";
 import { buildOpenCodeResumeCommand, buildOpenCodeRunCommand, resolveOpenCodeCommand } from "./launch.js";
 import { openCodeMonitorActions } from "./monitor.js";
-import { defaultOpenCodeRegistryFile, OpenCodeServerManager } from "./server.js";
 
 export class OpenCodeBackendProvider implements AgentBackendProvider {
   public readonly backend = "opencode" as const;
@@ -26,16 +24,23 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    signal?: AbortSignal,
   ): Promise<AgentBackendProviderPreparation> {
     const plugin = this.options.plugins.get(this.backend);
     const launch = plugin?.prepareLaunch
-      ? await this.preparePluginLaunch(session, backendArgs, plugin.prepareLaunch, resume)
+      ? await this.preparePluginLaunch(session, backendArgs, plugin.prepareLaunch, resume, signal)
       : this.prepareCommandLaunch(session, backendArgs, resume);
     let sessionUpdate: SessionIdentityUpdate | undefined;
     if (launch.backendSessionId && !session.backendSessionId) {
       sessionUpdate = { backendSessionId: launch.backendSessionId };
     }
     return { sessionUpdate, launch };
+  }
+
+  public async restoreLaunch(session: AgentSessionRecord): Promise<AgentBackendLaunch | undefined> {
+    const plugin = this.options.plugins.get(this.backend);
+    if (!plugin?.prepareLaunch || !session.backendSessionId) return undefined;
+    return this.preparePluginLaunch(session, [], plugin.prepareLaunch, true, undefined, session.executionStartedAt);
   }
 
   public async afterRun(
@@ -46,6 +51,11 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     return undefined;
   }
 
+  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {
+    // OpenCode servers are shared service references. Releasing a session must
+    // never terminate a server that may be used by another daemon or client.
+  }
+
   public async archive(_session: AgentSessionRecord): Promise<boolean> {
     return true;
   }
@@ -54,25 +64,8 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     return true;
   }
 
-  public async releaseIfUnused(session: AgentSessionRecord, remaining: readonly AgentSessionRecord[]): Promise<void> {
-    const runDir = session.worktreePath ?? session.workspaceRoot;
-    if (
-      remaining.some(
-        (candidate) =>
-          candidate.backend === this.backend && (candidate.worktreePath ?? candidate.workspaceRoot) === runDir,
-      )
-    ) {
-      return;
-    }
-    try {
-      await new OpenCodeServerManager({
-        environment: this.options.environment,
-        registryFile: this.options.opencodeRegistryFile ?? defaultOpenCodeRegistryFile(this.options.environment),
-      }).dispose(runDir);
-    } catch (error) {
-      this.options.logger.warn("opencode.server_release_failed", { runDir, ...errorFields(error) });
-      throw error;
-    }
+  public async releaseIfUnused(_session: AgentSessionRecord, _remaining: readonly AgentSessionRecord[]): Promise<void> {
+    // OpenCode server lifetime is independent from agent-session cleanup.
   }
 
   private async preparePluginLaunch(
@@ -80,7 +73,10 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     backendArgs: readonly string[],
     prepare: NonNullable<NonNullable<import("../index.js").AgentPluginV1["prepareLaunch"]>>,
     resume: boolean,
+    signal?: AbortSignal,
+    startedAt = timestamp(),
   ): Promise<AgentBackendLaunch> {
+    signal?.throwIfAborted();
     const runDir = session.worktreePath ?? session.workspaceRoot;
     const plan = await prepare({
       cwd: runDir,
@@ -91,11 +87,12 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
         sessionId: session.id,
         executionId: session.executionId ?? "",
         cwd: runDir,
-        startedAt: timestamp(),
+        startedAt,
         backendSessionId: session.backendSessionId ?? null,
         environment: this.options.environment,
       },
       resumeSessionId: resume ? (session.backendSessionId ?? null) : null,
+      signal,
     });
     return {
       command: [plan.primary.command, ...plan.primary.args],

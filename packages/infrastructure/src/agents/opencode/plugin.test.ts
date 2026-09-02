@@ -25,20 +25,14 @@ const serverEntry: OpenCodeServerEntry = {
 };
 
 function fakeManager(
-  overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown> } = {},
-  onDispose: () => void = () => undefined,
+  overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown>; afterEnsure?: () => void } = {},
 ): OpenCodeServerManager {
   return {
     ensure: async (root: string) => {
       if (overrides.ensureThrows) throw new Error("opencode serve did not become healthy within 15000ms");
+      overrides.afterEnsure?.();
       return { ...serverEntry, workspaceRoot: root };
     },
-    isHealthy: async () => true,
-    dispose: async () => {
-      onDispose();
-      return true;
-    },
-    disposeAll: async () => undefined,
     list: () => [serverEntry],
   } as unknown as OpenCodeServerManager;
 }
@@ -103,7 +97,7 @@ const cases = [
     ],
   },
   {
-    name: "prepares a launch that attaches the TUI to the owned server",
+    name: "prepares a launch that attaches the TUI to the shared server",
     input: { kind: "prepare" as const },
     assert: [
       returns<EmptyContext, PluginResult>({
@@ -114,7 +108,7 @@ const cases = [
           cwd: "/workspace",
           backendSessionId: "session-created",
           monitorPresent: true,
-          sidecarKinds: ["opencode-serve"],
+          sidecarKinds: [],
         },
         titleCalls: { createdTitles: [undefined], renamedSessions: [] },
       }),
@@ -132,7 +126,7 @@ const cases = [
           cwd: "/workspace",
           backendSessionId: "session-created",
           monitorPresent: true,
-          sidecarKinds: ["opencode-serve"],
+          sidecarKinds: [],
         },
         titleCalls: { createdTitles: ["review"], renamedSessions: [] },
       }),
@@ -150,7 +144,7 @@ const cases = [
           cwd: "/workspace",
           backendSessionId: "session-resumed",
           monitorPresent: true,
-          sidecarKinds: ["opencode-serve"],
+          sidecarKinds: [],
         },
         titleCalls: { createdTitles: [], renamedSessions: [] },
       }),
@@ -168,7 +162,7 @@ const cases = [
           cwd: "/workspace",
           backendSessionId: "session-resumed",
           monitorPresent: true,
-          sidecarKinds: ["opencode-serve"],
+          sidecarKinds: [],
         },
         titleCalls: { createdTitles: [], renamedSessions: [{ sessionId: "session-resumed", title: "review" }] },
       }),
@@ -259,28 +253,38 @@ describe("opencode plugin", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
-type LifecycleInput = "release" | "prepare-failure";
-type LifecycleFixtureKey = "prepare-failure";
+type LifecycleInput = "release" | "prepare-failure" | "cancel-after-ensure";
+type LifecycleFixtureKey = "prepare-failure" | "cancel-after-ensure";
 type LifecycleResult = undefined;
 type LifecycleContext = { disposeCalls: number };
 type LifecycleFixture = {
   plugin: AgentPluginV1;
   disposeCalls: { count: number };
+  signal?: AbortSignal;
 };
 
 const lifecycleCases = [
   {
-    name: "shares one disposal between the sidecar and launch plan hooks",
+    name: "does not dispose the shared server when the launch plan is released",
     input: "release" as const,
-    assert: [hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1)],
+    assert: [hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 0)],
   },
   {
-    name: "releases a prepared server when session preparation fails",
+    name: "does not dispose the shared server when session preparation fails",
     fixture: "prepare-failure" as const,
     input: "prepare-failure" as const,
     assert: [
       hasError<LifecycleContext, LifecycleResult>({ code: "opencode_session_not_found" }),
-      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 1),
+      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 0),
+    ],
+  },
+  {
+    name: "does not dispose the shared server when cancellation arrives after preparation",
+    fixture: "cancel-after-ensure" as const,
+    input: "cancel-after-ensure" as const,
+    assert: [
+      hasError<LifecycleContext, LifecycleResult>({ message: /aborted/i }),
+      hasObserved<LifecycleContext, LifecycleResult>("disposeCalls", 0),
     ],
   },
 ] satisfies readonly OperationCase<LifecycleFixtureKey, LifecycleInput, LifecycleResult, LifecycleContext>[];
@@ -293,7 +297,10 @@ const lifecycleTable: OperationTable<
   LifecycleContext
 > = {
   defaultFixture: () => createLifecycleFixture(true),
-  fixtures: { "prepare-failure": () => createLifecycleFixture(false) },
+  fixtures: {
+    "prepare-failure": () => createLifecycleFixture(false),
+    "cancel-after-ensure": () => createLifecycleFixture(true, true),
+  },
   cases: lifecycleCases,
   execute: async (fixture, input) => {
     const plan = await fixture.plugin.prepareLaunch!({
@@ -309,25 +316,25 @@ const lifecycleTable: OperationTable<
         environment: {},
       },
       resumeSessionId: input === "prepare-failure" ? "session-gone" : null,
+      signal: fixture.signal,
     });
-    if (input === "release") {
-      await Promise.all([plan.sidecars?.[0]?.stop(), plan.dispose?.()]);
-    }
+    void plan;
   },
   observe: (fixture) => ({ disposeCalls: fixture.disposeCalls.count }),
 };
 
-function createLifecycleFixture(sessionExists: boolean): FixtureHandle<LifecycleFixture> {
+function createLifecycleFixture(sessionExists: boolean, cancelAfterEnsure = false): FixtureHandle<LifecycleFixture> {
   const disposeCalls = { count: 0 };
+  const controller = cancelAfterEnsure ? new AbortController() : undefined;
   const plugin = createOpenCodePlugin({
-    serverManager: fakeManager({}, () => {
-      disposeCalls.count += 1;
-    }),
+    serverManager: fakeManager(
+      cancelAfterEnsure ? { afterEnsure: () => controller?.abort(new Error("aborted after server preparation")) } : {},
+    ),
     clientFactory: () =>
       fakeClient({ createdTitles: [], renamedSessions: [] }, sessionExists ? { "session-resumed": {} } : {}),
     monitorFactory: () => new PassThroughMonitor(),
   });
-  return { fixture: { plugin, disposeCalls } };
+  return { fixture: { plugin, disposeCalls, signal: controller?.signal } };
 }
 
 describe("opencode plugin lifecycle", () => {

@@ -4,7 +4,7 @@ import type { ProcessResult } from "@muximo/application";
 import { errorMessage, type Logger } from "../logging/index.js";
 
 export type SpawnHooks = {
-  onStarted?: (pid: number | undefined) => void | Promise<void>;
+  onStarted?: (pid: number | undefined, startedAt: string) => void;
   onError?: (error: unknown) => void;
   captureFailureDiagnostic?: boolean;
   signal?: AbortSignal;
@@ -86,7 +86,7 @@ export async function spawnAttached(
     );
   });
   try {
-    if (await started) await hooks.onStarted?.(child.pid);
+    if (await started) hooks.onStarted?.(child.pid, new Date().toISOString());
     return await result;
   } finally {
     process.off("SIGINT", onInterrupt);
@@ -151,17 +151,38 @@ export async function runAttachedProcess(
   return result.code;
 }
 
-export function isProcessAlive(pid: number, expectedStartedAt?: string): boolean {
+export type ProcessLiveness = "alive" | "dead" | "unknown";
+
+/**
+ * Observes process liveness without treating an unavailable identity probe as
+ * proof that a process is dead. Callers that delete or terminate resources
+ * must only act on an explicit `dead` result.
+ */
+export function observeProcessLiveness(pid: number, expectedStartedAt?: string): ProcessLiveness {
+  if (!Number.isInteger(pid) || pid <= 0) return "dead";
   try {
     process.kill(pid, 0);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EPERM")) return false;
+    const code = error instanceof Error && "code" in error ? String(error.code) : undefined;
+    if (code === "ESRCH") return "dead";
+    if (code !== "EPERM") return "unknown";
   }
-  if (expectedStartedAt === undefined) return true;
+  if (expectedStartedAt === undefined) return "alive";
   const expectedStartedAtMs = Date.parse(expectedStartedAt);
-  if (!Number.isFinite(expectedStartedAtMs)) return false;
+  if (!Number.isFinite(expectedStartedAtMs)) return "unknown";
   const processStartedAtMs = readProcessStartedAt(pid);
-  return processStartedAtMs !== undefined && isProcessStartTimeValid(expectedStartedAt, processStartedAtMs);
+  if (processStartedAtMs === undefined) return "unknown";
+  return isProcessStartTimeValid(expectedStartedAt, processStartedAtMs) ? "alive" : "dead";
+}
+
+export function isProcessAlive(pid: number, expectedStartedAt?: string): boolean {
+  return observeProcessLiveness(pid, expectedStartedAt) === "alive";
+}
+
+/** Returns the current process start time when the host can observe it. */
+export function currentProcessStartedAt(): string | undefined {
+  const startedAt = readProcessStartedAt(process.pid);
+  return startedAt === undefined ? undefined : new Date(startedAt).toISOString();
 }
 
 export function isProcessStartTimeValid(expectedStartedAt: string, actualStartedAtMs: number): boolean {
@@ -175,6 +196,8 @@ export function isProcessStartTimeValid(expectedStartedAt: string, actualStarted
 
 function readProcessStartedAt(pid: number): number | undefined {
   if (process.platform === "win32") return undefined;
+  // `ps` is synchronous and intentionally used only for lifecycle identity
+  // checks. Do not move this lookup into a high-frequency monitor loop.
   try {
     const value = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
       encoding: "utf8",

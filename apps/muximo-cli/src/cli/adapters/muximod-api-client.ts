@@ -10,10 +10,6 @@ import type {
   ManageSessionRequest,
   muximodContract,
   RegisterWorkspaceRequest,
-  ResumeAgentSessionRequest,
-  ResumeAgentSessionResponse,
-  RunAgentSessionRequest,
-  RunAgentSessionResponse,
   UpdateWorkspaceRequest,
   WorkspaceDirectory,
 } from "@muximo/contract/api";
@@ -30,8 +26,6 @@ export type MuximodApiClient = {
     manage(input: ManageSessionRequest): Promise<ManageSessionResult>;
   };
   agentSessions: {
-    run(input: RunAgentSessionRequest): Promise<RunAgentSessionResponse>;
-    resume(input: ResumeAgentSessionRequest): Promise<ResumeAgentSessionResponse>;
     cleanup(input: CleanupAgentSessionRequest): Promise<CleanupAgentSessionResponse>;
     list(input: ListAgentSessionsRequest): Promise<AgentSessionListResponse>;
   };
@@ -106,8 +100,6 @@ export async function connectMuximodApi(options: MuximodApiConnectionOptions): P
       manage: async (input) => (await request(() => rpc.sessions.manage(input))).session,
     },
     agentSessions: {
-      run: (input) => request(() => rpc.agentSessions.run(input)),
-      resume: (input) => request(() => rpc.agentSessions.resume(input)),
       cleanup: (input) => request(() => rpc.agentSessions.cleanup(input)),
       list: (input) => request(() => rpc.agentSessions.list(input), true),
     },
@@ -192,13 +184,15 @@ function isConnectionError(error: unknown): boolean {
   if (
     value.code === "control_socket_missing" ||
     value.code === "control_socket_connect_failed" ||
+    value.code === "control_socket_connect_timeout" ||
     value.code === "control_socket_closed" ||
-    value.code === "control_socket_error"
+    value.code === "control_socket_error" ||
+    value.code === "control_request_timeout"
   ) {
     return true;
   }
   if (value.cause && isConnectionError(value.cause)) return true;
-  return typeof value.message === "string" && /fetch failed|connection refused|socket closed/iu.test(value.message);
+  return false;
 }
 
 async function resolveWorkspaceSelector(

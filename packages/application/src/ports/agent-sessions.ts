@@ -6,7 +6,7 @@ import type {
   WorkspaceId,
   WorkspaceRecord,
 } from "@muximo/domain";
-import type { ClaimExecutionInput } from "./repositories.js";
+import type { ClaimAbandonedExecutionInput, ClaimExecutionInput } from "./repositories.js";
 
 /** Provider-neutral input for starting a managed agent session. */
 export type StartAgentSessionInput = {
@@ -22,6 +22,7 @@ export type StartAgentSessionInput = {
   setupHookExplicit: boolean;
   cleanupHookExplicit: boolean;
   backendArgs: readonly string[];
+  executionOwnerPid?: number;
 };
 
 /** Provider-neutral input for resuming a managed agent session. */
@@ -30,6 +31,7 @@ export type ResumeAgentSessionInput = {
   reference: string;
   hostPaneId?: string;
   backendArgs: readonly string[];
+  executionOwnerPid?: number;
 };
 
 /** Provider-neutral input for cleaning up a managed agent session. */
@@ -120,8 +122,8 @@ export type ProcessResult = {
   failureDiagnostic?: string;
 };
 
-/** Host-owned process execution capability used for interactive agent launches. */
-export type AgentExecutionRequest = {
+/** Serializable provider launch data handed to the host process that owns the TTY. */
+export type AgentExecutionSpec = {
   sessionId: string;
   executionId: string;
   sessionName: string;
@@ -129,18 +131,33 @@ export type AgentExecutionRequest = {
   command: readonly string[];
   cwd: string;
   environment: Readonly<Record<string, string>>;
-  signal?: AbortSignal;
 };
 
 export type AgentExecutionResult = ProcessResult & {
   pid?: number;
 };
 
-/** Executes a prepared provider command in the host process that owns the TTY. */
-export interface AgentExecutionPort {
-  readonly ownerPid: number;
-  execute(input: AgentExecutionRequest): Promise<AgentExecutionResult>;
-}
+export type PreparedAgentSession = {
+  session: AgentSessionRecord;
+  execution: AgentExecutionSpec;
+};
+
+export type AttachAgentSessionInput = {
+  agentSessionId: string;
+  executionId: string;
+  executionPid: number;
+  executionStartedAt: string;
+  executionOwnerPid?: number;
+  executionOwnerStartedAt?: string;
+  hostPaneId?: string;
+};
+
+export type CompleteAgentSessionInput = {
+  agentSessionId: string;
+  executionId: string;
+  hostPaneId?: string;
+  process: AgentExecutionResult;
+};
 
 /** Provider-neutral identity data that may be learned while launching a session. */
 export type SessionIdentityUpdate = {
@@ -161,18 +178,8 @@ export type SessionBaselineResult = {
   success: boolean;
 };
 
-export type LaunchExecution = {
-  process: ProcessResult;
-  sessionUpdate?: SessionIdentityUpdate;
-};
-
-export type LaunchPlan = {
-  run(execution: AgentExecutionPort): Promise<LaunchExecution>;
-  dispose(): Promise<void>;
-};
-
 export type LaunchPreparation = {
-  plan: LaunchPlan;
+  execution: AgentExecutionSpec;
   sessionUpdate?: SessionIdentityUpdate;
 };
 
@@ -186,6 +193,24 @@ export type ResumeAgentSessionResult = {
   process: ProcessResult;
   session: AgentSessionRecord;
 };
+
+/** Durable result returned after a host-owned execution has been finalized. */
+export type AgentExecutionReceipt =
+  | {
+      operation: "run";
+      agentSessionId: string;
+      executionId: string;
+      process: AgentExecutionResult;
+      session: AgentSessionRecord;
+      cleanup: RunAgentSessionResult["cleanup"];
+    }
+  | {
+      operation: "resume";
+      agentSessionId: string;
+      executionId: string;
+      process: AgentExecutionResult;
+      session: AgentSessionRecord;
+    };
 
 export type CleanupAgentSessionResult = {
   session: AgentSessionRecord;
@@ -226,7 +251,14 @@ export interface SessionLauncherPort {
     session: AgentSessionRecord,
     backendArgs: readonly string[],
     resume: boolean,
+    signal?: AbortSignal,
   ): Promise<LaunchPreparation>;
+  startLaunch(session: AgentSessionRecord): Promise<void>;
+  completeLaunch(
+    session: AgentSessionRecord,
+    process: AgentExecutionResult,
+  ): Promise<SessionIdentityUpdate | undefined>;
+  disposeLaunch(session: AgentSessionRecord): Promise<void>;
 }
 
 /** Provider-neutral remote-session lifecycle used by cleanup policy. */
@@ -262,8 +294,10 @@ export interface PanePublicationPort {
   ): Promise<void>;
 }
 
+export type ProcessLiveness = "alive" | "dead" | "unknown";
+
 export interface ProcessObservationPort {
-  isAlive(pid: number, expectedStartedAt?: string): Promise<boolean>;
+  observe(pid: number, expectedStartedAt?: string): Promise<ProcessLiveness>;
 }
 
 /** Concrete observations used by the application-owned session list policy. */
@@ -292,7 +326,11 @@ export type ManagedAgentSessionRepository = {
   insert(record: AgentSessionRecord): Promise<void>;
   update(record: AgentSessionRecord): Promise<void>;
   claimExecution(input: ClaimExecutionInput): Promise<boolean>;
+  claimAbandonedExecution(input: ClaimAbandonedExecutionInput): Promise<boolean>;
+  attachExecution(input: import("./repositories.js").AttachExecutionInput): Promise<boolean>;
   delete(id: AgentSessionRecord["id"]): Promise<void>;
+  findExecutionReceipt(executionId: string): Promise<AgentExecutionReceipt | undefined>;
+  saveExecutionReceipt(receipt: AgentExecutionReceipt): Promise<void>;
 };
 
 export type SessionLogger = {

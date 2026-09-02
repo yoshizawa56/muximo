@@ -11,18 +11,9 @@ import type {
   MuximodTerminalEndpoint,
   MuximodWorkspaceDirectory,
   RegisterWorkspaceCommand,
-  ResumeAgentSessionInput,
-  ResumeAgentSessionResult,
-  RunAgentSessionResult,
-  StartAgentSessionInput,
   UpdateWorkspaceCommand,
 } from "@muximo/application";
-import type {
-  CleanupAgentSessionRequest,
-  ListAgentSessionsRequest,
-  ResumeAgentSessionRequest,
-  RunAgentSessionRequest,
-} from "@muximo/contract/api";
+import type { CleanupAgentSessionRequest, ListAgentSessionsRequest } from "@muximo/contract/api";
 import {
   agentSessionListResponseSchema,
   authInfoSchema,
@@ -36,8 +27,6 @@ import {
   pairingStatusSchema,
   paneSummarySchema,
   type RegisterWorkspaceRequest,
-  resumeAgentSessionResponseSchema,
-  runAgentSessionResponseSchema,
   type UpdateWorkspaceRequest,
 } from "@muximo/contract/api";
 import { protocolVersion } from "@muximo/contract/shared";
@@ -133,16 +122,6 @@ function toApplicationCreateSession(input: CreateSessionRequest): CreateSessionI
   };
 }
 
-function toApplicationRunAgentSession(input: RunAgentSessionRequest): StartAgentSessionInput {
-  const { executionToken: _executionToken, ...applicationInput } = input;
-  return applicationInput;
-}
-
-function toApplicationResumeAgentSession(input: ResumeAgentSessionRequest): ResumeAgentSessionInput {
-  const { executionToken: _executionToken, ...applicationInput } = input;
-  return applicationInput;
-}
-
 function toApplicationCleanupAgentSession(input: CleanupAgentSessionRequest): CleanupAgentSessionInput {
   return input;
 }
@@ -228,24 +207,6 @@ function toProtocolPane(value: MuximodPaneSummary) {
     ...(value.windowWidth === undefined ? {} : { windowWidth: value.windowWidth }),
     ...(value.windowHeight === undefined ? {} : { windowHeight: value.windowHeight }),
   });
-}
-
-function toProtocolRunAgentSession(value: RunAgentSessionResult) {
-  return runAgentSessionResponseSchema.parse({ ...value, process: toProtocolProcessResult(value.process) });
-}
-
-function toProtocolResumeAgentSession(value: ResumeAgentSessionResult) {
-  return resumeAgentSessionResponseSchema.parse({ ...value, process: toProtocolProcessResult(value.process) });
-}
-
-function toProtocolProcessResult(value: RunAgentSessionResult["process"]) {
-  return {
-    started: value.started,
-    code: value.code,
-    interrupted: value.interrupted,
-    ...(value.signal === undefined ? {} : { signal: value.signal }),
-    ...(value.failureDiagnostic === undefined ? {} : { failureDiagnostic: value.failureDiagnostic }),
-  };
 }
 
 function toProtocolCleanupAgentSession(value: CleanupAgentSessionResult) {
@@ -400,34 +361,6 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
       ),
     },
     agentSessions: {
-      run: os.agentSessions.run.handler(({ input, context }) =>
-        safeAsyncCall(async () => {
-          if (!deps.agentExecution)
-            throw new MuximodHttpError(503, "agent_execution_unavailable", "Agent execution is unavailable");
-          const execution = await deps.agentExecution.consume({
-            token: input.executionToken,
-            operation: "run",
-            ...(input.hostPaneId === undefined ? {} : { hostPaneId: input.hostPaneId }),
-          });
-          return toProtocolRunAgentSession(
-            await deps.application.agentSessions.run(toApplicationRunAgentSession(input), execution),
-          );
-        }, context),
-      ),
-      resume: os.agentSessions.resume.handler(({ input, context }) =>
-        safeAsyncCall(async () => {
-          if (!deps.agentExecution)
-            throw new MuximodHttpError(503, "agent_execution_unavailable", "Agent execution is unavailable");
-          const execution = await deps.agentExecution.consume({
-            token: input.executionToken,
-            operation: "resume",
-            ...(input.hostPaneId === undefined ? {} : { hostPaneId: input.hostPaneId }),
-          });
-          return toProtocolResumeAgentSession(
-            await deps.application.agentSessions.resume(toApplicationResumeAgentSession(input), execution),
-          );
-        }, context),
-      ),
       cleanup: os.agentSessions.cleanup.handler(({ input, context }) =>
         safeAsyncCall(
           async () =>

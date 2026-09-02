@@ -1,4 +1,5 @@
 import {
+  hasObserved,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -7,7 +8,12 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { OpenCodeClient, type OpenCodeEvent, OpenCodeStreamClosedError } from "./client.js";
+import {
+  OpenCodeClient,
+  type OpenCodeEvent,
+  OpenCodeRequestTimeoutError,
+  OpenCodeStreamClosedError,
+} from "./client.js";
 
 type SseInput = {
   sseText: string;
@@ -170,17 +176,19 @@ const sseTable: OperationTable<undefined, "default", SseInput, SseResult, EmptyC
 type CallRecord = { url: string; init: RequestInit | undefined };
 
 type EndpointInput = {
-  kind: "health" | "create" | "abort" | "permission" | "fork" | "status" | "title";
+  kind: "health" | "create" | "abort" | "permission" | "fork" | "status" | "title" | "directory" | "timeout";
   sessionId?: string;
   permissionId?: string;
   responseBody?: unknown;
   responseStatus?: number;
   title?: string;
+  requestTimeoutMs?: number;
 };
 
 type EndpointResult = {
   value: unknown;
   calls: readonly { url: string; method: string; body: string | undefined }[];
+  directoryHeader?: string | null;
 };
 
 const endpointCases = [
@@ -298,6 +306,22 @@ const endpointCases = [
       }),
     ],
   },
+  {
+    name: "routes a session request to the configured OpenCode directory",
+    input: { kind: "directory" as const, responseBody: { id: "session-new" } },
+    assert: [
+      returns<EmptyContext, EndpointResult>({
+        value: "session-new",
+        calls: [{ url: "http://127.0.0.1:4096/session", method: "POST", body: "{}" }],
+        directoryHeader: "/workspace",
+      }),
+    ],
+  },
+  {
+    name: "bounds a hung short-lived request",
+    input: { kind: "timeout" as const, requestTimeoutMs: 1 },
+    assert: [hasObserved<EmptyContext, EndpointResult>("value", { error: "OpenCodeRequestTimeoutError" })],
+  },
 ] satisfies readonly OperationCase<"default", EndpointInput, EndpointResult, EmptyContext>[];
 
 const endpointTable: OperationTable<undefined, "default", EndpointInput, EndpointResult, EmptyContext> = {
@@ -306,8 +330,11 @@ const endpointTable: OperationTable<undefined, "default", EndpointInput, Endpoin
   execute: async (_fixture, input) => {
     const calls: CallRecord[] = [];
     const client = new OpenCodeClient("http://127.0.0.1:4096", {
+      requestTimeoutMs: input.requestTimeoutMs,
+      ...(input.kind === "directory" ? { directory: "/workspace" } : {}),
       request: async (url, init) => {
         calls.push({ url: String(url), init });
+        if (input.kind === "timeout") return new Promise<Response>(() => {});
         return new Response(JSON.stringify(input.responseBody), {
           status: input.responseStatus ?? 200,
           headers: { "content-type": "application/json" },
@@ -315,28 +342,39 @@ const endpointTable: OperationTable<undefined, "default", EndpointInput, Endpoin
       },
     });
     let value: unknown;
-    switch (input.kind) {
-      case "health":
-        value = await client.health();
-        break;
-      case "create":
-        value = await client.createSession(input.title);
-        break;
-      case "abort":
-        value = await client.abortSession(input.sessionId!);
-        break;
-      case "permission":
-        value = await client.replyPermission(input.sessionId!, input.permissionId!, "allow", true);
-        break;
-      case "fork":
-        value = await client.forkSession(input.sessionId!);
-        break;
-      case "status":
-        value = await client.sessionStatus(input.sessionId!);
-        break;
-      case "title":
-        value = await client.setSessionTitle(input.sessionId!, input.title!);
-        break;
+    try {
+      switch (input.kind) {
+        case "health":
+          value = await client.health();
+          break;
+        case "create":
+          value = await client.createSession(input.title);
+          break;
+        case "abort":
+          value = await client.abortSession(input.sessionId!);
+          break;
+        case "permission":
+          value = await client.replyPermission(input.sessionId!, input.permissionId!, "allow", true);
+          break;
+        case "fork":
+          value = await client.forkSession(input.sessionId!);
+          break;
+        case "status":
+          value = await client.sessionStatus(input.sessionId!);
+          break;
+        case "title":
+          value = await client.setSessionTitle(input.sessionId!, input.title!);
+          break;
+        case "directory":
+          value = await client.createSession();
+          break;
+        case "timeout":
+          await client.createSession();
+          value = { error: "request unexpectedly completed" };
+          break;
+      }
+    } catch (error) {
+      value = { error: error instanceof OpenCodeRequestTimeoutError ? error.name : String(error) };
     }
     return {
       value,
@@ -345,9 +383,12 @@ const endpointTable: OperationTable<undefined, "default", EndpointInput, Endpoin
         method: call.init?.method ?? "GET",
         body: typeof call.init?.body === "string" ? call.init.body : undefined,
       })),
+      ...(input.kind === "directory"
+        ? { directoryHeader: new Headers(calls[0]?.init?.headers).get("x-opencode-directory") }
+        : {}),
     };
   },
-  observe: () => ({}),
+  observe: (_fixture, result) => (result.ok ? result.value : { value: undefined, calls: [] }),
 };
 
 describe("opencode client", () => {
