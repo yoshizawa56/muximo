@@ -120,7 +120,8 @@ type DatabaseStep =
   | { type: "verify-atomic-claim-timestamp" }
   | { type: "verify-execution-owner" }
   | { type: "verify-abandoned-execution-claim" }
-  | { type: "verify-execution-receipt" };
+  | { type: "verify-execution-receipt" }
+  | { type: "verify-execution-receipt-retention" };
 type DatabaseResult = undefined;
 type DatabaseContext = {
   pane: PaneRecord | undefined;
@@ -153,6 +154,9 @@ type DatabaseContext = {
   timestampSession: { name: string; createdAt: string; updatedAt: string } | undefined;
   tmuxServerDefault: string | null | undefined;
   receipt: AgentExecutionReceipt | undefined;
+  currentReceipt: AgentExecutionReceipt | undefined;
+  expiredReceipt: AgentExecutionReceipt | undefined;
+  receiptCount: number;
 };
 
 const normalFixture = (): FixtureHandle<DatabaseFixture> => {
@@ -511,6 +515,15 @@ const cases = [
       }),
     ],
   },
+  {
+    name: "prunes completion receipts older than the replay retention window",
+    steps: [{ type: "verify-execution-receipt-retention" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("expiredReceipt", undefined),
+      matchesObserved<DatabaseResult>("currentReceipt", { executionId: "execution-receipt-current" }),
+      hasObserved<DatabaseContext, DatabaseResult>("receiptCount", 1),
+    ],
+  },
 ] satisfies readonly ScenarioCase<DatabaseKey, DatabaseStep, DatabaseResult, DatabaseContext>[];
 
 const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseResult, DatabaseContext> = {
@@ -749,6 +762,38 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           });
           break;
         }
+        case "verify-execution-receipt-retention": {
+          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const expiredSession = AgentSession.create({
+            ...session,
+            id: AgentSessionId.create("session-receipt-expired"),
+            name: "expired-receipt",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          });
+          const currentSession = AgentSession.create({
+            ...session,
+            id: AgentSessionId.create("session-receipt-current"),
+            name: "current-receipt",
+            updatedAt: "2026-08-14T00:00:00.000Z",
+          });
+          await sessions.saveExecutionReceipt({
+            operation: "run",
+            agentSessionId: expiredSession.id,
+            executionId: "execution-receipt-expired",
+            process: { started: true, code: 0, interrupted: false },
+            session: expiredSession,
+            cleanup: { disposition: "not_requested", reason: "no_worktree" },
+          });
+          await sessions.saveExecutionReceipt({
+            operation: "run",
+            agentSessionId: currentSession.id,
+            executionId: "execution-receipt-current",
+            process: { started: true, code: 0, interrupted: false },
+            session: currentSession,
+            cleanup: { disposition: "not_requested", reason: "no_worktree" },
+          });
+          break;
+        }
         default:
           assertNever(step);
       }
@@ -797,6 +842,11 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
         database.sqlite.query("PRAGMA table_info(panes)").all() as Array<{ name: string; dflt_value: string | null }>
       ).find((column) => column.name === "tmux_server_id")?.dflt_value,
       receipt: await sessions.findExecutionReceipt("execution-receipt"),
+      currentReceipt: await sessions.findExecutionReceipt("execution-receipt-current"),
+      expiredReceipt: await sessions.findExecutionReceipt("execution-receipt-expired"),
+      receiptCount: (
+        database.sqlite.query("SELECT COUNT(*) AS count FROM agent_execution_receipts").get() as { count: number }
+      ).count,
     };
   },
 };

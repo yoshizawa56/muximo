@@ -179,7 +179,11 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
       .disposeLaunch(session, session.worktreePath ?? session.workspaceRoot);
   }
 
-  /** Stops daemon-side observers while leaving the host-owned agent process untouched. */
+  /**
+   * Stops daemon-side observers while leaving the host-owned agent process untouched.
+   * Launch disposal belongs to completion/recovery because it may release resources
+   * that the host-owned provider process still needs.
+   */
   public async close(): Promise<void> {
     const errors: unknown[] = [];
     for (const [executionId, runtime] of this.prepared) {

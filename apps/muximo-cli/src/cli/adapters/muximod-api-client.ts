@@ -184,13 +184,15 @@ function isConnectionError(error: unknown): boolean {
   if (
     value.code === "control_socket_missing" ||
     value.code === "control_socket_connect_failed" ||
+    value.code === "control_socket_connect_timeout" ||
     value.code === "control_socket_closed" ||
-    value.code === "control_socket_error"
+    value.code === "control_socket_error" ||
+    value.code === "control_request_timeout"
   ) {
     return true;
   }
   if (value.cause && isConnectionError(value.cause)) return true;
-  return typeof value.message === "string" && /fetch failed|connection refused|socket closed/iu.test(value.message);
+  return false;
 }
 
 async function resolveWorkspaceSelector(

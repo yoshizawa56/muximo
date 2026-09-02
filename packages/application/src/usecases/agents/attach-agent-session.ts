@@ -18,13 +18,21 @@ export type AttachAgentSessionDependencies = {
 export class AttachAgentSession {
   public constructor(private readonly deps: AttachAgentSessionDependencies) {}
 
-  public async execute(input: AttachAgentSessionInput): Promise<AgentSessionRecord> {
+  public async execute(input: AttachAgentSessionInput): Promise<void> {
     const id = AgentSessionId.create(input.agentSessionId);
     const session = await this.deps.sessions.findById(id);
-    if (!session) throw new Error(`agent session not found: ${input.agentSessionId}`);
-    if (session.executionId !== input.executionId) throw new Error("agent execution is no longer current");
-    if (session.status !== "running" && session.status !== "resuming")
+    // Attachment is best-effort bookkeeping. The host process may finish and
+    // the daemon may finalize or delete the session before a delayed attach
+    // request reaches it; that stale request must not become a second failure.
+    if (!session) return;
+    if (session.executionId !== input.executionId) {
+      if (session.executionId === undefined && isTerminalState(session.status)) return;
+      throw new Error("agent execution is no longer current");
+    }
+    if (session.status !== "running" && session.status !== "resuming") {
+      if (isTerminalState(session.status)) return;
       throw new Error(`agent session '${session.name}' is not awaiting a provider process`);
+    }
     let attached: AgentSessionRecord;
     if (session.executionPid !== undefined) {
       if (session.executionPid !== input.executionPid)
@@ -64,6 +72,9 @@ export class AttachAgentSession {
     await this.deps.panes.adopt(attached, input.hostPaneId);
     await this.deps.panes.publish(attached, "running", input.hostPaneId);
     await this.deps.launcher.startLaunch(attached);
-    return attached;
   }
+}
+
+function isTerminalState(status: AgentSessionRecord["status"]): boolean {
+  return status === "interrupted" || status === "exited";
 }

@@ -209,8 +209,14 @@ export class RunAgentSession {
 
     this.recovering.add(session.id);
     this.recoveringExecutions.add(session.executionId);
+    let claimed = false;
+    const recoveringSession = AgentSession.update(session, {
+      status: "recovering",
+      resuming: false,
+      updatedAt: this.deps.clock.now(),
+    });
     try {
-      const claimed = await this.deps.sessions.claimAbandonedExecution({
+      claimed = await this.deps.sessions.claimAbandonedExecution({
         id: session.id,
         executionId: session.executionId,
         expectedExecutionPid: session.executionPid,
@@ -220,11 +226,9 @@ export class RunAgentSession {
         updatedAt: this.deps.clock.now(),
       });
       if (!claimed) return false;
-      const recoveringSession = AgentSession.update(session, {
-        status: "recovering",
-        resuming: false,
-        updatedAt: this.deps.clock.now(),
-      });
+      // Once recovery is claimed in the database, finish it even if the
+      // caller's preparation signal is cancelled. Leaving the record in
+      // `recovering` would permanently block the session name.
       this.deps.logger.debug("session.abandoned_execution_recovering", {
         sessionId: session.id,
         sessionName: session.name,
@@ -235,20 +239,13 @@ export class RunAgentSession {
       try {
         await this.deps.launcher.disposeLaunch(recoveringSession);
       } catch (error) {
-        const failed = await this.persist(recoveringSession, {
-          status: "exited",
-          lastExitStatus: 130,
-          executionId: clearPatch,
-          executionPid: clearPatch,
-          executionStartedAt: clearPatch,
-          executionOwnerPid: clearPatch,
-          executionOwnerStartedAt: clearPatch,
-        });
         this.deps.logger.debug("session.abandoned_execution_disposal_failed", {
           sessionId: session.id,
           message: errorMessage(error),
         });
-        throw new Error(`abandoned session '${failed.name}' could not release its backend resources`, { cause: error });
+        throw new Error(`abandoned session '${recoveringSession.name}' could not release its backend resources`, {
+          cause: error,
+        });
       }
 
       const failed = await this.persist(recoveringSession, {
@@ -265,6 +262,9 @@ export class RunAgentSession {
         throw new Error(`abandoned session '${failed.name}' could not be cleaned up: ${cleanup.reason}`);
       }
       return true;
+    } catch (error) {
+      if (claimed) await this.markExecutionFailed(recoveringSession);
+      throw error;
     } finally {
       this.recovering.delete(session.id);
       this.recoveringExecutions.delete(session.executionId);

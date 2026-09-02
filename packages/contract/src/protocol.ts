@@ -10,6 +10,12 @@ import {
 } from "@muximo/domain";
 import { z } from "zod";
 
+/**
+ * Version for the public HTTP and terminal contracts. The private control
+ * socket is a same-user, matched CLI/daemon channel and intentionally has no
+ * compatibility version; changing its schemas is a breaking change that must
+ * ship with both sides together.
+ */
 export const protocolVersion = 2 as const;
 export const terminalProtocolVersion = protocolVersion;
 export const muximodControlMaxRequestBytes = 64 * 1024;
