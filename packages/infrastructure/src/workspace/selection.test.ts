@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
 import { AllowedRootPolicy, allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./selection.js";
 
 type EmptyContext = {};
-type RootsInput = { env: NodeJS.ProcessEnv; fallback: string };
+type RootsInput = { env: NodeJS.ProcessEnv; fallback?: string };
 const rootsCases = [
   {
     name: "reads the documented workspace roots variable",
@@ -32,9 +32,14 @@ const rootsCases = [
     assert: [returns<EmptyContext, string[]>(["/work", "/projects"])],
   },
   {
-    name: "falls back to the daemon working directory",
+    name: "uses the supplied fallback root",
     input: { env: {}, fallback: "/muximod" },
     assert: [returns<EmptyContext, string[]>(["/muximod"])],
+  },
+  {
+    name: "falls back to the effective home directory",
+    input: { env: { HOME: "/home/test" } },
+    assert: [returns<EmptyContext, string[]>(["/home/test"])],
   },
 ] satisfies readonly OperationCase<"default", RootsInput, string[], EmptyContext>[];
 

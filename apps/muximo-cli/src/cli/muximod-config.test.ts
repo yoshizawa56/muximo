@@ -75,7 +75,7 @@ const cases = [
         pidFile: "/home/test/.local/state/muximo/muximod/muximod.pid",
         controlSocket: "/home/test/.local/state/muximo/muximod/muximod.sock",
         allowedOrigins: [],
-        allowedRoots: ["/workspace/project"],
+        allowedRoots: ["/home/test"],
         logLevel: "info",
         logFile: "/home/test/.local/state/muximo/muximod/muximod.log",
         workingDirectory: "/workspace/project",
