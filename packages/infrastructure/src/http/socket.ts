@@ -15,7 +15,8 @@ export type MuximodSocketTransport = {
 
 export interface MuximodSocket {
   readonly readyState: number;
-  send(data: MuximodSocketData): void;
+  /** Returns Bun's send status when the transport exposes it. */
+  send(data: MuximodSocketData): number | undefined;
   close(code?: number, reason?: string): void;
   onMessage(listener: (data: MuximodSocketData, isBinary: boolean) => void): () => void;
   onClose(listener: () => void): () => void;
@@ -44,8 +45,8 @@ export class BunSocketAdapter implements MuximodSocketAdapter {
     return this.context.readyState;
   }
 
-  public send(data: MuximodSocketData): void {
-    this.context.send(data);
+  public send(data: MuximodSocketData): number | undefined {
+    return this.context.send(data);
   }
 
   public close(code?: number, reason?: string): void {

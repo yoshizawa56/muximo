@@ -29,18 +29,21 @@ type FakeScheduler = {
 
 type OutputFixture = {
   output: string[];
+  overflowCount: number;
   scheduler: FakeScheduler;
   terminal: ReturnType<typeof createTerminalOutputScheduler>;
 };
 
 type OutputStep =
   | { type: "write"; data: string }
+  | { type: "clear" }
   | { type: "mark-scroll" }
   | { type: "run-frame" }
   | { type: "run-timer"; delayMs: number };
 
 type OutputContext = {
   output: readonly string[];
+  overflowCount: number;
   pendingFrameCount: number;
   pendingTimerDelays: readonly number[];
 };
@@ -84,6 +87,26 @@ const outputCases = [
       hasObserved<OutputContext, undefined>("pendingTimerDelays", []),
     ],
   },
+  {
+    name: "drops an output batch and requests a redraw when the buffer is full",
+    steps: [
+      { type: "write", data: "kept" },
+      { type: "write", data: "X".repeat(61) },
+    ],
+    assert: [
+      hasObserved<OutputContext, undefined>("output", []),
+      hasObserved<OutputContext, undefined>("overflowCount", 1),
+      hasObserved<OutputContext, undefined>("pendingTimerDelays", []),
+    ],
+  },
+  {
+    name: "clears stale output before an authoritative redraw",
+    steps: [{ type: "write", data: "stale output" }, { type: "clear" }],
+    assert: [
+      hasObserved<OutputContext, undefined>("output", []),
+      hasObserved<OutputContext, undefined>("pendingTimerDelays", []),
+    ],
+  },
 ] satisfies readonly ScenarioCase<"default", OutputStep, undefined, OutputContext>[];
 
 const outputTable: ScenarioTable<OutputFixture, "default", OutputStep, undefined, OutputContext> = {
@@ -94,6 +117,9 @@ const outputTable: ScenarioTable<OutputFixture, "default", OutputStep, undefined
       switch (step.type) {
         case "write":
           fixture.terminal.write(step.data);
+          break;
+        case "clear":
+          fixture.terminal.clear();
           break;
         case "mark-scroll":
           fixture.terminal.markScroll();
@@ -109,6 +135,7 @@ const outputTable: ScenarioTable<OutputFixture, "default", OutputStep, undefined
   },
   observe: (fixture) => ({
     output: [...fixture.output],
+    overflowCount: fixture.overflowCount,
     pendingFrameCount: fixture.scheduler.pendingFrameCount(),
     pendingTimerDelays: fixture.scheduler.pendingTimerDelays(),
   }),
@@ -197,13 +224,18 @@ const queueCases = [
     assert: [hasObserved<QueueContext, undefined>("inputs", ["first-input"])],
   },
   {
-    name: "keeps input queued while the transport is temporarily detached",
+    name: "drops input written while the transport is temporarily detached",
     steps: [{ type: "attach" }, { type: "detach" }, { type: "write", data: "reconnect-input" }, { type: "attach" }],
-    assert: [hasObserved<QueueContext, undefined>("inputs", ["reconnect-input"])],
+    assert: [hasObserved<QueueContext, undefined>("inputs", [])],
   },
   {
     name: "clears input when the terminal is permanently detached",
     steps: [{ type: "write", data: "stale-input" }, { type: "detach", clearPending: true }, { type: "attach" }],
+    assert: [hasObserved<QueueContext, undefined>("inputs", [])],
+  },
+  {
+    name: "drops pre-attach input beyond the byte bound",
+    steps: [{ type: "write", data: "X".repeat(17) }, { type: "attach" }],
     assert: [hasObserved<QueueContext, undefined>("inputs", [])],
   },
 ] satisfies readonly ScenarioCase<"default", QueueStep, undefined, QueueContext>[];
@@ -211,7 +243,7 @@ const queueCases = [
 const queueTable: ScenarioTable<QueueFixture, "default", QueueStep, undefined, QueueContext> = {
   defaultFixture: () => {
     const inputs: string[] = [];
-    const queue = createTerminalInputQueue();
+    const queue = createTerminalInputQueue({ maxPendingBytes: 16 });
     return { fixture: { inputs, queue } };
   },
   cases: queueCases,
@@ -243,15 +275,27 @@ describe("terminal scheduling", () => {
 function createOutputFixture(): FixtureHandle<OutputFixture> {
   const scheduler = createFakeScheduler();
   const output: string[] = [];
+  let overflowCount = 0;
   const terminal = createTerminalOutputScheduler({
     write: (data) => output.push(stringifyTerminalData(data)),
+    maxPendingBytes: 64,
+    onOverflow: () => {
+      overflowCount += 1;
+    },
     requestFrame: scheduler.requestFrame,
     cancelFrame: scheduler.cancelFrame,
     setTimeout: scheduler.setTimeout,
     clearTimeout: scheduler.clearTimeout,
   });
   return {
-    fixture: { output, scheduler, terminal },
+    fixture: {
+      output,
+      get overflowCount() {
+        return overflowCount;
+      },
+      scheduler,
+      terminal,
+    },
     cleanup: () => terminal.dispose(),
   };
 }

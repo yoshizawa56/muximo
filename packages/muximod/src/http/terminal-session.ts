@@ -22,6 +22,8 @@ import {
 
 type TerminalViewportManager = TerminalViewportPort;
 
+const TERMINAL_OUTPUT_GAP_MAX_BYTES = 128 * 1024;
+
 export type TerminalSessionOptions = {
   cwd: string;
   environment?: NodeJS.ProcessEnv;
@@ -65,10 +67,16 @@ export class TerminalSessionRegistry {
     if (this.sessions.get(session.sessionId) === session) this.sessions.delete(session.sessionId);
   }
 
-  public async releaseParkedForDifferentTarget(target: string, authDeviceId?: string): Promise<boolean> {
+  /**
+   * Releases a parked session that blocks a fresh attach from the same
+   * authenticated device. A same-target replacement is intentionally denied
+   * without a device identity so an unauthenticated caller cannot evict a
+   * resumable session by guessing its target.
+   */
+  public async releaseParkedForAttach(target: string, authDeviceId?: string): Promise<boolean> {
     let released = false;
     for (const session of [...this.sessions.values()]) {
-      released = (await session.releaseIfParkedForDifferentTarget(target, authDeviceId)) || released;
+      released = (await session.releaseIfParkedForAttach(target, authDeviceId)) || released;
     }
     return released;
   }
@@ -87,7 +95,7 @@ export class TerminalSessionRegistry {
   }
 }
 
-type TerminalSessionState = "awaiting_attach" | "attaching" | "attached" | "parked" | "closed";
+type TerminalSessionState = "awaiting_attach" | "attaching" | "attached" | "synchronizing" | "parked" | "closed";
 
 type SocketBinding = {
   socket: MuximodSocket;
@@ -118,6 +126,12 @@ export class TerminalSession {
   private target: string | undefined;
   private cols = 80;
   private rows = 24;
+  private ptyCols = 80;
+  private ptyRows = 24;
+  private parkedOutput: Buffer[] = [];
+  private parkedOutputBytes = 0;
+  private parkedOutputOverflowed = false;
+  private transportBackpressured = false;
 
   public constructor(
     socket: MuximodSocket,
@@ -136,8 +150,9 @@ export class TerminalSession {
     return this.options.authDeviceId === authDeviceId;
   }
 
-  public async releaseIfParkedForDifferentTarget(target: string, authDeviceId?: string): Promise<boolean> {
-    if (!this.matchesAuthContext(authDeviceId) || this.state !== "parked" || this.target === target) return false;
+  public async releaseIfParkedForAttach(target: string, authDeviceId?: string): Promise<boolean> {
+    if (!this.matchesAuthContext(authDeviceId) || this.state !== "parked") return false;
+    if (this.target === target && !authDeviceId) return false;
     await this.finalizeTransport(1000, "replaced");
     return true;
   }
@@ -203,7 +218,7 @@ export class TerminalSession {
       }
 
       try {
-        await this.lease?.claimMobile();
+        await this.claimMobileForInput(this.cols, this.rows);
         await this.pty?.write(rawDataToBuffer(data).toString("utf8"));
       } catch (error) {
         this.sendError("mobile_claim_failed", error);
@@ -231,7 +246,9 @@ export class TerminalSession {
           return;
         }
         try {
-          await this.lease?.claimMobile();
+          await this.claimMobileForInput(message.cols, message.rows);
+          this.cols = message.cols;
+          this.rows = message.rows;
         } catch (error) {
           this.sendError("mobile_claim_failed", error);
         }
@@ -242,6 +259,7 @@ export class TerminalSession {
           return;
         }
         try {
+          await this.claimMobileForInput(this.cols, this.rows);
           await this.lease.enterCopyMode();
         } catch (error) {
           this.sendError("copy_mode_failed", error);
@@ -253,6 +271,7 @@ export class TerminalSession {
           return;
         }
         try {
+          await this.claimMobileForInput(this.cols, this.rows);
           await this.lease.pasteTmuxBuffer();
         } catch (error) {
           this.sendError("paste_tmux_buffer_failed", error);
@@ -267,13 +286,29 @@ export class TerminalSession {
           return;
         }
         try {
-          await this.lease?.claimMobile(message.cols, message.rows);
+          await this.lease?.resize(message.cols, message.rows);
           await this.pty?.resize(message.cols, message.rows);
+          this.ptyCols = message.cols;
+          this.ptyRows = message.rows;
           this.cols = message.cols;
           this.rows = message.rows;
         } catch (error) {
           this.sendError("resize_failed", error);
         }
+        return;
+      case "redraw":
+        if (!this.isAttached() || !this.lease) {
+          this.sendError("not_attached", "Attach before requesting a terminal redraw");
+          return;
+        }
+        try {
+          await this.lease.refresh();
+        } catch (error) {
+          this.sendError("redraw_failed", error);
+        }
+        return;
+      case "ping":
+        this.send({ type: "pong", version: terminalProtocolVersion, nonce: message.nonce });
         return;
       case "detach":
         await this.detachIntentionally();
@@ -331,20 +366,41 @@ export class TerminalSession {
 
     this.clearResumeTimer();
     this.bindSocket(socket);
-    this.state = "attached";
+    this.transportBackpressured = false;
+    this.state = "synchronizing";
     this.cols = message.cols;
     this.rows = message.rows;
+    let shouldRedraw = false;
+    let replay: Buffer[] = [];
 
     try {
-      await this.lease?.claimMobile(message.cols, message.rows);
+      // Resuming transport must preserve the server-side owner. A mobile
+      // WebView may reconnect after a desktop takeover; its dimensions are
+      // only a measurement until the user explicitly claims control.
+      await this.lease?.resize(message.cols, message.rows);
       await this.pty?.resize(message.cols, message.rows);
+      this.ptyCols = message.cols;
+      this.ptyRows = message.rows;
+      shouldRedraw = this.parkedOutputOverflowed;
+      if (shouldRedraw) await this.lease?.refresh();
+      replay = this.takeParkedOutput();
+      this.clearParkedOutput();
+      this.state = "attached";
     } catch (error) {
       this.sendError("resume_failed", error, true);
+      // The replacement transport is already bound at this point. Keep the
+      // runtime resumable, close the failed transport, and let the client run
+      // through the normal bounded retry path instead of leaving the session
+      // stuck in `synchronizing`.
+      this.state = "parked";
+      this.scheduleResumeExpiry();
+      closeSocket(socket, 1013, "terminal resume failed");
       return true;
     }
 
     this.resumeToken = opaqueToken();
-    this.sendReady(true);
+    this.sendReady(true, shouldRedraw ? "redraw" : "replay");
+    for (const chunk of replay) this.sendBinary(chunk);
     return true;
   }
 
@@ -387,7 +443,7 @@ export class TerminalSession {
       } catch (error) {
         if (
           !isViewportLeaseConflict(error) ||
-          !(await this.registry.releaseParkedForDifferentTarget(target, this.options.authDeviceId))
+          !(await this.registry.releaseParkedForAttach(target, this.options.authDeviceId))
         )
           throw error;
         prepared = await this.options.viewportManager.prepare(target, this.options.cwd, message.cols, message.rows);
@@ -406,7 +462,9 @@ export class TerminalSession {
 
       const attachedPty = pty;
       this.pty = attachedPty;
-      attachedPty.onData((output) => this.sendBinary(Buffer.from(output, "utf8")));
+      this.ptyCols = message.cols;
+      this.ptyRows = message.rows;
+      attachedPty.onData((output) => this.handlePtyOutput(Buffer.from(output, "utf8")));
       attachedPty.onExit(({ exitCode, signal }) => {
         void this.handlePtyExit(attachedPty, exitCode, signal).catch((error) => this.handleAsyncFailure(error));
       });
@@ -425,12 +483,25 @@ export class TerminalSession {
 
       this.lease = lease;
       this.target = target;
+      let shouldRedraw = this.parkedOutputOverflowed;
+      let initialOutput: Buffer[] = [];
+      if (this.socket) {
+        this.state = "synchronizing";
+        if (shouldRedraw) await lease.refresh();
+        if (!shouldRedraw && this.parkedOutputOverflowed) {
+          shouldRedraw = true;
+          await lease.refresh();
+        }
+        initialOutput = this.takeParkedOutput();
+        this.clearParkedOutput();
+      }
       this.state = this.socket ? "attached" : "parked";
       this.registry.register(this);
       this.registered = true;
 
       if (this.socket) {
-        this.sendReady(false);
+        this.sendReady(false, shouldRedraw ? "redraw" : "live");
+        for (const chunk of initialOutput) this.sendBinary(chunk);
       } else {
         this.scheduleResumeExpiry();
       }
@@ -475,7 +546,7 @@ export class TerminalSession {
       return;
     }
     try {
-      await this.lease.claimMobile();
+      await this.claimMobileForInput(this.cols, this.rows);
       await imagePaster({
         paneId: this.lease.paneId,
         name: message.name,
@@ -487,7 +558,7 @@ export class TerminalSession {
     }
   }
 
-  private sendReady(resumed: boolean): void {
+  private sendReady(resumed: boolean, sync: "live" | "replay" | "redraw"): void {
     if (!this.target || !this.lease) return;
     this.send({
       type: "ready",
@@ -498,6 +569,8 @@ export class TerminalSession {
       target: this.target,
       paneId: this.lease.paneId,
       windowId: this.lease.windowId,
+      owner: this.lease.owner,
+      sync,
       cols: this.cols,
       rows: this.rows,
     });
@@ -505,12 +578,77 @@ export class TerminalSession {
 
   private send(message: ServerControlMessage): void {
     if (this.socket?.readyState !== muximodSocketReadyState.open) return;
-    this.socket.send(encodeServerControlFrame(message));
+    this.sendSocketData(encodeServerControlFrame(message));
   }
 
   private sendBinary(data: Buffer): void {
     if (this.socket?.readyState !== muximodSocketReadyState.open) return;
-    this.socket.send(data);
+    this.sendSocketData(data);
+  }
+
+  private sendSocketData(data: string | Uint8Array): void {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== muximodSocketReadyState.open) return;
+    try {
+      const status = socket.send(data);
+      // Bun reports 0 for a dropped frame and -1 when backpressure prevents
+      // immediate delivery. Either case makes an ANSI delta incomplete, so
+      // park the session and recover with a full redraw after resume.
+      if (status === 0 || status === -1) this.handleTransportBackpressure(socket);
+    } catch {
+      this.handleTransportBackpressure(socket);
+    }
+  }
+
+  private handleTransportBackpressure(socket: MuximodSocket): void {
+    this.parkedOutputOverflowed = true;
+    if (this.transportBackpressured) return;
+    this.transportBackpressured = true;
+    if (this.state === "attached") {
+      this.state = "parked";
+      this.scheduleResumeExpiry();
+    }
+    closeSocket(socket, 1013, "terminal output backpressure");
+  }
+
+  private async claimMobileForInput(cols: number, rows: number): Promise<void> {
+    const lease = this.lease;
+    if (!lease) return;
+    const shouldResizePty = lease.owner !== "mobile" || this.ptyCols !== cols || this.ptyRows !== rows;
+    await lease.claimMobile(cols, rows);
+    if (!shouldResizePty) return;
+    await this.pty?.resize(cols, rows);
+    this.ptyCols = cols;
+    this.ptyRows = rows;
+  }
+
+  private handlePtyOutput(data: Buffer): void {
+    if (this.state === "attaching" || this.state === "parked" || this.state === "synchronizing") {
+      const nextBytes = this.parkedOutputBytes + data.byteLength;
+      if (nextBytes > TERMINAL_OUTPUT_GAP_MAX_BYTES) {
+        this.parkedOutputOverflowed = true;
+        this.parkedOutput = [];
+        this.parkedOutputBytes = 0;
+        return;
+      }
+      this.parkedOutput.push(data);
+      this.parkedOutputBytes = nextBytes;
+      return;
+    }
+    this.sendBinary(data);
+  }
+
+  private takeParkedOutput(): Buffer[] {
+    const output = this.parkedOutput;
+    this.parkedOutput = [];
+    this.parkedOutputBytes = 0;
+    return output;
+  }
+
+  private clearParkedOutput(): void {
+    this.parkedOutput = [];
+    this.parkedOutputBytes = 0;
+    this.parkedOutputOverflowed = false;
   }
 
   private sendClosed(
@@ -591,6 +729,7 @@ export class TerminalSession {
     this.state = "closed";
     this.attachGeneration += 1;
     this.clearResumeTimer();
+    this.clearParkedOutput();
 
     const socket = this.socket;
     await this.stopRuntime();

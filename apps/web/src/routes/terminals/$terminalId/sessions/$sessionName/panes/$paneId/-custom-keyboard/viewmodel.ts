@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { customKeyboardKeyLibrary, customKeyboardSurfaceDefinitions, defaultCustomKeyboardLayout } from "./definitions";
+import {
+  CUSTOM_KEYBOARD_EDITABLE_ROW_ID,
+  customKeyboardFixedKeyIds,
+  customKeyboardKeyLibrary,
+  customKeyboardSurfaceDefinitions,
+  defaultCustomKeyboardFixedLayout,
+  defaultCustomKeyboardLayout,
+} from "./definitions";
 import { type CustomKeyboardIcon, customKeyboardIconOptions } from "./icons";
 import {
   applyCustomKeyboardDrop,
@@ -22,12 +29,17 @@ export type {
   CustomKeyboardTerminalActionDefinition,
 } from "./definitions";
 export {
+  CUSTOM_KEYBOARD_EDITABLE_ROW_ID,
+  CUSTOM_KEYBOARD_FIXED_ROW_ID,
+  customKeyboardFixedKeyIds,
   customKeyboardKeyDefinitions,
   customKeyboardKeyLibrary,
   customKeyboardSpecialKeyOptions,
   customKeyboardSpecialModifierOptions,
   customKeyboardSurfaceDefinitions,
   customKeyboardTerminalActionOptions,
+  defaultCustomKeyboardFixedKeys,
+  defaultCustomKeyboardFixedLayout,
   defaultCustomKeyboardKeys,
   defaultCustomKeyboardLayout,
   defineKey,
@@ -236,7 +248,11 @@ export type CustomKeyboardController = {
 
 export const DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID = "default";
 
+const CUSTOM_KEYBOARD_STATE_VERSION = 2;
+type CustomKeyboardStateVersion = 1 | typeof CUSTOM_KEYBOARD_STATE_VERSION;
+
 type StoredCustomKeyboardState = {
+  version?: unknown;
   profiles?: unknown;
   workspaceProfileIds?: unknown;
   activeProfileIdsByWorkspace?: unknown;
@@ -244,6 +260,7 @@ type StoredCustomKeyboardState = {
 };
 
 export type CustomKeyboardState = {
+  version: typeof CUSTOM_KEYBOARD_STATE_VERSION;
   profiles: CustomKeyboardProfile[];
   workspaceProfileIds: Record<string, string[]>;
   activeProfileIdsByWorkspace: Record<string, string>;
@@ -503,6 +520,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
 
   const onUpdateShortcut = useCallback(
     (keyId: string, draft: CustomKeyboardShortcutDraft) => {
+      if (customKeyboardFixedKeyIds.includes(keyId)) return;
       if (!isCustomKeyboardShortcutDraftValid(draft)) return;
       const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
       const update = (key: CustomKeyboardKey): CustomKeyboardKey =>
@@ -526,6 +544,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
 
   const onDeleteShortcut = useCallback(
     (keyId: string) => {
+      if (customKeyboardFixedKeyIds.includes(keyId)) return;
       setState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
@@ -538,10 +557,15 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     [options.workspaceId],
   );
 
-  const rows = useMemo(
+  const editableRows = useMemo(
     () => resolveCustomKeyboardLayout(activeProfile.layout, activeProfile.libraryKeys),
     [activeProfile],
   );
+  const fixedRows = useMemo(
+    () => resolveCustomKeyboardLayout(defaultCustomKeyboardFixedLayout, customKeyboardKeyLibrary),
+    [],
+  );
+  const rows = useMemo(() => [...editableRows, ...fixedRows], [editableRows, fixedRows]);
   const surfaces = useMemo(
     () =>
       customKeyboardSurfaceDefinitions.map((surface) => ({
@@ -557,7 +581,9 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
   const assignedIds = useMemo(() => assignedKeyIds(activeProfile.layout), [activeProfile.layout]);
   const availableKeys = useMemo(() => {
     const assigned = new Set(assignedIds);
-    return activeProfile.libraryKeys.filter((candidate) => !assigned.has(candidate.id));
+    return activeProfile.libraryKeys.filter(
+      (candidate) => !assigned.has(candidate.id) && !customKeyboardFixedKeyIds.includes(candidate.id),
+    );
   }, [activeProfile.libraryKeys, assignedIds]);
 
   const keyboard: CustomKeyboardViewModel = {
@@ -579,7 +605,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
   };
 
   const settings: CustomKeyboardSettingsViewModel = {
-    rows,
+    rows: editableRows,
     availableKeys,
     shortcutKeys,
     activeProfile: activeProfileSummary,
@@ -667,6 +693,7 @@ export function isCustomKeyboardProfileNameValid(name: string): boolean {
 
 function createDefaultCustomKeyboardState(): CustomKeyboardState {
   return {
+    version: CUSTOM_KEYBOARD_STATE_VERSION,
     profiles: [createDefaultCustomKeyboardProfile()],
     workspaceProfileIds: {},
     activeProfileIdsByWorkspace: {},
@@ -693,7 +720,9 @@ export function parseCustomKeyboardState(raw: string | null): CustomKeyboardStat
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed)) return fallback;
-    return parseStoredCustomKeyboardState(parsed, fallback);
+    const version = parsed.version === undefined ? 1 : parsed.version === CUSTOM_KEYBOARD_STATE_VERSION ? 2 : null;
+    if (version === null) return fallback;
+    return parseStoredCustomKeyboardState(parsed, fallback, version);
   } catch {
     return fallback;
   }
@@ -702,6 +731,7 @@ export function parseCustomKeyboardState(raw: string | null): CustomKeyboardStat
 function parseStoredCustomKeyboardState(
   parsed: StoredCustomKeyboardState,
   fallback: CustomKeyboardState,
+  version: CustomKeyboardStateVersion,
 ): CustomKeyboardState {
   if (
     !Array.isArray(parsed.profiles) ||
@@ -711,7 +741,7 @@ function parseStoredCustomKeyboardState(
   ) {
     return fallback;
   }
-  const profiles = normalizeProfiles(parsed.profiles);
+  const profiles = normalizeProfiles(parsed.profiles, version);
   if (profiles.length === 0) return fallback;
   const profileIds = new Set(profiles.map((profile) => profile.id));
   const workspaceProfileIds = normalizeWorkspaceProfileIds(parsed.workspaceProfileIds, profileIds);
@@ -723,13 +753,19 @@ function parseStoredCustomKeyboardState(
     typeof parsed.globalActiveProfileId === "string" && profileIds.has(parsed.globalActiveProfileId)
       ? parsed.globalActiveProfileId
       : DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID;
-  return { profiles, workspaceProfileIds, activeProfileIdsByWorkspace, globalActiveProfileId };
+  return {
+    version: CUSTOM_KEYBOARD_STATE_VERSION,
+    profiles,
+    workspaceProfileIds,
+    activeProfileIdsByWorkspace,
+    globalActiveProfileId,
+  };
 }
 
-function normalizeProfiles(value: unknown): CustomKeyboardProfile[] {
+function normalizeProfiles(value: unknown, version: CustomKeyboardStateVersion): CustomKeyboardProfile[] {
   if (!Array.isArray(value)) return [createDefaultCustomKeyboardProfile()];
   const parsedProfiles = value.flatMap((candidate) => {
-    const profile = normalizeProfile(candidate);
+    const profile = normalizeProfile(candidate, version);
     return profile ? [profile] : [];
   });
   const uniqueProfileMap = new Map<string, CustomKeyboardProfile>();
@@ -741,7 +777,7 @@ function normalizeProfiles(value: unknown): CustomKeyboardProfile[] {
   return [defaultProfile, ...[...uniqueProfileMap.values()].filter((profile) => profile.id !== defaultProfile.id)];
 }
 
-function normalizeProfile(value: unknown): CustomKeyboardProfile | null {
+function normalizeProfile(value: unknown, version: CustomKeyboardStateVersion): CustomKeyboardProfile | null {
   if (
     !isRecord(value) ||
     typeof value.id !== "string" ||
@@ -766,7 +802,10 @@ function normalizeProfile(value: unknown): CustomKeyboardProfile | null {
     ...customKeyboardKeyLibrary,
     ...storedLibraryKeys.filter((key) => !builtInKeyIds.has(key.id) && isUserDefinedCustomKeyboardKey(key)),
   ]);
-  const layout = normalizeLayout(value.layout, libraryKeys);
+  const layout =
+    version === 1
+      ? migrateLegacyCustomKeyboardLayout(value.layout, libraryKeys)
+      : normalizeCustomKeyboardLayout(value.layout, libraryKeys);
   const defaultShortcutKeyIds = libraryKeys.filter((key) => key.category === "shortcuts").map((key) => key.id);
   const shortcutKeyIds = uniqueIds(
     (validStringArray(value.shortcutKeyIds) ?? defaultShortcutKeyIds).filter((keyId) =>
@@ -785,13 +824,26 @@ function normalizeProfile(value: unknown): CustomKeyboardProfile | null {
   };
 }
 
-function normalizeLayout(value: unknown, libraryKeys: readonly CustomKeyboardKey[]): CustomKeyboardLayout {
+function migrateLegacyCustomKeyboardLayout(
+  value: unknown,
+  libraryKeys: readonly CustomKeyboardKey[],
+): CustomKeyboardLayout {
+  // Version 1 stored the fixed utility row inside every profile. The row is now global and must not be migrated into
+  // the editable profile layout.
+  return normalizeCustomKeyboardLayout(value, libraryKeys);
+}
+
+function normalizeCustomKeyboardLayout(
+  value: unknown,
+  libraryKeys: readonly CustomKeyboardKey[],
+): CustomKeyboardLayout {
   if (!isRecord(value) || !Array.isArray(value.rows)) return cloneCustomKeyboardLayout(defaultCustomKeyboardLayout);
   const libraryKeyIds = new Set(libraryKeys.map((key) => key.id));
   const usedKeyIds = new Set<string>();
   const usedRowIds = new Set<string>();
   const rows: CustomKeyboardLayoutRow[] = value.rows.flatMap((candidate) => {
     if (!isRecord(candidate) || typeof candidate.id !== "string" || candidate.id.trim().length === 0) return [];
+    if (candidate.id !== CUSTOM_KEYBOARD_EDITABLE_ROW_ID) return [];
     if (usedRowIds.has(candidate.id) || !Array.isArray(candidate.placements)) return [];
     const overflow = candidate.overflow === "stable" || candidate.overflow === "scroll" ? candidate.overflow : null;
     if (!overflow) return [];
@@ -800,6 +852,7 @@ function normalizeLayout(value: unknown, libraryKeys: readonly CustomKeyboardKey
       if (!isRecord(placement) || typeof placement.keyId !== "string" || !libraryKeyIds.has(placement.keyId)) {
         return [];
       }
+      if (customKeyboardFixedKeyIds.includes(placement.keyId)) return [];
       if (usedKeyIds.has(placement.keyId)) return [];
       const density = placement.density === "compact" || placement.density === "regular" ? placement.density : null;
       if (!density) return [];
@@ -1003,6 +1056,7 @@ export function deleteCustomKeyboardProfile(state: CustomKeyboardState, profileI
     ),
   );
   return {
+    version: CUSTOM_KEYBOARD_STATE_VERSION,
     profiles,
     workspaceProfileIds,
     activeProfileIdsByWorkspace,

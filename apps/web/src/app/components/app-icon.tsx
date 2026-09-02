@@ -1,11 +1,13 @@
 export type AppIconName =
   | "arrow-left"
   | "close"
+  | "edit"
   | "folder"
   | "layout"
   | "menu"
   | "new-pane"
   | "paperclip"
+  | "plus"
   | "refresh"
   | "settings"
   | "sliders"
@@ -40,6 +42,13 @@ export function AppIcon({ name, size = 16 }: { name: AppIconName; size?: number 
           <path d="m6 6 12 12M18 6 6 18" />
         </svg>
       );
+    case "edit":
+      return (
+        <svg {...iconProps}>
+          <path d="m4 20 4.2-.8L19.5 7.9a2.1 2.1 0 0 0-3-3L5.2 16.2z" />
+          <path d="m14.5 6.5 3 3" />
+        </svg>
+      );
     case "folder":
       return (
         <svg {...iconProps}>
@@ -71,6 +80,12 @@ export function AppIcon({ name, size = 16 }: { name: AppIconName; size?: number 
       return (
         <svg {...iconProps}>
           <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+        </svg>
+      );
+    case "plus":
+      return (
+        <svg {...iconProps}>
+          <path d="M12 5v14M5 12h14" />
         </svg>
       );
     case "refresh":

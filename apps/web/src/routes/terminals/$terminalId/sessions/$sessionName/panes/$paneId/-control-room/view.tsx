@@ -257,6 +257,24 @@ export function ControlRoomView({
                   }}
                 />
               ) : null}
+              {viewModel.viewportOwner === "desktop" && viewModel.status === "connected" ? (
+                <div
+                  className="absolute inset-x-3 bottom-10 z-20 flex min-h-[54px] items-center justify-between gap-4 rounded-[11px] border border-[#735c2c] bg-[rgb(36_28_13_/_94%)] px-[13px] py-2.5 shadow-[0_8px_24px_rgb(0_0_0_/_30%)] max-[620px]:items-start"
+                  role="status"
+                >
+                  <span className="flex min-w-0 flex-col gap-[3px]">
+                    <strong className="text-[0.7rem]">PC activity detected</strong>
+                    <small className="text-[0.65rem] text-muted">The viewport is back at desktop size.</small>
+                  </span>
+                  <button
+                    className="whitespace-nowrap rounded-[7px] bg-[#735c2c] px-2.5 py-[7px] text-[0.65rem] font-bold text-[#fff4cf]"
+                    type="button"
+                    onClick={viewModel.claim}
+                  >
+                    Take control
+                  </button>
+                </div>
+              ) : null}
               <div className="flex min-h-7 shrink-0 items-center justify-between gap-3 border-t border-[#15351d] bg-[#071008] px-[13px] font-mono text-[0.58rem] text-[#657169] max-[920px]:hidden">
                 <span className="inline-flex items-center gap-1.5 text-[#8cb793]">
                   <span className="size-[5px] rounded-full bg-lime-deep" />{" "}
@@ -295,24 +313,6 @@ export function ControlRoomView({
                 <strong className="text-[0.7rem]">Terminal action failed</strong>
                 <small className="text-[0.65rem] text-muted">{viewModel.actionErrorMessage}</small>
               </span>
-            </div>
-          ) : null}
-          {viewModel.viewportOwner === "desktop" && viewModel.status === "connected" ? (
-            <div
-              className="flex min-h-[54px] items-center justify-between gap-4 rounded-[11px] border border-[#735c2c] bg-[#241c0d] px-[13px] py-2.5 max-[620px]:items-start"
-              role="status"
-            >
-              <span className="flex min-w-0 flex-col gap-[3px]">
-                <strong className="text-[0.7rem]">PC activity detected</strong>
-                <small className="text-[0.65rem] text-muted">The viewport is back at desktop size.</small>
-              </span>
-              <button
-                className="whitespace-nowrap rounded-[7px] bg-[#735c2c] px-2.5 py-[7px] text-[0.65rem] font-bold text-[#fff4cf]"
-                type="button"
-                onClick={viewModel.claim}
-              >
-                Take control
-              </button>
             </div>
           ) : null}
         </section>

@@ -15,7 +15,10 @@ import type {
   CustomKeyboardSurfaceId,
 } from "./viewmodel";
 
-export type CustomKeyboardDefaultPlacement = "main" | "utility" | "surface" | "library";
+export const CUSTOM_KEYBOARD_EDITABLE_ROW_ID = "main";
+export const CUSTOM_KEYBOARD_FIXED_ROW_ID = "fixed";
+
+export type CustomKeyboardDefaultPlacement = "main" | "fixed" | "surface" | "library";
 
 export type CustomKeyboardKeyDefinition = CustomKeyboardKey & {
   defaultPlacement: CustomKeyboardDefaultPlacement;
@@ -270,7 +273,7 @@ const customKeyboardKeyDefinitions = defineKeys<readonly CustomKeyboardKeyDefini
     label: "ADD",
     accessibleLabel: "Add image",
     activation: { type: "native", action: "pick-photo" },
-    defaultPlacement: "utility",
+    defaultPlacement: "fixed",
     defaultDensity: "compact",
   }),
   defineKey({
@@ -280,7 +283,7 @@ const customKeyboardKeyDefinitions = defineKeys<readonly CustomKeyboardKeyDefini
     label: "CLIP",
     accessibleLabel: "Open copy and paste actions",
     activation: { type: "surface", surface: "clipboard" },
-    defaultPlacement: "utility",
+    defaultPlacement: "fixed",
     defaultDensity: "compact",
   }),
   defineKey({
@@ -290,7 +293,7 @@ const customKeyboardKeyDefinitions = defineKeys<readonly CustomKeyboardKeyDefini
     label: "KEYBOARD",
     accessibleLabel: "Show or hide the standard keyboard",
     activation: { type: "native", action: "toggle-standard-keyboard" },
-    defaultPlacement: "utility",
+    defaultPlacement: "fixed",
     defaultDensity: "compact",
     defaultFlexGrow: 1,
   }),
@@ -301,17 +304,16 @@ const customKeyboardKeyDefinitions = defineKeys<readonly CustomKeyboardKeyDefini
     label: "Arrows",
     accessibleLabel: "Arrow pad",
     activation: { type: "directional-flick" },
-    defaultPlacement: "utility",
+    defaultPlacement: "fixed",
     defaultDensity: "compact",
   }),
   defineKey({
     id: "profile-surface",
     category: "special",
     icon: "settings",
-    label: "PROFILE",
     accessibleLabel: "Open custom keyboard profiles and settings",
     activation: { type: "surface", surface: "profile" },
-    defaultPlacement: "utility",
+    defaultPlacement: "fixed",
     defaultDensity: "compact",
   }),
   defineKey({
@@ -403,6 +405,12 @@ export const defaultCustomKeyboardKeys: readonly CustomKeyboardKey[] = customKey
   .filter((definition) => definition.defaultPlacement === "main")
   .map(keyFromDefinition);
 
+export const defaultCustomKeyboardFixedKeys: readonly CustomKeyboardKey[] = customKeyboardKeyDefinitions
+  .filter((definition) => definition.defaultPlacement === "fixed")
+  .map(keyFromDefinition);
+
+export const customKeyboardFixedKeyIds: readonly string[] = defaultCustomKeyboardFixedKeys.map((key) => key.id);
+
 function defaultPlacement(definition: CustomKeyboardKeyDefinition): {
   keyId: string;
   density: "regular" | "compact";
@@ -418,17 +426,22 @@ function defaultPlacement(definition: CustomKeyboardKeyDefinition): {
 export const defaultCustomKeyboardLayout: CustomKeyboardLayout = {
   rows: [
     {
-      id: "main",
+      id: CUSTOM_KEYBOARD_EDITABLE_ROW_ID,
       overflow: "scroll" as const,
       placements: customKeyboardKeyDefinitions
         .filter((definition) => definition.defaultPlacement === "main")
         .map(defaultPlacement),
     },
+  ],
+};
+
+export const defaultCustomKeyboardFixedLayout: CustomKeyboardLayout = {
+  rows: [
     {
-      id: "utility",
+      id: CUSTOM_KEYBOARD_FIXED_ROW_ID,
       overflow: "stable" as const,
       placements: customKeyboardKeyDefinitions
-        .filter((definition) => definition.defaultPlacement === "utility")
+        .filter((definition) => definition.defaultPlacement === "fixed")
         .map(defaultPlacement),
     },
   ],

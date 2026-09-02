@@ -7,9 +7,14 @@ import type {
   ManagedAgentSessionRepository,
 } from "@muximo/application";
 import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { type AgentSessionRow, agentExecutionReceipts, agentSessions } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
+
+// Completion receipts are only needed to replay a lost control response. Keep
+// them long enough for a delayed retry without retaining finalized session
+// snapshots indefinitely.
+const executionReceiptRetentionMs = 7 * 24 * 60 * 60 * 1_000;
 
 export class DrizzleAgentSessionRepository
   extends DrizzleRepositoryBase
@@ -159,6 +164,7 @@ export class DrizzleAgentSessionRepository
   }
 
   public async saveExecutionReceipt(receipt: AgentExecutionReceipt): Promise<void> {
+    const updatedAt = receipt.session.updatedAt;
     this.db()
       .insert(agentExecutionReceipts)
       .values({
@@ -168,11 +174,16 @@ export class DrizzleAgentSessionRepository
         process: JSON.stringify(receipt.process),
         session: JSON.stringify(receipt.session),
         cleanup: "cleanup" in receipt ? JSON.stringify(receipt.cleanup) : null,
-        createdAt: receipt.session.updatedAt,
-        updatedAt: receipt.session.updatedAt,
+        createdAt: updatedAt,
+        updatedAt,
       })
       .onConflictDoNothing()
       .run();
+
+    const updatedAtMs = Date.parse(updatedAt);
+    if (!Number.isFinite(updatedAtMs)) return;
+    const cutoff = new Date(updatedAtMs - executionReceiptRetentionMs).toISOString();
+    this.db().delete(agentExecutionReceipts).where(lt(agentExecutionReceipts.updatedAt, cutoff)).run();
   }
 
   public async setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean> {

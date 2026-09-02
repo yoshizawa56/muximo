@@ -196,6 +196,8 @@ export function isProcessStartTimeValid(expectedStartedAt: string, actualStarted
 
 function readProcessStartedAt(pid: number): number | undefined {
   if (process.platform === "win32") return undefined;
+  // `ps` is synchronous and intentionally used only for lifecycle identity
+  // checks. Do not move this lookup into a high-frequency monitor loop.
   try {
     const value = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
       encoding: "utf8",

@@ -1,3 +1,4 @@
+import { CUSTOM_KEYBOARD_EDITABLE_ROW_ID, customKeyboardFixedKeyIds } from "./definitions";
 import type {
   CustomKeyboardDragSource,
   CustomKeyboardDropTarget,
@@ -38,7 +39,9 @@ export function resolveCustomKeyboardLayout(
 }
 
 export function assignedKeyIds(layout: CustomKeyboardLayout): string[] {
-  return layout.rows.flatMap((row) => row.placements.map((placement) => placement.keyId));
+  return layout.rows
+    .filter((row) => row.id === CUSTOM_KEYBOARD_EDITABLE_ROW_ID)
+    .flatMap((row) => row.placements.map((placement) => placement.keyId));
 }
 
 export function toggleCustomKeyboardModifier(
@@ -69,8 +72,16 @@ export function applyCustomKeyboardDrop(
   }
 
   if (source.collection === "shortcut-library") return copyDropState(state);
+  if (target.rowId !== CUSTOM_KEYBOARD_EDITABLE_ROW_ID || customKeyboardFixedKeyIds.includes(source.keyId)) {
+    return copyDropState(state);
+  }
   const sourcePlacement = findPlacement(state.layout, source.keyId, source.rowId);
-  if (source.collection === "keyboard" && !sourcePlacement) return copyDropState(state);
+  if (
+    source.collection === "keyboard" &&
+    (!sourcePlacement || sourcePlacement.row.id !== CUSTOM_KEYBOARD_EDITABLE_ROW_ID)
+  ) {
+    return copyDropState(state);
+  }
   if (!state.layout.rows.some((row) => row.id === target.rowId)) return copyDropState(state);
 
   const layout = removeKeyFromLayout(state.layout, source.keyId);
@@ -85,7 +96,10 @@ export function removeKeyFromLayout(layout: CustomKeyboardLayout, keyId: string)
   return {
     rows: layout.rows.map((row) => ({
       ...row,
-      placements: row.placements.filter((placement) => placement.keyId !== keyId),
+      placements:
+        row.id === CUSTOM_KEYBOARD_EDITABLE_ROW_ID
+          ? row.placements.filter((placement) => placement.keyId !== keyId)
+          : [...row.placements],
     })),
   };
 }

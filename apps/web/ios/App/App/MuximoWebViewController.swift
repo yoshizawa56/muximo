@@ -1,7 +1,18 @@
 import Capacitor
 import UIKit
+import WebKit
+
+private final class MuximoWebView: WKWebView {
+    override var inputAccessoryView: UIView? {
+        nil
+    }
+}
 
 final class MuximoWebViewController: CAPBridgeViewController {
+    override func webView(with frame: CGRect, configuration: WKWebViewConfiguration) -> WKWebView {
+        MuximoWebView(frame: frame, configuration: configuration)
+    }
+
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
 

@@ -52,6 +52,9 @@ type LifecycleFixture = {
   provideBackendSessionId: boolean;
   processAlive: boolean;
   abortOnClaim: boolean;
+  abortOnAbandonedClaim: boolean;
+  recoveryAbortController?: AbortController;
+  lateAttachment: boolean;
   resumeAbortController?: AbortController;
   dirty: boolean;
   runCount: number;
@@ -152,6 +155,8 @@ function createFixture(
     provideBackendSessionId?: boolean;
     processAlive?: boolean;
     abortOnClaim?: boolean;
+    abortOnAbandonedClaim?: boolean;
+    lateAttachment?: boolean;
     dirty?: boolean;
     runWorkspaceInput?: WorkspaceResolutionInput;
   } = {},
@@ -173,6 +178,8 @@ function createFixture(
     provideBackendSessionId: options.provideBackendSessionId ?? true,
     processAlive: options.processAlive ?? false,
     abortOnClaim: options.abortOnClaim ?? false,
+    abortOnAbandonedClaim: options.abortOnAbandonedClaim ?? false,
+    lateAttachment: options.lateAttachment ?? false,
     dirty: options.dirty ?? false,
     runCount: 0,
     disposeCount: 0,
@@ -240,6 +247,7 @@ function repository(fixture: LifecycleFixture) {
         return false;
       }
       fixture.sessions.set(input.id, { ...current, status: "recovering", resuming: false, updatedAt: input.updatedAt });
+      if (fixture.abortOnAbandonedClaim) fixture.recoveryAbortController?.abort();
       return true;
     },
     attachExecution: async (input: AttachExecutionInput) => {
@@ -541,6 +549,9 @@ type RunKey =
   | "completion-retry"
   | "abandoned-preparation"
   | "abandoned-execution"
+  | "abandoned-recovery-failed"
+  | "abandoned-recovery-cancelled"
+  | "late-attachment"
   | "preparing";
 type RunStep = { operation: "run"; repeat?: number };
 const runCases = [
@@ -693,6 +704,33 @@ const runCases = [
       hasObserved<RunContext, RunAgentSessionResult>("worktreeRemoveCount", 1),
     ],
   },
+  {
+    name: "clears the recovery claim when abandoned-session cleanup fails",
+    fixture: "abandoned-recovery-failed",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasError<RunContext, RunAgentSessionResult>({ message: /could not be cleaned up/ }),
+      hasObserved<RunContext, RunAgentSessionResult>("status", "exited"),
+    ],
+  },
+  {
+    name: "finishes abandoned-session recovery before honoring cancellation",
+    fixture: "abandoned-recovery-cancelled",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasError<RunContext, RunAgentSessionResult>({ message: /aborted|cancelled/i }),
+      hasObserved<RunContext, RunAgentSessionResult>("status", undefined),
+    ],
+  },
+  {
+    name: "ignores a delayed attachment after completion has removed the session",
+    fixture: "late-attachment",
+    steps: [{ operation: "run" }],
+    assert: [
+      hasObserved<RunContext, RunAgentSessionResult>("status", undefined),
+      hasObserved<RunContext, RunAgentSessionResult>("deleted", true),
+    ],
+  },
 ] satisfies readonly ScenarioCase<RunKey, RunStep, RunAgentSessionResult, RunContext>[];
 
 const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSessionResult, RunContext> = {
@@ -784,16 +822,50 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
         }),
       }),
     }),
+    "abandoned-recovery-failed": () => ({
+      fixture: createFixture({
+        cleanupDisposition: "retained",
+        session: sessionFixture({
+          status: "running",
+          executionId: "abandoned-recovery-failed",
+          executionPid: 701,
+          executionStartedAt: "2026-08-23T00:00:00.000Z",
+          executionOwnerPid: 702,
+          executionOwnerStartedAt: "2026-08-23T00:00:00.000Z",
+        }),
+      }),
+    }),
+    "abandoned-recovery-cancelled": () => ({
+      fixture: createFixture({
+        abortOnAbandonedClaim: true,
+        session: sessionFixture({
+          status: "running",
+          executionId: "abandoned-recovery-cancelled",
+          executionPid: 701,
+          executionStartedAt: "2026-08-23T00:00:00.000Z",
+          executionOwnerPid: 702,
+          executionOwnerStartedAt: "2026-08-23T00:00:00.000Z",
+        }),
+      }),
+    }),
+    "late-attachment": () => ({
+      fixture: createFixture({ useWorktree: true, lateAttachment: true }),
+    }),
   },
   cases: runCases,
   execute: async (fixture, steps) => {
     if (steps[0]?.operation !== "run") throw new Error("run scenario has no run step");
     const useCase = createRunUseCase(fixture);
-    const prepared = await useCase.prepare({
-      ...runInput,
-      ...(fixture.runWorkspaceInput ?? {}),
-      useWorktree: fixture.useWorktree,
-    });
+    const recoveryAbortController = fixture.abortOnAbandonedClaim ? new AbortController() : undefined;
+    fixture.recoveryAbortController = recoveryAbortController;
+    const prepared = await useCase.prepare(
+      {
+        ...runInput,
+        ...(fixture.runWorkspaceInput ?? {}),
+        useWorktree: fixture.useWorktree,
+      },
+      recoveryAbortController?.signal,
+    );
     await createAttachUseCase(fixture).execute({
       agentSessionId: prepared.session.id,
       executionId: prepared.session.executionId ?? "",
@@ -815,6 +887,15 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
         executionId: prepared.session.executionId ?? "",
         hostPaneId: "%1",
         process: fixture.processResult,
+      });
+    }
+    if (fixture.lateAttachment) {
+      await createAttachUseCase(fixture).execute({
+        agentSessionId: prepared.session.id,
+        executionId: prepared.session.executionId ?? "",
+        executionPid: 701,
+        executionStartedAt: "2026-08-23T00:01:00.000Z",
+        hostPaneId: "%1",
       });
     }
     return result;

@@ -30,9 +30,25 @@ export const OnlineAndOffline: Story = {
   args: { viewModel: buildViewModel() },
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
+    await expect(canvas.getByRole("button", { name: /feature-login/ })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: /MacBook Air/ }));
     await expect(args.viewModel.onSelectTerminal).toHaveBeenCalledWith(storyTerminal);
     await expect(canvas.getByRole("button", { name: /Studio mini/ })).toBeDisabled();
+  },
+};
+
+export const LongHostAndConnectionName: Story = {
+  args: {
+    viewModel: buildViewModel({
+      connectionName: "production-macbook-air-connection-profile-with-a-long-name",
+      terminals: [
+        {
+          ...storyTerminal,
+          name: "Production MacBook Air Terminal",
+          host: "production-macbook-air-hostname-with-a-long-tailnet-name",
+        },
+      ],
+    }),
   },
 };
 

@@ -50,8 +50,12 @@ export type ViewportLease = {
   readonly paneId: string;
   readonly windowId: string;
   readonly sessionName: string;
+  readonly owner: ViewportOwner;
   claimMobile(cols?: number, rows?: number): Promise<void>;
+  /** Updates the mobile geometry without transferring viewport ownership. */
   resize(cols?: number, rows?: number): Promise<void>;
+  /** Requests an authoritative redraw for the mobile tmux client. */
+  refresh(): Promise<void>;
   enterCopyMode(): Promise<void>;
   pasteTmuxBuffer(): Promise<void>;
   release(): Promise<void>;

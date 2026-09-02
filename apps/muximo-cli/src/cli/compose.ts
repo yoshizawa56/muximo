@@ -632,13 +632,14 @@ function isControlConnectionError(error: unknown): boolean {
       "control_socket_connect_timeout",
       "control_socket_closed",
       "control_socket_error",
+      "control_request_timeout",
     ].includes(error.code);
   }
   if (!error || typeof error !== "object") return false;
-  const value = error as { code?: unknown; cause?: unknown; message?: unknown };
-  if (["ECONNREFUSED", "ECONNRESET", "EPIPE"].includes(String(value.code))) return true;
+  const value = error as { code?: unknown; cause?: unknown };
+  if (["ECONNREFUSED", "ECONNRESET", "EPIPE", "ETIMEDOUT"].includes(String(value.code))) return true;
   if (value.cause && isControlConnectionError(value.cause)) return true;
-  return typeof value.message === "string" && /fetch failed|connection refused|socket closed/iu.test(value.message);
+  return false;
 }
 
 async function withApiInvalidation<Result>(operation: () => Promise<Result>, invalidate: () => void): Promise<Result> {

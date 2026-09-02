@@ -207,7 +207,13 @@ export class OpenCodeServerManager {
       const existing = registry[workspaceRoot];
       if (existing !== undefined) {
         try {
-          const health = await this.waitForHealth(existing.port, workspaceRoot, existing.pid, signal);
+          const health = await this.waitForHealth(
+            existing.port,
+            workspaceRoot,
+            existing.pid,
+            existing.startedAt,
+            signal,
+          );
           const refreshed =
             existing.pid !== undefined && this.observe(existing.pid, existing.startedAt) === "dead"
               ? removeProcessIdentity(existing)
@@ -221,7 +227,7 @@ export class OpenCodeServerManager {
           throwIfAborted(signal);
           const liveness = existing.pid === undefined ? undefined : this.observe(existing.pid, existing.startedAt);
           const portAvailable = liveness === "dead" ? true : await this.probePort(existing.port);
-          if (liveness === "alive" || (liveness !== "dead" && !portAvailable)) {
+          if (liveness === "alive" || liveness === "unknown" || !portAvailable) {
             throw new OpenCodeServerUnavailableError(workspaceRoot, existing.port, error);
           }
           delete registry[workspaceRoot];
@@ -245,7 +251,7 @@ export class OpenCodeServerManager {
       this.writeRegistry(registry);
 
       try {
-        const health = await this.waitForHealth(port, workspaceRoot, child.pid, signal);
+        const health = await this.waitForHealth(port, workspaceRoot, child.pid, startingEntry.startedAt, signal);
         const entry: OpenCodeServerEntry = { ...startingEntry, version: health.version };
         registry[workspaceRoot] = entry;
         this.writeRegistry(registry);
@@ -323,6 +329,7 @@ export class OpenCodeServerManager {
     port: number,
     workspaceRoot: string,
     pid: number | undefined,
+    expectedStartedAt: string | undefined,
     signal?: AbortSignal,
   ): Promise<OpenCodeHealth> {
     const deadline = this.now() + this.startupTimeoutMs;
@@ -330,7 +337,7 @@ export class OpenCodeServerManager {
       throwIfAborted(signal);
       const health = await this.readHealth(baseUrlForPort(port), workspaceRoot, signal);
       if (health !== undefined) return health;
-      if (pid !== undefined && this.observe(pid) === "dead") {
+      if (pid !== undefined && this.observe(pid, expectedStartedAt) === "dead") {
         throw new Error(`opencode serve exited before it became healthy (${this.executable} serve --port ${port})`);
       }
       if (this.now() >= deadline) {

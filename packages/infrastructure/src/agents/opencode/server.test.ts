@@ -39,6 +39,7 @@ type Harness = {
   spawnRecords: SpawnRecord[];
   spawnEnvironments: NodeJS.ProcessEnv[];
   requestRecords: RequestRecord[];
+  processObservations: Array<{ pid: number; expectedStartedAt: string | undefined }>;
   alivePids: Set<number>;
   unknownPids: Set<number>;
   unrefPids: number[];
@@ -53,6 +54,7 @@ type SeededEntry = {
   alive?: boolean;
   healthy?: boolean;
   portAvailable?: boolean;
+  unknown?: boolean;
 };
 
 type ServerInput = {
@@ -68,6 +70,7 @@ type ServerInput = {
   registryLockTimeoutMs?: number;
   registryLockPollIntervalMs?: number;
   requestTimeoutMs?: number;
+  assertProcessIdentity?: boolean;
   healthRequestHangs?: boolean;
   staleLock?: boolean;
   contendedLock?: boolean;
@@ -80,6 +83,7 @@ type ServerResult = {
   spawned: readonly SpawnRecord[];
   spawnEnvironment?: NodeJS.ProcessEnv;
   requestRecords: readonly RequestRecord[];
+  processObservations?: readonly { pid: number; expectedStartedAt: string | undefined }[];
   unrefPids: readonly number[];
   registry: Record<string, unknown> | undefined;
   errorCode?: string;
@@ -103,6 +107,7 @@ function createHarness(): Harness {
     spawnRecords: [],
     spawnEnvironments: [],
     requestRecords: [],
+    processObservations: [],
     alivePids: new Set(),
     unknownPids: new Set(),
     unrefPids: [],
@@ -146,7 +151,10 @@ function createManager(harness: Harness, input: ServerInput): OpenCodeServerMana
       });
     },
     signaller: {
-      observe: (pid) => (harness.unknownPids.has(pid) ? "unknown" : harness.alivePids.has(pid) ? "alive" : "dead"),
+      observe: (pid, expectedStartedAt) => {
+        harness.processObservations.push({ pid, expectedStartedAt });
+        return harness.unknownPids.has(pid) ? "unknown" : harness.alivePids.has(pid) ? "alive" : "dead";
+      },
     },
     now: () => harness.now,
     sleep: async (milliseconds) => {
@@ -187,6 +195,7 @@ function seed(harness: Harness, input: ServerInput): void {
     };
     writeFileSync(harness.registryFile, JSON.stringify({ [root]: entry }));
     if (seeded.alive && seeded.pid !== undefined) harness.alivePids.add(seeded.pid);
+    if (seeded.unknown && seeded.pid !== undefined) harness.unknownPids.add(seeded.pid);
     if (seeded.healthy) harness.healthyPorts.add(seeded.port);
     if (seeded.portAvailable) harness.availablePorts.add(seeded.port);
   }
@@ -361,6 +370,53 @@ const cases = [
     ],
   },
   {
+    name: "does not replace an unknown shared server even when its port is available",
+    input: {
+      operation: "ensure" as const,
+      seededEntry: { pid: 42, unknown: true, port: 7_000, portAvailable: true },
+      startupTimeoutMs: 10,
+    },
+    assert: [
+      hasError<ServerResult, ServerResult>({ code: "opencode_server_unavailable", retryable: true }),
+      hasObserved<ServerResult, ServerResult>("spawned", []),
+    ],
+  },
+  {
+    name: "uses the recorded process start identity while waiting for a stale server",
+    input: {
+      operation: "ensure" as const,
+      assertProcessIdentity: true,
+      seededEntry: { pid: 42, port: 7_000, healthy: false, portAvailable: true },
+    },
+    assert: [
+      returns<ServerResult, ServerResult>({
+        entry: { workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3" },
+        entries: [],
+        spawned: [
+          {
+            command: "opencode",
+            args: ["serve", "--hostname", "127.0.0.1", "--port", "7000"],
+            cwd: "/ws",
+            pid: 1_000,
+          },
+        ],
+        requestRecords: [
+          { url: "http://127.0.0.1:7000/global/health", directory: "/ws" },
+          { url: "http://127.0.0.1:7000/global/health", directory: "/ws" },
+        ],
+        processObservations: [
+          { pid: 42, expectedStartedAt: "2026-08-15T00:00:00.000Z" },
+          { pid: 42, expectedStartedAt: "2026-08-15T00:00:00.000Z" },
+        ],
+        unrefPids: [1_000],
+        registry: {
+          "/ws": { workspaceRoot: "/ws", pid: 1_000, port: 7_000, version: "1.2.3", startedAt: anyStartedAt },
+        },
+        failure: "none",
+      }),
+    ],
+  },
+  {
     name: "connects to an explicitly configured external server without spawning",
     input: { operation: "ensure" as const, rawRegistry: "not-json", serverUrl: "http://127.0.0.1:4096" },
     assert: [
@@ -442,6 +498,7 @@ const table: OperationTable<ServerFixture, "default", ServerInput, ServerResult,
         spawned: harness.spawnRecords,
         spawnEnvironment: harness.spawnEnvironments[0],
         requestRecords: harness.requestRecords,
+        ...(input.assertProcessIdentity ? { processObservations: harness.processObservations } : {}),
         unrefPids: harness.unrefPids,
         registry: snapshotRegistry(harness),
         errorCode: errorCode(caught),
@@ -460,6 +517,7 @@ const table: OperationTable<ServerFixture, "default", ServerInput, ServerResult,
       spawned: harness.spawnRecords,
       ...(harness.spawnEnvironments[0] === undefined ? {} : { spawnEnvironment: harness.spawnEnvironments[0] }),
       requestRecords: harness.requestRecords,
+      ...(input.assertProcessIdentity ? { processObservations: harness.processObservations } : {}),
       unrefPids: harness.unrefPids,
       registry,
       failure: "none",

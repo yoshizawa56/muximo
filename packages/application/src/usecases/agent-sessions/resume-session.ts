@@ -70,8 +70,9 @@ export class ResumeAgentSession {
     const executionId = this.deps.clock.id();
     const executionStartedAt = this.deps.clock.now();
     throwIfAborted(signal);
-    if (
-      !(await this.deps.sessions.claimExecution({
+    let claimed = false;
+    try {
+      claimed = await this.deps.sessions.claimExecution({
         id: session.id,
         expectedExecutionPid: session.executionPid ?? null,
         executionId,
@@ -80,11 +81,8 @@ export class ResumeAgentSession {
         executionOwnerPid: input.executionOwnerPid ?? null,
         executionOwnerStartedAt: input.executionOwnerPid === undefined ? null : executionStartedAt,
         updatedAt: executionStartedAt,
-      }))
-    ) {
-      throw new Error(`session '${session.name}' is already being resumed`);
-    }
-    try {
+      });
+      if (!claimed) throw new Error(`session '${session.name}' is already being resumed`);
       throwIfAborted(signal);
 
       session = await this.persist(session, {
@@ -111,7 +109,7 @@ export class ResumeAgentSession {
           this.deps.logger.debug("session.resume_launch_cleanup_failed", { message: errorMessage(disposeError) });
         }
       }
-      await this.markExecutionFailed(session);
+      if (claimed) await this.markExecutionFailed(session);
       throw error;
     }
   }
