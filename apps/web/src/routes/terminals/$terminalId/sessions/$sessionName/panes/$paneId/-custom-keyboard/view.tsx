@@ -1,11 +1,25 @@
 import {
+  type CollisionDetection,
+  DndContext,
+  type DragEndEvent,
+  type DragMoveEvent,
+  type DragOverEvent,
+  DragOverlay,
+  type DragStartEvent,
+  MouseSensor,
+  pointerWithin,
+  TouchSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
   type ChangeEvent,
   type CSSProperties,
-  type DragEvent,
   Fragment,
   type KeyboardEvent,
   type ReactNode,
-  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -24,6 +38,7 @@ import {
 } from "./layout";
 import { isCustomKeyboardShortcutDraftValid } from "./policy";
 import {
+  CUSTOM_KEYBOARD_EDITABLE_ROW_ID,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
   type CustomKeyboardFlickDirection,
@@ -50,22 +65,55 @@ type ShortcutDropIndicator = {
   index: number;
 };
 
-type PointerDragState = {
-  keyId: string;
+type CustomKeyboardDndDropTarget =
+  | { kind: "preview" }
+  | { kind: "preview-row"; rowId: string }
+  | { kind: "preview-key"; rowId: string; targetKeyId: string }
+  | { kind: "shortcut-library"; targetIndex: number };
+
+const CUSTOM_KEYBOARD_TOUCH_DRAG_DELAY_MS = 200;
+const CUSTOM_KEYBOARD_TOUCH_DRAG_TOLERANCE_PX = 8;
+const CUSTOM_KEYBOARD_MOUSE_DRAG_DISTANCE_PX = 8;
+
+type CustomKeyboardDndSession = {
   source: CustomKeyboardDragSource;
-  startX: number;
-  startY: number;
-  started: boolean;
+  moved: boolean;
   targetRowId: string | null;
   targetKeyId: string | null;
   targetIndex: number | null;
   overPreview: boolean;
 };
 
-type PointerDragPosition = {
-  x: number;
-  y: number;
+const customKeyboardCollisionDetection: CollisionDetection = (args) => {
+  const collisions = pointerWithin(args);
+
+  return collisions.sort((left, right) => {
+    const leftPriority = customKeyboardDropTargetPriority(
+      left.data?.droppableContainer.data.current?.customKeyboardDropTarget,
+    );
+    const rightPriority = customKeyboardDropTargetPriority(
+      right.data?.droppableContainer.data.current?.customKeyboardDropTarget,
+    );
+    return rightPriority - leftPriority;
+  });
 };
+
+function customKeyboardDropTargetPriority(value: unknown): number {
+  if (!value || typeof value !== "object") return 0;
+
+  switch ((value as { kind?: unknown }).kind) {
+    case "preview-key":
+      return 4;
+    case "shortcut-library":
+      return 3;
+    case "preview-row":
+      return 2;
+    case "preview":
+      return 1;
+    default:
+      return 0;
+  }
+}
 
 export type CustomKeyboardClipboardHistoryEntry = {
   id: string;
@@ -93,8 +141,53 @@ type CustomKeyboardPopover = {
   anchor: CustomKeyboardPopoverAnchor;
 } | null;
 
+type CustomKeyboardModalViewport = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
 function assertNeverCustomKeyboardActivation(value: never): never {
   throw new Error(`Unsupported custom keyboard activation: ${String(value)}`);
+}
+
+function readCustomKeyboardModalViewport(): CustomKeyboardModalViewport {
+  if (typeof window === "undefined") return { top: 0, left: 0, width: 1, height: 1 };
+  const visualViewport = window.visualViewport;
+  const heightCandidates = [visualViewport?.height, window.innerHeight, document.documentElement.clientHeight].filter(
+    (height): height is number => typeof height === "number" && height > 0,
+  );
+  const height = heightCandidates.length > 0 ? Math.min(...heightCandidates) : 1;
+
+  return {
+    top: visualViewport?.offsetTop ?? 0,
+    left: visualViewport?.offsetLeft ?? 0,
+    width: Math.max(1, visualViewport?.width ?? window.innerWidth),
+    height,
+  };
+}
+
+function useCustomKeyboardModalViewport(): CustomKeyboardModalViewport {
+  const [viewport, setViewport] = useState<CustomKeyboardModalViewport>(readCustomKeyboardModalViewport);
+
+  useLayoutEffect(() => {
+    const updateViewport = () => setViewport(readCustomKeyboardModalViewport());
+    const visualViewport = window.visualViewport;
+
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    visualViewport?.addEventListener("resize", updateViewport);
+    visualViewport?.addEventListener("scroll", updateViewport);
+
+    return () => {
+      window.removeEventListener("resize", updateViewport);
+      visualViewport?.removeEventListener("resize", updateViewport);
+      visualViewport?.removeEventListener("scroll", updateViewport);
+    };
+  }, []);
+
+  return viewport;
 }
 
 function customKeyboardPopoverAnchor(element: HTMLElement): CustomKeyboardPopoverAnchor {
@@ -257,7 +350,7 @@ export function CustomKeyboardBar({
 
   return (
     <div
-      className={`custom-keyboard-bar relative z-40 shrink-0 border-t border-[#1c4a28] bg-[rgb(5_15_8_/_98%)] pl-[max(5px,var(--safe-area-left))] pr-[max(5px,var(--safe-area-right))] pt-1 shadow-[0_-10px_24px_rgb(0_0_0_/_28%)] ${viewModel.nativeKeyboardVisible ? "" : "custom-keyboard-bar--custom"}`}
+      className={`custom-keyboard-bar relative z-40 shrink-0 border-t border-[#1c4a28] bg-[rgb(5_15_8_/_98%)] pl-[max(5px,var(--safe-area-left))] pr-[max(5px,var(--safe-area-right))] pt-1 shadow-[0_-10px_24px_rgb(0_0_0_/_28%)] ${viewModel.nativeKeyboardVisible ? "custom-keyboard-bar--native" : "custom-keyboard-bar--custom"}`}
       role="toolbar"
       aria-label="Custom terminal keyboard"
     >
@@ -956,7 +1049,6 @@ export function CustomKeyboardSettingsView({
   onSave: () => void;
 }) {
   const [draggedButtonId, setDraggedButtonId] = useState<string | null>(null);
-  const [pointerDragPosition, setPointerDragPosition] = useState<PointerDragPosition | null>(null);
   const [dropTargetButtonId, setDropTargetButtonId] = useState<string | null>(null);
   const [dropTargetRowId, setDropTargetRowId] = useState<string | null>(null);
   const [shortcutDropIndicator, setShortcutDropIndicator] = useState<ShortcutDropIndicator | null>(null);
@@ -971,14 +1063,22 @@ export function CustomKeyboardSettingsView({
   const [shortcutDraft, setShortcutDraft] = useState<CustomKeyboardShortcutDraft>(() => createShortcutDraft());
   const [profileNameDraft, setProfileNameDraft] = useState(viewModel.activeProfile.name);
   const [profileIconDraft, setProfileIconDraft] = useState<CustomKeyboardIcon>(viewModel.activeProfile.icon);
-  const [newProfileOpen, setNewProfileOpen] = useState(false);
+  const [profileModal, setProfileModal] = useState<"create" | "edit" | null>(null);
   const [newProfileName, setNewProfileName] = useState("New profile");
   const [newProfileIcon, setNewProfileIcon] = useState<CustomKeyboardIcon>("terminal");
   const activeProfile = viewModel.activeProfile;
-  const pointerDragRef = useRef<PointerDragState | null>(null);
-  const dragSourceRef = useRef<CustomKeyboardDragSource | null>(null);
-  const suppressClickRef = useRef(false);
-  const suppressClickTimerRef = useRef<number | null>(null);
+  const sensors = useSensors(
+    useSensor(MouseSensor, {
+      activationConstraint: { distance: CUSTOM_KEYBOARD_MOUSE_DRAG_DISTANCE_PX },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: CUSTOM_KEYBOARD_TOUCH_DRAG_DELAY_MS,
+        tolerance: CUSTOM_KEYBOARD_TOUCH_DRAG_TOLERANCE_PX,
+      },
+    }),
+  );
+  const dndSessionRef = useRef<CustomKeyboardDndSession | null>(null);
 
   useEffect(() => {
     setProfileNameDraft(activeProfile.name);
@@ -995,25 +1095,15 @@ export function CustomKeyboardSettingsView({
     [viewModel],
   );
 
-  const addButtonFromClick = useCallback(
-    (button: CustomKeyboardKey) => {
-      if (suppressClickRef.current) {
-        suppressClickRef.current = false;
-        return;
-      }
-      addButton(button);
-    },
-    [addButton],
-  );
+  const addButtonFromClick = addButton;
 
   const resetDrag = useCallback(() => {
+    dndSessionRef.current = null;
     setDraggedButtonId(null);
-    setPointerDragPosition(null);
     setDropTargetButtonId(null);
     setDropTargetRowId(null);
     setShortcutDropIndicator(null);
     setPreviewDropActive(false);
-    dragSourceRef.current = null;
   }, []);
 
   const commitDrop = useCallback(
@@ -1024,7 +1114,11 @@ export function CustomKeyboardSettingsView({
       targetIndex: number | null,
       overPreview: boolean,
     ) => {
-      if (shortcutEditMode && overPreview) {
+      if (shortcutEditMode && (overPreview || targetIndex === null)) {
+        resetDrag();
+        return;
+      }
+      if (!shortcutEditMode && !overPreview) {
         resetDrag();
         return;
       }
@@ -1042,133 +1136,90 @@ export function CustomKeyboardSettingsView({
     [activeTab, resetDrag, shortcutEditMode, viewModel],
   );
 
-  const setDragSource = (event: DragEvent<HTMLElement>, source: CustomKeyboardDragSource) => {
-    dragSourceRef.current = source;
-    setDraggedButtonId(source.keyId);
-    setDropTargetButtonId(null);
-    setDropTargetRowId(null);
-    setShortcutDropIndicator(null);
-    setPreviewDropActive(false);
-    event.dataTransfer.effectAllowed = "copyMove";
-    event.dataTransfer.setData("text/plain", source.keyId);
-    event.dataTransfer.setData("application/x-muximo-keyboard-collection", source.collection);
-  };
+  const updateDndDropTarget = useCallback(
+    (session: CustomKeyboardDndSession, over: DragOverEvent["over"]) => {
+      const target = readCustomKeyboardDndDropTarget(over);
+      const isPreviewTarget =
+        target?.kind === "preview" || target?.kind === "preview-row" || target?.kind === "preview-key";
+      const targetRowId = target?.kind === "preview-row" || target?.kind === "preview-key" ? target.rowId : null;
+      const targetKeyId = target?.kind === "preview-key" ? target.targetKeyId : null;
+      const targetIndex =
+        shortcutEditMode && activeTab === "shortcuts" && target?.kind === "shortcut-library"
+          ? target.targetIndex
+          : null;
+      const overPreview = !shortcutEditMode && isPreviewTarget;
 
-  const handleDrop = (
-    event: DragEvent<HTMLElement>,
-    targetKeyId?: string,
-    targetIndex?: number,
-    targetRowId?: string,
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const sourceId = draggedButtonId ?? event.dataTransfer.getData("text/plain");
-    if (!sourceId) {
-      resetDrag();
-      return;
-    }
-
-    const overPreview = Boolean(event.currentTarget.closest('[data-custom-keyboard-drop-zone="preview"]'));
-    const collectionValue = event.dataTransfer.getData("application/x-muximo-keyboard-collection");
-    const collection = isCustomKeyboardDragCollection(collectionValue)
-      ? collectionValue
-      : shortcutEditMode && activeTab === "shortcuts"
-        ? "shortcut-library"
-        : viewModel.assignedKeyIds.includes(sourceId)
-          ? "keyboard"
-          : "library";
-    const source = dragSourceRef.current ?? { keyId: sourceId, collection };
-    commitDrop(source, targetRowId ?? null, targetKeyId ?? null, targetIndex ?? null, overPreview);
-  };
-
-  const beginPointerDrag = (event: ReactPointerEvent<HTMLElement>, source: CustomKeyboardDragSource) => {
-    if (event.pointerType === "mouse") return;
-    pointerDragRef.current = {
-      keyId: source.keyId,
-      source,
-      startX: event.clientX,
-      startY: event.clientY,
-      started: false,
-      targetRowId: null,
-      targetKeyId: null,
-      targetIndex: null,
-      overPreview: false,
-    };
-  };
-
-  useEffect(() => {
-    const handlePointerMove = (event: PointerEvent) => {
-      const drag = pointerDragRef.current;
-      if (!drag) return;
-
-      if (!drag.started) {
-        const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
-        if (distance < 8) return;
-        drag.started = true;
-        setDraggedButtonId(drag.keyId);
-        dragSourceRef.current = drag.source;
-        suppressClickRef.current = true;
-      }
-
-      event.preventDefault();
-      setPointerDragPosition({ x: event.clientX, y: event.clientY });
-      const target = document.elementFromPoint(event.clientX, event.clientY);
-      const targetKeyId = target?.closest<HTMLElement>("[data-custom-keyboard-drop-target]")?.dataset
-        .customKeyboardDropTarget;
-      const targetRowId = target?.closest<HTMLElement>("[data-custom-keyboard-drop-row]")?.dataset
-        .customKeyboardDropRow;
-      const targetIndexValue = target?.closest<HTMLElement>("[data-custom-keyboard-drop-index]")?.dataset
-        .customKeyboardDropIndex;
-      const targetIndex = targetIndexValue === undefined ? null : Number(targetIndexValue);
-      const overPreview = Boolean(target?.closest<HTMLElement>('[data-custom-keyboard-drop-zone="preview"]'));
-      drag.targetRowId = targetRowId ?? null;
-      drag.targetKeyId = targetKeyId ?? null;
-      drag.targetIndex =
-        shortcutEditMode && activeTab === "shortcuts" && Number.isInteger(targetIndex) ? targetIndex : null;
-      drag.overPreview = overPreview;
-      setDropTargetButtonId(targetKeyId ?? null);
-      setDropTargetRowId(targetRowId ?? null);
-      setShortcutDropIndicator(drag.targetIndex === null ? null : { index: drag.targetIndex });
+      session.targetRowId = targetRowId;
+      session.targetKeyId = targetKeyId;
+      session.targetIndex = targetIndex;
+      session.overPreview = overPreview;
+      setDropTargetButtonId(targetKeyId);
+      setDropTargetRowId(targetRowId);
+      setShortcutDropIndicator(session.targetIndex === null ? null : { index: session.targetIndex });
       setPreviewDropActive(overPreview);
-    };
+    },
+    [activeTab, shortcutEditMode],
+  );
 
-    const handlePointerUp = () => {
-      const drag = pointerDragRef.current;
-      if (!drag) return;
-      pointerDragRef.current = null;
-      if (drag.started) {
-        commitDrop(drag.source, drag.targetRowId, drag.targetKeyId, drag.targetIndex, drag.overPreview);
-        if (suppressClickTimerRef.current !== null) window.clearTimeout(suppressClickTimerRef.current);
-        suppressClickTimerRef.current = window.setTimeout(() => {
-          suppressClickRef.current = false;
-          suppressClickTimerRef.current = null;
-        }, 350);
-      } else {
-        resetDrag();
-      }
-    };
+  const handleDndDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const source = readCustomKeyboardDragSource(event.active);
+      if (!source) return;
 
-    const handlePointerCancel = () => {
-      if (!pointerDragRef.current) return;
-      pointerDragRef.current = null;
       resetDrag();
-      if (suppressClickTimerRef.current !== null) {
-        window.clearTimeout(suppressClickTimerRef.current);
-        suppressClickTimerRef.current = null;
-      }
-      suppressClickRef.current = false;
-    };
+      dndSessionRef.current = {
+        source,
+        moved: false,
+        targetRowId: null,
+        targetKeyId: null,
+        targetIndex: null,
+        overPreview: false,
+      };
+      setDraggedButtonId(source.keyId);
+      setDropTargetButtonId(null);
+      setDropTargetRowId(null);
+      setShortcutDropIndicator(null);
+      setPreviewDropActive(false);
+    },
+    [resetDrag],
+  );
 
-    window.addEventListener("pointermove", handlePointerMove, { passive: false });
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerCancel);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerCancel);
-      if (suppressClickTimerRef.current !== null) window.clearTimeout(suppressClickTimerRef.current);
-    };
-  }, [activeTab, commitDrop, resetDrag, shortcutEditMode]);
+  const handleDndDragMove = useCallback((event: DragMoveEvent) => {
+    const session = dndSessionRef.current;
+    if (!session) return;
+
+    session.moved = session.moved || event.delta.x !== 0 || event.delta.y !== 0;
+  }, []);
+
+  const handleDndDragOver = useCallback(
+    (event: DragOverEvent) => {
+      const session = dndSessionRef.current;
+      if (!session) return;
+      updateDndDropTarget(session, event.over);
+    },
+    [updateDndDropTarget],
+  );
+
+  const handleDndDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const session = dndSessionRef.current;
+      if (!session) return;
+
+      const moved = session.moved || event.delta.x !== 0 || event.delta.y !== 0;
+      if (!moved) {
+        resetDrag();
+        return;
+      }
+
+      updateDndDropTarget(session, event.over);
+      commitDrop(session.source, session.targetRowId, session.targetKeyId, session.targetIndex, session.overPreview);
+    },
+    [commitDrop, resetDrag, updateDndDropTarget],
+  );
+
+  const handleDndDragCancel = useCallback(() => {
+    resetDrag();
+  }, [resetDrag]);
 
   const openShortcutModal = (button?: CustomKeyboardKey) => {
     setEditingShortcutId(button?.id ?? null);
@@ -1197,8 +1248,53 @@ export function CustomKeyboardSettingsView({
     setActiveTab("shortcuts");
   };
 
+  const openProfileCreateModal = () => {
+    setNewProfileName("New profile");
+    setNewProfileIcon("terminal");
+    setProfileModal("create");
+  };
+
+  const openProfileEditModal = () => {
+    setProfileNameDraft(activeProfile.name);
+    setProfileIconDraft(activeProfile.icon);
+    setProfileModal("edit");
+  };
+
+  const closeProfileModal = () => {
+    setProfileModal(null);
+  };
+
+  const saveProfile = () => {
+    if (profileModal === "create") {
+      if (!isCustomKeyboardProfileNameValid(newProfileName)) return;
+      viewModel.onCreateProfile({ name: newProfileName, icon: newProfileIcon });
+      closeProfileModal();
+      return;
+    }
+    if (profileModal !== "edit") return;
+    if (activeProfile.id !== DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID) {
+      if (!isCustomKeyboardProfileNameValid(profileNameDraft)) return;
+      viewModel.onRenameProfile(activeProfile.id, profileNameDraft);
+      viewModel.onSetProfileIcon(activeProfile.id, profileIconDraft);
+    }
+    closeProfileModal();
+  };
+
+  const duplicateActiveProfile = () => {
+    viewModel.onDuplicateProfile(activeProfile.id);
+    closeProfileModal();
+  };
+
+  const deleteActiveProfile = () => {
+    if (activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID) return;
+    if (!window.confirm(`Delete profile "${activeProfile.name}"?`)) return;
+    viewModel.onDeleteProfile(activeProfile.id);
+    closeProfileModal();
+  };
+
   const assignedKeyIds = new Set(viewModel.assignedKeyIds);
-  const layoutKeys = viewModel.rows.flatMap((row) => row.items.map((item) => item.key));
+  const editableRows = viewModel.rows.filter((row) => row.id === CUSTOM_KEYBOARD_EDITABLE_ROW_ID);
+  const layoutKeys = editableRows.flatMap((row) => row.items.map((item) => item.key));
   const allKeys = [...layoutKeys, ...viewModel.availableKeys];
   const categoryButtons = Array.from(
     new Map(allKeys.filter((key) => key.category === activeTab).map((key) => [key.id, key] as const)).values(),
@@ -1208,467 +1304,279 @@ export function CustomKeyboardSettingsView({
     activeTab === "shortcuts" && shortcutEditMode && pointerDraggedButton?.category === "shortcuts";
 
   return (
-    <main className="relative flex h-[var(--app-viewport-height)] min-h-0 flex-col overflow-hidden bg-[#061008] text-[#d9f4dc]">
-      <header className="flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#1d4325] bg-[rgb(6_16_8_/_96%)] px-[max(10px,var(--safe-area-left))] py-2">
-        <button
-          className="grid size-8 shrink-0 place-items-center rounded-[8px] border border-[#2d5d37] bg-[#0b2111] text-[#a9e8b1]"
-          type="button"
-          onClick={onClose}
-          aria-label="Close custom keyboard settings"
-        >
-          <AppIcon name="arrow-left" size={15} />
-        </button>
-        <div className="min-w-0 flex-1">
-          <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.16em] text-[#63ae6e]">
-            Custom keys
-          </span>
-          <h1 className="m-0 mt-0.5 truncate text-[0.9rem] font-bold tracking-[-0.03em]">Keyboard settings</h1>
-        </div>
-        <button
-          className="rounded-[8px] bg-[#8bff9a] px-2.5 py-1.5 font-mono text-[0.56rem] font-bold uppercase tracking-[0.08em] text-[#061008]"
-          type="button"
-          onClick={onSave}
-        >
-          Save
-        </button>
-      </header>
-
-      <section
-        className="shrink-0 border-b border-[#1d4927] bg-[rgb(7_20_10_/_94%)] px-3 py-2.5"
-        aria-label="Keyboard profiles"
-      >
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.14em] text-[#63ae6e]">
-              Profiles
+    <DndContext
+      sensors={sensors}
+      collisionDetection={customKeyboardCollisionDetection}
+      autoScroll={false}
+      onDragStart={handleDndDragStart}
+      onDragMove={handleDndDragMove}
+      onDragOver={handleDndDragOver}
+      onDragEnd={handleDndDragEnd}
+      onDragCancel={handleDndDragCancel}
+    >
+      <main className="relative flex h-[var(--app-viewport-height)] min-h-0 flex-col overflow-hidden bg-[#061008] text-[#d9f4dc]">
+        <header className="flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#1d4325] bg-[rgb(6_16_8_/_96%)] px-[max(10px,var(--safe-area-left))] py-2">
+          <button
+            className="grid size-8 shrink-0 place-items-center rounded-[8px] border border-[#2d5d37] bg-[#0b2111] text-[#a9e8b1]"
+            type="button"
+            onClick={onClose}
+            aria-label="Close custom keyboard settings"
+          >
+            <AppIcon name="arrow-left" size={15} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.16em] text-[#63ae6e]">
+              Custom keys
             </span>
-            <h2 className="m-0 mt-0.5 truncate text-[0.82rem] font-bold">Workspace keyboard profiles</h2>
+            <h1 className="m-0 mt-0.5 truncate text-[0.9rem] font-bold tracking-[-0.03em]">Keyboard settings</h1>
           </div>
           <button
-            className="shrink-0 rounded-[7px] border border-[#315f3a] bg-[#0b2411] px-2 py-1.5 font-mono text-[0.5rem] font-bold uppercase tracking-[0.05em] text-[#a9e8b1]"
+            className="rounded-[8px] bg-[#8bff9a] px-2.5 py-1.5 font-mono text-[0.56rem] font-bold uppercase tracking-[0.08em] text-[#061008]"
             type="button"
-            onClick={() => setNewProfileOpen((current) => !current)}
-            aria-expanded={newProfileOpen}
+            onClick={onSave}
           >
-            {newProfileOpen ? "Cancel" : "New profile"}
+            Save
           </button>
-        </div>
-        <div className="mt-2 flex min-w-0 gap-1.5 overflow-x-auto pb-0.5" role="listbox" aria-label="Keyboard profiles">
-          {viewModel.profiles.map((profile) => {
-            const active = profile.id === viewModel.activeProfile.id;
-            return (
-              <div className="flex shrink-0 items-stretch gap-0.5" key={profile.id}>
-                <button
-                  className={`flex min-h-9 max-w-[150px] min-w-[86px] items-center gap-1.5 rounded-[7px] border px-2 text-left ${
-                    active
-                      ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd]"
-                      : "border-[#245631] bg-[#0b1c0f] text-[#8fc998]"
-                  }`}
-                  type="button"
-                  onClick={() => viewModel.onSelectProfile(profile.id)}
-                  role="option"
-                  aria-selected={active}
-                  title={profile.name}
-                >
-                  <CustomKeyboardIconView icon={profile.icon} size={14} />
-                  <span className="min-w-0 flex-1 truncate text-[0.54rem] font-bold">{profile.name}</span>
-                  {active ? (
-                    <span className="text-[0.7rem]" aria-hidden="true">
-                      ✓
-                    </span>
-                  ) : null}
-                </button>
-                {viewModel.workspaceId && profile.id !== DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID ? (
-                  <button
-                    className={`min-h-9 rounded-[7px] border px-1.5 font-mono text-[0.44rem] font-bold uppercase tracking-[0.04em] ${
-                      profile.linked
-                        ? "border-[#4a9a57] bg-[#12351a] text-[#baffc1]"
-                        : "border-[#315f3a] bg-[#071509] text-[#719176]"
-                    }`}
-                    type="button"
-                    onClick={() => viewModel.onToggleProfileLink(profile.id)}
-                    aria-pressed={profile.linked}
-                    title={profile.linked ? "Remove profile from workspace" : "Add profile to workspace"}
-                  >
-                    {profile.linked ? "Linked" : "Link"}
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-        {newProfileOpen ? (
-          <form
-            className="mt-2 grid gap-2 rounded-[8px] border border-[#285a33] bg-[#061008] p-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!isCustomKeyboardProfileNameValid(newProfileName)) return;
-              viewModel.onCreateProfile({ name: newProfileName, icon: newProfileIcon });
-              setNewProfileOpen(false);
-            }}
-          >
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-              <label className="flex min-w-0 flex-col gap-1">
-                <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
-                  Profile name
-                </span>
-                <input
-                  className="min-h-9 min-w-0 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a]"
-                  value={newProfileName}
-                  onChange={(event) => setNewProfileName(event.target.value)}
-                  maxLength={40}
-                  autoComplete="off"
-                  aria-label="New profile name"
-                />
-              </label>
-              <button
-                className="min-h-9 rounded-[6px] bg-[#8bff9a] px-2.5 font-mono text-[0.52rem] font-bold uppercase tracking-[0.06em] text-[#061008] disabled:opacity-35"
-                type="submit"
-                disabled={!isCustomKeyboardProfileNameValid(newProfileName)}
-              >
-                Create
-              </button>
-            </div>
-            <div className="min-w-0">
-              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
-                Profile icon
-              </span>
-              <CustomKeyboardIconPicker value={newProfileIcon} onChange={setNewProfileIcon} />
-            </div>
-          </form>
-        ) : null}
-        <div className="mt-2 grid gap-2 rounded-[8px] border border-[#1d4325] bg-[#061008] p-2">
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-            <label className="flex min-w-0 flex-col gap-1">
-              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
-                Active profile name
-              </span>
-              <input
-                className="min-h-9 min-w-0 rounded-[6px] border border-[#24552e] bg-[#0b1c0f] px-2 font-mono text-[0.62rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a] disabled:opacity-45"
-                value={profileNameDraft}
-                onChange={(event) => setProfileNameDraft(event.target.value)}
-                maxLength={40}
-                disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
-                autoComplete="off"
-                aria-label="Active profile name"
-              />
-            </label>
-            <div className="flex min-h-9 items-stretch gap-1">
-              <button
-                className="rounded-[6px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#a9e8b1] disabled:opacity-35"
-                type="button"
-                onClick={() => viewModel.onRenameProfile(viewModel.activeProfile.id, profileNameDraft)}
-                disabled={
-                  viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID ||
-                  !isCustomKeyboardProfileNameValid(profileNameDraft)
-                }
-              >
-                Rename
-              </button>
-              <button
-                className="rounded-[6px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#a9e8b1]"
-                type="button"
-                onClick={() => viewModel.onDuplicateProfile(viewModel.activeProfile.id)}
-              >
-                Duplicate
-              </button>
-              <button
-                className="rounded-[6px] border border-red/40 bg-red/10 px-2 font-mono text-[0.5rem] font-bold uppercase tracking-[0.04em] text-[#ffb0aa] disabled:opacity-35"
-                type="button"
-                onClick={() => {
-                  if (window.confirm(`Delete profile "${viewModel.activeProfile.name}"?`)) {
-                    viewModel.onDeleteProfile(viewModel.activeProfile.id);
-                  }
-                }}
-                disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-          <div className="min-w-0">
-            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
-              Active profile icon
-            </span>
-            <CustomKeyboardIconPicker
-              value={profileIconDraft}
-              onChange={(icon) => {
-                setProfileIconDraft(icon);
-                viewModel.onSetProfileIcon(viewModel.activeProfile.id, icon);
-              }}
-              disabled={viewModel.activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
-            />
-          </div>
-        </div>
-        <p className="m-0 mt-1 font-mono text-[0.48rem] leading-[1.4] text-[#628168]">
-          {viewModel.workspaceId
-            ? "Select a profile to remember it for this workspace. Linked profiles remain available in the profile picker."
-            : "Profile data is stored locally on this device. Default keeps the shared terminal actions available."}
-        </p>
-      </section>
+        </header>
 
-      <section
-        className={`shrink-0 border-b border-[#1d4927] bg-[rgb(8_24_12_/_92%)] px-3 py-2.5 ${
-          shortcutEditMode ? "pointer-events-none opacity-45" : ""
-        }`}
-        aria-label="Custom keyboard preview"
-        aria-disabled={shortcutEditMode}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.14em] text-[#63ae6e]">
-              {shortcutEditMode ? "Locked" : "Preview"}
-            </span>
-            <h2 className="m-0 mt-0.5 text-[0.82rem] font-bold">Custom keyboard</h2>
-          </div>
-          <button
-            className={`rounded-[7px] border px-2 py-1 font-mono text-[0.5rem] font-bold uppercase tracking-[0.06em] ${
-              showFlickSettings
-                ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd]"
-                : "border-[#315f3a] bg-[#0b2411] text-[#8fc998]"
-            }`}
-            type="button"
-            onClick={() => setShowFlickSettings((current) => !current)}
-            aria-expanded={showFlickSettings}
-          >
-            Flick repeat
-          </button>
-        </div>
-        <div
-          className={`mt-2 flex min-h-[52px] min-w-0 items-center gap-1 rounded-[9px] border border-dashed bg-[#061008] p-1.5 transition-colors ${
-            draggedButtonId === null ? "overflow-x-auto touch-pan-x" : "overflow-x-hidden touch-none"
-          } ${previewDropActive ? "border-[#8bff9a] bg-[#102d17]" : "border-[#386e43]"}`}
-          data-custom-keyboard-drop-zone="preview"
-          role="toolbar"
-          aria-label="Custom keyboard preview drop zone"
-          onDragEnter={
-            shortcutEditMode
-              ? undefined
-              : (event) => {
-                  event.preventDefault();
-                  setPreviewDropActive(true);
-                }
-          }
-          onDragOver={
-            shortcutEditMode
-              ? undefined
-              : (event) => {
-                  event.preventDefault();
-                  setPreviewDropActive(true);
-                }
-          }
-          onDragLeave={shortcutEditMode ? undefined : () => setPreviewDropActive(false)}
-          onDrop={shortcutEditMode ? undefined : (event) => handleDrop(event)}
+        <section
+          className="shrink-0 border-b border-[#1d4927] bg-[rgb(7_20_10_/_94%)] px-3 py-2"
+          aria-label="Keyboard profiles"
         >
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            {viewModel.rows.map((row) => (
-              <fieldset
-                className="m-0 flex min-w-0 items-center gap-1 overflow-x-auto border-0 p-0 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                key={row.id}
-                data-custom-keyboard-drop-row={row.id}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setDropTargetRowId(row.id);
-                  setPreviewDropActive(true);
-                }}
-                onDrop={(event) => handleDrop(event, undefined, undefined, row.id)}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0 font-mono text-[0.46rem] font-bold uppercase tracking-[0.14em] text-[#63ae6e]">
+              Profile
+            </span>
+            <label className="min-w-0 flex-1">
+              <span className="sr-only">Keyboard profile</span>
+              <select
+                className="min-h-9 w-full min-w-0 rounded-[7px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.58rem] font-bold text-[#d9ffdd] outline-none focus:border-[#8bff9a]"
+                value={activeProfile.id}
+                onChange={(event) => viewModel.onSelectProfile(event.target.value)}
+                aria-label="Keyboard profile"
               >
-                <span className="w-12 shrink-0 font-mono text-[0.42rem] font-bold uppercase tracking-[0.08em] text-[#628168]">
-                  {row.id}
-                </span>
-                {row.items.map((item) => (
-                  <CustomKeyboardPreviewButton
-                    key={item.key.id}
-                    button={item.key}
-                    assigned
-                    dragging={item.key.id === draggedButtonId}
-                    dropTarget={row.id === dropTargetRowId && item.key.id === dropTargetButtonId}
-                    dragEnabled={!shortcutEditMode}
-                    onRemove={() => viewModel.onRemoveKey(item.key.id)}
-                    onDragStart={(event) =>
-                      setDragSource(event, { keyId: item.key.id, collection: "keyboard", rowId: row.id })
-                    }
-                    onPointerDown={(event) =>
-                      beginPointerDrag(event, { keyId: item.key.id, collection: "keyboard", rowId: row.id })
-                    }
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setDropTargetRowId(row.id);
-                      setDropTargetButtonId(item.key.id);
-                      setPreviewDropActive(true);
-                    }}
-                    onDrop={(event) => handleDrop(event, item.key.id, undefined, row.id)}
-                    onDragEnd={resetDrag}
-                  />
+                {viewModel.profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
                 ))}
-                <span
-                  className={`flex h-[34px] min-w-[92px] shrink-0 items-center justify-center rounded-[6px] border border-dashed px-2 font-mono text-[0.48rem] transition-colors ${
-                    previewDropActive && dropTargetRowId === row.id
-                      ? "border-[#8bff9a] text-[#baffc1]"
-                      : "border-[#2a5c36] text-[#628168]"
-                  }`}
-                >
-                  Drag keys here
-                </span>
-              </fieldset>
-            ))}
-          </div>
-        </div>
-        {showFlickSettings ? (
-          <div className="mt-2 rounded-[8px] border border-[#285a33] bg-[#071509] p-2">
-            <p className="m-0 text-[0.54rem] text-[#719176]">
-              Swipe or hold the arrow pad to repeat the arrow input at the selected interval.
-            </p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <label className="rounded-[7px] border border-[#1d4325] bg-[#061008] p-2">
-                <span className="flex items-center justify-between gap-2">
-                  <strong className="text-[0.6rem]">Repeat start delay</strong>
-                  <output className="rounded-full border border-[#315f3a] bg-[#0b2411] px-1.5 py-0.5 font-mono text-[0.52rem] font-bold text-[#a9e8b1]">
-                    {viewModel.repeatStartDelayMs} ms
-                  </output>
-                </span>
-                <input
-                  className="mt-1.5 w-full accent-[#8bff9a]"
-                  type="range"
-                  min={200}
-                  max={1200}
-                  step={20}
-                  value={viewModel.repeatStartDelayMs}
-                  onChange={(event) => viewModel.onRepeatStartDelayChange(Number(event.target.value))}
-                  aria-label="Flick repeat start delay"
-                />
-              </label>
-              <label className="rounded-[7px] border border-[#1d4325] bg-[#061008] p-2">
-                <span className="flex items-center justify-between gap-2">
-                  <strong className="text-[0.6rem]">Arrow repeat interval</strong>
-                  <output className="rounded-full border border-[#315f3a] bg-[#0b2411] px-1.5 py-0.5 font-mono text-[0.52rem] font-bold text-[#a9e8b1]">
-                    {viewModel.repeatIntervalMs} ms
-                  </output>
-                </span>
-                <input
-                  className="mt-1.5 w-full accent-[#8bff9a]"
-                  type="range"
-                  min={80}
-                  max={600}
-                  step={20}
-                  value={viewModel.repeatIntervalMs}
-                  onChange={(event) => viewModel.onRepeatIntervalChange(Number(event.target.value))}
-                  aria-label="Flick repeat interval"
-                />
-              </label>
-            </div>
-          </div>
-        ) : null}
-      </section>
-
-      <div
-        className="flex shrink-0 overflow-x-auto border-b border-[#1d4325] bg-[#071509] px-2"
-        role="tablist"
-        aria-label="Custom keyboard assignment categories"
-      >
-        {customKeyboardSettingsTabs.map((tab) => (
-          <button
-            className={`min-w-[86px] flex-1 border-b-2 px-2 py-2.5 font-mono text-[0.54rem] font-bold uppercase tracking-[0.08em] ${
-              activeTab === tab.value ? "border-[#8bff9a] text-[#d9ffdd]" : "border-transparent text-[#6fa677]"
-            }`}
-            key={tab.value}
-            type="button"
-            onClick={() => setActiveTab(tab.value)}
-            role="tab"
-            aria-selected={activeTab === tab.value}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      <div
-        className={`min-h-0 flex-1 p-3 pb-[max(18px,var(--safe-area-bottom))] ${
-          activeTab === "shortcuts" ? "overflow-y-auto" : "overflow-hidden"
-        }`}
-      >
-        {activeTab === "shortcuts" ? (
-          <CustomKeyboardShortcutLibrary
-            viewModel={viewModel}
-            editMode={shortcutEditMode}
-            onToggleEditMode={() => setShortcutEditMode((current) => !current)}
-            onRegisterShortcut={() => openShortcutModal()}
-            onEditShortcut={openShortcutModal}
-            draggedButtonId={draggedButtonId}
-            onDragStart={(event, source) => setDragSource(event, source)}
-            onPointerDown={(event, source) => beginPointerDrag(event, source)}
-            onDragOver={(event, targetIndex) => {
-              event.preventDefault();
-              setShortcutDropIndicator({ index: targetIndex });
-            }}
-            onDrop={(event, targetIndex) => handleDrop(event, undefined, targetIndex)}
-            onDragEnd={resetDrag}
-            dropIndicator={shortcutDropIndicator}
-          />
-        ) : (
-          <CustomKeyboardButtonLibrary
-            buttons={categoryButtons}
-            assignedKeyIds={assignedKeyIds}
-            category={activeTab}
-            shiftActive={abcShiftActive}
-            onToggleShift={() => setAbcShiftActive((current) => !current)}
-            numberShiftActive={numberShiftActive}
-            onToggleNumberShift={() => setNumberShiftActive((current) => !current)}
-            onAddButton={addButtonFromClick}
-            onDragStart={(event, source) => setDragSource(event, source)}
-            onPointerDown={(event, source) => beginPointerDrag(event, source)}
-            onDragEnd={resetDrag}
-            draggedButtonId={draggedButtonId}
-          />
-        )}
-      </div>
-      {shortcutModalOpen ? (
-        <CustomKeyboardShortcutRegistrationModal
-          draft={shortcutDraft}
-          mode={editingShortcutId ? "edit" : "create"}
-          onChange={setShortcutDraft}
-          onClose={closeShortcutModal}
-          onSubmit={saveShortcut}
-        />
-      ) : null}
-      {pointerDragPosition && pointerDraggedButton ? (
-        <div
-          className={`pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-1/2 rounded-[9px] border border-[#8bff9a] bg-[#194d25]/95 font-mono text-[#d9ffdd] shadow-[0_12px_30px_rgb(0_0_0_/_42%)] ${
-            draggingShortcutCard
-              ? "flex w-[min(260px,calc(100vw-24px))] items-center gap-2 p-2"
-              : "flex size-[48px] flex-col items-center justify-center"
-          }`}
-          style={{ left: pointerDragPosition.x, top: pointerDragPosition.y }}
-          aria-hidden="true"
-        >
-          {pointerDraggedButton.icon ? (
-            <span
-              className={
-                draggingShortcutCard
-                  ? "grid size-9 shrink-0 place-items-center rounded-[7px] bg-[#0d2237] text-[0.86rem]"
-                  : "text-[0.86rem] font-bold leading-none"
-              }
+              </select>
+            </label>
+            <button
+              className="grid size-9 shrink-0 place-items-center rounded-[7px] border border-[#315f3a] bg-[#0b2411] text-[#a9e8b1] hover:border-[#8bff9a]"
+              type="button"
+              onClick={openProfileEditModal}
+              aria-label="Edit keyboard profile"
+              title="Edit keyboard profile"
             >
-              <CustomKeyboardIconView icon={pointerDraggedButton.icon} />
-            </span>
+              <AppIcon name="edit" size={15} />
+            </button>
+            <button
+              className="grid size-9 shrink-0 place-items-center rounded-[7px] border border-[#315f3a] bg-[#0b2411] text-[#a9e8b1] hover:border-[#8bff9a]"
+              type="button"
+              onClick={openProfileCreateModal}
+              aria-label="Add keyboard profile"
+              title="Add keyboard profile"
+            >
+              <AppIcon name="plus" size={15} />
+            </button>
+            {viewModel.workspaceId && activeProfile.id !== DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID ? (
+              <button
+                className={`min-h-9 shrink-0 rounded-[7px] border px-2 font-mono text-[0.44rem] font-bold uppercase tracking-[0.04em] ${
+                  activeProfile.linked
+                    ? "border-[#4a9a57] bg-[#12351a] text-[#baffc1]"
+                    : "border-[#315f3a] bg-[#071509] text-[#719176]"
+                }`}
+                type="button"
+                onClick={() => viewModel.onToggleProfileLink(activeProfile.id)}
+                aria-pressed={activeProfile.linked}
+                title={activeProfile.linked ? "Remove profile from workspace" : "Add profile to workspace"}
+              >
+                {activeProfile.linked ? "Linked" : "Link"}
+              </button>
+            ) : null}
+          </div>
+          <p className="m-0 mt-1 truncate font-mono text-[0.48rem] leading-[1.4] text-[#628168]">
+            {viewModel.workspaceId
+              ? "Choose the profile for this workspace. Use edit or add to manage profiles."
+              : "Profiles are stored locally on this device."}
+          </p>
+        </section>
+
+        <section
+          className={`shrink-0 border-b border-[#1d4927] bg-[rgb(8_24_12_/_92%)] px-3 py-2.5 ${
+            shortcutEditMode ? "pointer-events-none opacity-45" : ""
+          }`}
+          aria-label="Custom keyboard preview"
+          aria-disabled={shortcutEditMode}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.14em] text-[#63ae6e]">
+                {shortcutEditMode ? "Locked" : "Preview"}
+              </span>
+              <h2 className="m-0 mt-0.5 text-[0.82rem] font-bold">Custom keyboard</h2>
+            </div>
+            <button
+              className={`rounded-[7px] border px-2 py-1 font-mono text-[0.5rem] font-bold uppercase tracking-[0.06em] ${
+                showFlickSettings
+                  ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd]"
+                  : "border-[#315f3a] bg-[#0b2411] text-[#8fc998]"
+              }`}
+              type="button"
+              onClick={() => setShowFlickSettings((current) => !current)}
+              aria-expanded={showFlickSettings}
+            >
+              Flick repeat
+            </button>
+          </div>
+          <CustomKeyboardPreviewDropZone
+            active={previewDropActive}
+            disabled={shortcutEditMode}
+            dragging={draggedButtonId !== null}
+          >
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              {editableRows.map((row) => (
+                <CustomKeyboardPreviewRow
+                  key={row.id}
+                  row={row}
+                  draggedButtonId={draggedButtonId}
+                  dropTargetButtonId={dropTargetButtonId}
+                  dropTargetRowId={dropTargetRowId}
+                  previewDropActive={previewDropActive}
+                  dragEnabled={!shortcutEditMode}
+                  onRemove={(keyId) => viewModel.onRemoveKey(keyId)}
+                />
+              ))}
+            </div>
+          </CustomKeyboardPreviewDropZone>
+          {showFlickSettings ? (
+            <div className="mt-2 rounded-[8px] border border-[#285a33] bg-[#071509] p-2">
+              <p className="m-0 text-[0.54rem] text-[#719176]">
+                Swipe or hold the arrow pad to repeat the arrow input at the selected interval.
+              </p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <label className="rounded-[7px] border border-[#1d4325] bg-[#061008] p-2">
+                  <span className="flex items-center justify-between gap-2">
+                    <strong className="text-[0.6rem]">Repeat start delay</strong>
+                    <output className="rounded-full border border-[#315f3a] bg-[#0b2411] px-1.5 py-0.5 font-mono text-[0.52rem] font-bold text-[#a9e8b1]">
+                      {viewModel.repeatStartDelayMs} ms
+                    </output>
+                  </span>
+                  <input
+                    className="mt-1.5 w-full accent-[#8bff9a]"
+                    type="range"
+                    min={200}
+                    max={1200}
+                    step={20}
+                    value={viewModel.repeatStartDelayMs}
+                    onChange={(event) => viewModel.onRepeatStartDelayChange(Number(event.target.value))}
+                    aria-label="Flick repeat start delay"
+                  />
+                </label>
+                <label className="rounded-[7px] border border-[#1d4325] bg-[#061008] p-2">
+                  <span className="flex items-center justify-between gap-2">
+                    <strong className="text-[0.6rem]">Arrow repeat interval</strong>
+                    <output className="rounded-full border border-[#315f3a] bg-[#0b2411] px-1.5 py-0.5 font-mono text-[0.52rem] font-bold text-[#a9e8b1]">
+                      {viewModel.repeatIntervalMs} ms
+                    </output>
+                  </span>
+                  <input
+                    className="mt-1.5 w-full accent-[#8bff9a]"
+                    type="range"
+                    min={80}
+                    max={600}
+                    step={20}
+                    value={viewModel.repeatIntervalMs}
+                    onChange={(event) => viewModel.onRepeatIntervalChange(Number(event.target.value))}
+                    aria-label="Flick repeat interval"
+                  />
+                </label>
+              </div>
+            </div>
           ) : null}
-          {draggingShortcutCard ? (
-            <span className="min-w-0 flex-1">
-              <strong className="block truncate text-[0.62rem]">{shortcutDisplayLabel(pointerDraggedButton)}</strong>
-              <code className="mt-0.5 block truncate text-[0.52rem] text-[#8fc998]">
-                {formatSequence(keySequence(pointerDraggedButton))}
-              </code>
-            </span>
+        </section>
+
+        <div
+          className="flex shrink-0 overflow-x-auto border-b border-[#1d4325] bg-[#071509] px-2"
+          role="tablist"
+          aria-label="Custom keyboard assignment categories"
+        >
+          {customKeyboardSettingsTabs.map((tab) => (
+            <button
+              className={`min-w-[86px] flex-1 border-b-2 px-2 py-2.5 font-mono text-[0.54rem] font-bold uppercase tracking-[0.08em] ${
+                activeTab === tab.value ? "border-[#8bff9a] text-[#d9ffdd]" : "border-transparent text-[#6fa677]"
+              }`}
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+              role="tab"
+              aria-selected={activeTab === tab.value}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div
+          className={`min-h-0 flex-1 p-3 pb-[max(18px,var(--safe-area-bottom))] ${
+            activeTab === "shortcuts" ? "overflow-y-auto" : "overflow-hidden"
+          }`}
+        >
+          {activeTab === "shortcuts" ? (
+            <CustomKeyboardShortcutLibrary
+              viewModel={viewModel}
+              editMode={shortcutEditMode}
+              onToggleEditMode={() => setShortcutEditMode((current) => !current)}
+              onRegisterShortcut={() => openShortcutModal()}
+              onEditShortcut={openShortcutModal}
+              draggedButtonId={draggedButtonId}
+              dropIndicator={shortcutDropIndicator}
+            />
           ) : (
-            <span className="max-w-[42px] truncate text-[0.42rem] leading-none">
-              {pointerDraggedButton.category === "shortcuts"
-                ? shortcutDisplayLabel(pointerDraggedButton)
-                : (pointerDraggedButton.label ?? "key")}
-            </span>
+            <CustomKeyboardButtonLibrary
+              buttons={categoryButtons}
+              assignedKeyIds={assignedKeyIds}
+              category={activeTab}
+              shiftActive={abcShiftActive}
+              onToggleShift={() => setAbcShiftActive((current) => !current)}
+              numberShiftActive={numberShiftActive}
+              onToggleNumberShift={() => setNumberShiftActive((current) => !current)}
+              onAddButton={addButtonFromClick}
+              draggedButtonId={draggedButtonId}
+            />
           )}
         </div>
-      ) : null}
-    </main>
+        {profileModal ? (
+          <CustomKeyboardProfileModal
+            mode={profileModal}
+            name={profileModal === "edit" ? profileNameDraft : newProfileName}
+            icon={profileModal === "edit" ? profileIconDraft : newProfileIcon}
+            isDefault={profileModal === "edit" && activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID}
+            onNameChange={profileModal === "edit" ? setProfileNameDraft : setNewProfileName}
+            onIconChange={profileModal === "edit" ? setProfileIconDraft : setNewProfileIcon}
+            onClose={closeProfileModal}
+            onSubmit={saveProfile}
+            onDuplicate={profileModal === "edit" ? duplicateActiveProfile : undefined}
+            onDelete={profileModal === "edit" ? deleteActiveProfile : undefined}
+          />
+        ) : null}
+        {shortcutModalOpen ? (
+          <CustomKeyboardShortcutRegistrationModal
+            draft={shortcutDraft}
+            mode={editingShortcutId ? "edit" : "create"}
+            onChange={setShortcutDraft}
+            onClose={closeShortcutModal}
+            onSubmit={saveShortcut}
+          />
+        ) : null}
+      </main>
+      <DragOverlay dropAnimation={null} zIndex={50} className="pointer-events-none">
+        {pointerDraggedButton ? (
+          <CustomKeyboardDragPreview button={pointerDraggedButton} shortcutCard={draggingShortcutCard} />
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
 
@@ -1683,6 +1591,58 @@ function isCustomKeyboardDragCollection(value: string): value is CustomKeyboardD
   return value === "keyboard" || value === "library" || value === "shortcut-library";
 }
 
+function readCustomKeyboardDragSource(active: DragStartEvent["active"]): CustomKeyboardDragSource | null {
+  const value = active.data.current?.customKeyboardSource;
+  if (!value || typeof value !== "object") return null;
+
+  const candidate = value as { keyId?: unknown; collection?: unknown; rowId?: unknown };
+  if (
+    typeof candidate.keyId !== "string" ||
+    typeof candidate.collection !== "string" ||
+    !isCustomKeyboardDragCollection(candidate.collection)
+  ) {
+    return null;
+  }
+
+  return {
+    keyId: candidate.keyId,
+    collection: candidate.collection,
+    ...(typeof candidate.rowId === "string" ? { rowId: candidate.rowId } : {}),
+  };
+}
+
+function readCustomKeyboardDndDropTarget(over: DragOverEvent["over"]): CustomKeyboardDndDropTarget | null {
+  const value = over?.data.current?.customKeyboardDropTarget;
+  if (!value || typeof value !== "object") return null;
+
+  const candidate = value as {
+    kind?: unknown;
+    rowId?: unknown;
+    targetKeyId?: unknown;
+    targetIndex?: unknown;
+  };
+  if (candidate.kind === "preview") return { kind: "preview" };
+  if (candidate.kind === "preview-row" && typeof candidate.rowId === "string") {
+    return { kind: "preview-row", rowId: candidate.rowId };
+  }
+  if (
+    candidate.kind === "preview-key" &&
+    typeof candidate.rowId === "string" &&
+    typeof candidate.targetKeyId === "string"
+  ) {
+    return { kind: "preview-key", rowId: candidate.rowId, targetKeyId: candidate.targetKeyId };
+  }
+  if (
+    candidate.kind === "shortcut-library" &&
+    typeof candidate.targetIndex === "number" &&
+    Number.isInteger(candidate.targetIndex) &&
+    candidate.targetIndex >= 0
+  ) {
+    return { kind: "shortcut-library", targetIndex: candidate.targetIndex };
+  }
+  return null;
+}
+
 function createShortcutDraft(): CustomKeyboardShortcutDraft {
   return {
     icon: "shortcut",
@@ -1690,31 +1650,136 @@ function createShortcutDraft(): CustomKeyboardShortcutDraft {
   };
 }
 
+function CustomKeyboardPreviewDropZone({
+  active,
+  disabled,
+  dragging,
+  children,
+}: {
+  active: boolean;
+  disabled: boolean;
+  dragging: boolean;
+  children: ReactNode;
+}) {
+  const { setNodeRef } = useDroppable({
+    id: "custom-keyboard-preview",
+    data: { customKeyboardDropTarget: { kind: "preview" } },
+    disabled,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`mt-2 flex min-h-[52px] min-w-0 items-center gap-1 rounded-[9px] border border-dashed bg-[#061008] p-1.5 transition-colors ${
+        dragging ? "overflow-x-hidden touch-none" : "overflow-x-auto touch-pan-x"
+      } ${active ? "border-[#8bff9a] bg-[#102d17]" : "border-[#386e43]"}`}
+      role="toolbar"
+      aria-label="Custom keyboard preview drop zone"
+      aria-disabled={disabled}
+    >
+      {children}
+    </div>
+  );
+}
+
+function CustomKeyboardPreviewRow({
+  row,
+  draggedButtonId,
+  dropTargetButtonId,
+  dropTargetRowId,
+  previewDropActive,
+  dragEnabled,
+  onRemove,
+}: {
+  row: CustomKeyboardSettingsViewModel["rows"][number];
+  draggedButtonId: string | null;
+  dropTargetButtonId: string | null;
+  dropTargetRowId: string | null;
+  previewDropActive: boolean;
+  dragEnabled: boolean;
+  onRemove: (keyId: string) => void;
+}) {
+  const { setNodeRef } = useDroppable({
+    id: `custom-keyboard-preview-row:${row.id}`,
+    data: { customKeyboardDropTarget: { kind: "preview-row", rowId: row.id } },
+    disabled: !dragEnabled,
+  });
+
+  return (
+    <fieldset
+      className="m-0 flex min-w-0 items-center gap-1 overflow-x-auto border-0 p-0 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      ref={setNodeRef}
+    >
+      {row.items.map((item) => (
+        <CustomKeyboardPreviewButton
+          key={item.key.id}
+          button={item.key}
+          source={{ keyId: item.key.id, collection: "keyboard", rowId: row.id }}
+          assigned
+          dragging={item.key.id === draggedButtonId}
+          dropTarget={row.id === dropTargetRowId && item.key.id === dropTargetButtonId}
+          dragEnabled={dragEnabled}
+          onRemove={() => onRemove(item.key.id)}
+        />
+      ))}
+      <span
+        className={`flex h-[34px] min-w-[92px] shrink-0 items-center justify-center rounded-[6px] border border-dashed px-2 font-mono text-[0.48rem] transition-colors ${
+          previewDropActive && dropTargetRowId === row.id
+            ? "border-[#8bff9a] text-[#baffc1]"
+            : "border-[#2a5c36] text-[#628168]"
+        }`}
+      >
+        Drag keys here
+      </span>
+    </fieldset>
+  );
+}
+
 function CustomKeyboardPreviewButton({
   button,
+  source,
   assigned,
   dragging,
   dropTarget,
   dragEnabled,
   onRemove,
-  onDragStart,
-  onPointerDown,
-  onDragOver,
-  onDrop,
-  onDragEnd,
 }: {
   button: CustomKeyboardKey;
+  source: CustomKeyboardDragSource;
   assigned: boolean;
   dragging: boolean;
   dropTarget: boolean;
   dragEnabled: boolean;
   onRemove: () => void;
-  onDragStart: (event: DragEvent<HTMLElement>) => void;
-  onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
-  onDragOver: (event: DragEvent<HTMLElement>) => void;
-  onDrop: (event: DragEvent<HTMLElement>) => void;
-  onDragEnd: () => void;
 }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDraggableNodeRef,
+    setActivatorNodeRef,
+  } = useDraggable({
+    id: `custom-keyboard-preview:${button.id}`,
+    data: { customKeyboardSource: source },
+    disabled: !dragEnabled,
+  });
+  const { setNodeRef: setDroppableNodeRef } = useDroppable({
+    id: `custom-keyboard-preview-key:${source.rowId ?? "main"}:${button.id}`,
+    data: {
+      customKeyboardDropTarget: {
+        kind: "preview-key",
+        rowId: source.rowId ?? "main",
+        targetKeyId: button.id,
+      },
+    },
+    disabled: !dragEnabled,
+  });
+  const setNodeRef = useCallback(
+    (element: HTMLElement | null) => {
+      setDraggableNodeRef(element);
+      setDroppableNodeRef(element);
+    },
+    [setDraggableNodeRef, setDroppableNodeRef],
+  );
   const displayLabel = keyboardButtonDisplayLabel(button);
   const valueLabel = keyboardButtonValueLabel(button);
   const showValueAsPrimary = valueLabel !== undefined;
@@ -1728,14 +1793,7 @@ function CustomKeyboardPreviewButton({
         assigned ? "border-[#4a8d55] bg-[#12351a]" : "border-[#2a5c36] bg-[#0b2111]",
         dragging ? "opacity-45" : "",
       ].join(" ")}
-      aria-label={button.accessibleLabel}
-      data-custom-keyboard-drop-target={button.id}
-      draggable={dragEnabled}
-      onDragStart={onDragStart}
-      onPointerDown={onPointerDown}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      onDragEnd={onDragEnd}
+      ref={setNodeRef}
     >
       {dropTarget ? (
         <span
@@ -1743,7 +1801,14 @@ function CustomKeyboardPreviewButton({
           aria-hidden="true"
         />
       ) : null}
-      <div className="flex min-w-0 flex-1 flex-col items-center justify-center font-mono text-[#c5ffcb]">
+      <button
+        className="flex min-w-0 flex-1 self-stretch appearance-none flex-col items-center justify-center border-0 bg-transparent p-0 font-mono text-[#c5ffcb]"
+        type="button"
+        ref={setActivatorNodeRef}
+        {...attributes}
+        {...listeners}
+        aria-label={button.accessibleLabel}
+      >
         {showIcon ? (
           <span className="max-w-[42px] truncate text-[0.68rem] font-bold leading-none">
             <CustomKeyboardIconView icon={icon} />
@@ -1754,7 +1819,7 @@ function CustomKeyboardPreviewButton({
         ) : displayLabel ? (
           <span className="max-w-[42px] truncate text-[0.4rem] leading-none">{displayLabel}</span>
         ) : null}
-      </div>
+      </button>
       <button
         className="absolute -right-1 -top-1 grid size-3.5 place-items-center rounded-full border border-[#5c302d] bg-[#24100f] text-[0.58rem] leading-none text-[#e8877d]"
         type="button"
@@ -1776,9 +1841,6 @@ function CustomKeyboardButtonLibrary({
   numberShiftActive,
   onToggleNumberShift,
   onAddButton,
-  onDragStart,
-  onPointerDown,
-  onDragEnd,
   draggedButtonId,
 }: {
   buttons: readonly CustomKeyboardKey[];
@@ -1789,9 +1851,6 @@ function CustomKeyboardButtonLibrary({
   numberShiftActive: boolean;
   onToggleNumberShift: () => void;
   onAddButton: (button: CustomKeyboardKey) => void;
-  onDragStart: (event: DragEvent<HTMLElement>, source: CustomKeyboardDragSource) => void;
-  onPointerDown: (event: ReactPointerEvent<HTMLElement>, source: CustomKeyboardDragSource) => void;
-  onDragEnd: () => void;
   draggedButtonId: string | null;
 }) {
   const buttonsByLabel = new Map<string, CustomKeyboardKey>();
@@ -1824,19 +1883,6 @@ function CustomKeyboardButtonLibrary({
         dragged={draggedButtonId === button.id}
         displayLabel={shiftActive && category === "abc" ? label.toUpperCase() : label}
         onAddButton={onAddButton}
-        onDragStart={(event, keyId) =>
-          onDragStart(event, {
-            keyId,
-            collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
-          })
-        }
-        onPointerDown={(event, keyId) =>
-          onPointerDown(event, {
-            keyId,
-            collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
-          })
-        }
-        onDragEnd={onDragEnd}
       />
     );
   };
@@ -1858,7 +1904,7 @@ function CustomKeyboardButtonLibrary({
             {category === "abc" ? "Alphabet keyboard" : category === "123" ? "Numbers and symbols" : "Terminal keys"}
           </h2>
         </div>
-        <span className="font-mono text-[0.5rem] text-[#6f9d76]">Tap to add · drag to preview</span>
+        <span className="font-mono text-[0.5rem] text-[#6f9d76]">Tap to add · hold, then drag to preview</span>
       </div>
       {category === "abc" ? (
         <div className="mt-3 flex flex-col gap-1.5">
@@ -1874,19 +1920,6 @@ function CustomKeyboardButtonLibrary({
                 isShiftKey
                 shiftActive={shiftActive}
                 onAddButton={onAddButton}
-                onDragStart={(event, keyId) =>
-                  onDragStart(event, {
-                    keyId,
-                    collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
-                  })
-                }
-                onPointerDown={(event, keyId) =>
-                  onPointerDown(event, {
-                    keyId,
-                    collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
-                  })
-                }
-                onDragEnd={onDragEnd}
                 onToggleShift={onToggleShift}
               />
             ) : (
@@ -1999,19 +2032,6 @@ function CustomKeyboardButtonLibrary({
               displayLabel={specialLibraryDisplayLabel(button)}
               displayIcon
               onAddButton={onAddButton}
-              onDragStart={(event, keyId) =>
-                onDragStart(event, {
-                  keyId,
-                  collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
-                })
-              }
-              onPointerDown={(event, keyId) =>
-                onPointerDown(event, {
-                  keyId,
-                  collection: assignedKeyIds.has(keyId) ? "keyboard" : "library",
-                })
-              }
-              onDragEnd={onDragEnd}
             />
           ))}
         </div>
@@ -2046,9 +2066,6 @@ function CustomKeyboardLibraryKey({
   shiftActive = false,
   displayIcon = false,
   onAddButton,
-  onDragStart,
-  onPointerDown,
-  onDragEnd,
   onToggleShift,
 }: {
   button: CustomKeyboardKey;
@@ -2059,15 +2076,21 @@ function CustomKeyboardLibraryKey({
   shiftActive?: boolean;
   displayIcon?: boolean;
   onAddButton: (button: CustomKeyboardKey) => void;
-  onDragStart: (event: DragEvent<HTMLElement>, keyId: string) => void;
-  onPointerDown: (event: ReactPointerEvent<HTMLElement>, keyId: string) => void;
-  onDragEnd: () => void;
   onToggleShift?: () => void;
 }) {
+  const source: CustomKeyboardDragSource = {
+    keyId: button.id,
+    collection: assigned ? "keyboard" : "library",
+  };
+  const { attributes, listeners, setNodeRef } = useDraggable({
+    id: `custom-keyboard-library:${button.id}`,
+    data: { customKeyboardSource: source },
+  });
+
   return (
     <button
       className={[
-        "relative grid h-[38px] min-w-0 flex-1 place-items-center rounded-[6px] border font-sans text-[0.68rem] font-semibold transition-colors touch-none",
+        "relative grid h-[38px] min-w-0 flex-1 place-items-center rounded-[6px] border font-sans text-[0.68rem] font-semibold transition-colors",
         assigned
           ? isShiftKey && shiftActive
             ? "border-[#8bff9a] bg-[#194d25] text-[#d9ffdd]"
@@ -2078,10 +2101,9 @@ function CustomKeyboardLibraryKey({
         dragged ? "opacity-45" : "",
       ].join(" ")}
       type="button"
-      draggable
-      onDragStart={(event) => onDragStart(event, button.id)}
-      onPointerDown={(event) => onPointerDown(event, button.id)}
-      onDragEnd={onDragEnd}
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
       onClick={() => {
         if (isShiftKey) {
           onToggleShift?.();
@@ -2116,6 +2138,41 @@ function CustomKeyboardLibraryKey({
   );
 }
 
+function CustomKeyboardShortcutDropZone({
+  index,
+  active,
+  disabled,
+}: {
+  index: number;
+  active: boolean;
+  disabled: boolean;
+}) {
+  const { setNodeRef } = useDroppable({
+    id: `custom-keyboard-shortcut-drop:${index}`,
+    data: { customKeyboardDropTarget: { kind: "shortcut-library", targetIndex: index } },
+    disabled,
+  });
+
+  return (
+    <button
+      className="relative h-2 w-full appearance-none border-0 bg-transparent p-0"
+      ref={setNodeRef}
+      type="button"
+      aria-label={`Insert shortcut at position ${index + 1}`}
+    >
+      {active ? (
+        <div
+          className="pointer-events-none absolute inset-x-1 top-1/2 flex -translate-y-1/2 items-center gap-1"
+          aria-hidden="true"
+        >
+          <span className="size-1.5 shrink-0 rounded-full bg-[#8bff9a] shadow-[0_0_8px_rgb(139_255_154_/_80%)]" />
+          <span className="h-[2px] min-w-0 flex-1 rounded-full bg-[#8bff9a] shadow-[0_0_8px_rgb(139_255_154_/_55%)]" />
+        </div>
+      ) : null}
+    </button>
+  );
+}
+
 function CustomKeyboardShortcutLibrary({
   viewModel,
   editMode,
@@ -2123,11 +2180,6 @@ function CustomKeyboardShortcutLibrary({
   onRegisterShortcut,
   onEditShortcut,
   draggedButtonId,
-  onDragStart,
-  onPointerDown,
-  onDragOver,
-  onDrop,
-  onDragEnd,
   dropIndicator,
 }: {
   viewModel: CustomKeyboardSettingsViewModel;
@@ -2136,11 +2188,6 @@ function CustomKeyboardShortcutLibrary({
   onRegisterShortcut: () => void;
   onEditShortcut: (button: CustomKeyboardKey) => void;
   draggedButtonId: string | null;
-  onDragStart: (event: DragEvent<HTMLElement>, source: CustomKeyboardDragSource) => void;
-  onPointerDown: (event: ReactPointerEvent<HTMLElement>, source: CustomKeyboardDragSource) => void;
-  onDragOver: (event: DragEvent<HTMLElement>, targetIndex: number) => void;
-  onDrop: (event: DragEvent<HTMLElement>, targetIndex: number) => void;
-  onDragEnd: () => void;
   dropIndicator: ShortcutDropIndicator | null;
 }) {
   const shortcuts = viewModel.shortcutKeys;
@@ -2148,25 +2195,12 @@ function CustomKeyboardShortcutLibrary({
   const renderDropZone = (index: number) => {
     const active = editMode && dropIndicator?.index === index && draggedButtonId !== null;
     return (
-      <button
-        className="relative h-2 w-full appearance-none border-0 bg-transparent p-0"
+      <CustomKeyboardShortcutDropZone
         key={`shortcut-drop-${index}`}
-        type="button"
-        aria-label={`Insert shortcut at position ${index + 1}`}
-        data-custom-keyboard-drop-index={editMode ? index : undefined}
-        onDragOver={editMode ? (event) => onDragOver(event, index) : undefined}
-        onDrop={editMode ? (event) => onDrop(event, index) : undefined}
-      >
-        {active ? (
-          <div
-            className="pointer-events-none absolute inset-x-1 top-1/2 flex -translate-y-1/2 items-center gap-1"
-            aria-hidden="true"
-          >
-            <span className="size-1.5 shrink-0 rounded-full bg-[#8bff9a] shadow-[0_0_8px_rgb(139_255_154_/_80%)]" />
-            <span className="h-[2px] min-w-0 flex-1 rounded-full bg-[#8bff9a] shadow-[0_0_8px_rgb(139_255_154_/_55%)]" />
-          </div>
-        ) : null}
-      </button>
+        index={index}
+        active={active}
+        disabled={!editMode}
+      />
     );
   };
 
@@ -2209,76 +2243,17 @@ function CustomKeyboardShortcutLibrary({
       <div className="mt-3 grid gap-0">
         {shortcuts.map((button, index) => {
           const assigned = viewModel.assignedKeyIds.includes(button.id);
-          const canReorder = editMode;
           return (
             <Fragment key={button.id}>
               {renderDropZone(index)}
-              <fieldset
-                className={[
-                  "flex min-w-0 items-center gap-1.5 rounded-[8px] border p-1.5 transition-[border-color,box-shadow,opacity,transform]",
-                  canReorder ? "cursor-grab active:cursor-grabbing" : "cursor-default",
-                  assigned ? "border-[#4a8d55] bg-[#12351a]" : "border-dashed border-[#2e6540] bg-[#0a1c0e]",
-                  draggedButtonId === button.id ? "scale-[1.01] opacity-45 shadow-[0_8px_20px_rgb(0_0_0_/_28%)]" : "",
-                ].join(" ")}
-                aria-label={button.accessibleLabel}
-                draggable
-                onDragStart={(event) =>
-                  onDragStart(event, {
-                    keyId: button.id,
-                    collection: editMode ? "shortcut-library" : assigned ? "keyboard" : "library",
-                  })
-                }
-                onPointerDown={(event) =>
-                  onPointerDown(event, {
-                    keyId: button.id,
-                    collection: editMode ? "shortcut-library" : assigned ? "keyboard" : "library",
-                  })
-                }
-                onDragEnd={onDragEnd}
-              >
-                {canReorder ? (
-                  <span
-                    className="mr-0.5 shrink-0 cursor-grab select-none px-0.5 text-[0.52rem] leading-none text-[#5d8b65]"
-                    aria-hidden="true"
-                  >
-                    ⋮⋮
-                  </span>
-                ) : null}
-                <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-                  <span className="grid size-8 shrink-0 place-items-center rounded-[7px] border border-[#315d88] bg-[#0d2237] font-mono text-[0.72rem] font-bold text-[#a8d7ff]">
-                    {button.icon ? <CustomKeyboardIconView icon={button.icon} /> : null}
-                    <span className="sr-only">{button.accessibleLabel}</span>
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <strong className="block truncate text-[0.62rem] text-[#c9f6ce]">
-                      {shortcutDisplayLabel(button)}
-                    </strong>
-                    <code className="mt-0.5 block truncate font-mono text-[0.54rem] text-[#6e9c75]">
-                      {formatSequence(keySequence(button))}
-                    </code>
-                  </span>
-                </div>
-                {editMode ? (
-                  <div className="relative z-20 ml-auto flex shrink-0 items-center gap-0.5">
-                    <button
-                      className="grid size-7 place-items-center rounded-[6px] border border-[#315f3a] bg-[#0b2411] font-mono text-[0.72rem] text-[#9bd7a3]"
-                      type="button"
-                      onClick={() => onEditShortcut(button)}
-                      aria-label={`Edit ${button.accessibleLabel}`}
-                    >
-                      ✎
-                    </button>
-                    <button
-                      className="grid size-7 place-items-center rounded-[6px] border border-[#5c302d] bg-[#24100f] font-mono text-[0.72rem] text-[#e8877d]"
-                      type="button"
-                      onClick={() => viewModel.onDeleteShortcut(button.id)}
-                      aria-label={`Delete ${button.accessibleLabel}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : null}
-              </fieldset>
+              <CustomKeyboardShortcutCard
+                button={button}
+                assigned={assigned}
+                editMode={editMode}
+                dragged={draggedButtonId === button.id}
+                onEditShortcut={onEditShortcut}
+                onDeleteShortcut={() => viewModel.onDeleteShortcut(button.id)}
+              />
             </Fragment>
           );
         })}
@@ -2290,6 +2265,127 @@ function CustomKeyboardShortcutLibrary({
         </p>
       ) : null}
     </section>
+  );
+}
+
+function CustomKeyboardShortcutCard({
+  button,
+  assigned,
+  editMode,
+  dragged,
+  onEditShortcut,
+  onDeleteShortcut,
+}: {
+  button: CustomKeyboardKey;
+  assigned: boolean;
+  editMode: boolean;
+  dragged: boolean;
+  onEditShortcut: (button: CustomKeyboardKey) => void;
+  onDeleteShortcut: () => void;
+}) {
+  const source: CustomKeyboardDragSource = {
+    keyId: button.id,
+    collection: editMode ? "shortcut-library" : assigned ? "keyboard" : "library",
+  };
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef } = useDraggable({
+    id: `custom-keyboard-shortcut:${button.id}`,
+    data: { customKeyboardSource: source },
+  });
+  const canReorder = editMode;
+
+  return (
+    <fieldset
+      className={[
+        "flex min-w-0 items-center gap-1.5 rounded-[8px] border p-1.5 transition-[border-color,box-shadow,opacity,transform]",
+        canReorder ? "cursor-grab active:cursor-grabbing" : "cursor-default",
+        assigned ? "border-[#4a8d55] bg-[#12351a]" : "border-dashed border-[#2e6540] bg-[#0a1c0e]",
+        dragged ? "scale-[1.01] opacity-45 shadow-[0_8px_20px_rgb(0_0_0_/_28%)]" : "",
+      ].join(" ")}
+      ref={setNodeRef}
+      {...attributes}
+      {...(!canReorder ? (listeners ?? {}) : {})}
+      aria-label={button.accessibleLabel}
+    >
+      {canReorder ? (
+        <span
+          className="mr-0.5 shrink-0 cursor-grab select-none px-0.5 text-[0.52rem] leading-none text-[#5d8b65]"
+          ref={setActivatorNodeRef}
+          {...(listeners ?? {})}
+          aria-hidden="true"
+        >
+          ⋮⋮
+        </span>
+      ) : null}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+        <span className="grid size-8 shrink-0 place-items-center rounded-[7px] border border-[#315d88] bg-[#0d2237] font-mono text-[0.72rem] font-bold text-[#a8d7ff]">
+          {button.icon ? <CustomKeyboardIconView icon={button.icon} /> : null}
+          <span className="sr-only">{button.accessibleLabel}</span>
+        </span>
+        <span className="min-w-0 flex-1">
+          <strong className="block truncate text-[0.62rem] text-[#c9f6ce]">{shortcutDisplayLabel(button)}</strong>
+          <code className="mt-0.5 block truncate font-mono text-[0.54rem] text-[#6e9c75]">
+            {formatSequence(keySequence(button))}
+          </code>
+        </span>
+      </div>
+      {editMode ? (
+        <div className="relative z-20 ml-auto flex shrink-0 items-center gap-0.5">
+          <button
+            className="grid size-7 place-items-center rounded-[6px] border border-[#315f3a] bg-[#0b2411] font-mono text-[0.72rem] text-[#9bd7a3]"
+            type="button"
+            onClick={() => onEditShortcut(button)}
+            aria-label={`Edit ${button.accessibleLabel}`}
+          >
+            ✎
+          </button>
+          <button
+            className="grid size-7 place-items-center rounded-[6px] border border-[#5c302d] bg-[#24100f] font-mono text-[0.72rem] text-[#e8877d]"
+            type="button"
+            onClick={onDeleteShortcut}
+            aria-label={`Delete ${button.accessibleLabel}`}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
+function CustomKeyboardDragPreview({ button, shortcutCard }: { button: CustomKeyboardKey; shortcutCard: boolean }) {
+  return (
+    <div
+      className={`pointer-events-none rounded-[9px] border border-[#8bff9a] bg-[#194d25]/95 font-mono text-[#d9ffdd] shadow-[0_12px_30px_rgb(0_0_0_/_42%)] ${
+        shortcutCard
+          ? "flex w-[min(260px,calc(100vw-24px))] items-center gap-2 p-2"
+          : "flex size-[48px] flex-col items-center justify-center"
+      }`}
+      aria-hidden="true"
+    >
+      {button.icon ? (
+        <span
+          className={
+            shortcutCard
+              ? "grid size-9 shrink-0 place-items-center rounded-[7px] bg-[#0d2237] text-[0.86rem]"
+              : "text-[0.86rem] font-bold leading-none"
+          }
+        >
+          <CustomKeyboardIconView icon={button.icon} />
+        </span>
+      ) : null}
+      {shortcutCard ? (
+        <span className="min-w-0 flex-1">
+          <strong className="block truncate text-[0.62rem]">{shortcutDisplayLabel(button)}</strong>
+          <code className="mt-0.5 block truncate text-[0.52rem] text-[#8fc998]">
+            {formatSequence(keySequence(button))}
+          </code>
+        </span>
+      ) : (
+        <span className="max-w-[42px] truncate text-[0.42rem] leading-none">
+          {button.category === "shortcuts" ? shortcutDisplayLabel(button) : (button.label ?? "key")}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -2357,6 +2453,149 @@ function CustomKeyboardIconPicker({
   );
 }
 
+function CustomKeyboardProfileModal({
+  mode,
+  name,
+  icon,
+  isDefault,
+  onNameChange,
+  onIconChange,
+  onClose,
+  onSubmit,
+  onDuplicate,
+  onDelete,
+}: {
+  mode: "create" | "edit";
+  name: string;
+  icon: CustomKeyboardIcon;
+  isDefault: boolean;
+  onNameChange: (name: string) => void;
+  onIconChange: (icon: CustomKeyboardIcon) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+  onDuplicate?: () => void;
+  onDelete?: () => void;
+}) {
+  const canSubmit = isDefault || isCustomKeyboardProfileNameValid(name);
+
+  return (
+    <CustomKeyboardModalOverlay className="z-50 bg-[rgb(0_0_0_/_58%)] backdrop-blur-[2px]">
+      <section
+        className="my-auto flex max-h-full min-h-0 w-full max-w-[520px] shrink-0 flex-col overflow-hidden rounded-[14px] border border-[#2c6036] bg-[#071509] text-[#d9f4dc] shadow-[0_24px_80px_rgb(0_0_0_/_46%)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="custom-keyboard-profile-modal-title"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onClose();
+        }}
+      >
+        <header className="flex shrink-0 items-center gap-2 border-b border-[#1d4325] px-3 py-2.5">
+          <div className="min-w-0 flex-1">
+            <span className="font-mono text-[0.46rem] font-bold uppercase tracking-[0.14em] text-[#63ae6e]">
+              Keyboard profiles
+            </span>
+            <h2 id="custom-keyboard-profile-modal-title" className="m-0 mt-0.5 text-[0.9rem] font-bold">
+              {mode === "edit" ? "Edit profile" : "Add profile"}
+            </h2>
+          </div>
+          <button
+            className="grid size-8 place-items-center rounded-[7px] border border-[#315f3a] bg-[#0b2411] text-[#a9e8b1]"
+            type="button"
+            onClick={onClose}
+            aria-label="Close profile dialog"
+          >
+            <AppIcon name="close" size={14} />
+          </button>
+        </header>
+        <form
+          id="custom-keyboard-profile-form"
+          className="min-h-0 flex-1 overflow-y-auto p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canSubmit) onSubmit();
+          }}
+        >
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="font-mono text-[0.5rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
+              Profile name
+            </span>
+            <input
+              className="min-h-10 min-w-0 rounded-[7px] border border-[#285a33] bg-[#061008] px-2.5 font-mono text-[0.68rem] text-[#d8ffdc] outline-none focus:border-[#8bff9a] disabled:opacity-45"
+              value={name}
+              onChange={(event) => onNameChange(event.target.value)}
+              maxLength={40}
+              autoComplete="off"
+              disabled={isDefault}
+              aria-label="Profile name"
+            />
+          </label>
+          <fieldset className="mt-3 border-0 p-0">
+            <legend className="font-mono text-[0.5rem] font-bold uppercase tracking-[0.1em] text-[#6a9b72]">
+              Profile icon
+            </legend>
+            <CustomKeyboardIconPicker value={icon} onChange={onIconChange} disabled={isDefault} />
+          </fieldset>
+        </form>
+        <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[#1d4325] px-3 py-2.5">
+          {mode === "edit" && onDuplicate ? (
+            <button
+              className="rounded-[7px] border border-[#315f3a] bg-[#0b2411] px-2.5 py-2 font-mono text-[0.52rem] font-bold uppercase tracking-[0.05em] text-[#9bd7a3]"
+              type="button"
+              onClick={onDuplicate}
+            >
+              Duplicate
+            </button>
+          ) : null}
+          {mode === "edit" && onDelete ? (
+            <button
+              className="rounded-[7px] border border-[#5c302d] bg-[#24100f] px-2.5 py-2 font-mono text-[0.52rem] font-bold uppercase tracking-[0.05em] text-[#ffb0aa] disabled:cursor-not-allowed disabled:opacity-35"
+              type="button"
+              onClick={onDelete}
+              disabled={isDefault}
+            >
+              Delete
+            </button>
+          ) : null}
+          <span className="flex-1" />
+          <button
+            className="rounded-[7px] border border-[#315f3a] bg-[#0b2411] px-3 py-2 font-mono text-[0.56rem] font-bold uppercase tracking-[0.06em] text-[#9bd7a3]"
+            type="button"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded-[7px] bg-[#8bff9a] px-3 py-2 font-mono text-[0.56rem] font-bold uppercase tracking-[0.06em] text-[#061008] disabled:cursor-not-allowed disabled:opacity-35"
+            type="submit"
+            form="custom-keyboard-profile-form"
+            disabled={!canSubmit}
+          >
+            {mode === "edit" ? (isDefault ? "Done" : "Save profile") : "Add profile"}
+          </button>
+        </footer>
+      </section>
+    </CustomKeyboardModalOverlay>
+  );
+}
+
+function CustomKeyboardModalOverlay({ children, className }: { children: ReactNode; className: string }) {
+  const viewport = useCustomKeyboardModalViewport();
+
+  return (
+    <div
+      className={`custom-keyboard-modal-overlay fixed flex min-h-0 flex-col items-center overflow-y-auto overscroll-contain ${className}`}
+      style={{
+        top: `${viewport.top}px`,
+        left: `${viewport.left}px`,
+        width: `${viewport.width}px`,
+        height: `${viewport.height}px`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function CustomKeyboardShortcutRegistrationModal({
   draft,
   mode,
@@ -2371,9 +2610,9 @@ function CustomKeyboardShortcutRegistrationModal({
   onSubmit: () => void;
 }) {
   return (
-    <div className="absolute inset-0 z-30 grid place-items-end bg-[rgb(0_0_0_/_58%)] p-2 backdrop-blur-[2px] sm:place-items-center">
+    <CustomKeyboardModalOverlay className="z-30 bg-[rgb(0_0_0_/_58%)] backdrop-blur-[2px]">
       <section
-        className="flex max-h-[calc(100dvh-16px)] w-full max-w-[520px] flex-col overflow-hidden rounded-[14px] border border-[#2c6036] bg-[#071509] text-[#d9f4dc] shadow-[0_24px_80px_rgb(0_0_0_/_46%)]"
+        className="my-auto flex max-h-full min-h-0 w-full max-w-[520px] shrink-0 flex-col overflow-hidden rounded-[14px] border border-[#2c6036] bg-[#071509] text-[#d9f4dc] shadow-[0_24px_80px_rgb(0_0_0_/_46%)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="shortcut-registration-title"
@@ -2399,7 +2638,7 @@ function CustomKeyboardShortcutRegistrationModal({
             ×
           </button>
         </header>
-        <div className="min-h-0 overflow-y-auto p-3">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
           <fieldset>
             <legend className="font-mono text-[0.52rem] font-bold uppercase tracking-[0.12em] text-[#6fa677]">
               Icon
@@ -2431,7 +2670,7 @@ function CustomKeyboardShortcutRegistrationModal({
           </button>
         </footer>
       </section>
-    </div>
+    </CustomKeyboardModalOverlay>
   );
 }
 

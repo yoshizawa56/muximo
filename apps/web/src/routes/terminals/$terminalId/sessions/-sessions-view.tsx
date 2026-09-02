@@ -5,13 +5,13 @@ import type { SessionsViewModel } from "./-sessions-viewmodel";
 export function SessionsView({ viewModel }: { viewModel: SessionsViewModel }) {
   return (
     <ConnectionFlowLayout>
-      <div className="mx-auto w-full max-w-[570px] flex-1 px-6 py-[58px] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pb-[calc(32px+var(--safe-area-bottom))] max-[620px]:pt-8">
+      <div className="mx-auto w-full min-w-0 max-w-[570px] flex-1 px-6 py-[58px] max-[620px]:px-[max(14px,var(--safe-area-right))] max-[620px]:pb-[calc(32px+var(--safe-area-bottom))] max-[620px]:pt-8">
         <button
-          className="mb-[26px] inline-flex items-center gap-[7px] font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime"
+          className="mb-[26px] inline-flex min-w-0 max-w-full items-center gap-[7px] font-mono text-[0.64rem] text-[#76ad7e] transition-colors hover:text-lime"
           type="button"
           onClick={viewModel.onBack}
         >
-          ‹ <span>{viewModel.selectedTerminal?.name ?? "terminal"}</span>
+          ‹ <span className="min-w-0 truncate">{viewModel.selectedTerminal?.name ?? "terminal"}</span>
         </button>
         <FlowIntro
           step="STEP 2 / 2"
@@ -19,17 +19,21 @@ export function SessionsView({ viewModel }: { viewModel: SessionsViewModel }) {
           description="Pick the session to open on your phone. It stays alive when you disconnect."
         />
         {viewModel.selectedTerminal ? (
-          <div className="-mt-3 mb-[25px] flex w-fit items-center gap-2 rounded-[7px] border border-[#1d4b28] bg-[rgb(7_24_11_/_68%)] px-[9px] py-[7px] font-mono text-[0.58rem] text-[#a9dfae]">
+          <div className="-mt-3 mb-[25px] flex min-w-0 max-w-full w-fit items-center gap-2 rounded-[7px] border border-[#1d4b28] bg-[rgb(7_24_11_/_68%)] px-[9px] py-[7px] font-mono text-[0.58rem] text-[#a9dfae]">
             <span className="size-1.5 shrink-0 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(57_214_91_/_12%)]" />
-            <span>{viewModel.selectedTerminal.name}</span>
-            <small className="text-[#52765a]">{viewModel.selectedTerminal.tailnetIp}</small>
+            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+              {viewModel.selectedTerminal.name}
+            </span>
+            <small className="max-w-[45%] shrink-0 overflow-hidden text-[#52765a] text-ellipsis whitespace-nowrap">
+              {viewModel.selectedTerminal.tailnetIp}
+            </small>
           </div>
         ) : null}
         <section className="mt-1.5" aria-label="tmux sessions">
-          <div className="mb-2.5 flex items-center justify-between gap-3 font-mono text-[0.56rem] font-bold tracking-[0.12em] text-[#638e6b]">
-            <span>TMUX SESSIONS</span>
-            <span className="inline-flex items-center gap-2.5">
-              <small className="text-[0.52rem] font-normal tracking-normal text-[#416a49]">
+          <div className="mb-2.5 flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 font-mono text-[0.56rem] font-bold tracking-[0.12em] text-[#638e6b]">
+            <span className="shrink-0">TMUX SESSIONS</span>
+            <div className="flex shrink-0 items-center gap-2.5">
+              <small className="shrink-0 text-[0.52rem] font-normal tracking-normal text-[#416a49]">
                 {viewModel.sessions.length} found
               </small>
               <button
@@ -39,7 +43,7 @@ export function SessionsView({ viewModel }: { viewModel: SessionsViewModel }) {
               >
                 + new session
               </button>
-            </span>
+            </div>
           </div>
           {viewModel.status === "loading" ? (
             <p className="mt-[18px] flex items-start gap-2 text-[0.62rem] leading-[1.5] text-[#56785c] max-[620px]:text-[0.72rem]">

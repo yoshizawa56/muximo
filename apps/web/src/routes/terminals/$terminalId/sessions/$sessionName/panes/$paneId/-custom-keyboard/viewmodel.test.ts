@@ -17,6 +17,7 @@ import {
   toggleCustomKeyboardModifier,
 } from "./policy";
 import {
+  CUSTOM_KEYBOARD_FIXED_ROW_ID,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
   type CustomKeyboardIcon,
@@ -27,10 +28,12 @@ import {
   type CustomKeyboardState,
   type CustomKeyboardSurfaceId,
   createCustomKeyboardProfile,
+  customKeyboardFixedKeyIds,
   customKeyboardKeyDefinitions,
   customKeyboardKeyLibrary,
   customKeyboardSurfaceDefinitions,
   customKeyboardTerminalActionOptions,
+  defaultCustomKeyboardFixedLayout,
   defaultCustomKeyboardLayout,
   deleteCustomKeyboardProfile,
   duplicateCustomKeyboardProfile,
@@ -97,10 +100,6 @@ const layoutForDrop: CustomKeyboardLayout = {
       { keyId: "escape", density: "regular" },
       { keyId: "enter", density: "regular" },
     ]),
-    row("utility", "stable", [
-      { keyId: "directional-flick", density: "compact", flexGrow: 1 },
-      { keyId: "profile-surface", density: "compact" },
-    ]),
   ],
 };
 
@@ -112,21 +111,19 @@ type DropInput = {
 
 const dropCases = [
   {
-    name: "moves a keyboard key across rows while preserving its placement density",
+    name: "moves a keyboard key within the editable row while preserving its placement density",
     input: {
       state: { layout: layoutForDrop, shortcutKeyIds: [] },
-      source: { keyId: "escape", collection: "keyboard", rowId: "main" },
-      target: { type: "keyboard", rowId: "utility", targetKeyId: "profile-surface" },
+      source: { keyId: "enter", collection: "keyboard", rowId: "main" },
+      target: { type: "keyboard", rowId: "main", targetKeyId: "escape" },
     },
     assert: [
       returns<EmptyContext, CustomKeyboardDropState>({
         layout: {
           rows: [
-            row("main", "scroll", [{ keyId: "enter", density: "regular" }]),
-            row("utility", "stable", [
-              { keyId: "directional-flick", density: "compact", flexGrow: 1 },
+            row("main", "scroll", [
+              { keyId: "enter", density: "regular" },
               { keyId: "escape", density: "regular" },
-              { keyId: "profile-surface", density: "compact" },
             ]),
           ],
         },
@@ -135,11 +132,29 @@ const dropCases = [
     ],
   },
   {
-    name: "assigns an available library key to the end of a stable row",
+    name: "rejects a drop onto the fixed lower row",
+    input: {
+      state: { layout: layoutForDrop, shortcutKeyIds: [] },
+      source: { keyId: "escape", collection: "keyboard", rowId: "main" },
+      target: { type: "keyboard", rowId: CUSTOM_KEYBOARD_FIXED_ROW_ID, targetKeyId: "profile-surface" },
+    },
+    assert: [returns<EmptyContext, CustomKeyboardDropState>({ layout: layoutForDrop, shortcutKeyIds: [] })],
+  },
+  {
+    name: "rejects a fixed key from the library entering the editable row",
+    input: {
+      state: { layout: layoutForDrop, shortcutKeyIds: [] },
+      source: { keyId: "profile-surface", collection: "library" },
+      target: { type: "keyboard", rowId: "main", targetKeyId: null },
+    },
+    assert: [returns<EmptyContext, CustomKeyboardDropState>({ layout: layoutForDrop, shortcutKeyIds: [] })],
+  },
+  {
+    name: "assigns an available library key to the editable row",
     input: {
       state: { layout: layoutForDrop, shortcutKeyIds: [] },
       source: { keyId: "letter-a", collection: "library" },
-      target: { type: "keyboard", rowId: "utility", targetKeyId: null },
+      target: { type: "keyboard", rowId: "main", targetKeyId: null },
     },
     assert: [
       returns<EmptyContext, CustomKeyboardDropState>({
@@ -148,10 +163,6 @@ const dropCases = [
             row("main", "scroll", [
               { keyId: "escape", density: "regular" },
               { keyId: "enter", density: "regular" },
-            ]),
-            row("utility", "stable", [
-              { keyId: "directional-flick", density: "compact", flexGrow: 1 },
-              { keyId: "profile-surface", density: "compact" },
               { keyId: "letter-a", density: "regular" },
             ]),
           ],
@@ -199,15 +210,12 @@ type ResolvedLayoutObservation = {
 
 const resolvedLayoutCases = [
   {
-    name: "resolves every layout row from the shared key library",
+    name: "resolves the editable layout row from the shared key library",
     input: {},
     assert: [
       returns<EmptyContext, ResolvedLayoutObservation>({
-        rows: [
-          { id: "main", overflow: "scroll", keyIds: ["escape", "enter"] },
-          { id: "utility", overflow: "stable", keyIds: ["profile-surface"] },
-        ],
-        assignedKeyIds: ["escape", "enter", "profile-surface"],
+        rows: [{ id: "main", overflow: "scroll", keyIds: ["escape", "enter"] }],
+        assignedKeyIds: ["escape", "enter"],
       }),
     ],
   },
@@ -223,7 +231,6 @@ const resolvedLayoutTable: OperationTable<undefined, "default", {}, ResolvedLayo
           { keyId: "escape", density: "regular" },
           { keyId: "enter", density: "regular" },
         ]),
-        row("utility", "stable", [{ keyId: "profile-surface", density: "compact" }]),
       ],
     };
     const library = [
@@ -246,14 +253,14 @@ const resolvedLayoutTable: OperationTable<undefined, "default", {}, ResolvedLayo
 
 type DefaultLayoutObservation = {
   mainKeyIds: readonly string[];
-  utilityKeyIds: readonly string[];
-  utilityOverflow: string | undefined;
-  keyboardFlexGrow: number | undefined;
+  fixedKeyIds: readonly string[];
+  fixedOverflow: string | undefined;
+  fixedFlexGrow: number | undefined;
 };
 
 const defaultLayoutCases = [
   {
-    name: "keeps Enter and exclamation in the default main row",
+    name: "keeps editable keys and fixed actions in separate default rows",
     input: {},
     assert: [
       returns<EmptyContext, DefaultLayoutObservation>({
@@ -272,15 +279,15 @@ const defaultLayoutCases = [
           "tilde",
           "at",
         ],
-        utilityKeyIds: [
+        fixedKeyIds: [
           "photo-library",
           "clipboard-surface",
           "toggle-standard-keyboard",
           "directional-flick",
           "profile-surface",
         ],
-        utilityOverflow: "stable",
-        keyboardFlexGrow: 1,
+        fixedOverflow: "stable",
+        fixedFlexGrow: 1,
       }),
     ],
   },
@@ -291,13 +298,12 @@ const defaultLayoutTable: OperationTable<undefined, "default", {}, DefaultLayout
   cases: defaultLayoutCases,
   execute: () => {
     const main = defaultCustomKeyboardLayout.rows.find((currentRow) => currentRow.id === "main");
-    const utility = defaultCustomKeyboardLayout.rows.find((currentRow) => currentRow.id === "utility");
+    const fixed = defaultCustomKeyboardFixedLayout.rows[0];
     return {
       mainKeyIds: main?.placements.map((placement) => placement.keyId) ?? [],
-      utilityKeyIds: utility?.placements.map((placement) => placement.keyId) ?? [],
-      utilityOverflow: utility?.overflow,
-      keyboardFlexGrow: utility?.placements.find((placement) => placement.keyId === "toggle-standard-keyboard")
-        ?.flexGrow,
+      fixedKeyIds: fixed?.placements.map((placement) => placement.keyId) ?? [],
+      fixedOverflow: fixed?.overflow,
+      fixedFlexGrow: fixed?.placements.find((placement) => placement.keyId === "toggle-standard-keyboard")?.flexGrow,
     };
   },
   observe: () => ({}),
@@ -442,6 +448,7 @@ const shortcutDraftTable: OperationTable<undefined, "default", { sequence: Short
   };
 
 type ParsedStateObservation = {
+  stateVersion: number;
   profileIds: readonly string[];
   activeProfileId: string;
   linkedProfileIds: readonly string[];
@@ -449,8 +456,8 @@ type ParsedStateObservation = {
   agentMainKeyIds: readonly string[];
   agentShortcutKeyIds: readonly string[];
   agentIcon: CustomKeyboardIcon;
-  utilityKeyIds: readonly string[];
-  utilityFlexGrow: number | undefined;
+  agentLayoutRowIds: readonly string[];
+  agentFixedKeyIdsInLayout: readonly string[];
 };
 
 const validState = JSON.stringify({
@@ -548,10 +555,11 @@ const invalidState = JSON.stringify({
 
 const parsedStateCases = [
   {
-    name: "preserves rows, custom keys, flex growth, and workspace profile selection",
+    name: "migrates the legacy fixed row out of profiles while preserving workspace selection",
     input: { raw: validState },
     assert: [
       returns<EmptyContext, ParsedStateObservation>({
+        stateVersion: 2,
         profileIds: ["default", "agent"],
         activeProfileId: "agent",
         linkedProfileIds: ["agent"],
@@ -573,8 +581,8 @@ const parsedStateCases = [
         agentMainKeyIds: ["custom-shortcut-agent-command"],
         agentShortcutKeyIds: ["custom-shortcut-agent-command"],
         agentIcon: "branch",
-        utilityKeyIds: ["toggle-standard-keyboard"],
-        utilityFlexGrow: 2,
+        agentLayoutRowIds: ["main"],
+        agentFixedKeyIdsInLayout: [],
       }),
     ],
   },
@@ -583,6 +591,7 @@ const parsedStateCases = [
     input: { raw: invalidState },
     assert: [
       returns<EmptyContext, ParsedStateObservation>({
+        stateVersion: 2,
         profileIds: ["default"],
         activeProfileId: "default",
         linkedProfileIds: [],
@@ -590,8 +599,8 @@ const parsedStateCases = [
         agentMainKeyIds: [],
         agentShortcutKeyIds: [],
         agentIcon: "terminal",
-        utilityKeyIds: [],
-        utilityFlexGrow: undefined,
+        agentLayoutRowIds: [],
+        agentFixedKeyIdsInLayout: [],
       }),
     ],
   },
@@ -604,8 +613,9 @@ const parsedStateTable: OperationTable<undefined, "default", { raw: string }, Pa
     const state = parseCustomKeyboardState(input.raw);
     const defaultProfile = state.profiles.find((profile) => profile.id === "default");
     const agentProfile = state.profiles.find((profile) => profile.id === "agent");
-    const utilityRow = agentProfile?.layout.rows.find((currentRow) => currentRow.id === "utility");
+    const agentLayoutPlacements = agentProfile?.layout.rows.flatMap((currentRow) => currentRow.placements) ?? [];
     return {
+      stateVersion: state.version,
       profileIds: state.profiles.map((profile) => profile.id),
       activeProfileId: resolveActiveProfileId(state, "workspace-1"),
       linkedProfileIds: state.workspaceProfileIds["workspace-1"] ?? [],
@@ -619,8 +629,10 @@ const parsedStateTable: OperationTable<undefined, "default", { raw: string }, Pa
           ?.placements.map((item) => item.keyId) ?? [],
       agentShortcutKeyIds: agentProfile?.shortcutKeyIds ?? [],
       agentIcon: agentProfile?.icon ?? "terminal",
-      utilityKeyIds: utilityRow?.placements.map((item) => item.keyId) ?? [],
-      utilityFlexGrow: utilityRow?.placements.find((item) => item.keyId === "toggle-standard-keyboard")?.flexGrow,
+      agentLayoutRowIds: agentProfile?.layout.rows.map((row) => row.id) ?? [],
+      agentFixedKeyIdsInLayout: agentLayoutPlacements
+        .map((placement) => placement.keyId)
+        .filter((keyId) => customKeyboardFixedKeyIds.includes(keyId)),
     };
   },
   observe: () => ({}),
