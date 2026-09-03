@@ -9,6 +9,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { EventPublisher } from "@orpc/server";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import { createMuximodApp } from "./app.js";
 import { createOriginPolicy } from "./middleware.js";
@@ -118,23 +119,13 @@ describe("muximod event transport", () => {
 
 const testAuth: MuximodAuthPort = {
   serverId: authContext.serverId,
-  authenticateAccessToken: async (token) => (token === "events-token" ? authContext : undefined),
-  claimPairing: async () => {
-    throw new Error("not used");
-  },
-  pairingStatus: async () => {
-    throw new Error("not used");
-  },
-  createChallenge: async () => {
-    throw new Error("not used");
-  },
-  createSession: async () => {
-    throw new Error("not used");
-  },
-  issueWebSocketTicket: async () => {
-    throw new Error("not used");
-  },
-  consumeWebSocketTicket: async () => undefined,
+  authenticateAccessToken: (token) => Effect.succeed(token === "events-token" ? authContext : undefined),
+  claimPairing: () => Effect.fail(new Error("not used")),
+  pairingStatus: () => Effect.fail(new Error("not used")),
+  createChallenge: () => Effect.fail(new Error("not used")),
+  createSession: () => Effect.fail(new Error("not used")),
+  issueWebSocketTicket: () => Effect.fail(new Error("not used")),
+  consumeWebSocketTicket: () => Effect.succeed(undefined),
 };
 
 function createApplication(): MuximodApplication {

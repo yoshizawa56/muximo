@@ -1,25 +1,25 @@
-import type { WorkspaceRecord } from "@muximo/domain";
 import { Workspace, WorkspaceId } from "@muximo/domain";
 import {
   type FixtureHandle,
   hasError,
   hasNoError,
   hasObserved,
+  resolveMaybePromise,
   runScenarioTable,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect, type Layer } from "effect";
 import { describe, it } from "vitest";
-import type { ApplicationClock } from "../../ports/application.js";
+import type { ApplicationEffect } from "../../effect.js";
 import type { WorkspaceRepository } from "../../ports/repositories.js";
-import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
-import { DeleteWorkspace } from "./delete-workspace.js";
-import { ListWorkspaces } from "./list-workspaces.js";
-import { RegisterWorkspace } from "./register-workspace.js";
-import { UpdateWorkspace } from "./update-workspace.js";
+import type { WorkspaceAuditPort, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "../../ports/workspace.js";
+import { deleteWorkspace } from "./delete-workspace.js";
+import { registerWorkspace } from "./register-workspace.js";
+import { updateWorkspace } from "./update-workspace.js";
 import type { UpdateWorkspaceInput } from "./workspace-inputs.js";
-import { WorkspaceRecordFactory } from "./workspace-record-factory.js";
+import { type WorkspaceServices, workspaceLayer } from "./workspace-services.js";
 
 type WorkspaceStep =
   | { type: "register"; input: { directory: string; name?: string } }
@@ -28,18 +28,14 @@ type WorkspaceStep =
 
 type WorkspaceFixture = {
   repository: FakeWorkspaceRepository;
-  list: ListWorkspaces;
-  register: RegisterWorkspace;
-  update: UpdateWorkspace;
-  delete: DeleteWorkspace;
   auditEvents: string[];
+  layer: Layer.Layer<WorkspaceServices>;
 };
 
 type WorkspaceContext = {
   recordCount: number;
   recordName: string;
   rootPath: string;
-  updatedAt: string;
   auditEvents: readonly string[];
   insertCalls: number;
   upsertCalls: number;
@@ -57,12 +53,11 @@ const scenarios = [
       },
     ],
     assert: [
-      hasNoError<WorkspaceContext, WorkspaceRecord>(),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("recordCount", 1),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("recordName", "renamed"),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("rootPath", "/work/project"),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("updatedAt", "2026-08-16T00:00:00.000Z"),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", ["workspace.created", "workspace.updated"]),
+      hasNoError<WorkspaceContext, Workspace>(),
+      hasObserved<WorkspaceContext, Workspace>("recordCount", 1),
+      hasObserved<WorkspaceContext, Workspace>("recordName", "renamed"),
+      hasObserved<WorkspaceContext, Workspace>("rootPath", "/work/project"),
+      hasObserved<WorkspaceContext, Workspace>("auditEvents", ["workspace.created", "workspace.updated"]),
     ],
   },
   {
@@ -72,10 +67,10 @@ const scenarios = [
       { type: "delete", selector: "project" },
     ],
     assert: [
-      hasNoError<WorkspaceContext, WorkspaceRecord>(),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("recordCount", 0),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("recordName", ""),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", ["workspace.created", "workspace.deleted"]),
+      hasNoError<WorkspaceContext, Workspace>(),
+      hasObserved<WorkspaceContext, Workspace>("recordCount", 0),
+      hasObserved<WorkspaceContext, Workspace>("recordName", ""),
+      hasObserved<WorkspaceContext, Workspace>("auditEvents", ["workspace.created", "workspace.deleted"]),
     ],
   },
   {
@@ -83,39 +78,42 @@ const scenarios = [
     fixture: "duplicate",
     steps: [{ type: "register", input: { directory: "/work/project" } }],
     assert: [
-      hasError<WorkspaceContext, WorkspaceRecord>({ code: "workspace_already_registered" }),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("recordCount", 1),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("insertCalls", 1),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("upsertCalls", 0),
-      hasObserved<WorkspaceContext, WorkspaceRecord>("auditEvents", []),
+      hasError<WorkspaceContext, Workspace>({
+        code: "workspace_already_registered",
+        _tag: "WorkspaceAlreadyRegisteredError",
+      }),
+      hasObserved<WorkspaceContext, Workspace>("recordCount", 1),
+      hasObserved<WorkspaceContext, Workspace>("insertCalls", 1),
+      hasObserved<WorkspaceContext, Workspace>("upsertCalls", 0),
+      hasObserved<WorkspaceContext, Workspace>("auditEvents", []),
     ],
   },
-] satisfies readonly ScenarioCase<"duplicate", WorkspaceStep, WorkspaceRecord, WorkspaceContext>[];
+] satisfies readonly ScenarioCase<"duplicate", WorkspaceStep, Workspace, WorkspaceContext>[];
 
-const table: ScenarioTable<WorkspaceFixture, "duplicate", WorkspaceStep, WorkspaceRecord, WorkspaceContext> = {
+const table: ScenarioTable<WorkspaceFixture, "duplicate", WorkspaceStep, Workspace, WorkspaceContext> = {
   defaultFixture: createWorkspaceFixture,
   fixtures: { duplicate: createDuplicateWorkspaceFixture },
   cases: scenarios,
-  execute: async (fixture, steps) => {
-    let result: WorkspaceRecord | undefined;
-    for (const step of steps) {
-      result =
-        step.type === "register"
-          ? await fixture.register.execute(step.input)
-          : step.type === "update"
-            ? await fixture.update.execute(step.selector, step.input)
-            : await fixture.delete.execute(step.selector);
-    }
-    return result!;
-  },
+  execute: (fixture, steps) =>
+    Effect.gen(function* () {
+      let result: Workspace | undefined;
+      for (const step of steps) {
+        result =
+          step.type === "register"
+            ? yield* registerWorkspace(step.input)
+            : step.type === "update"
+              ? yield* updateWorkspace(step.selector, step.input)
+              : yield* deleteWorkspace(step.selector);
+      }
+      return result!;
+    }).pipe(Effect.provide(fixture.layer)),
   observe: async (fixture) => {
-    const records = await fixture.repository.list();
+    const records = await resolveMaybePromise(fixture.repository.list());
     const record = records[0];
     return {
       recordCount: records.length,
       recordName: record?.name ?? "",
       rootPath: record?.rootPath ?? "",
-      updatedAt: record?.updatedAt ?? "",
       auditEvents: [...fixture.auditEvents],
       insertCalls: fixture.repository.insertCalls,
       upsertCalls: fixture.repository.upsertCalls,
@@ -131,26 +129,15 @@ function createWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
   const repository = new FakeWorkspaceRepository();
   const directory = new FakeWorkspaceDirectory();
   const auditEvents: string[] = [];
-  const timestamps = ["2026-08-15T00:00:00.000Z", "2026-08-16T00:00:00.000Z"];
-  let timestampIndex = 0;
-  const clock: ApplicationClock = {
-    now: () => timestamps[Math.min(timestampIndex++, timestamps.length - 1)]!,
+  const audit: WorkspaceAuditPort = {
+    record: (eventType: string) =>
+      Effect.sync(() => {
+        auditEvents.push(eventType);
+      }),
   };
-  const factory = new WorkspaceRecordFactory(directory, clock);
-  const audit = {
-    record: (eventType: string) => {
-      auditEvents.push(eventType);
-    },
-  };
+  const layer = workspaceLayer({ repository, directories: directory, audit });
   return {
-    fixture: {
-      repository,
-      auditEvents,
-      list: new ListWorkspaces(repository),
-      register: new RegisterWorkspace(repository, factory, audit),
-      update: new UpdateWorkspace(repository, directory, factory, audit),
-      delete: new DeleteWorkspace(repository, directory, audit),
-    },
+    fixture: { repository, auditEvents, layer },
   };
 }
 
@@ -162,59 +149,63 @@ function createDuplicateWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
       rootPath: "/work/project",
       name: "project",
       isGit: true,
-      createdAt: "2026-08-14T00:00:00.000Z",
-      updatedAt: "2026-08-14T00:00:00.000Z",
     }),
   );
   return handle;
 }
 
 class FakeWorkspaceRepository implements WorkspaceRepository {
-  private records: WorkspaceRecord[] = [];
+  private records: Workspace[] = [];
 
   public insertCalls = 0;
   public upsertCalls = 0;
 
-  public seed(record: WorkspaceRecord): void {
+  public seed(record: Workspace): void {
     this.records.push(record);
   }
 
-  public async findById(id: string): Promise<WorkspaceRecord | undefined> {
-    return this.records.find((record) => record.id === id);
+  public findById(id: WorkspaceId): ApplicationEffect<Workspace | undefined> {
+    return Effect.succeed(this.records.find((record) => record.id === id));
   }
 
-  public async list(): Promise<WorkspaceRecord[]> {
-    return [...this.records];
+  public list(): ApplicationEffect<Workspace[]> {
+    return Effect.succeed([...this.records]);
   }
 
-  public async insert(record: WorkspaceRecord): Promise<boolean> {
-    this.insertCalls += 1;
-    if (this.records.some((candidate) => candidate.id === record.id)) return false;
-    this.records.push(record);
-    return true;
+  public insert(record: Workspace): ApplicationEffect<boolean> {
+    return Effect.sync(() => {
+      this.insertCalls += 1;
+      if (this.records.some((candidate) => candidate.id === record.id)) return false;
+      this.records.push(record);
+      return true;
+    });
   }
 
-  public async upsert(record: WorkspaceRecord): Promise<void> {
-    this.upsertCalls += 1;
-    this.records = [...this.records.filter((candidate) => candidate.id !== record.id), record];
+  public upsert(record: Workspace): ApplicationEffect<void> {
+    return Effect.sync(() => {
+      this.upsertCalls += 1;
+      this.records = [...this.records.filter((candidate) => candidate.id !== record.id), record];
+    });
   }
 
-  public async delete(id: string): Promise<void> {
-    this.records = this.records.filter((record) => record.id !== id);
+  public delete(id: WorkspaceId): ApplicationEffect<void> {
+    return Effect.sync(() => {
+      this.records = this.records.filter((record) => record.id !== id);
+    });
   }
 }
 
 class FakeWorkspaceDirectory implements WorkspaceDirectoryPort {
-  public resolveDirectory(directory: string) {
-    return {
+  public resolveDirectory(directory: string): ApplicationEffect<WorkspaceDirectoryInfo> {
+    return Effect.succeed({
       id: WorkspaceId.create("workspace-1"),
       rootPath: directory === "project" ? "/work/project" : directory,
       name: "project",
       isGit: true,
-    };
+    });
   }
 
-  public resolveHook(path: string): string {
-    return `/work/project/${path}`;
+  public resolveHook(path: string): ApplicationEffect<string> {
+    return Effect.succeed(`/work/project/${path}`);
   }
 }

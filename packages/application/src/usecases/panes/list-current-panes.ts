@@ -1,18 +1,7 @@
-import type { PaneRecord } from "@muximo/domain";
-import type { ApplicationClock } from "../../ports/application.js";
-import type { MuximodHostPort } from "../../ports/host.js";
-import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
-import type { AgentStatusStore } from "../sessions/agent-status.js";
+import { Effect } from "effect";
 import { reconcilePanes } from "../terminals/reconcile-panes.js";
 
-export async function listCurrentPanes(
-  host: MuximodHostPort,
-  paneRepository: PaneRepository,
-  agentSessionRepository: AgentSessionRepository,
-  agentStatus: AgentStatusStore,
-  clock: ApplicationClock,
-  sessionName?: string,
-): Promise<PaneRecord[]> {
-  const panes = await reconcilePanes(host, paneRepository, agentSessionRepository, agentStatus, clock);
+export const listCurrentPanes = Effect.fn("Panes.listCurrent")(function* (sessionName?: string) {
+  const panes = yield* reconcilePanes();
   return sessionName ? panes.filter((pane) => pane.sessionName === sessionName) : panes;
-}
+});

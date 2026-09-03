@@ -13,8 +13,9 @@ import {
   unlinkSync,
 } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
-import type { HookPort, HookResult, ShellHookPort } from "@muximo/application";
-import type { AgentBackend, AgentSessionRecord } from "@muximo/domain";
+import type { ApplicationEffect, HookPort, HookResult, ShellHookPort } from "@muximo/application";
+import type { AgentBackend, AgentSession } from "@muximo/domain";
+import { fromPromise } from "../effect.js";
 import { errorFields, type Logger } from "../logging/index.js";
 import { realpathSafe } from "./filesystem.js";
 
@@ -29,76 +30,85 @@ export type HookAdapterOptions = {
 export class WorkspaceHookAdapter implements HookPort, ShellHookPort {
   public constructor(private readonly options: HookAdapterOptions) {}
 
-  public async resolveHook(value: string, workspaceRoot: string): Promise<string> {
-    const path = realpathSafe(isAbsolute(value) ? value : join(workspaceRoot, value));
-    if (!existsSync(path)) throw new Error(`workspace hook does not exist: ${value}`);
-    accessSync(path, constants.X_OK);
-    if (!statSync(path).isFile()) throw new Error(`workspace hook is not a file: ${path}`);
-    return path;
-  }
-
-  public async resolveStoredHook(path: string | undefined): Promise<string | undefined> {
-    return path === undefined ? undefined : this.resolveHook(path, this.options.cwd);
-  }
-
-  public async run(session: AgentSessionRecord, kind: "setup" | "cleanup"): Promise<HookResult> {
-    const hook = kind === "setup" ? session.setupHook : session.cleanupHook;
-    if (!hook) return { success: true };
-    const success = await this.runCore({
-      hook,
-      kind,
-      runDir: session.worktreePath ?? session.workspaceRoot,
-      name: session.name,
-      backend: session.backend,
-      workspaceRoot: session.workspaceRoot,
-      worktreePath: session.worktreePath ?? "",
-      backendSessionId: session.backendSessionId ?? "",
-      stateId: session.id,
-      resuming: session.resuming,
-      setupOutputFile: session.setupOutputFile ?? "",
+  public resolveHook(value: string, workspaceRoot: string): ApplicationEffect<string> {
+    return fromPromise(() => {
+      const path = realpathSafe(isAbsolute(value) ? value : join(workspaceRoot, value));
+      if (!existsSync(path)) throw new Error(`workspace hook does not exist: ${value}`);
+      accessSync(path, constants.X_OK);
+      if (!statSync(path).isFile()) throw new Error(`workspace hook is not a file: ${path}`);
+      return path;
     });
-    return {
-      success,
-      sessionUpdate: {
-        [kind === "setup" ? "setupOutputFile" : "cleanupOutputFile"]: this.outputFile(session.id, kind),
-      },
-    };
   }
 
-  public async removeOutputs(session: AgentSessionRecord): Promise<void> {
-    for (const path of [session.setupOutputFile, session.cleanupOutputFile]) {
-      if (!path) continue;
-      try {
-        unlinkSync(path);
-      } catch {
-        // Hook output is an artifact; a missing file is harmless.
+  public resolveStoredHook(path: string | undefined): ApplicationEffect<string | undefined> {
+    if (path === undefined) return fromPromise(() => undefined);
+    return this.resolveHook(path, this.options.cwd);
+  }
+
+  public run(session: AgentSession, kind: "setup" | "cleanup"): ApplicationEffect<HookResult> {
+    const hook = kind === "setup" ? session.setupHook : session.cleanupHook;
+    if (!hook) return fromPromise(() => ({ success: true }));
+    return fromPromise(async () => {
+      const success = await this.runCore({
+        hook,
+        kind,
+        runDir: session.worktreePath ?? session.workspaceRoot,
+        name: session.name,
+        backend: session.backend,
+        workspaceRoot: session.workspaceRoot,
+        worktreePath: session.worktreePath ?? "",
+        backendSessionId: session.backendSessionId ?? "",
+        stateId: session.id,
+        resuming: session.resuming,
+        setupOutputFile: session.setupOutputFile ?? "",
+      });
+      return {
+        success,
+        sessionUpdate: {
+          [kind === "setup" ? "setupOutputFile" : "cleanupOutputFile"]: this.outputFile(session.id, kind),
+        },
+      };
+    });
+  }
+
+  public removeOutputs(session: AgentSession): ApplicationEffect<void> {
+    return fromPromise(() => {
+      for (const path of [session.setupOutputFile, session.cleanupOutputFile]) {
+        if (!path) continue;
+        try {
+          unlinkSync(path);
+        } catch {
+          // Hook output is an artifact; a missing file is harmless.
+        }
       }
-    }
-    this.removeEmptyDirectory(join(this.options.hookOutputRoot, session.id));
+      this.removeEmptyDirectory(join(this.options.hookOutputRoot, session.id));
+    });
   }
 
-  public async runShell(input: {
+  public runShell(input: {
     hook: string | null;
     kind: "setup" | "cleanup";
     runDir: string;
     name: string;
     workspaceRoot: string;
     worktreePath: string;
-  }): Promise<boolean> {
-    if (!input.hook) return true;
-    return this.runCore({
-      hook: input.hook,
-      kind: input.kind,
-      runDir: input.runDir,
-      name: input.name,
-      backend: "shell",
-      workspaceRoot: input.workspaceRoot,
-      worktreePath: input.worktreePath,
-      backendSessionId: "",
-      stateId: `shell-${input.name}`,
-      resuming: false,
-      setupOutputFile: "",
-    });
+  }): ApplicationEffect<boolean> {
+    if (!input.hook) return fromPromise(() => true);
+    return fromPromise(() =>
+      this.runCore({
+        hook: input.hook ?? "",
+        kind: input.kind,
+        runDir: input.runDir,
+        name: input.name,
+        backend: "shell",
+        workspaceRoot: input.workspaceRoot,
+        worktreePath: input.worktreePath,
+        backendSessionId: "",
+        stateId: `shell-${input.name}`,
+        resuming: false,
+        setupOutputFile: "",
+      }),
+    );
   }
 
   private async runCore(input: {

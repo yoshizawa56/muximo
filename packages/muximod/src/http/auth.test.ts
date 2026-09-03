@@ -7,6 +7,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
 import { createOriginPolicy } from "./middleware.js";
@@ -16,23 +17,13 @@ import { createTestMuximodSocketFactory } from "./test-socket.js";
 const serverId = "server-auth-test-000000";
 const auth: MuximodAuthPort = {
   serverId,
-  authenticateAccessToken: async () => undefined,
-  claimPairing: async () => {
-    throw new Error("not used");
-  },
-  pairingStatus: async () => {
-    throw new Error("not used");
-  },
-  createChallenge: async () => {
-    throw new Error("not used");
-  },
-  createSession: async () => {
-    throw new Error("not used");
-  },
-  issueWebSocketTicket: async () => {
-    throw new Error("not used");
-  },
-  consumeWebSocketTicket: async () => undefined,
+  authenticateAccessToken: () => Effect.succeed(undefined),
+  claimPairing: () => Effect.fail(new Error("not used")),
+  pairingStatus: () => Effect.fail(new Error("not used")),
+  createChallenge: () => Effect.fail(new Error("not used")),
+  createSession: () => Effect.fail(new Error("not used")),
+  issueWebSocketTicket: () => Effect.fail(new Error("not used")),
+  consumeWebSocketTicket: () => Effect.succeed(undefined),
 };
 
 type HttpStep = { type: "health" | "info" | "protected" | "preflight" };

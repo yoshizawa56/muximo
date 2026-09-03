@@ -18,7 +18,7 @@ export function selectedTargetFromPaneId(
 
 export type PaneBoardViewModel = {
   selectedTarget: string;
-  panes: PaneSummary[];
+  panes: readonly PaneSummary[];
   status: "loading" | "ready" | "error";
   errorMessage: string | null;
   select: (pane: PaneSummary) => void;

@@ -16,7 +16,8 @@
     "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@muximo/domain": "workspace:*"
+    "@muximo/domain": "workspace:*",
+    "effect": "4.0.0-beta.107"
   },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",

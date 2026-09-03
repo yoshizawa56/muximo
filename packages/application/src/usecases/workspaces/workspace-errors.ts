@@ -1,6 +1,8 @@
 import type { WorkspaceDirectoryInfo } from "../../ports/workspace.js";
 
 export class WorkspaceUseCaseError extends Error {
+  public readonly _tag: string = "WorkspaceUseCaseError";
+
   public constructor(
     public readonly code: string,
     message: string,
@@ -12,6 +14,8 @@ export class WorkspaceUseCaseError extends Error {
 }
 
 export class WorkspaceAlreadyRegisteredError extends WorkspaceUseCaseError {
+  public override readonly _tag = "WorkspaceAlreadyRegisteredError" as const;
+
   public constructor(workspace: WorkspaceDirectoryInfo) {
     super("workspace_already_registered", `workspace is already registered: ${workspace.rootPath}`, {
       workspaceId: workspace.id,
@@ -22,6 +26,8 @@ export class WorkspaceAlreadyRegisteredError extends WorkspaceUseCaseError {
 }
 
 export class WorkspaceNotFoundError extends WorkspaceUseCaseError {
+  public override readonly _tag = "WorkspaceNotFoundError" as const;
+
   public constructor(selector: string) {
     super("workspace_not_found", `workspace not found: ${selector}`, { selector });
     this.name = "WorkspaceNotFoundError";

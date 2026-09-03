@@ -1,4 +1,5 @@
 import type { WorkspaceId } from "@muximo/domain";
+import type { ApplicationEffect } from "../effect.js";
 
 export type WorkspaceDirectoryInfo = {
   id: WorkspaceId;
@@ -13,8 +14,8 @@ export type WorkspaceDirectoryInfo = {
  * executable-file checks.
  */
 export interface WorkspaceDirectoryPort {
-  resolveDirectory(directory: string): WorkspaceDirectoryInfo | Promise<WorkspaceDirectoryInfo>;
-  resolveHook(path: string, workspaceRoot: string): string | Promise<string>;
+  resolveDirectory(directory: string): ApplicationEffect<WorkspaceDirectoryInfo>;
+  resolveHook(path: string, workspaceRoot: string): ApplicationEffect<string>;
 }
 
 /**
@@ -23,5 +24,5 @@ export interface WorkspaceDirectoryPort {
  * this callback for a transactional workspace mutation.
  */
 export interface WorkspaceAuditPort {
-  record(eventType: string, entityId: string, payload: unknown): void | Promise<void>;
+  record(eventType: string, entityId: string, payload: unknown): ApplicationEffect<void>;
 }

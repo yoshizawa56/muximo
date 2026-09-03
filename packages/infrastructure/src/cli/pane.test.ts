@@ -8,6 +8,7 @@ import {
   hasObserved,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
@@ -119,8 +120,8 @@ const lifecycleTable: OperationTable<PaneFixture, "default", LifecycleInput, Pan
   execute: async (fixture, input) => {
     fixture.adapter = createAdapter(fixture, input.mode);
     const session = createSession(fixture.root);
-    await fixture.adapter.adopt(session);
-    await fixture.adapter.release(session);
+    await resolveMaybePromise(fixture.adapter.adopt(session));
+    await resolveMaybePromise(fixture.adapter.release(session));
     if (input.mode === "restore") fixture.adapter.restoreShell();
     return observePane(fixture);
   },
@@ -132,7 +133,9 @@ const observationTable: OperationTable<PaneFixture, "default", ObservationInput,
   cases: observationCases,
   execute: async (fixture, input) => {
     fixture.adapter = createAdapter(fixture, input.mode);
-    await fixture.adapter.observe(createSession(fixture.root), { state: "waiting_input", recentOutput: "Need input" });
+    await resolveMaybePromise(
+      fixture.adapter.observe(createSession(fixture.root), { state: "waiting_input", recentOutput: "Need input" }),
+    );
     return observePane(fixture);
   },
   observe: observePane,
@@ -160,8 +163,7 @@ function createSession(root: string): AgentSession {
     setupRan: false,
     resuming: false,
     executionId: "execution-id",
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
+    lastActivityAt: "2026-08-23T00:00:00.000Z",
   });
 }
 

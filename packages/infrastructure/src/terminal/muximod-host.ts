@@ -1,6 +1,7 @@
 // This class translates the host port into tmux and process operations.
 import { randomUUID } from "node:crypto";
 import {
+  type ApplicationEffect,
   ApplicationError,
   type CreatePaneInput,
   type HostPaneReference,
@@ -10,7 +11,8 @@ import {
   type MuximodPaneObservation,
   type TerminalHostSnapshot,
 } from "@muximo/application";
-import type { WorkspaceRecord } from "@muximo/domain";
+import type { Workspace } from "@muximo/domain";
+import { fromPromise } from "../effect.js";
 import { isProcessAlive } from "../process/process.js";
 import { classifyTerminalCommand, classifyUnmanagedAgentOutput } from "./observation.js";
 import {
@@ -33,146 +35,172 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     return randomUUID();
   }
 
-  public async hasSession(target: string): Promise<boolean> {
-    return this.adapter.hasSession(target);
+  public hasSession(target: string): ApplicationEffect<boolean> {
+    return fromPromise(() => this.adapter.hasSession(target));
   }
 
-  public async findManagedSessionId(target: string): Promise<string | undefined> {
-    const snapshot = await this.listPanesSnapshot();
-    return snapshot.panes.find((pane) => pane.sessionName === target)?.muximodManagedSessionId;
+  public findManagedSessionId(target: string): ApplicationEffect<string | undefined> {
+    return fromPromise(() => {
+      const snapshot = this.readSnapshot();
+      return snapshot.panes.find((pane) => pane.sessionName === target)?.muximodManagedSessionId;
+    });
   }
 
-  public async configureManagedSession(target: string, managedSessionId: string): Promise<void> {
-    configureManagedTmuxSession(this.adapter, target, managedSessionId, resolveMuximoCommand(this.environment));
+  public configureManagedSession(target: string, managedSessionId: string): ApplicationEffect<void> {
+    return fromPromise(() => {
+      configureManagedTmuxSession(this.adapter, target, managedSessionId, resolveMuximoCommand(this.environment));
+    });
   }
 
-  public async createManagedSession(target: string, cwd: string): Promise<string> {
-    const managedSessionId = randomUUID();
-    const binary = resolveMuximoCommand(this.environment);
-    let created = false;
-    try {
-      this.adapter.createSession(
-        target,
-        cwd,
-        buildMuximoShellCommand(binary, {
-          MUXIMOD_MANAGED_SESSION_ID: managedSessionId,
-          MUXIMOD_MANAGED_SESSION_NAME: target,
-        }),
-      );
-      created = true;
-      configureManagedTmuxSession(this.adapter, target, managedSessionId, binary);
-      return managedSessionId;
-    } catch (error) {
-      if (created) {
-        try {
-          this.adapter.killSession(target);
-        } catch {
-          // Preserve the original setup error; cleanup is best effort.
+  public createManagedSession(target: string, cwd: string): ApplicationEffect<string> {
+    return fromPromise(() => {
+      const managedSessionId = randomUUID();
+      const binary = resolveMuximoCommand(this.environment);
+      let created = false;
+      try {
+        this.adapter.createSession(
+          target,
+          cwd,
+          buildMuximoShellCommand(binary, {
+            MUXIMOD_MANAGED_SESSION_ID: managedSessionId,
+            MUXIMOD_MANAGED_SESSION_NAME: target,
+          }),
+        );
+        created = true;
+        configureManagedTmuxSession(this.adapter, target, managedSessionId, binary);
+        return managedSessionId;
+      } catch (error) {
+        if (created) {
+          try {
+            this.adapter.killSession(target);
+          } catch {
+            // Preserve the original setup error; cleanup is best effort.
+          }
         }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
-  public async killSession(target: string): Promise<void> {
-    this.adapter.killSession(target);
+  public killSession(target: string): ApplicationEffect<void> {
+    return fromPromise(() => {
+      this.adapter.killSession(target);
+    });
   }
 
-  public async attachSession(target: string): Promise<number> {
-    return this.adapter.attachSession(target);
+  public attachSession(target: string): ApplicationEffect<number> {
+    return fromPromise(() => this.adapter.attachSession(target));
   }
 
-  public async createManagedPane(
+  public createManagedPane(
     input: CreatePaneInput,
-    workspace: WorkspaceRecord | undefined,
+    workspace: Workspace | undefined,
     cwd: string | undefined,
-  ): Promise<string> {
-    const paneName = input.name;
-    const command = buildMuximoShellCommand(
-      resolveMuximoCommand(this.environment),
-      {
-        MUXIMOD_MANAGED_SESSION_NAME: input.sessionName,
-        MUXIMOD_PANE_NAME: paneName,
-        ...(input.useWorktree ? { MUXIMOD_WORKTREE_SESSION_NAME: paneName } : {}),
-        ...(workspace ? { MUXIMOD_WORKSPACE_ID: workspace.id } : {}),
-      },
-      input.kind === "agent" ? this.buildAgentCommand(input, workspace) : undefined,
-      input.kind === "shell" && input.useWorktree ? ["--worktree", paneName] : [],
-    );
+  ): ApplicationEffect<string> {
+    return fromPromise(() => {
+      const paneName = input.name;
+      const command = buildMuximoShellCommand(
+        resolveMuximoCommand(this.environment),
+        {
+          MUXIMOD_MANAGED_SESSION_NAME: input.sessionName,
+          MUXIMOD_PANE_NAME: paneName,
+          ...(input.useWorktree ? { MUXIMOD_WORKTREE_SESSION_NAME: paneName } : {}),
+          ...(workspace ? { MUXIMOD_WORKSPACE_ID: workspace.id } : {}),
+        },
+        input.kind === "agent" ? this.buildAgentCommand(input, workspace) : undefined,
+        input.kind === "shell" && input.useWorktree ? ["--worktree", paneName] : [],
+      );
 
-    if (input.placement === "window") return this.adapter.newWindow(input.sessionName, cwd, command);
-    if (!input.targetPaneId)
-      throw new ApplicationError("target_pane_required", "targetPaneId is required for a split pane");
+      if (input.placement === "window") return this.adapter.newWindow(input.sessionName, cwd, command);
+      if (!input.targetPaneId)
+        throw new ApplicationError("target_pane_required", "targetPaneId is required for a split pane");
 
-    const target = this.adapter.resolvePane(input.targetPaneId);
-    if (target.sessionName !== input.sessionName) {
-      throw new ApplicationError("target_pane_session_mismatch", "targetPaneId belongs to a different tmux session");
-    }
-    const snapshot = this.adapter.snapshotWindow(target);
-    return this.adapter.splitWindow(command, input.placement, input.targetPaneId, snapshot.zoomed);
+      const target = this.adapter.resolvePane(input.targetPaneId);
+      if (target.sessionName !== input.sessionName) {
+        throw new ApplicationError("target_pane_session_mismatch", "targetPaneId belongs to a different tmux session");
+      }
+      const snapshot = this.adapter.snapshotWindow(target);
+      return this.adapter.splitWindow(command, input.placement, input.targetPaneId, snapshot.zoomed);
+    });
   }
 
-  public async resolvePane(target: string): Promise<HostPaneReference> {
-    return toHostPaneReference(this.adapter.resolvePane(target));
+  public resolvePane(target: string): ApplicationEffect<HostPaneReference> {
+    return fromPromise(() => toHostPaneReference(this.adapter.resolvePane(target)));
   }
 
-  public async isWindowZoomed(pane: HostPaneReference): Promise<boolean> {
-    return this.adapter.snapshotWindow(toTmuxPaneRef(pane)).zoomed;
+  public isWindowZoomed(pane: HostPaneReference): ApplicationEffect<boolean> {
+    return fromPromise(() => this.adapter.snapshotWindow(toTmuxPaneRef(pane)).zoomed);
   }
 
-  public async splitPane(
+  public splitPane(
     command: string | undefined,
     placement: "right" | "bottom",
     targetPaneId: string,
     zoomed: boolean,
-  ): Promise<string> {
-    return this.adapter.splitWindow(command, placement, targetPaneId, zoomed);
+  ): ApplicationEffect<string> {
+    return fromPromise(() => this.adapter.splitWindow(command, placement, targetPaneId, zoomed));
   }
 
-  public async listPanesSnapshot(): Promise<TerminalHostSnapshot> {
-    return mapTmuxSnapshotToTerminalHostSnapshot(this.adapter.listPanesSnapshot());
+  public listPanesSnapshot(): ApplicationEffect<TerminalHostSnapshot> {
+    return fromPromise(() => this.readSnapshot());
   }
 
-  public async classifyCommand(command: string): Promise<MuximodPaneClassification> {
-    return classifyTerminalCommand(command);
+  public classifyCommand(command: string): ApplicationEffect<MuximodPaneClassification> {
+    return fromPromise(() => classifyTerminalCommand(command));
   }
 
-  public async observeUnmanagedAgent(
+  public observeUnmanagedAgent(
     paneId: string,
     fallbackState: Parameters<typeof classifyUnmanagedAgentOutput>[1],
-  ): Promise<MuximodPaneObservation> {
-    try {
-      return classifyUnmanagedAgentOutput(this.adapter.capturePane(paneId), fallbackState);
-    } catch {
-      return { state: fallbackState };
-    }
+  ): ApplicationEffect<MuximodPaneObservation> {
+    return fromPromise(() => {
+      try {
+        return classifyUnmanagedAgentOutput(this.adapter.capturePane(paneId), fallbackState);
+      } catch {
+        return { state: fallbackState };
+      }
+    });
   }
 
-  public async setAgentPaneMetadata(
+  public setAgentPaneMetadata(
     paneId: string,
     field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id",
     value: string,
-  ): Promise<void> {
-    this.adapter.setAgentPaneMetadata(paneId, field, value);
+  ): ApplicationEffect<void> {
+    return fromPromise(() => {
+      this.adapter.setAgentPaneMetadata(paneId, field, value);
+    });
   }
 
-  public async setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): Promise<void> {
-    this.adapter.setAgentExecutionMetadata(paneId, agentSessionId, executionId);
+  public setAgentExecutionMetadata(
+    paneId: string,
+    agentSessionId: string,
+    executionId: string,
+  ): ApplicationEffect<void> {
+    return fromPromise(() => {
+      this.adapter.setAgentExecutionMetadata(paneId, agentSessionId, executionId);
+    });
   }
 
-  public async clearAgentExecutionMetadata(paneId: string, expectedExecutionId = ""): Promise<boolean> {
-    return this.adapter.clearAgentExecutionMetadata(paneId, expectedExecutionId);
+  public clearAgentExecutionMetadata(paneId: string, expectedExecutionId = ""): ApplicationEffect<boolean> {
+    return fromPromise(() => this.adapter.clearAgentExecutionMetadata(paneId, expectedExecutionId));
   }
 
-  public async resetAgentPaneMetadata(paneId: string): Promise<void> {
-    this.adapter.resetAgentPaneMetadata(paneId);
+  public resetAgentPaneMetadata(paneId: string): ApplicationEffect<void> {
+    return fromPromise(() => {
+      this.adapter.resetAgentPaneMetadata(paneId);
+    });
   }
 
-  public async isProcessAlive(pid: number, expectedStartedAt?: string): Promise<boolean> {
-    return isProcessAlive(pid, expectedStartedAt);
+  public isProcessAlive(pid: number, expectedStartedAt?: string): ApplicationEffect<boolean> {
+    return fromPromise(() => isProcessAlive(pid, expectedStartedAt));
   }
 
-  private buildAgentCommand(input: CreatePaneInput, workspace: WorkspaceRecord | undefined): string {
+  private readSnapshot(): TerminalHostSnapshot {
+    return mapTmuxSnapshotToTerminalHostSnapshot(this.adapter.listPanesSnapshot());
+  }
+
+  private buildAgentCommand(input: CreatePaneInput, workspace: Workspace | undefined): string {
     const binary = resolveMuximoCommand(this.environment);
     if (!input.agentId) throw new ApplicationError("agent_required", "agentId is required for an agent pane");
     const args = [input.agentId, "--no-worktree", "--name", input.name];

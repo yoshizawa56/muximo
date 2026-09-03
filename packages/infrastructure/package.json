@@ -31,6 +31,7 @@
     "@muximo/application": "workspace:*",
     "@muximo/domain": "workspace:*",
     "drizzle-orm": "^0.45.2",
+    "effect": "4.0.0-beta.107",
     "ignore": "^7.0.6"
   },
   "devDependencies": {

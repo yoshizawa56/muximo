@@ -322,7 +322,7 @@ export class TerminalSession {
       return;
     }
 
-    if (message.sessionId && message.resumeToken) {
+    if ("sessionId" in message && "resumeToken" in message && message.sessionId && message.resumeToken) {
       const existing = this.registry.find(message.sessionId, message.resumeToken, this.options.authDeviceId);
       if (!existing) {
         this.sendError("resume_not_found", "The terminal session is no longer resumable", true);

@@ -1,5 +1,6 @@
 import { type MuximodEvent, muximodEventSchema } from "@muximo/contract/api";
 import { EventPublisher } from "@orpc/server";
+import { Schema } from "effect";
 
 /**
  * Publishes small, non-authoritative invalidation events to SSE subscribers.
@@ -17,7 +18,10 @@ export class MuximodEventHub {
   }
 
   public publish(event: MuximodEvent): void {
-    this.publisher.publish("muximod", muximodEventSchema.parse(event));
+    this.publisher.publish(
+      "muximod",
+      Schema.decodeUnknownSync(muximodEventSchema, { onExcessProperty: "error" })(event),
+    );
   }
 
   public close(): void {

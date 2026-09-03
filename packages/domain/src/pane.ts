@@ -1,10 +1,11 @@
-import { z } from "zod";
+import { Schema } from "effect";
+import { ImmutableEntityFieldError, InvalidEntityError } from "./entity-errors.js";
 import { AgentSessionId, PaneId, WorkspaceId } from "./ids.js";
-import { applyObjectPatch, type ObjectPatch } from "./patch.js";
+import { applyObjectPatch, type EntityPatch } from "./patch.js";
 
 export const paneKinds = ["agent", "shell", "unknown"] as const;
-export const paneKindSchema = z.enum(paneKinds);
-export type PaneKind = z.infer<typeof paneKindSchema>;
+export const paneKindSchema = Schema.Literals(paneKinds);
+export type PaneKind = (typeof paneKindSchema)["Type"];
 
 export const paneStates = [
   "starting",
@@ -15,41 +16,37 @@ export const paneStates = [
   "completed",
   "stopped",
 ] as const;
-export const paneStateSchema = z.enum(paneStates);
-export type PaneState = z.infer<typeof paneStateSchema>;
+export const paneStateSchema = Schema.Literals(paneStates);
+export type PaneState = (typeof paneStateSchema)["Type"];
 
-const paneSchema = z
-  .object({
-    id: PaneId.schema,
-    hostPaneId: z.string().min(1),
-    hostServerId: z.string().min(1),
-    agentSessionId: AgentSessionId.schema.optional(),
-    agentExecutionId: z.string().min(1).optional(),
-    sessionName: z.string().min(1),
-    windowId: z.string().min(1),
-    kind: paneKindSchema,
-    name: z.string().min(1),
-    cwd: z.string().min(1),
-    workspaceId: WorkspaceId.schema.optional(),
-    agentId: z.string().min(1).optional(),
-    state: paneStateSchema,
-    title: z.string().optional(),
-    recentOutput: z.string().optional(),
-    lastSeenAt: z.string().min(1),
-    windowName: z.string().optional(),
-    windowIndex: z.number().int().min(0).optional(),
-    paneIndex: z.number().int().min(0).optional(),
-    left: z.number().int().min(0).optional(),
-    top: z.number().int().min(0).optional(),
-    width: z.number().int().min(1).optional(),
-    height: z.number().int().min(1).optional(),
-    windowWidth: z.number().int().min(1).optional(),
-    windowHeight: z.number().int().min(1).optional(),
-  })
-  .strict();
-
-export type Pane = z.infer<typeof paneSchema>;
-export type PaneRecord = Pane;
+/** Bare field schemas shared by the entity definition and wire derivations. */
+export const PaneFields = {
+  id: PaneId.schema,
+  hostPaneId: Schema.String.check(Schema.isMinLength(1)),
+  hostServerId: Schema.String.check(Schema.isMinLength(1)),
+  agentSessionId: AgentSessionId.schema,
+  agentExecutionId: Schema.String.check(Schema.isMinLength(1)),
+  sessionName: Schema.String.check(Schema.isMinLength(1)),
+  windowId: Schema.String.check(Schema.isMinLength(1)),
+  kind: paneKindSchema,
+  name: Schema.String.check(Schema.isMinLength(1)),
+  cwd: Schema.String.check(Schema.isMinLength(1)),
+  workspaceId: WorkspaceId.schema,
+  agentId: Schema.String.check(Schema.isMinLength(1)),
+  state: paneStateSchema,
+  title: Schema.String,
+  recentOutput: Schema.String,
+  lastSeenAt: Schema.String.check(Schema.isMinLength(1)),
+  windowName: Schema.String,
+  windowIndex: Schema.Number.check(nonNegativeInteger()),
+  paneIndex: Schema.Number.check(nonNegativeInteger()),
+  left: Schema.Number.check(nonNegativeInteger()),
+  top: Schema.Number.check(nonNegativeInteger()),
+  width: Schema.Number.check(positiveInteger()),
+  height: Schema.Number.check(positiveInteger()),
+  windowWidth: Schema.Number.check(positiveInteger()),
+  windowHeight: Schema.Number.check(positiveInteger()),
+} as const;
 
 export type PaneCreateInput = {
   id: PaneId;
@@ -79,8 +76,9 @@ export type PaneCreateInput = {
   windowHeight?: number;
 };
 
-type PaneMutableFields = Omit<Pane, "id" | "hostPaneId" | "hostServerId" | "state">;
-export type PaneUpdateInput = ObjectPatch<PaneMutableFields>;
+const paneImmutableFields = ["id", "hostPaneId", "hostServerId", "state"] as const;
+type PaneImmutableFields = (typeof paneImmutableFields)[number];
+export type PaneUpdateInput = EntityPatch<(typeof Pane)["Encoded"], PaneImmutableFields>;
 
 export type PaneStateTransition = {
   from: PaneState;
@@ -90,42 +88,78 @@ export type PaneStateTransition = {
 };
 
 const terminalStates = new Set<PaneState>(["failed", "completed", "stopped"]);
-const immutablePaneUpdateKeys = new Set(["id", "hostPaneId", "hostServerId", "state"]);
+const immutablePaneUpdateKeys = new Set<string>(paneImmutableFields);
 
-const parsePane = (input: unknown): Pane => paneSchema.parse(input);
-
-export const Pane = {
-  schema: paneSchema,
+export class Pane extends Schema.Class<Pane>("Pane")({
+  id: PaneId.schema,
+  hostPaneId: PaneFields.hostPaneId,
+  hostServerId: PaneFields.hostServerId,
+  agentSessionId: Schema.optional(AgentSessionId.schema),
+  agentExecutionId: Schema.optional(PaneFields.agentExecutionId),
+  sessionName: PaneFields.sessionName,
+  windowId: PaneFields.windowId,
+  kind: paneKindSchema,
+  name: PaneFields.name,
+  cwd: PaneFields.cwd,
+  workspaceId: Schema.optional(WorkspaceId.schema),
+  agentId: Schema.optional(PaneFields.agentId),
+  state: paneStateSchema,
+  title: Schema.optional(PaneFields.title),
+  recentOutput: Schema.optional(PaneFields.recentOutput),
+  lastSeenAt: PaneFields.lastSeenAt,
+  windowName: Schema.optional(PaneFields.windowName),
+  windowIndex: Schema.optional(PaneFields.windowIndex),
+  paneIndex: Schema.optional(PaneFields.paneIndex),
+  left: Schema.optional(PaneFields.left),
+  top: Schema.optional(PaneFields.top),
+  width: Schema.optional(PaneFields.width),
+  height: Schema.optional(PaneFields.height),
+  windowWidth: Schema.optional(PaneFields.windowWidth),
+  windowHeight: Schema.optional(PaneFields.windowHeight),
+}) {
+  static create(input: PaneCreateInput): Pane {
+    const { initialState, ...record } = input;
+    return decodePane({ ...record, state: initialState });
+  }
 
   /** Rehydrates a persisted pane. This is the only re-entry point for raw data. */
-  restore(input: unknown): Pane {
-    return parsePane(input);
-  },
+  static restore(input: unknown): Pane {
+    return decodePane(input);
+  }
 
-  create(input: PaneCreateInput): Pane {
-    const { initialState, ...record } = input;
-    return parsePane({ ...record, state: initialState });
-  },
-
-  update(entity: Pane, input: PaneUpdateInput): Pane {
-    const current = parsePane(entity);
+  update(input: PaneUpdateInput): Pane {
     for (const key of Object.keys(input)) {
       if (immutablePaneUpdateKeys.has(key)) {
-        throw new Error(`Pane update cannot change immutable field: ${key}`);
+        throw new ImmutableEntityFieldError("Pane", key);
       }
     }
-    return parsePane(applyObjectPatch(current, input));
-  },
+    const current = { ...this } as (typeof Pane)["Encoded"];
+    return decodePane(applyObjectPatch(current, input));
+  }
 
-  canTransitionState: canTransitionPaneState,
-  resetState: resetPaneState,
-  transitionState: transitionPane,
-  isAttentionState,
-} as const;
+  /** Reinitializes a pane state when its host pane starts a new execution. */
+  resetTo(next: PaneState, reason: string, at: string): Pane {
+    validatePaneStateChange(next, reason, at);
+    return decodePane({ ...this, state: next, lastSeenAt: at });
+  }
+
+  transitionTo(next: PaneState, reason: string, at: string): Pane {
+    const transition = transitionPaneState(this.state, next, reason, at);
+    return decodePane({ ...this, state: transition.to, lastSeenAt: at });
+  }
+}
+
+const decodePane = (input: unknown): Pane => {
+  try {
+    return Schema.decodeUnknownSync(Pane, { onExcessProperty: "error" })(input);
+  } catch (error) {
+    throw new InvalidEntityError("Pane", { cause: error });
+  }
+};
 
 export function canTransitionPaneState(from: PaneState, to: PaneState): boolean {
-  paneStateSchema.parse(from);
-  paneStateSchema.parse(to);
+  decodePaneState(from);
+  decodePaneState(to);
   if (from === to) return true;
   if (terminalStates.has(from)) return false;
   if (to === "starting") return from === "starting";
@@ -146,26 +180,25 @@ export function transitionPaneState(
   return { from: current, to: next, reason, at };
 }
 
-/** Reinitializes a pane state when its host pane starts a new execution. */
-export function resetPaneState(entity: Pane, next: PaneState, reason: string, at: string): Pane {
-  const current = parsePane(entity);
-  validatePaneStateChange(next, reason, at);
-  return parsePane({ ...current, state: next, lastSeenAt: at });
+export function isAttentionState(state: PaneState): boolean {
+  decodePaneState(state);
+  return state === "waiting_input" || state === "waiting_approval" || state === "failed";
 }
 
-export function transitionPane(entity: Pane, next: PaneState, reason: string, at: string): Pane {
-  const current = parsePane(entity);
-  const transition = transitionPaneState(current.state, next, reason, at);
-  return parsePane({ ...current, state: transition.to, lastSeenAt: at });
-}
+const decodePaneState = (state: PaneState): PaneState => {
+  return Schema.decodeUnknownSync(paneStateSchema)(state);
+};
 
 function validatePaneStateChange(next: PaneState, reason: string, at: string): void {
-  paneStateSchema.parse(next);
+  decodePaneState(next);
   if (!reason.trim()) throw new Error("Pane state transition requires a reason");
   if (!at.trim()) throw new Error("Pane state transition requires a time");
 }
 
-export function isAttentionState(state: PaneState): boolean {
-  paneStateSchema.parse(state);
-  return state === "waiting_input" || state === "waiting_approval" || state === "failed";
+function nonNegativeInteger() {
+  return Schema.makeFilter((value: number) => Number.isInteger(value) && value >= 0);
+}
+
+function positiveInteger() {
+  return Schema.makeFilter((value: number) => Number.isInteger(value) && value > 0);
 }

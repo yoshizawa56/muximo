@@ -5,20 +5,29 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
-import type { MuximodWorkspaceDirectory, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "@muximo/application";
+import {
+  type ApplicationEffect,
+  attemptSync,
+  type MuximodWorkspaceCatalogPort,
+  type MuximodWorkspaceDirectory,
+  type WorkspaceDirectoryInfo,
+  type WorkspaceDirectoryPort,
+} from "@muximo/application";
 import {
   validateWorkspaceSelection,
   Workspace,
   type WorkspaceDirectoryOption,
   WorkspaceId,
-  type WorkspaceRecord,
   type WorkspaceSelection,
 } from "@muximo/domain";
+import { Effect } from "effect";
+import { fromPromise } from "../effect.js";
 
 export type InvalidDirectoryReason = "not_found" | "not_directory" | "outside_allowed_root" | "unknown_workspace";
 export type InvalidHookReason = "not_found" | "not_file" | "not_executable";
 
 export class InvalidWorkspaceDirectoryError extends Error {
+  public readonly _tag = "InvalidWorkspaceDirectoryError" as const;
   public readonly code = "invalid_directory" as const;
 
   public constructor(
@@ -36,6 +45,7 @@ export class InvalidWorkspaceDirectoryError extends Error {
 }
 
 export class InvalidWorkspaceHookError extends Error {
+  public readonly _tag = "InvalidWorkspaceHookError" as const;
   public readonly code = "invalid_hook" as const;
 
   public constructor(
@@ -81,50 +91,54 @@ export class AllowedRootPolicy {
   }
 }
 
-export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
+export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort, MuximodWorkspaceCatalogPort {
   public readonly policy: AllowedRootPolicy;
 
   public constructor(allowedRoots: readonly string[], basePath = process.cwd()) {
     this.policy = new AllowedRootPolicy(allowedRoots, basePath);
   }
 
-  public resolveDirectory(directory: string): WorkspaceDirectoryInfo {
-    const resolved = this.policy.assertDirectory(directory);
-    const rootPath = gitWorkspaceRoot(resolved) ?? resolved;
-    if (!this.policy.contains(rootPath)) {
-      throw new InvalidWorkspaceDirectoryError(directory, "outside_allowed_root", this.policy.roots);
-    }
-    return {
-      id: workspaceIdForPath(rootPath),
-      rootPath,
-      name: basename(rootPath) || rootPath,
-      isGit: rootPath !== resolved || isGitWorkspace(rootPath),
-    };
+  public resolveDirectory(directory: string): ApplicationEffect<WorkspaceDirectoryInfo> {
+    return fromPromise(() => {
+      const resolved = this.policy.assertDirectory(directory);
+      const rootPath = gitWorkspaceRoot(resolved) ?? resolved;
+      if (!this.policy.contains(rootPath)) {
+        throw new InvalidWorkspaceDirectoryError(directory, "outside_allowed_root", this.policy.roots);
+      }
+      return {
+        id: workspaceIdForPath(rootPath),
+        rootPath,
+        name: basename(rootPath) || rootPath,
+        isGit: rootPath !== resolved || isGitWorkspace(rootPath),
+      };
+    });
   }
 
-  public resolveHook(path: string, workspaceRoot: string): string {
-    return validateHookPath(path, workspaceRoot);
+  public resolveHook(path: string, workspaceRoot: string): ApplicationEffect<string> {
+    return fromPromise(() => validateHookPath(path, workspaceRoot));
   }
 
   /** Lists directory candidates for the host-side registration browser. */
-  public async browseDirectories(parentPath?: string): Promise<MuximodWorkspaceDirectory[]> {
-    const bases = parentPath ? [this.policy.assertDirectory(parentPath)] : this.policy.roots.filter(isDirectory);
-    let candidates = bases;
-    if (parentPath) {
-      const [base] = bases;
-      if (!base) throw new Error("workspace directory parent path has no base directory");
-      candidates = safeReadDirectory(base)
-        .map((entry) => resolve(base, entry))
-        .filter(isDirectory);
-    }
+  public browseDirectories(parentPath?: string): ApplicationEffect<MuximodWorkspaceDirectory[]> {
+    return fromPromise(() => {
+      const bases = parentPath ? [this.policy.assertDirectory(parentPath)] : this.policy.roots.filter(isDirectory);
+      let candidates = bases;
+      if (parentPath) {
+        const [base] = bases;
+        if (!base) throw new Error("workspace directory parent path has no base directory");
+        candidates = safeReadDirectory(base)
+          .map((entry) => resolve(base, entry))
+          .filter(isDirectory);
+      }
 
-    return candidates
-      .filter((directory) => this.policy.contains(directory))
-      .map((directory) => this.toDirectoryCandidate(realpathIfPresent(directory)))
-      .sort((left, right) => left.directory.localeCompare(right.directory));
+      return candidates
+        .filter((directory) => this.policy.contains(directory))
+        .map((directory) => this.toDirectoryCandidate(realpathIfPresent(directory)))
+        .sort((left, right) => left.directory.localeCompare(right.directory));
+    });
   }
 
-  public toDirectoryOption(record: WorkspaceRecord): MuximodWorkspaceDirectory {
+  public toDirectoryOption(record: Workspace): MuximodWorkspaceDirectory {
     return {
       id: record.id,
       name: record.name,
@@ -135,33 +149,43 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
     };
   }
 
-  public async resolveWorkspaceDirectory(
+  public resolveWorkspaceDirectory(
     workspaceId: WorkspaceId,
-    reader: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
-  ): Promise<WorkspaceRecord> {
-    const workspace = await reader(workspaceId);
-    if (!workspace) throw new InvalidWorkspaceDirectoryError(workspaceId, "unknown_workspace", this.policy.roots);
-    return this.resolveRegisteredWorkspace(workspace);
+    reader: (id: WorkspaceId) => ApplicationEffect<Workspace | undefined>,
+  ): ApplicationEffect<Workspace> {
+    const self = this;
+    return Effect.gen(function* () {
+      const workspace = yield* reader(workspaceId);
+      if (!workspace) {
+        return yield* Effect.fail(
+          new InvalidWorkspaceDirectoryError(workspaceId, "unknown_workspace", self.policy.roots),
+        );
+      }
+      return yield* attemptSync(() => self.resolveRegisteredWorkspace(workspace));
+    });
   }
 
-  public async resolveSelection(
+  public resolveSelection(
     selection: WorkspaceSelection,
-    reader: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
-  ): Promise<WorkspaceRecord> {
-    const workspace = await this.resolveWorkspaceDirectory(selection.workspaceId, reader);
-    const option: WorkspaceDirectoryOption = {
-      id: workspace.id,
-      name: workspace.name,
-      rootPath: workspace.rootPath,
-      isGit: workspace.isGit,
-      setupScriptPath: workspace.setupScriptPath,
-      cleanupScriptPath: workspace.cleanupScriptPath,
-    };
-    validateWorkspaceSelection(selection, option);
-    return workspace;
+    reader: (id: WorkspaceId) => ApplicationEffect<Workspace | undefined>,
+  ): ApplicationEffect<Workspace> {
+    const self = this;
+    return Effect.gen(function* () {
+      const workspace = yield* self.resolveWorkspaceDirectory(selection.workspaceId, reader);
+      const option: WorkspaceDirectoryOption = {
+        id: workspace.id,
+        name: workspace.name,
+        rootPath: workspace.rootPath,
+        isGit: workspace.isGit,
+        setupScriptPath: workspace.setupScriptPath,
+        cleanupScriptPath: workspace.cleanupScriptPath,
+      };
+      yield* attemptSync(() => validateWorkspaceSelection(selection, option));
+      return workspace;
+    });
   }
 
-  private resolveRegisteredWorkspace(workspace: WorkspaceRecord): WorkspaceRecord {
+  private resolveRegisteredWorkspace(workspace: Workspace): Workspace {
     const rootPath = this.policy.assertDirectory(workspace.rootPath);
     return Workspace.restore({
       ...workspace,

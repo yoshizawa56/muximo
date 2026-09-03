@@ -1,14 +1,14 @@
 import {
-  AgentSession,
+  AgentSessionFields,
   agentBackendSchema,
-  Pane,
-  PaneId,
+  PaneFields,
   paneKindSchema,
   paneStateSchema,
-  Workspace,
-  WorkspaceId,
+  WorkspaceFields,
+  workspaceSelectionModeSchema,
 } from "@muximo/domain";
-import { z } from "zod";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
+import { Effect, Result, Schema, SchemaParser } from "effect";
 
 /**
  * Version for the public HTTP and terminal contracts. The private control
@@ -28,295 +28,361 @@ export const maxPasteImageBytes = 10 * 1024 * 1024;
 /** Base64 encoding of `maxPasteImageBytes`, used to bound the wire message. */
 export const maxPasteImageBase64Length = Math.ceil(maxPasteImageBytes / 3) * 4;
 
-export const muximodHealthSchema = z
-  .object({
-    ok: z.literal(true),
-    service: z.literal("muximod"),
-    protocolVersion: z.literal(protocolVersion),
-    pid: z.number().int().positive(),
-    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  })
-  .strict();
-export type MuximodHealth = z.infer<typeof muximodHealthSchema>;
+/**
+ * Exposes an Effect schema to oRPC and other Standard Schema consumers with
+ * the repository's strict excess-property policy baked in.
+ */
+export const wire = <S extends Schema.Constraint>(schema: S): StandardSchemaV1<S["Encoded"], S["Type"]> & S =>
+  Schema.toStandardSchemaV1(schema as unknown as Schema.ConstraintDecoder<unknown>, {
+    parseOptions: { onExcessProperty: "error" },
+  }) as unknown as StandardSchemaV1<S["Encoded"], S["Type"]> & S;
 
-export const muximodCapabilitiesSchema = z
-  .object({
-    protocolVersion: z.literal(protocolVersion),
-    features: z
-      .object({
-        tmuxSessions: z.boolean(),
-        terminalWebSocket: z.boolean(),
-        paneState: z.boolean(),
-        resourceInvalidationEvents: z.boolean(),
-      })
-      .strict(),
-  })
-  .strict();
-export type MuximodCapabilities = z.infer<typeof muximodCapabilitiesSchema>;
+/** Defines a strict wire object. Unknown fields are rejected, never stripped. */
+export const struct = <const Fields extends Schema.Struct.Fields>(fields: Fields) => wire(Schema.Struct(fields));
 
-export const authDeviceTypeSchema = z.enum(["browser", "native", "cli"]);
-export type AuthDeviceType = z.infer<typeof authDeviceTypeSchema>;
+/**
+ * Builds one tagged member of a discriminated union. The tag literal is
+ * injected first so the tag value stays the single source of truth.
+ */
+const unionCase = <Tag extends string, Value extends string, Fields extends Schema.Struct.Fields>(
+  tag: Tag,
+  value: Value,
+  fields: Fields,
+) => {
+  const tagSchema = Schema.Literal(value);
+  const member = Schema.Struct({
+    [tag]: tagSchema,
+    ...fields,
+  } as unknown as Record<Tag, typeof tagSchema> & Fields);
+  return [value, member] as const;
+};
 
-const base64UrlValueSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
-const displayValueSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(120)
-  .regex(/^[^\u0000\r\n]+$/);
-const controlRequestIdSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9_-]+$/);
-const agentExecutionCommandSchema = z.array(z.string().max(16_384)).min(1).max(256);
-const agentExecutionEnvironmentSchema = z
-  .record(z.string().min(1).max(256), z.string().max(64 * 1024))
-  .refine((value) => Object.keys(value).length <= 1_024, "environment has too many entries");
-const agentExecutionProcessResultSchema = z
-  .object({
-    started: z.boolean(),
-    code: z.number().int(),
-    interrupted: z.boolean(),
-    signal: z.string().max(32).nullable().optional(),
-    failureDiagnostic: z.string().trim().min(1).max(4_096).optional(),
-    pid: z.number().int().positive().optional(),
-  })
-  .strict();
-const cleanupReasonWireSchema = z.enum([
-  "cleanup_declined",
-  "remote_archive_failed",
-  "remote_restore_failed",
-  "cleanup_hook_failed",
-  "unregistered_worktree",
-  "worktree_removal_failed",
+type UnionMembers<Cases extends ReadonlyArray<readonly [string, Schema.Constraint]>> = {
+  [I in keyof Cases]: Cases[I] extends readonly [string, infer S extends Schema.Constraint] ? S : never;
+};
+
+/**
+ * Defines a tag-dispatched union of wire objects. Decoding selects members by
+ * the tag value (trying same-tag members in order), so nested failures keep
+ * the exact member paths instead of degrading to tag mismatches.
+ */
+export const discriminatedUnion = <
+  Tag extends string,
+  const Cases extends ReadonlyArray<readonly [string, Schema.Constraint]>,
+>(
+  tag: Tag,
+  cases: Cases,
+): StandardSchemaV1<Schema.Union<UnionMembers<Cases>>["Encoded"], Schema.Union<UnionMembers<Cases>>["Type"]> &
+  Schema.Union<UnionMembers<Cases>> => {
+  type MemberSchema = Cases[number] extends readonly [string, infer S extends Schema.Constraint] ? S : never;
+  const groups = new Map<unknown, Array<MemberSchema>>();
+  const ordered: Array<MemberSchema> = [];
+  for (const [value, schema] of cases) {
+    ordered.push(schema as MemberSchema);
+    const group = groups.get(value);
+    if (group) group.push(schema as MemberSchema);
+    else groups.set(value, [schema as MemberSchema]);
+  }
+  const dispatch = Schema.declareConstructor<unknown>()([], () => (input, _self, options) => {
+    const candidates =
+      typeof input === "object" && input !== null
+        ? (groups.get((input as Record<PropertyKey, unknown>)[tag]) ?? null)
+        : null;
+    const members = candidates ?? ordered;
+    const [first, ...rest] = members;
+    if (first === undefined) throw new Error("discriminated union requires at least one member");
+    const decode = (member: MemberSchema) =>
+      SchemaParser.decodeUnknownResult(member as unknown as Schema.ConstraintDecoder<unknown>, options)(input);
+    const results = [first, ...rest].map(decode);
+    for (const result of results) {
+      if (Result.isSuccess(result)) return Effect.succeed(result.success);
+    }
+    const [firstResult] = results;
+    if (firstResult !== undefined && Result.isFailure(firstResult)) return Effect.fail(firstResult.failure);
+    throw new Error("discriminated union requires at least one member");
+  });
+  return wire(dispatch as unknown as Schema.Union<UnionMembers<Cases>>);
+};
+
+const boundedString = (minLength: number, maxLength: number) =>
+  Schema.Trim.check(Schema.isMinLength(minLength), Schema.isMaxLength(maxLength));
+
+const unboundedTrimmedString = (maxLength: number) => Schema.Trim.check(Schema.isMaxLength(maxLength));
+
+const intInRange = (minimum: number, maximum: number) =>
+  Schema.makeFilter((value: number) => Number.isInteger(value) && value >= minimum && value <= maximum);
+
+const positiveInt = Schema.makeFilter((value: number) => Number.isInteger(value) && value > 0);
+
+const nonNegativeInt = Schema.makeFilter((value: number) => Number.isInteger(value) && value >= 0);
+
+const dateTimeString = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) =>
+      /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:?\d{2})$/.test(value) &&
+      !Number.isNaN(Date.parse(value)),
+  ),
+);
+
+const httpUrlString = Schema.String.check(
+  Schema.makeFilter((value: string) => {
+    try {
+      const url = new URL(value);
+      return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+    } catch {
+      return false;
+    }
+  }),
+);
+
+const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
+
+export const muximodHealthSchema = struct({
+  ok: Schema.Literal(true),
+  service: Schema.Literal("muximod"),
+  protocolVersion: Schema.Literal(protocolVersion),
+  pid: Schema.Int.check(positiveInt),
+  configurationFingerprint: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+});
+export type MuximodHealth = (typeof muximodHealthSchema)["Type"];
+
+export const muximodCapabilitiesSchema = struct({
+  protocolVersion: Schema.Literal(protocolVersion),
+  features: struct({
+    tmuxSessions: Schema.Boolean,
+    terminalWebSocket: Schema.Boolean,
+    paneState: Schema.Boolean,
+    resourceInvalidationEvents: Schema.Boolean,
+  }),
+});
+export type MuximodCapabilities = (typeof muximodCapabilitiesSchema)["Type"];
+
+export const authDeviceTypeSchema = Schema.Literals(["browser", "native", "cli"]);
+export type AuthDeviceType = (typeof authDeviceTypeSchema)["Type"];
+
+const base64UrlValueSchema = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/));
+const displayValueSchema = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(120),
+  Schema.isPattern(/^[^\u0000\r\n]+$/),
+);
+const controlRequestIdSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+);
+const agentSessionArgumentSchema = Schema.String.check(Schema.isMaxLength(4_096));
+const agentSessionWorkspaceScopeInputSchema = Schema.Literals(["current", "all"]);
+const agentSessionStartInputSchema = struct({
+  backend: agentBackendSchema,
+  name: Schema.optional(AgentSessionFields.name),
+  hostPaneId: Schema.optional(Schema.String.check(Schema.isPattern(/^%[0-9]+$/))),
+  workspace: Schema.optional(boundedString(1, 4_096)),
+  cwd: Schema.optional(boundedString(1, 4_096)),
+  useWorktree: Schema.Boolean,
+  worktreeRoot: Schema.optional(boundedString(1, 4_096)),
+  setupHook: Schema.optional(boundedString(1, 4_096)),
+  cleanupHook: Schema.optional(boundedString(1, 4_096)),
+  setupHookExplicit: Schema.Boolean,
+  cleanupHookExplicit: Schema.Boolean,
+  backendArgs: Schema.Array(agentSessionArgumentSchema).check(Schema.isMaxLength(256)),
+  executionOwnerPid: Schema.optional(Schema.Int.check(positiveInt)),
+});
+const agentSessionResumeInputSchema = struct({
+  workspaceScope: agentSessionWorkspaceScopeInputSchema,
+  reference: boundedString(1, 256),
+  hostPaneId: Schema.optional(Schema.String.check(Schema.isPattern(/^%[0-9]+$/))),
+  backendArgs: Schema.Array(agentSessionArgumentSchema).check(Schema.isMaxLength(256)),
+  executionOwnerPid: Schema.optional(Schema.Int.check(positiveInt)),
+});
+const agentExecutionPlanSchema = struct({
+  sessionId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  executionId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(128)),
+  sessionName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
+  backend: agentBackendSchema,
+  command: Schema.Array(Schema.String.check(Schema.isMaxLength(16_384))).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(256),
+  ),
+  cwd: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+  environment: Schema.Record(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+    Schema.String.check(Schema.isMaxLength(64 * 1024)),
+  ).check(Schema.makeFilter((value) => Object.keys(value).length <= 1_024)),
+});
+
+/**
+ * Wire representation of an agent session record. The shape is declared
+ * explicitly (rather than reusing the domain class) so wire evolution stays
+ * versioned behind `protocolVersion`; field rules still come from the domain.
+ */
+export const agentSessionRecordSchema = struct({
+  id: AgentSessionFields.id,
+  name: AgentSessionFields.name,
+  backend: AgentSessionFields.backend,
+  status: AgentSessionFields.status,
+  workspaceId: AgentSessionFields.workspaceId,
+  workspaceRoot: AgentSessionFields.workspaceRoot,
+  workspaceName: AgentSessionFields.workspaceName,
+  worktreeRoot: Schema.optional(AgentSessionFields.worktreeRoot),
+  worktreePath: Schema.optional(AgentSessionFields.worktreePath),
+  branch: Schema.optional(AgentSessionFields.branch),
+  baseCommit: Schema.optional(AgentSessionFields.baseCommit),
+  useWorktree: AgentSessionFields.useWorktree,
+  setupHook: Schema.optional(AgentSessionFields.setupHook),
+  cleanupHook: Schema.optional(AgentSessionFields.cleanupHook),
+  setupOutputFile: Schema.optional(AgentSessionFields.setupOutputFile),
+  cleanupOutputFile: Schema.optional(AgentSessionFields.cleanupOutputFile),
+  backendSessionId: Schema.optional(AgentSessionFields.backendSessionId),
+  setupRan: AgentSessionFields.setupRan,
+  resuming: AgentSessionFields.resuming,
+  baselineStatus: Schema.optional(AgentSessionFields.baselineStatus),
+  lastExitStatus: Schema.optional(AgentSessionFields.lastExitStatus),
+  executionId: Schema.optional(AgentSessionFields.executionId),
+  executionPid: Schema.optional(AgentSessionFields.executionPid),
+  executionStartedAt: Schema.optional(AgentSessionFields.executionStartedAt),
+  executionOwnerPid: Schema.optional(AgentSessionFields.executionOwnerPid),
+  executionOwnerStartedAt: Schema.optional(AgentSessionFields.executionOwnerStartedAt),
+  lastActivityAt: AgentSessionFields.lastActivityAt,
+});
+export type AgentSessionRecord = (typeof agentSessionRecordSchema)["Type"];
+
+export const tmuxSessionNameSchema = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[A-Za-z0-9._-]+$/),
+);
+
+export const publicKeyJwkSchema = struct({
+  kty: Schema.Literal("EC"),
+  crv: Schema.Literal("P-256"),
+  x: base64UrlValueSchema,
+  y: base64UrlValueSchema,
+});
+export type PublicKeyJwk = (typeof publicKeyJwkSchema)["Type"];
+
+export const pairingQrPayloadSchema = struct({
+  v: Schema.Literal(2),
+  muximodBaseUrl: httpUrlString,
+  serverId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  pairingId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  pairingSecret: base64UrlValueSchema.check(Schema.isMinLength(32), Schema.isMaxLength(512)),
+  expiresAt: Schema.Int.check(positiveInt),
+});
+export type PairingQrPayload = (typeof pairingQrPayloadSchema)["Type"];
+
+export const pairingCodePayloadSchema = struct({
+  muximodBaseUrl: httpUrlString,
+  pairingId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  pairingSecret: base64UrlValueSchema.check(Schema.isMinLength(32), Schema.isMaxLength(512)),
+});
+export type PairingCodePayload = (typeof pairingCodePayloadSchema)["Type"];
+
+const localAuthSessionResponseSchema = struct({
+  serverId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  deviceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  sessionId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  accessToken: base64UrlValueSchema.check(Schema.isMinLength(32), Schema.isMaxLength(512)),
+  expiresAt: dateTimeString,
+});
+
+const pairingClaimNotificationFields = {
+  pairingId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  serverId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  deviceName: displayValueSchema,
+  deviceType: authDeviceTypeSchema,
+  platform: Schema.NullOr(Schema.String),
+  clientVersion: Schema.NullOr(Schema.String),
+  keyFingerprint: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  expiresAt: dateTimeString,
+} as const;
+
+const pairingClaimNotificationSchema = struct(pairingClaimNotificationFields);
+export type PairingClaimNotification = (typeof pairingClaimNotificationSchema)["Type"];
+
+const agentSessionIdString = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128));
+const executionIdString = Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(128));
+const hostPaneIdString = Schema.String.check(Schema.isPattern(/^%[0-9]+$/));
+
+const agentExecutionProcessResultSchema = struct({
+  started: Schema.Boolean,
+  code: Schema.Int,
+  interrupted: Schema.Boolean,
+  signal: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(32)))),
+  failureDiagnostic: Schema.optional(boundedString(1, 4_096)),
+  pid: Schema.optional(Schema.Int.check(positiveInt)),
+});
+
+export const muximodControlRequestSchema = discriminatedUnion("type", [
+  unionCase("type", "create_local_session", {
+    requestId: controlRequestIdSchema,
+  }),
+  unionCase("type", "create_pairing", {
+    requestId: controlRequestIdSchema,
+    muximodBaseUrl: httpUrlString,
+  }),
+  unionCase("type", "approve_pairing", {
+    requestId: controlRequestIdSchema,
+    pairingId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  }),
+  unionCase("type", "reject_pairing", {
+    requestId: controlRequestIdSchema,
+    pairingId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  }),
+  unionCase("type", "adopt_agent_session", {
+    requestId: controlRequestIdSchema,
+    agentSessionId: agentSessionIdString,
+    hostPaneId: hostPaneIdString,
+    executionId: executionIdString,
+  }),
+  unionCase("type", "release_agent_session", {
+    requestId: controlRequestIdSchema,
+    agentSessionId: agentSessionIdString,
+    hostPaneId: hostPaneIdString,
+    executionId: executionIdString,
+  }),
+  unionCase("type", "observe_agent_session", {
+    requestId: controlRequestIdSchema,
+    agentSessionId: agentSessionIdString,
+    hostPaneId: hostPaneIdString,
+    executionId: executionIdString,
+    state: paneStateSchema,
+    recentOutput: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
+  }),
+  unionCase("type", "read_log", {
+    requestId: controlRequestIdSchema,
+    lines: Schema.Int.check(intInRange(1, 10_000)),
+  }),
+  unionCase("type", "prepare_agent_execution", {
+    requestId: controlRequestIdSchema,
+    operation: Schema.Literal("run"),
+    input: agentSessionStartInputSchema,
+  }),
+  unionCase("type", "prepare_agent_execution", {
+    requestId: controlRequestIdSchema,
+    operation: Schema.Literal("resume"),
+    input: agentSessionResumeInputSchema,
+  }),
+  unionCase("type", "attach_agent_execution", {
+    requestId: controlRequestIdSchema,
+    agentSessionId: agentSessionIdString,
+    executionId: executionIdString,
+    hostPaneId: Schema.optional(hostPaneIdString),
+    executionPid: Schema.Int.check(positiveInt),
+    executionStartedAt: dateTimeString,
+    executionOwnerPid: Schema.optional(Schema.Int.check(positiveInt)),
+    executionOwnerStartedAt: Schema.optional(dateTimeString),
+  }),
+  unionCase("type", "complete_agent_execution", {
+    requestId: controlRequestIdSchema,
+    operation: Schema.Literals(["run", "resume"]),
+    agentSessionId: agentSessionIdString,
+    executionId: executionIdString,
+    hostPaneId: Schema.optional(hostPaneIdString),
+    result: agentExecutionProcessResultSchema,
+  }),
 ]);
-const cleanupResultWireSchema = z.discriminatedUnion("disposition", [
-  z.object({ disposition: z.literal("removed") }).strict(),
-  z.object({ disposition: z.literal("retained"), reason: cleanupReasonWireSchema }).strict(),
-  z.object({ disposition: z.literal("failed"), reason: cleanupReasonWireSchema }).strict(),
-]);
-const runCleanupResultWireSchema = z.discriminatedUnion("disposition", [
-  z.object({ disposition: z.literal("not_requested"), reason: z.enum(["interrupted", "no_worktree"]) }).strict(),
-  ...cleanupResultWireSchema.options,
-]);
-
-const hostPaneIdWireSchema = z.string().regex(/^%[0-9]+$/);
-
-const agentSessionWorkspaceScopeInputSchema = z.enum(["current", "all"]);
-const agentSessionArgumentSchema = z.string().max(4_096);
-const agentSessionStartInputSchema = z
-  .object({
-    backend: agentBackendSchema,
-    name: AgentSession.schema.shape.name.optional(),
-    hostPaneId: hostPaneIdWireSchema.optional(),
-    workspace: z.string().trim().min(1).max(4_096).optional(),
-    cwd: z.string().trim().min(1).max(4_096).optional(),
-    useWorktree: z.boolean(),
-    worktreeRoot: z.string().trim().min(1).max(4_096).optional(),
-    setupHook: z.string().trim().min(1).max(4_096).optional(),
-    cleanupHook: z.string().trim().min(1).max(4_096).optional(),
-    setupHookExplicit: z.boolean(),
-    cleanupHookExplicit: z.boolean(),
-    backendArgs: z.array(agentSessionArgumentSchema).max(256),
-    executionOwnerPid: z.number().int().positive().optional(),
-  })
-  .strict();
-const agentSessionResumeInputSchema = z
-  .object({
-    workspaceScope: agentSessionWorkspaceScopeInputSchema,
-    reference: z.string().trim().min(1).max(256),
-    hostPaneId: hostPaneIdWireSchema.optional(),
-    backendArgs: z.array(agentSessionArgumentSchema).max(256),
-    executionOwnerPid: z.number().int().positive().optional(),
-  })
-  .strict();
-const agentExecutionPlanSchema = z
-  .object({
-    sessionId: z.string().min(1).max(128),
-    executionId: z.string().min(16).max(128),
-    sessionName: z.string().min(1).max(120),
-    backend: agentBackendSchema,
-    command: agentExecutionCommandSchema,
-    cwd: z.string().min(1).max(4_096),
-    environment: agentExecutionEnvironmentSchema,
-  })
-  .strict();
-const agentSessionRecordWireSchema = AgentSession.schema;
-
-export const tmuxSessionNameSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(64)
-  .regex(/^[A-Za-z0-9._-]+$/);
-
-const httpUrlSchema = z
-  .string()
-  .url()
-  .refine((value) => {
-    const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
-  }, "URL must use http or https without credentials");
-
-export const publicKeyJwkSchema = z
-  .object({
-    kty: z.literal("EC"),
-    crv: z.literal("P-256"),
-    x: base64UrlValueSchema,
-    y: base64UrlValueSchema,
-  })
-  .strict();
-export type PublicKeyJwk = z.infer<typeof publicKeyJwkSchema>;
-
-export const pairingQrPayloadSchema = z
-  .object({
-    v: z.literal(2),
-    muximodBaseUrl: httpUrlSchema,
-    serverId: z.string().min(16).max(256),
-    pairingId: z.string().min(16).max(256),
-    pairingSecret: base64UrlValueSchema.min(32).max(512),
-    expiresAt: z.number().int().positive(),
-  })
-  .strict();
-export type PairingQrPayload = z.infer<typeof pairingQrPayloadSchema>;
-
-export const pairingCodePayloadSchema = z
-  .object({
-    muximodBaseUrl: httpUrlSchema,
-    pairingId: z.string().min(16).max(256),
-    pairingSecret: base64UrlValueSchema.min(32).max(512),
-  })
-  .strict();
-export type PairingCodePayload = z.infer<typeof pairingCodePayloadSchema>;
-
-const localAuthSessionResponseSchema = z
-  .object({
-    serverId: z.string().min(16).max(256),
-    deviceId: z.string().min(1).max(256),
-    sessionId: z.string().min(1).max(256),
-    accessToken: base64UrlValueSchema.min(32).max(512),
-    expiresAt: z.string().datetime(),
-  })
-  .strict();
-
-const pairingClaimNotificationSchema = z
-  .object({
-    pairingId: z.string().min(16).max(256),
-    serverId: z.string().min(16).max(256),
-    deviceName: displayValueSchema,
-    deviceType: authDeviceTypeSchema,
-    platform: z.string().nullable(),
-    clientVersion: z.string().nullable(),
-    keyFingerprint: z.string().min(1).max(256),
-    expiresAt: z.string().datetime(),
-  })
-  .strict();
-export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
-
-export const muximodControlRequestSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("create_local_session"), requestId: controlRequestIdSchema }).strict(),
-  z
-    .object({
-      type: z.literal("create_pairing"),
-      requestId: controlRequestIdSchema,
-      muximodBaseUrl: httpUrlSchema,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("approve_pairing"),
-      requestId: controlRequestIdSchema,
-      pairingId: z.string().min(16).max(256),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("reject_pairing"),
-      requestId: controlRequestIdSchema,
-      pairingId: z.string().min(16).max(256),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("adopt_agent_session"),
-      requestId: controlRequestIdSchema,
-      agentSessionId: z.string().min(1).max(128),
-      hostPaneId: hostPaneIdWireSchema,
-      executionId: z.string().min(16).max(128),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("release_agent_session"),
-      requestId: controlRequestIdSchema,
-      agentSessionId: z.string().min(1).max(128),
-      hostPaneId: hostPaneIdWireSchema,
-      executionId: z.string().min(16).max(128),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("observe_agent_session"),
-      requestId: controlRequestIdSchema,
-      agentSessionId: z.string().min(1).max(128),
-      hostPaneId: hostPaneIdWireSchema,
-      executionId: z.string().min(16).max(128),
-      state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
-      recentOutput: z.string().max(2_000).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("read_log"),
-      requestId: controlRequestIdSchema,
-      lines: z.number().int().min(1).max(10_000),
-    })
-    .strict(),
-  z.discriminatedUnion("operation", [
-    z
-      .object({
-        type: z.literal("prepare_agent_execution"),
-        requestId: controlRequestIdSchema,
-        operation: z.literal("run"),
-        input: agentSessionStartInputSchema,
-      })
-      .strict(),
-    z
-      .object({
-        type: z.literal("prepare_agent_execution"),
-        requestId: controlRequestIdSchema,
-        operation: z.literal("resume"),
-        input: agentSessionResumeInputSchema,
-      })
-      .strict(),
-  ]),
-  z
-    .object({
-      type: z.literal("attach_agent_execution"),
-      requestId: controlRequestIdSchema,
-      agentSessionId: z.string().min(1).max(128),
-      executionId: z.string().min(16).max(128),
-      hostPaneId: hostPaneIdWireSchema.optional(),
-      executionPid: z.number().int().positive(),
-      executionStartedAt: z.string().datetime(),
-      executionOwnerPid: z.number().int().positive().optional(),
-      executionOwnerStartedAt: z.string().datetime().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("complete_agent_execution"),
-      requestId: controlRequestIdSchema,
-      operation: z.enum(["run", "resume"]),
-      agentSessionId: z.string().min(1).max(128),
-      executionId: z.string().min(16).max(128),
-      hostPaneId: hostPaneIdWireSchema.optional(),
-      result: agentExecutionProcessResultSchema,
-    })
-    .strict(),
-]);
-export type MuximodControlRequest = z.infer<typeof muximodControlRequestSchema>;
+export type MuximodControlRequest = (typeof muximodControlRequestSchema)["Type"];
 
 export type ControlFrameDecode<T> =
   | { ok: true; value: T }
@@ -327,122 +393,106 @@ export function decodeMuximodControlRequest(data: string | Uint8Array): ControlF
 }
 
 export function encodeMuximodControlRequest(request: MuximodControlRequest): string {
-  return JSON.stringify(muximodControlRequestSchema.parse(request));
+  return JSON.stringify(Schema.encodeSync(muximodControlRequestSchema)(request));
 }
 
-export const muximodControlResponseSchema = z.discriminatedUnion("type", [
-  z
-    .object({
-      type: z.literal("local_session_created"),
-      requestId: controlRequestIdSchema,
-      session: localAuthSessionResponseSchema,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("pairing_created"),
-      requestId: controlRequestIdSchema,
-      pairingId: z.string().min(16).max(256),
-      pairingCode: z.string().startsWith("ma3:").min(16).max(8_192),
-      payload: pairingQrPayloadSchema,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("pairing_claimed"),
-      ...pairingClaimNotificationSchema.shape,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("pairing_result"),
-      requestId: controlRequestIdSchema,
-      pairingId: z.string().min(16).max(256),
-      status: z.enum(["approved", "rejected"]),
-      deviceId: z.string().min(1).max(256).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("agent_session_adopted"),
-      requestId: controlRequestIdSchema,
-      agentSessionId: z.string().min(1).max(128),
-      hostPaneId: hostPaneIdWireSchema,
-      executionId: z.string().min(16).max(128),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("agent_session_released"),
-      requestId: controlRequestIdSchema,
-      agentSessionId: z.string().min(1).max(128),
-      hostPaneId: hostPaneIdWireSchema,
-      executionId: z.string().min(16).max(128),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("agent_session_observed"),
-      requestId: controlRequestIdSchema,
-      agentSessionId: z.string().min(1).max(128),
-      hostPaneId: hostPaneIdWireSchema,
-      executionId: z.string().min(16).max(128),
-      state: z.enum(["starting", "running", "waiting_input", "waiting_approval", "failed", "completed", "stopped"]),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("daemon_log"),
-      requestId: controlRequestIdSchema,
-      state: z.enum(["available", "empty", "missing"]),
-      logFile: z.string().min(1),
-      lines: z.array(z.string()).max(10_000),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("agent_execution_prepared"),
-      requestId: controlRequestIdSchema,
-      operation: z.enum(["run", "resume"]),
-      agentSessionId: z.string().min(1).max(128),
-      executionId: z.string().min(16).max(128),
-      hostPaneId: hostPaneIdWireSchema.optional(),
-      session: agentSessionRecordWireSchema,
-      execution: agentExecutionPlanSchema,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("agent_execution_attached"),
-      requestId: controlRequestIdSchema,
-      agentSessionId: z.string().min(1).max(128),
-      executionId: z.string().min(16).max(128),
-      executionPid: z.number().int().positive(),
-      executionStartedAt: z.string().datetime(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("agent_execution_completed"),
-      requestId: controlRequestIdSchema,
-      operation: z.enum(["run", "resume"]),
-      agentSessionId: z.string().min(1).max(128),
-      executionId: z.string().min(16).max(128),
-      process: agentExecutionProcessResultSchema,
-      session: agentSessionRecordWireSchema,
-      cleanup: runCleanupResultWireSchema.optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("error"),
-      requestId: controlRequestIdSchema.optional(),
-      code: z.string().min(1).max(120),
-      message: z.string().min(1).max(4_096),
-    })
-    .strict(),
+const cleanupReasonWireSchema = Schema.Literals([
+  "cleanup_declined",
+  "remote_archive_failed",
+  "remote_restore_failed",
+  "cleanup_hook_failed",
+  "unregistered_worktree",
+  "worktree_removal_failed",
 ]);
-export type MuximodControlResponse = z.infer<typeof muximodControlResponseSchema>;
+const cleanupResultWireSchema = discriminatedUnion("disposition", [
+  unionCase("disposition", "removed", {}),
+  unionCase("disposition", "retained", { reason: cleanupReasonWireSchema }),
+  unionCase("disposition", "failed", { reason: cleanupReasonWireSchema }),
+]);
+const runCleanupResultWireSchema = discriminatedUnion("disposition", [
+  unionCase("disposition", "not_requested", { reason: Schema.Literals(["interrupted", "no_worktree"]) }),
+  unionCase("disposition", "removed", {}),
+  unionCase("disposition", "retained", { reason: cleanupReasonWireSchema }),
+  unionCase("disposition", "failed", { reason: cleanupReasonWireSchema }),
+]);
+
+export const muximodControlResponseSchema = discriminatedUnion("type", [
+  unionCase("type", "local_session_created", {
+    requestId: controlRequestIdSchema,
+    session: localAuthSessionResponseSchema,
+  }),
+  unionCase("type", "pairing_created", {
+    requestId: controlRequestIdSchema,
+    pairingId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+    pairingCode: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(8_192), Schema.isPattern(/^ma3:/)),
+    payload: pairingQrPayloadSchema,
+  }),
+  unionCase("type", "pairing_claimed", {
+    ...pairingClaimNotificationFields,
+  }),
+  unionCase("type", "pairing_result", {
+    requestId: controlRequestIdSchema,
+    pairingId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+    status: Schema.Literals(["approved", "rejected"]),
+    deviceId: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256))),
+  }),
+  unionCase("type", "agent_session_adopted", {
+    requestId: controlRequestIdSchema,
+    agentSessionId: agentSessionIdString,
+    hostPaneId: hostPaneIdString,
+    executionId: executionIdString,
+  }),
+  unionCase("type", "agent_session_released", {
+    requestId: controlRequestIdSchema,
+    agentSessionId: agentSessionIdString,
+    hostPaneId: hostPaneIdString,
+    executionId: executionIdString,
+  }),
+  unionCase("type", "agent_session_observed", {
+    requestId: controlRequestIdSchema,
+    agentSessionId: agentSessionIdString,
+    hostPaneId: hostPaneIdString,
+    executionId: executionIdString,
+    state: paneStateSchema,
+  }),
+  unionCase("type", "daemon_log", {
+    requestId: controlRequestIdSchema,
+    state: Schema.Literals(["available", "empty", "missing"]),
+    logFile: Schema.String.check(Schema.isMinLength(1)),
+    lines: Schema.Array(Schema.String).check(Schema.isMaxLength(10_000)),
+  }),
+  unionCase("type", "agent_execution_prepared", {
+    requestId: controlRequestIdSchema,
+    operation: Schema.Literals(["run", "resume"]),
+    agentSessionId: agentSessionIdString,
+    executionId: executionIdString,
+    hostPaneId: Schema.optional(hostPaneIdString),
+    session: agentSessionRecordSchema,
+    execution: agentExecutionPlanSchema,
+  }),
+  unionCase("type", "agent_execution_attached", {
+    requestId: controlRequestIdSchema,
+    agentSessionId: agentSessionIdString,
+    executionId: executionIdString,
+    executionPid: Schema.Int.check(positiveInt),
+    executionStartedAt: dateTimeString,
+  }),
+  unionCase("type", "agent_execution_completed", {
+    requestId: controlRequestIdSchema,
+    operation: Schema.Literals(["run", "resume"]),
+    agentSessionId: agentSessionIdString,
+    executionId: executionIdString,
+    process: agentExecutionProcessResultSchema,
+    session: agentSessionRecordSchema,
+    cleanup: Schema.optional(runCleanupResultWireSchema),
+  }),
+  unionCase("type", "error", {
+    requestId: Schema.optional(controlRequestIdSchema),
+    code: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
+    message: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+  }),
+]);
+export type MuximodControlResponse = (typeof muximodControlResponseSchema)["Type"];
 
 export type MuximodControlLogResult = Pick<
   Extract<MuximodControlResponse, { type: "daemon_log" }>,
@@ -454,247 +504,206 @@ export function decodeMuximodControlResponse(data: string | Uint8Array): Control
 }
 
 export function encodeMuximodControlResponse(response: MuximodControlResponse): string {
-  return JSON.stringify(muximodControlResponseSchema.parse(response));
+  return JSON.stringify(Schema.encodeSync(muximodControlResponseSchema)(response));
 }
 
-export const authInfoSchema = z
-  .object({
-    protocolVersion: z.literal(protocolVersion),
-    serverId: z.string().min(16).max(256),
-    serverTime: z.string().datetime(),
-  })
-  .strict();
-export type AuthInfo = z.infer<typeof authInfoSchema>;
+export const authInfoSchema = struct({
+  protocolVersion: Schema.Literal(protocolVersion),
+  serverId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  serverTime: dateTimeString,
+});
+export type AuthInfo = (typeof authInfoSchema)["Type"];
 
-export const pairingClaimRequestSchema = z
-  .object({
-    pairingSecret: base64UrlValueSchema.min(32).max(512),
-    publicKey: publicKeyJwkSchema,
-    deviceName: displayValueSchema,
-    deviceType: authDeviceTypeSchema,
-    platform: z
-      .string()
-      .trim()
-      .max(120)
-      .regex(/^[^\u0000\r\n]*$/)
-      .optional(),
-    clientVersion: z
-      .string()
-      .trim()
-      .max(120)
-      .regex(/^[^\u0000\r\n]*$/)
-      .optional(),
-    clientNonce: base64UrlValueSchema.min(16).max(512),
-    signature: base64UrlValueSchema.min(1).max(1024),
-  })
-  .strict();
-export type PairingClaimRequest = z.infer<typeof pairingClaimRequestSchema>;
+export const pairingClaimRequestSchema = struct({
+  pairingSecret: base64UrlValueSchema.check(Schema.isMinLength(32), Schema.isMaxLength(512)),
+  publicKey: publicKeyJwkSchema,
+  deviceName: displayValueSchema,
+  deviceType: authDeviceTypeSchema,
+  platform: Schema.optional(unboundedTrimmedString(120).check(Schema.isPattern(/^[^\u0000\r\n]*$/))),
+  clientVersion: Schema.optional(unboundedTrimmedString(120).check(Schema.isPattern(/^[^\u0000\r\n]*$/))),
+  clientNonce: base64UrlValueSchema.check(Schema.isMinLength(16), Schema.isMaxLength(512)),
+  signature: base64UrlValueSchema.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+});
+export type PairingClaimRequest = (typeof pairingClaimRequestSchema)["Type"];
 
-export const pairingClaimResponseSchema = z
-  .object({
-    serverId: z.string().min(16).max(256),
-    pairingId: z.string().min(16).max(256),
-    claimToken: z.string().min(32).max(512),
-    status: z.literal("awaiting_approval"),
-    expiresAt: z.string().datetime(),
-    keyFingerprint: z.string().min(1).max(256),
-  })
-  .strict();
-export type PairingClaimResponse = z.infer<typeof pairingClaimResponseSchema>;
+export const pairingClaimResponseSchema = struct({
+  serverId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  pairingId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  claimToken: Schema.String.check(Schema.isMinLength(32), Schema.isMaxLength(512)),
+  status: Schema.Literal("awaiting_approval"),
+  expiresAt: dateTimeString,
+  keyFingerprint: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+});
+export type PairingClaimResponse = (typeof pairingClaimResponseSchema)["Type"];
 
-export const pairingStatusSchema = z
-  .object({
-    status: z.enum(["offered", "awaiting_approval", "approved", "rejected", "expired"]),
-    deviceId: z.string().min(1).max(256).nullable(),
-  })
-  .strict();
-export type PairingStatus = z.infer<typeof pairingStatusSchema>;
+export const pairingStatusSchema = struct({
+  status: Schema.Literals(["offered", "awaiting_approval", "approved", "rejected", "expired"]),
+  deviceId: Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256))),
+});
+export type PairingStatus = (typeof pairingStatusSchema)["Type"];
 
-export const authChallengeRequestSchema = z
-  .object({
-    deviceId: z.string().min(1).max(256),
-  })
-  .strict();
-export type AuthChallengeRequest = z.infer<typeof authChallengeRequestSchema>;
+export const authChallengeRequestSchema = struct({
+  deviceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+});
+export type AuthChallengeRequest = (typeof authChallengeRequestSchema)["Type"];
 
-export const authChallengeResponseSchema = z
-  .object({
-    serverId: z.string().min(16).max(256),
-    deviceId: z.string().min(1).max(256),
-    challengeId: z.string().min(16).max(256),
-    nonce: base64UrlValueSchema.min(16).max(512),
-    expiresAt: z.string().datetime(),
-  })
-  .strict();
-export type AuthChallengeResponse = z.infer<typeof authChallengeResponseSchema>;
+export const authChallengeResponseSchema = struct({
+  serverId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  deviceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  challengeId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  nonce: base64UrlValueSchema.check(Schema.isMinLength(16), Schema.isMaxLength(512)),
+  expiresAt: dateTimeString,
+});
+export type AuthChallengeResponse = (typeof authChallengeResponseSchema)["Type"];
 
-export const authSessionRequestSchema = z
-  .object({
-    deviceId: z.string().min(1).max(256),
-    challengeId: z.string().min(16).max(256),
-    signature: base64UrlValueSchema.min(1).max(1024),
-  })
-  .strict();
-export type AuthSessionRequest = z.infer<typeof authSessionRequestSchema>;
+export const authSessionRequestSchema = struct({
+  deviceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  challengeId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  signature: base64UrlValueSchema.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+});
+export type AuthSessionRequest = (typeof authSessionRequestSchema)["Type"];
 
-export const authSessionResponseSchema = z
-  .object({
-    serverId: z.string().min(16).max(256),
-    deviceId: z.string().min(1).max(256),
-    sessionId: z.string().min(16).max(256),
-    accessToken: z.string().min(32).max(512),
-    expiresAt: z.string().datetime(),
-  })
-  .strict();
-export type AuthSessionResponse = z.infer<typeof authSessionResponseSchema>;
+export const authSessionResponseSchema = struct({
+  serverId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  deviceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  sessionId: Schema.String.check(Schema.isMinLength(16), Schema.isMaxLength(256)),
+  accessToken: Schema.String.check(Schema.isMinLength(32), Schema.isMaxLength(512)),
+  expiresAt: dateTimeString,
+});
+export type AuthSessionResponse = (typeof authSessionResponseSchema)["Type"];
 
-export const wsTicketRequestSchema = z
-  .object({
-    endpoint: z.literal("terminal"),
-  })
-  .strict();
-export type WsTicketRequest = z.infer<typeof wsTicketRequestSchema>;
+export const wsTicketRequestSchema = struct({
+  endpoint: Schema.Literal("terminal"),
+});
+export type WsTicketRequest = (typeof wsTicketRequestSchema)["Type"];
 
-export const wsTicketResponseSchema = z
-  .object({
-    ticket: z.string().min(32).max(512),
-    endpoint: z.literal("terminal"),
-    expiresAt: z.string().datetime(),
-  })
-  .strict();
-export type WsTicketResponse = z.infer<typeof wsTicketResponseSchema>;
+export const wsTicketResponseSchema = struct({
+  ticket: Schema.String.check(Schema.isMinLength(32), Schema.isMaxLength(512)),
+  endpoint: Schema.Literal("terminal"),
+  expiresAt: dateTimeString,
+});
+export type WsTicketResponse = (typeof wsTicketResponseSchema)["Type"];
 
-export const authDeviceSchema = z
-  .object({
-    deviceId: z.string().min(1).max(256),
-    displayName: z.string().min(1).max(120),
-    deviceType: authDeviceTypeSchema,
-    platform: z.string().nullable(),
-    clientVersion: z.string().nullable(),
-    keyFingerprint: z.string().min(1).max(256),
-    status: z.enum(["active", "revoked"]),
-    createdAt: z.string().datetime(),
-    lastSeenAt: z.string().datetime().nullable(),
-    revokedAt: z.string().datetime().nullable(),
-  })
-  .strict();
-export type AuthDevice = z.infer<typeof authDeviceSchema>;
+export const authDeviceSchema = struct({
+  deviceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
+  deviceType: authDeviceTypeSchema,
+  platform: Schema.NullOr(Schema.String),
+  clientVersion: Schema.NullOr(Schema.String),
+  keyFingerprint: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  status: Schema.Literals(["active", "revoked"]),
+  createdAt: dateTimeString,
+  lastSeenAt: Schema.NullOr(dateTimeString),
+  revokedAt: Schema.NullOr(dateTimeString),
+});
+export type AuthDevice = (typeof authDeviceSchema)["Type"];
 
-export const muximodEventSchema = z
-  .object({
-    type: z.literal("session_updated"),
-    sessionName: z.string().min(1),
-    reason: z.enum(["pane_created", "pane_deleted", "pane_changed"]),
-    revision: z.number().int().nonnegative(),
-  })
-  .strict();
-export type MuximodEvent = z.infer<typeof muximodEventSchema>;
+export const muximodEventSchema = struct({
+  type: Schema.Literal("session_updated"),
+  sessionName: Schema.String.check(Schema.isMinLength(1)),
+  reason: Schema.Literals(["pane_created", "pane_deleted", "pane_changed"]),
+  revision: Schema.Int.check(nonNegativeInt),
+});
+export type MuximodEvent = (typeof muximodEventSchema)["Type"];
 
-export const workspaceSelectionModeSchema = z.enum(["workspace", "worktree"]);
-export type WorkspaceSelectionMode = z.infer<typeof workspaceSelectionModeSchema>;
+export type { WorkspaceSelectionMode } from "@muximo/domain";
+export { workspaceSelectionModeSchema };
 
-const workspaceScriptPathSchema = Workspace.schema.shape.setupScriptPath.unwrap();
-const workspaceScriptPatchSchema = workspaceScriptPathSchema.trim().min(1).max(4_096).nullable().optional();
-const workspaceNameInputSchema = Workspace.schema.shape.name.trim().min(1).optional();
-const workspaceIdWireSchema = WorkspaceId.valueSchema;
-const paneIdWireSchema = PaneId.valueSchema;
+const workspaceIdString = nonEmptyString;
+const paneIdString = nonEmptyString;
 
-export const workspaceDirectorySchema = z
-  .object({
-    id: workspaceIdWireSchema,
-    name: Workspace.schema.shape.name,
-    directory: Workspace.schema.shape.rootPath,
-    isGit: Workspace.schema.shape.isGit,
-    setupScriptPath: workspaceScriptPathSchema.nullable(),
-    cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().nullable(),
-  })
-  .strict();
-export type WorkspaceDirectory = z.infer<typeof workspaceDirectorySchema>;
+export const workspaceDirectorySchema = struct({
+  id: workspaceIdString,
+  name: WorkspaceFields.name,
+  directory: WorkspaceFields.rootPath,
+  isGit: WorkspaceFields.isGit,
+  setupScriptPath: Schema.NullOr(WorkspaceFields.setupScriptPath),
+  cleanupScriptPath: Schema.NullOr(WorkspaceFields.cleanupScriptPath),
+});
+export type WorkspaceDirectory = (typeof workspaceDirectorySchema)["Type"];
 
-export const workspaceListResponseSchema = z.object({ workspaces: z.array(workspaceDirectorySchema) }).strict();
+export const workspaceListResponseSchema = struct({ workspaces: Schema.Array(workspaceDirectorySchema) });
 
-export const workspaceBrowseResponseSchema = z.object({ directories: z.array(workspaceDirectorySchema) }).strict();
+export const workspaceBrowseResponseSchema = struct({ directories: Schema.Array(workspaceDirectorySchema) });
 
-export const registerWorkspaceRequestSchema = z
-  .object({
-    directory: z.string().trim().min(1).max(4_096),
-    name: workspaceNameInputSchema,
-    setupScriptPath: workspaceScriptPatchSchema,
-    cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().trim().min(1).max(4_096).nullable().optional(),
-  })
-  .strict();
-export type RegisterWorkspaceRequest = z.infer<typeof registerWorkspaceRequestSchema>;
+const workspaceHookPatchSchema = Schema.optional(
+  Schema.NullOr(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4_096))),
+);
+const workspaceNameInputSchema = Schema.optional(
+  Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120), Schema.isPattern(/^[^\u0000\r\n\t]*$/)),
+);
 
-export const updateWorkspaceRequestSchema = z
-  .object({
-    name: workspaceNameInputSchema,
-    setupScriptPath: workspaceScriptPatchSchema,
-    cleanupScriptPath: Workspace.schema.shape.cleanupScriptPath.unwrap().trim().min(1).max(4_096).nullable().optional(),
-  })
-  .strict();
-export type UpdateWorkspaceRequest = z.infer<typeof updateWorkspaceRequestSchema>;
+export const registerWorkspaceRequestSchema = struct({
+  directory: boundedString(1, 4_096),
+  name: workspaceNameInputSchema,
+  setupScriptPath: workspaceHookPatchSchema,
+  cleanupScriptPath: workspaceHookPatchSchema,
+});
+export type RegisterWorkspaceRequest = (typeof registerWorkspaceRequestSchema)["Type"];
 
-export const workspaceResponseSchema = z.object({ workspace: workspaceDirectorySchema }).strict();
+export const updateWorkspaceRequestSchema = struct({
+  name: workspaceNameInputSchema,
+  setupScriptPath: workspaceHookPatchSchema,
+  cleanupScriptPath: workspaceHookPatchSchema,
+});
+export type UpdateWorkspaceRequest = (typeof updateWorkspaceRequestSchema)["Type"];
 
-export const workspaceSelectionSchema = z
-  .object({
-    workspaceId: workspaceIdWireSchema,
-    mode: workspaceSelectionModeSchema,
-  })
-  .strict();
-export type WorkspaceSelection = z.infer<typeof workspaceSelectionSchema>;
+export const workspaceResponseSchema = struct({ workspace: workspaceDirectorySchema });
+
+export const workspaceSelectionSchema = struct({
+  workspaceId: workspaceIdString,
+  mode: workspaceSelectionModeSchema,
+});
+export type WorkspaceSelection = (typeof workspaceSelectionSchema)["Type"];
 
 export const agentSessionWorkspaceScopeSchema = agentSessionWorkspaceScopeInputSchema;
-export type AgentSessionWorkspaceScope = z.infer<typeof agentSessionWorkspaceScopeSchema>;
+export type AgentSessionWorkspaceScope = (typeof agentSessionWorkspaceScopeSchema)["Type"];
 
-export const cleanupAgentSessionRequestSchema = z
-  .object({
-    workspaceScope: agentSessionWorkspaceScopeSchema,
-    force: z.boolean(),
-    reference: z.string().trim().min(1).max(256),
-  })
-  .strict();
-export type CleanupAgentSessionRequest = z.infer<typeof cleanupAgentSessionRequestSchema>;
+export const cleanupAgentSessionRequestSchema = struct({
+  workspaceScope: agentSessionWorkspaceScopeSchema,
+  force: Schema.Boolean,
+  reference: boundedString(1, 256),
+});
+export type CleanupAgentSessionRequest = (typeof cleanupAgentSessionRequestSchema)["Type"];
 
-export const listAgentSessionsRequestSchema = z
-  .object({
-    workspaceScope: agentSessionWorkspaceScopeSchema,
-    includeUnavailable: z.boolean(),
-  })
-  .strict();
-export type ListAgentSessionsRequest = z.infer<typeof listAgentSessionsRequestSchema>;
+export const listAgentSessionsRequestSchema = struct({
+  workspaceScope: agentSessionWorkspaceScopeSchema,
+  includeUnavailable: Schema.Boolean,
+});
+export type ListAgentSessionsRequest = (typeof listAgentSessionsRequestSchema)["Type"];
 
-export const processResultSchema = z
-  .object({
-    started: z.boolean(),
-    code: z.number().int(),
-    interrupted: z.boolean(),
-    signal: z.string().nullable().optional(),
-    failureDiagnostic: z.string().trim().min(1).max(4_096).optional(),
-  })
-  .strict();
-export type ProcessResult = z.infer<typeof processResultSchema>;
+export const processResultSchema = struct({
+  started: Schema.Boolean,
+  code: Schema.Int,
+  interrupted: Schema.Boolean,
+  signal: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(32)))),
+  failureDiagnostic: Schema.optional(boundedString(1, 4_096)),
+});
+export type ProcessResult = (typeof processResultSchema)["Type"];
 
 export const cleanupReasonSchema = cleanupReasonWireSchema;
-export type CleanupReason = z.infer<typeof cleanupReasonSchema>;
+export type CleanupReason = (typeof cleanupReasonSchema)["Type"];
 
 export const cleanupResultSchema = cleanupResultWireSchema;
-export type CleanupResult = z.infer<typeof cleanupResultSchema>;
+export type CleanupResult = (typeof cleanupResultSchema)["Type"];
 
 export const runCleanupResultSchema = runCleanupResultWireSchema;
-export type RunCleanupResult = z.infer<typeof runCleanupResultSchema>;
+export type RunCleanupResult = (typeof runCleanupResultSchema)["Type"];
 
-export const agentSessionRecordSchema = agentSessionRecordWireSchema;
-export type AgentSessionRecord = z.infer<typeof agentSessionRecordSchema>;
+export const agentSessionExecutionHealthSchema = Schema.Literals([
+  "inactive",
+  "active",
+  "long_running",
+  "stale",
+  "unknown",
+]);
+export type AgentSessionExecutionHealth = (typeof agentSessionExecutionHealthSchema)["Type"];
 
-export const agentSessionExecutionHealthSchema = z.enum(["inactive", "active", "long_running", "stale", "unknown"]);
-export type AgentSessionExecutionHealth = z.infer<typeof agentSessionExecutionHealthSchema>;
+export const agentSessionResumeStateSchema = Schema.Literals(["available", "unavailable", "unknown"]);
+export type AgentSessionResumeState = (typeof agentSessionResumeStateSchema)["Type"];
 
-export const agentSessionResumeStateSchema = z.enum(["available", "unavailable", "unknown"]);
-export type AgentSessionResumeState = z.infer<typeof agentSessionResumeStateSchema>;
-
-export const agentSessionResumeReasonSchema = z
-  .enum([
+export const agentSessionResumeReasonSchema = Schema.NullOr(
+  Schema.Literals([
     "backend_session_missing",
     "backend_session_discovery_required",
     "currently_running",
@@ -703,180 +712,131 @@ export const agentSessionResumeReasonSchema = z
     "worktree_missing",
     "worktree_state_unknown",
     "worktree_unregistered",
-  ])
-  .nullable();
-export type AgentSessionResumeReason = z.infer<typeof agentSessionResumeReasonSchema>;
+  ]),
+);
+export type AgentSessionResumeReason = (typeof agentSessionResumeReasonSchema)["Type"];
 
-export const agentSessionWorktreeStateSchema = z.enum([
+export const agentSessionWorktreeStateSchema = Schema.Literals([
   "not_applicable",
   "available",
   "missing",
   "unregistered",
   "unknown",
 ]);
-export type AgentSessionWorktreeState = z.infer<typeof agentSessionWorktreeStateSchema>;
+export type AgentSessionWorktreeState = (typeof agentSessionWorktreeStateSchema)["Type"];
 
-export const agentSessionListProjectionSchema = z
-  .object({
-    session: agentSessionRecordSchema,
-    executionHealth: agentSessionExecutionHealthSchema,
-    resume: agentSessionResumeStateSchema,
-    resumeReason: agentSessionResumeReasonSchema,
-    worktreeState: agentSessionWorktreeStateSchema,
-    visibleByDefault: z.boolean(),
-  })
-  .strict();
-export type AgentSessionListProjection = z.infer<typeof agentSessionListProjectionSchema>;
+export const agentSessionListProjectionSchema = struct({
+  session: agentSessionRecordSchema,
+  executionHealth: agentSessionExecutionHealthSchema,
+  resume: agentSessionResumeStateSchema,
+  resumeReason: agentSessionResumeReasonSchema,
+  worktreeState: agentSessionWorktreeStateSchema,
+  visibleByDefault: Schema.Boolean,
+});
+export type AgentSessionListProjection = (typeof agentSessionListProjectionSchema)["Type"];
 
-export const agentSessionListResponseSchema = z
-  .object({
-    allViews: z.array(agentSessionListProjectionSchema),
-    views: z.array(agentSessionListProjectionSchema),
-  })
-  .strict();
-export type AgentSessionListResponse = z.infer<typeof agentSessionListResponseSchema>;
+export const agentSessionListResponseSchema = struct({
+  allViews: Schema.Array(agentSessionListProjectionSchema),
+  views: Schema.Array(agentSessionListProjectionSchema),
+});
+export type AgentSessionListResponse = (typeof agentSessionListResponseSchema)["Type"];
 
-export const runAgentSessionResponseSchema = z
-  .object({
-    process: processResultSchema,
-    session: agentSessionRecordSchema,
-    cleanup: runCleanupResultSchema,
-  })
-  .strict();
-export type RunAgentSessionResponse = z.infer<typeof runAgentSessionResponseSchema>;
+export const runAgentSessionResponseSchema = struct({
+  process: processResultSchema,
+  session: agentSessionRecordSchema,
+  cleanup: runCleanupResultSchema,
+});
+export type RunAgentSessionResponse = (typeof runAgentSessionResponseSchema)["Type"];
 
-export const resumeAgentSessionResponseSchema = z
-  .object({
-    process: processResultSchema,
-    session: agentSessionRecordSchema,
-  })
-  .strict();
-export type ResumeAgentSessionResponse = z.infer<typeof resumeAgentSessionResponseSchema>;
+export const resumeAgentSessionResponseSchema = struct({
+  process: processResultSchema,
+  session: agentSessionRecordSchema,
+});
+export type ResumeAgentSessionResponse = (typeof resumeAgentSessionResponseSchema)["Type"];
 
-export const cleanupAgentSessionResponseSchema = z
-  .object({
-    session: agentSessionRecordSchema,
-    cleanup: cleanupResultSchema,
-  })
-  .strict();
-export type CleanupAgentSessionResponse = z.infer<typeof cleanupAgentSessionResponseSchema>;
+export const cleanupAgentSessionResponseSchema = struct({
+  session: agentSessionRecordSchema,
+  cleanup: cleanupResultSchema,
+});
+export type CleanupAgentSessionResponse = (typeof cleanupAgentSessionResponseSchema)["Type"];
 
-const dimensionsSchema = z
-  .object({
-    cols: z.number().int().min(1).max(500),
-    rows: z.number().int().min(1).max(300),
-  })
-  .strict();
+const dimensionsFields = {
+  cols: Schema.Int.check(intInRange(1, 500)),
+  rows: Schema.Int.check(intInRange(1, 300)),
+} as const;
 
-const terminalFrameVersionSchema = z
-  .object({
-    version: z.literal(terminalProtocolVersion),
-  })
-  .strict();
+const terminalFrameVersionFields = {
+  version: Schema.Literal(terminalProtocolVersion),
+} as const;
 
-const terminalSessionIdSchema = z.string().min(1).max(128);
-const terminalResumeTokenSchema = z.string().min(1).max(256);
+const terminalSessionIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128));
+const terminalResumeTokenSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
+const terminalOwnerSchema = Schema.Literals(["mobile", "desktop"]);
 
-const terminalAttachMessageSchema = z
-  .object({
-    type: z.literal("attach"),
-    ...terminalFrameVersionSchema.shape,
-    target: z.string().min(1).max(256),
-    ...dimensionsSchema.shape,
-    sessionId: terminalSessionIdSchema.optional(),
-    resumeToken: terminalResumeTokenSchema.optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if ((value.sessionId === undefined) !== (value.resumeToken === undefined)) {
-      context.addIssue({
-        code: "custom",
-        path: [value.sessionId === undefined ? "sessionId" : "resumeToken"],
-        message: "sessionId and resumeToken must be provided together",
-      });
-    }
-  });
+const terminalAttachBaseFields = {
+  ...terminalFrameVersionFields,
+  target: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  ...dimensionsFields,
+} as const;
 
-export const clientControlMessageSchema = z.discriminatedUnion("type", [
-  terminalAttachMessageSchema,
-  z
-    .object({
-      type: z.literal("resize"),
-      ...terminalFrameVersionSchema.shape,
-      ...dimensionsSchema.shape,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("redraw"),
-      ...terminalFrameVersionSchema.shape,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("ping"),
-      ...terminalFrameVersionSchema.shape,
-      nonce: z.string().min(1).max(128),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("detach"),
-      ...terminalFrameVersionSchema.shape,
-      sessionId: terminalSessionIdSchema.optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("claim"),
-      ...terminalFrameVersionSchema.shape,
-      ...dimensionsSchema.shape,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("enter_copy_mode"),
-      ...terminalFrameVersionSchema.shape,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("paste_tmux_buffer"),
-      ...terminalFrameVersionSchema.shape,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("paste_image"),
-      ...terminalFrameVersionSchema.shape,
-      // Display name for the inline-image protocol and for tools that read the
-      // pasted file. Kept on the client because the OS picker knows it.
-      name: z
-        .string()
-        .trim()
-        .min(1)
-        .max(255)
-        .regex(/^[^\u0000-\u001f\u007f:;]+$/, "name contains a control character, ':' or ';'"),
-      mimeType: z
-        .string()
-        .trim()
-        .min(1)
-        .max(255)
-        .regex(/^[^\u0000-\u001f\u007f]+$/)
-        .optional(),
-      // Standard base64 (with padding) so muximod can decode without URL handling.
-      data: z
-        .string()
-        .regex(/^[A-Za-z0-9+/]+={0,2}$/)
-        .min(1)
-        .max(maxPasteImageBase64Length),
-    })
-    .strict(),
+export const clientControlMessageSchema = discriminatedUnion("type", [
+  unionCase("type", "attach", {
+    ...terminalAttachBaseFields,
+  }),
+  unionCase("type", "attach", {
+    ...terminalAttachBaseFields,
+    sessionId: terminalSessionIdSchema,
+    resumeToken: terminalResumeTokenSchema,
+  }),
+  unionCase("type", "resize", {
+    ...terminalFrameVersionFields,
+    ...dimensionsFields,
+  }),
+  unionCase("type", "redraw", {
+    ...terminalFrameVersionFields,
+  }),
+  unionCase("type", "ping", {
+    ...terminalFrameVersionFields,
+    nonce: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  }),
+  unionCase("type", "detach", {
+    ...terminalFrameVersionFields,
+    sessionId: Schema.optional(terminalSessionIdSchema),
+  }),
+  unionCase("type", "claim", {
+    ...terminalFrameVersionFields,
+    ...dimensionsFields,
+  }),
+  unionCase("type", "enter_copy_mode", {
+    ...terminalFrameVersionFields,
+  }),
+  unionCase("type", "paste_tmux_buffer", {
+    ...terminalFrameVersionFields,
+  }),
+  unionCase("type", "paste_image", {
+    ...terminalFrameVersionFields,
+    // Display name for the inline-image protocol and for tools that read the
+    // pasted file. Kept on the client because the OS picker knows it.
+    name: Schema.Trim.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(255),
+      Schema.isPattern(/^[^\u0000-\u001f\u007f:;]+$/),
+    ),
+    mimeType: Schema.optional(
+      Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(255), Schema.isPattern(/^[^\u0000-\u001f\u007f]+$/)),
+    ),
+    // Standard base64 (with padding) so muximod can decode without URL handling.
+    data: Schema.String.check(
+      Schema.isPattern(/^[A-Za-z0-9+/]+={0,2}$/),
+      Schema.isMinLength(1),
+      Schema.isMaxLength(maxPasteImageBase64Length),
+    ),
+  }),
 ]);
 
-export type ClientControlMessage = z.infer<typeof clientControlMessageSchema>;
+export type ClientControlMessage = (typeof clientControlMessageSchema)["Type"];
 
-type TerminalControlFrameDecode<T> =
+export type TerminalControlFrameDecode<T> =
   | { ok: true; message: T }
   | { ok: false; code: "invalid_json" | "unsupported_version" | "invalid_message"; message: string };
 
@@ -884,7 +844,7 @@ export type ClientControlFrameDecode = TerminalControlFrameDecode<ClientControlM
 
 /** Validates and encodes a client control message for a text WebSocket frame. */
 export function encodeClientControlFrame(message: ClientControlMessage): string {
-  return JSON.stringify(clientControlMessageSchema.parse(message));
+  return JSON.stringify(Schema.encodeSync(clientControlMessageSchema)(message));
 }
 
 /** Decodes and validates a text WebSocket control frame at the protocol boundary. */
@@ -892,204 +852,173 @@ export function decodeClientControlFrame(data: string | Uint8Array): ClientContr
   return decodeTerminalControlFrame(data, clientControlMessageSchema);
 }
 
-export const paneSummarySchema = z
-  .object({
-    id: paneIdWireSchema,
-    hostPaneId: hostPaneIdWireSchema,
-    sessionName: Pane.schema.shape.sessionName,
-    windowId: Pane.schema.shape.windowId,
-    kind: paneKindSchema,
-    name: Pane.schema.shape.name,
-    cwd: Pane.schema.shape.cwd,
-    workspaceId: workspaceIdWireSchema.nullable(),
-    agentId: Pane.schema.shape.agentId.unwrap().nullable(),
-    state: paneStateSchema,
-    title: Pane.schema.shape.title.unwrap().nullable(),
-    // Live-only output tail. It is intentionally bounded and omitted from
-    // persisted pane rows so the pane list remains a small status projection.
-    recentOutput: Pane.schema.shape.recentOutput.unwrap().max(2_000).optional(),
-    lastSeenAt: Pane.schema.shape.lastSeenAt,
-    // Live tmux geometry used by the pane layout.
-    windowName: Pane.schema.shape.windowName,
-    windowIndex: Pane.schema.shape.windowIndex,
-    // Pane indexes are scoped to a tmux window and are distinct from hostPaneId
-    // (the server-wide target such as %32).
-    paneIndex: Pane.schema.shape.paneIndex,
-    left: Pane.schema.shape.left,
-    top: Pane.schema.shape.top,
-    width: Pane.schema.shape.width,
-    height: Pane.schema.shape.height,
-    windowWidth: Pane.schema.shape.windowWidth,
-    windowHeight: Pane.schema.shape.windowHeight,
-  })
-  .strict();
+export const paneSummarySchema = struct({
+  id: paneIdString,
+  hostPaneId: Schema.String.check(Schema.isPattern(/^%[0-9]+$/)),
+  sessionName: PaneFields.sessionName,
+  windowId: PaneFields.windowId,
+  kind: paneKindSchema,
+  name: PaneFields.name,
+  cwd: PaneFields.cwd,
+  workspaceId: Schema.NullOr(paneIdString),
+  agentId: Schema.NullOr(PaneFields.agentId),
+  state: paneStateSchema,
+  title: Schema.NullOr(PaneFields.title),
+  // Live-only output tail. It is intentionally bounded and omitted from
+  // persisted pane rows so the pane list remains a small status projection.
+  recentOutput: Schema.optional(PaneFields.recentOutput.check(Schema.isMaxLength(2_000))),
+  lastSeenAt: PaneFields.lastSeenAt,
+  // Live tmux geometry used by the pane layout.
+  windowName: Schema.optional(PaneFields.windowName),
+  windowIndex: Schema.optional(PaneFields.windowIndex),
+  // Pane indexes are scoped to a tmux window and are distinct from hostPaneId
+  // (the server-wide target such as %32).
+  paneIndex: Schema.optional(PaneFields.paneIndex),
+  left: Schema.optional(PaneFields.left),
+  top: Schema.optional(PaneFields.top),
+  width: Schema.optional(PaneFields.width),
+  height: Schema.optional(PaneFields.height),
+  windowWidth: Schema.optional(PaneFields.windowWidth),
+  windowHeight: Schema.optional(PaneFields.windowHeight),
+});
 
-export const paneListResponseSchema = z.object({ panes: z.array(paneSummarySchema) }).strict();
-export type PaneSummary = z.infer<typeof paneSummarySchema>;
+export const paneListResponseSchema = struct({ panes: Schema.Array(paneSummarySchema) });
+export type PaneSummary = (typeof paneSummarySchema)["Type"];
 
-export const panePlacementSchema = z.enum(["window", "right", "bottom"]);
-export type PanePlacement = z.infer<typeof panePlacementSchema>;
+export const panePlacementSchema = Schema.Literals(["window", "right", "bottom"]);
+export type PanePlacement = (typeof panePlacementSchema)["Type"];
 
-export const createPaneRequestSchema = z
-  .object({
+export const createPaneRequestSchema = wire(
+  Schema.Struct({
     sessionName: tmuxSessionNameSchema,
-    kind: z.enum(["agent", "shell"]),
-    name: z
-      .string()
-      .trim()
-      .min(1)
-      .max(120)
-      .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "name contains a control character"),
-    workspaceId: workspaceIdWireSchema.optional(),
-    agentId: agentBackendSchema.nullable(),
-    useWorktree: z.boolean(),
+    kind: Schema.Literals(["agent", "shell"]),
+    name: Schema.Trim.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(120),
+      Schema.isPattern(/^[^\u0000-\u001f\u007f]+$/),
+    ),
+    workspaceId: Schema.optional(workspaceIdString),
+    agentId: Schema.NullOr(agentBackendSchema),
+    useWorktree: Schema.Boolean,
     placement: panePlacementSchema,
-    targetPaneId: z.string().trim().min(1).max(64).nullable(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.placement !== "window" && value.workspaceId && !value.useWorktree) {
-      context.addIssue({
-        code: "custom",
-        path: ["workspaceId"],
-        message: "workspaceId on a split pane requires useWorktree",
-      });
-    }
-    if (value.kind === "agent" && !value.agentId) {
-      context.addIssue({ code: "custom", path: ["agentId"], message: "agentId is required for an agent pane" });
-    }
-    if (value.kind === "shell" && value.agentId) {
-      context.addIssue({ code: "custom", path: ["agentId"], message: "agentId is not allowed for a shell pane" });
-    }
-    if (value.placement === "window" && value.targetPaneId) {
-      context.addIssue({
-        code: "custom",
-        path: ["targetPaneId"],
-        message: "targetPaneId is only used for a split pane",
-      });
-    }
-    if (value.placement !== "window" && !value.targetPaneId) {
-      context.addIssue({
-        code: "custom",
-        path: ["targetPaneId"],
-        message: "targetPaneId is required for a split pane",
-      });
-    }
-  });
-export type CreatePaneRequest = z.infer<typeof createPaneRequestSchema>;
+    targetPaneId: Schema.NullOr(boundedString(1, 64)),
+  }).check(
+    Schema.makeFilter((value) => {
+      const issues: Array<Schema.FilterIssue> = [];
+      if (value.placement !== "window" && value.workspaceId && !value.useWorktree) {
+        issues.push({ path: ["workspaceId"], issue: "workspaceId on a split pane requires useWorktree" });
+      }
+      if (value.kind === "agent" && !value.agentId) {
+        issues.push({ path: ["agentId"], issue: "agentId is required for an agent pane" });
+      }
+      if (value.kind === "shell" && value.agentId) {
+        issues.push({ path: ["agentId"], issue: "agentId is not allowed for a shell pane" });
+      }
+      if (value.placement === "window" && value.targetPaneId) {
+        issues.push({ path: ["targetPaneId"], issue: "targetPaneId is only used for a split pane" });
+      }
+      if (value.placement !== "window" && !value.targetPaneId) {
+        issues.push({ path: ["targetPaneId"], issue: "targetPaneId is required for a split pane" });
+      }
+      return issues;
+    }),
+  ),
+);
+export type CreatePaneRequest = (typeof createPaneRequestSchema)["Type"];
 
-export const paneResponseSchema = z.object({ pane: paneSummarySchema }).strict();
+export const paneResponseSchema = struct({ pane: paneSummarySchema });
 
-export const terminalEndpointSchema = z
-  .object({
-    id: z.string().min(1),
-    name: z.string().min(1),
-    host: z.string().min(1),
-    tailnetIp: z.string().min(1),
-    state: z.enum(["online", "offline"]),
-    detail: z.string(),
-    lastSeen: z.string(),
-  })
-  .strict();
-export type TerminalEndpoint = z.infer<typeof terminalEndpointSchema>;
+export const terminalEndpointSchema = struct({
+  id: nonEmptyString,
+  name: nonEmptyString,
+  host: nonEmptyString,
+  tailnetIp: nonEmptyString,
+  state: Schema.Literals(["online", "offline"]),
+  detail: Schema.String,
+  lastSeen: Schema.String,
+});
+export type TerminalEndpoint = (typeof terminalEndpointSchema)["Type"];
 
-export const terminalListResponseSchema = z.object({ terminals: z.array(terminalEndpointSchema) }).strict();
+export const terminalListResponseSchema = struct({ terminals: Schema.Array(terminalEndpointSchema) });
 
-export const tmuxSessionSchema = z
-  .object({
-    name: z.string().min(1),
-    paneCount: z.number().int().min(0),
-    waitingCount: z.number().int().min(0),
-    detail: z.string(),
-    managed: z.boolean(),
-  })
-  .strict();
-export type TmuxSession = z.infer<typeof tmuxSessionSchema>;
+export const tmuxSessionSchema = struct({
+  name: Schema.String.check(Schema.isMinLength(1)),
+  paneCount: Schema.Int.check(nonNegativeInt),
+  waitingCount: Schema.Int.check(nonNegativeInt),
+  detail: Schema.String,
+  managed: Schema.Boolean,
+});
+export type TmuxSession = (typeof tmuxSessionSchema)["Type"];
 
-export const sessionListResponseSchema = z.object({ sessions: z.array(tmuxSessionSchema) }).strict();
+export const sessionListResponseSchema = struct({ sessions: Schema.Array(tmuxSessionSchema) });
 
-export const manageSessionRequestSchema = z
-  .object({
-    name: tmuxSessionNameSchema,
-  })
-  .strict();
-export type ManageSessionRequest = z.infer<typeof manageSessionRequestSchema>;
+export const manageSessionRequestSchema = struct({
+  name: tmuxSessionNameSchema,
+});
+export type ManageSessionRequest = (typeof manageSessionRequestSchema)["Type"];
 
-export const managedSessionResponseSchema = z
-  .object({
-    session: z
-      .object({
-        name: z.string().min(1),
-        changed: z.boolean(),
-      })
-      .strict(),
-  })
-  .strict();
+export const managedSessionResponseSchema = struct({
+  session: struct({
+    name: Schema.String.check(Schema.isMinLength(1)),
+    changed: Schema.Boolean,
+  }),
+});
+export type ManagedSessionResponse = (typeof managedSessionResponseSchema)["Type"];
 
-export const createSessionRequestSchema = z
-  .object({
-    name: tmuxSessionNameSchema,
-    workspaceId: workspaceIdWireSchema,
-  })
-  .strict();
-export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
+export const createSessionRequestSchema = struct({
+  name: tmuxSessionNameSchema,
+  workspaceId: workspaceIdString,
+});
+export type CreateSessionRequest = (typeof createSessionRequestSchema)["Type"];
 
-export const sessionResponseSchema = z.object({ session: tmuxSessionSchema }).strict();
+export const sessionResponseSchema = struct({ session: tmuxSessionSchema });
 
-export const serverControlMessageSchema = z.discriminatedUnion("type", [
-  z
-    .object({
-      type: z.literal("ready"),
-      ...terminalFrameVersionSchema.shape,
-      sessionId: terminalSessionIdSchema,
-      resumeToken: terminalResumeTokenSchema,
-      resumed: z.boolean(),
-      target: z.string(),
-      paneId: z.string(),
-      windowId: z.string(),
-      owner: z.enum(["mobile", "desktop"]),
-      sync: z.enum(["live", "replay", "redraw"]),
-      ...dimensionsSchema.shape,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("viewport"),
-      ...terminalFrameVersionSchema.shape,
-      owner: z.enum(["mobile", "desktop"]),
-      reason: z.enum(["attached", "mobile_claim", "desktop_activity", "desktop_resize", "desktop_focus", "detached"]),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("pong"),
-      ...terminalFrameVersionSchema.shape,
-      nonce: z.string().min(1).max(128),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("error"),
-      ...terminalFrameVersionSchema.shape,
-      sessionId: terminalSessionIdSchema.optional(),
-      code: z.string(),
-      message: z.string(),
-      retryable: z.boolean().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("closed"),
-      ...terminalFrameVersionSchema.shape,
-      sessionId: terminalSessionIdSchema,
-      reason: z.enum(["detached", "terminal_exit", "network_timeout", "server_shutdown"]),
-      code: z.number().int().nullable(),
-      signal: z.string().nullable(),
-    })
-    .strict(),
+export const serverControlMessageSchema = discriminatedUnion("type", [
+  unionCase("type", "ready", {
+    ...terminalFrameVersionFields,
+    sessionId: terminalSessionIdSchema,
+    resumeToken: terminalResumeTokenSchema,
+    resumed: Schema.Boolean,
+    target: Schema.String,
+    paneId: Schema.String,
+    windowId: Schema.String,
+    owner: terminalOwnerSchema,
+    sync: Schema.Literals(["live", "replay", "redraw"]),
+    ...dimensionsFields,
+  }),
+  unionCase("type", "viewport", {
+    ...terminalFrameVersionFields,
+    owner: terminalOwnerSchema,
+    reason: Schema.Literals([
+      "attached",
+      "mobile_claim",
+      "desktop_activity",
+      "desktop_resize",
+      "desktop_focus",
+      "detached",
+    ]),
+  }),
+  unionCase("type", "pong", {
+    ...terminalFrameVersionFields,
+    nonce: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  }),
+  unionCase("type", "error", {
+    ...terminalFrameVersionFields,
+    sessionId: Schema.optional(terminalSessionIdSchema),
+    code: Schema.String,
+    message: Schema.String,
+    retryable: Schema.optional(Schema.Boolean),
+  }),
+  unionCase("type", "closed", {
+    ...terminalFrameVersionFields,
+    sessionId: terminalSessionIdSchema,
+    reason: Schema.Literals(["detached", "terminal_exit", "network_timeout", "server_shutdown"]),
+    code: Schema.NullOr(Schema.Int),
+    signal: Schema.NullOr(Schema.String),
+  }),
 ]);
 
-export type ServerControlMessage = z.infer<typeof serverControlMessageSchema>;
+export type ServerControlMessage = (typeof serverControlMessageSchema)["Type"];
 
 export type ServerControlFrameDecode = TerminalControlFrameDecode<ServerControlMessage>;
 
@@ -1100,7 +1029,7 @@ export function decodeServerControlFrame(data: string | Uint8Array): ServerContr
 
 /** Validates and encodes a server control message for a text WebSocket frame. */
 export function encodeServerControlFrame(message: ServerControlMessage): string {
-  return JSON.stringify(serverControlMessageSchema.parse(message));
+  return JSON.stringify(Schema.encodeSync(serverControlMessageSchema)(message));
 }
 
 /** Decodes standard (non-URL) base64 payloads used by image paste frames. */
@@ -1114,7 +1043,7 @@ export function decodeBase64(value: string): Uint8Array {
 
 function decodeControlFrame<T>(
   data: string | Uint8Array,
-  schema: { safeParse: (input: unknown) => unknown },
+  schema: Schema.ConstraintDecoder<unknown>,
 ): ControlFrameDecode<T> {
   let input: unknown;
   try {
@@ -1123,16 +1052,16 @@ function decodeControlFrame<T>(
     return { ok: false, code: "invalid_json", message: "control frame must be valid JSON" };
   }
 
-  const parsed = schema.safeParse(input) as {
-    success: boolean;
-    data?: T;
-  };
-  return parsed.success
-    ? { ok: true, value: parsed.data as T }
-    : { ok: false, code: "invalid_shape", message: "control frame has an invalid shape" };
+  const result = Schema.decodeUnknownResult(schema, { onExcessProperty: "error" })(input);
+  return Result.isFailure(result)
+    ? { ok: false, code: "invalid_shape", message: "control frame has an invalid shape" }
+    : { ok: true, value: result.success as T };
 }
 
-function decodeTerminalControlFrame<T>(data: string | Uint8Array, schema: z.ZodType<T>): TerminalControlFrameDecode<T> {
+function decodeTerminalControlFrame<T>(
+  data: string | Uint8Array,
+  schema: Schema.ConstraintDecoder<unknown>,
+): TerminalControlFrameDecode<T> {
   let input: unknown;
   try {
     input = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data));
@@ -1148,10 +1077,10 @@ function decodeTerminalControlFrame<T>(data: string | Uint8Array, schema: z.ZodT
     };
   }
 
-  const parsed = schema.safeParse(input);
-  return parsed.success
-    ? { ok: true, message: parsed.data }
-    : { ok: false, code: "invalid_message", message: parsed.error.message };
+  const result = Schema.decodeUnknownResult(schema, { onExcessProperty: "error" })(input);
+  return Result.isFailure(result)
+    ? { ok: false, code: "invalid_message", message: "control frame message failed validation" }
+    : { ok: true, message: result.success as T };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

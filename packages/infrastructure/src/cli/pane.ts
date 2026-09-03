@@ -1,10 +1,12 @@
 import type {
   AgentObservationPort,
   AgentStateObservation,
+  ApplicationEffect,
   PanePublicationPort,
   ShellPanePort,
 } from "@muximo/application";
-import type { AgentSessionRecord, PaneState } from "@muximo/domain";
+import type { AgentSession, PaneState } from "@muximo/domain";
+import { fromPromise } from "../effect.js";
 import { errorFields, type Logger } from "../logging/index.js";
 import type { TmuxAdapter } from "../terminal/tmux.js";
 
@@ -35,7 +37,11 @@ export type PaneAdapterOptions = {
 export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObservationPort, ShellPanePort {
   public constructor(private readonly options: PaneAdapterOptions) {}
 
-  public async adopt(session: AgentSessionRecord, hostPaneId?: string): Promise<void> {
+  public adopt(session: AgentSession, hostPaneId?: string): ApplicationEffect<void> {
+    return fromPromise(() => this.adoptPromise(session, hostPaneId));
+  }
+
+  private async adoptPromise(session: AgentSession, hostPaneId?: string): Promise<void> {
     const pane = resolveTmuxPane(this.options.environment, hostPaneId);
     if (!pane || !session.executionId) return;
     const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
@@ -55,7 +61,11 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
     }
   }
 
-  public async release(session: AgentSessionRecord, hostPaneId?: string): Promise<void> {
+  public release(session: AgentSession, hostPaneId?: string): ApplicationEffect<void> {
+    return fromPromise(() => this.releasePromise(session, hostPaneId));
+  }
+
+  private async releasePromise(session: AgentSession, hostPaneId?: string): Promise<void> {
     const pane = resolveTmuxPane(this.options.environment, hostPaneId);
     if (!pane || !session.executionId) return;
     const input = { agentSessionId: session.id, hostPaneId: pane, executionId: session.executionId };
@@ -75,20 +85,20 @@ export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObs
     }
   }
 
-  public async publish(
-    session: AgentSessionRecord,
+  public publish(
+    session: AgentSession,
     state: "running" | "completed" | "failed" | "stopped",
     hostPaneId?: string,
-  ): Promise<void> {
-    return this.observeAtPane(session, { state }, hostPaneId);
+  ): ApplicationEffect<void> {
+    return fromPromise(() => this.observeAtPane(session, { state }, hostPaneId));
   }
 
-  public async observe(session: AgentSessionRecord, observation: AgentStateObservation): Promise<void> {
-    return this.observeAtPane(session, observation);
+  public observe(session: AgentSession, observation: AgentStateObservation): ApplicationEffect<void> {
+    return fromPromise(() => this.observeAtPane(session, observation));
   }
 
   private async observeAtPane(
-    session: AgentSessionRecord,
+    session: AgentSession,
     observation: AgentStateObservation,
     hostPaneId?: string,
   ): Promise<void> {

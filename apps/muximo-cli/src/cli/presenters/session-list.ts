@@ -73,7 +73,7 @@ export function toCliSessionJson(view: AgentSessionListProjection): Record<strin
     worktree_state: view.worktreeState,
     branch: session.branch,
     session_id: session.backendSessionId,
-    updated_at: session.updatedAt,
+    last_activity_at: session.lastActivityAt,
   };
 }
 

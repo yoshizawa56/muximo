@@ -1,3 +1,4 @@
+import type { ApplicationEffect } from "../effect.js";
 import type { ProcessResult } from "./agent-sessions.js";
 
 /** Operational configuration for the managed muximod service. */
@@ -33,6 +34,8 @@ export type DaemonHealthFailureContext = {
 };
 
 export class DaemonHealthError extends Error {
+  public readonly _tag = "DaemonHealthError" as const;
+
   public readonly details: {
     reason: DaemonHealthFailureReason;
     options: Pick<DaemonOptions, "logFile">;
@@ -78,26 +81,26 @@ export type DaemonStartResult =
 
 /** OS process/filesystem/health capabilities supplied by infrastructure. */
 export interface DaemonRuntimePort {
-  runForeground(options: DaemonOptions): Promise<ProcessResult>;
-  spawn(options: DaemonOptions): Promise<DaemonProcessHandle>;
-  isHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean>;
+  runForeground(options: DaemonOptions): ApplicationEffect<ProcessResult>;
+  spawn(options: DaemonOptions): ApplicationEffect<DaemonProcessHandle>;
+  isHealthy(options: DaemonOptions, expectedPid?: number): ApplicationEffect<boolean>;
   /** Checks ownership without requiring the process to match a new config. */
-  isProcessHealthy(options: Pick<DaemonOptions, "host" | "port">, expectedPid: number): Promise<boolean>;
-  isAlive(pid: number): Promise<boolean>;
-  signal(pid: number, signal: "SIGTERM"): void;
-  readPidRecord(path: string): DaemonPidRecord | undefined;
-  writePidRecord(path: string, record: DaemonPidRecord): void;
-  removePidRecord(path: string, expectedPid: number): void;
-  writeRestartMarker(path: string, refreshServers: boolean): void;
-  hasRestartMarker(path: string): boolean;
-  consumeRestartMarker(path: string): boolean | undefined;
-  removeRestartMarker(path: string): void;
+  isProcessHealthy(options: Pick<DaemonOptions, "host" | "port">, expectedPid: number): ApplicationEffect<boolean>;
+  isAlive(pid: number): ApplicationEffect<boolean>;
+  signal(pid: number, signal: "SIGTERM"): ApplicationEffect<void>;
+  readPidRecord(path: string): ApplicationEffect<DaemonPidRecord | undefined>;
+  writePidRecord(path: string, record: DaemonPidRecord): ApplicationEffect<void>;
+  removePidRecord(path: string, expectedPid: number): ApplicationEffect<void>;
+  writeRestartMarker(path: string, refreshServers: boolean): ApplicationEffect<void>;
+  hasRestartMarker(path: string): ApplicationEffect<boolean>;
+  consumeRestartMarker(path: string): ApplicationEffect<boolean | undefined>;
+  removeRestartMarker(path: string): ApplicationEffect<void>;
 }
 
 export type DaemonProcessHandle = {
   pid?: number;
-  wait(): Promise<ProcessResult>;
-  terminate(signal: "SIGTERM"): void;
+  wait(): ApplicationEffect<ProcessResult>;
+  terminate(signal: "SIGTERM"): ApplicationEffect<void>;
 };
 
 export type DaemonClock = {
@@ -105,5 +108,5 @@ export type DaemonClock = {
 };
 
 export type DaemonScheduler = {
-  sleep(milliseconds: number): Promise<void>;
+  sleep(milliseconds: number): ApplicationEffect<void>;
 };

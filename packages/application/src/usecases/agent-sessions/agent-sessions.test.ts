@@ -1,21 +1,17 @@
-import {
-  AgentSession,
-  AgentSessionId,
-  type AgentSessionRecord,
-  WorkspaceId,
-  type WorkspaceRecord,
-} from "@muximo/domain";
+import { AgentSession, AgentSessionId, Workspace, WorkspaceId } from "@muximo/domain";
 import {
   hasError,
   hasObserved,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   runOperationTable,
   runScenarioTable,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import {
   type AgentExecutionReceipt,
@@ -38,9 +34,9 @@ import {
 } from "../../index.js";
 
 type LifecycleFixture = {
-  sessions: Map<string, AgentSessionRecord>;
+  sessions: Map<string, AgentSession>;
   receipts: Map<string, AgentExecutionReceipt>;
-  workspace: WorkspaceRecord;
+  workspace: Workspace;
   processResult: ProcessResult;
   processError?: Error;
   prepareError?: Error;
@@ -77,7 +73,7 @@ type LifecycleFixture = {
 };
 
 type RunContext = {
-  status: AgentSessionRecord["status"] | undefined;
+  status: AgentSession["status"] | undefined;
   processCode: number | undefined;
   cleanup: RunAgentSessionResult["cleanup"] | undefined;
   runCount: number;
@@ -98,13 +94,13 @@ type RunContext = {
 };
 
 type ResumeContext = {
-  status: AgentSessionRecord["status"] | undefined;
+  status: AgentSession["status"] | undefined;
   processCode: number | undefined;
   runCount: number;
   disposeCount: number;
   adoptedPaneId: string | undefined;
   releasedPaneId: string | undefined;
-  claimUpdatedAt?: string;
+  claimLastActivityAt?: string;
 };
 
 type CleanupContext = {
@@ -114,16 +110,14 @@ type CleanupContext = {
   deleted: boolean;
 };
 
-const workspace: WorkspaceRecord = {
+const workspace: Workspace = Workspace.create({
   id: WorkspaceId.create("workspace-id"),
   rootPath: "/workspace",
   name: "workspace",
   isGit: false,
-  createdAt: "2026-08-23T00:00:00.000Z",
-  updatedAt: "2026-08-23T00:00:00.000Z",
-};
+});
 
-function sessionFixture(overrides: Partial<AgentSessionRecord> = {}): AgentSessionRecord {
+function sessionFixture(overrides: Partial<AgentSession> = {}): AgentSession {
   return AgentSession.create({
     id: AgentSessionId.create("session-id"),
     name: "session",
@@ -135,15 +129,14 @@ function sessionFixture(overrides: Partial<AgentSessionRecord> = {}): AgentSessi
     useWorktree: false,
     setupRan: false,
     resuming: false,
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
+    lastActivityAt: "2026-08-23T00:00:00.000Z",
     ...overrides,
   });
 }
 
 function createFixture(
   options: {
-    session?: AgentSessionRecord;
+    session?: AgentSession;
     processResult?: ProcessResult;
     processError?: Error;
     prepareError?: Error;
@@ -161,7 +154,7 @@ function createFixture(
     runWorkspaceInput?: WorkspaceResolutionInput;
   } = {},
 ): LifecycleFixture {
-  const sessions = new Map<string, AgentSessionRecord>();
+  const sessions = new Map<string, AgentSession>();
   if (options.session) sessions.set(options.session.id, options.session);
   return {
     sessions,
@@ -207,76 +200,92 @@ function cleanupResult(disposition: CleanupDisposition): CleanupResult {
 
 function repository(fixture: LifecycleFixture) {
   return {
-    findById: async (id: AgentSessionId) => fixture.sessions.get(id),
-    findByName: async (workspaceId: WorkspaceId, name: string) =>
-      [...fixture.sessions.values()].find((session) => session.workspaceId === workspaceId && session.name === name),
-    list: async (workspaceId?: WorkspaceId) =>
-      [...fixture.sessions.values()].filter(
-        (session) => workspaceId === undefined || session.workspaceId === workspaceId,
+    findById: (id: AgentSessionId) => Effect.succeed(fixture.sessions.get(id)),
+    findByName: (workspaceId: WorkspaceId, name: string) =>
+      Effect.succeed(
+        [...fixture.sessions.values()].find((session) => session.workspaceId === workspaceId && session.name === name),
       ),
-    insert: async (record: AgentSessionRecord) => {
-      fixture.sessions.set(record.id, record);
-    },
-    update: async (record: AgentSessionRecord) => {
-      fixture.sessions.set(record.id, record);
-    },
-    claimExecution: async (input: ClaimExecutionInput) => {
-      fixture.claim = input;
-      if (fixture.abortOnClaim) fixture.resumeAbortController?.abort();
-      return true;
-    },
-    claimAbandonedExecution: async (input: {
+    list: (workspaceId?: WorkspaceId) =>
+      Effect.succeed(
+        [...fixture.sessions.values()].filter(
+          (session) => workspaceId === undefined || session.workspaceId === workspaceId,
+        ),
+      ),
+    insert: (record: AgentSession) =>
+      Effect.sync(() => {
+        fixture.sessions.set(record.id, record);
+      }),
+    update: (record: AgentSession) =>
+      Effect.sync(() => {
+        fixture.sessions.set(record.id, record);
+      }),
+    claimExecution: (input: ClaimExecutionInput) =>
+      Effect.sync(() => {
+        fixture.claim = input;
+        if (fixture.abortOnClaim) fixture.resumeAbortController?.abort();
+        return true;
+      }),
+    claimAbandonedExecution: (input: {
       id: AgentSessionId;
       executionId: string;
       expectedExecutionPid: number | null;
       expectedExecutionStartedAt: string | null;
       expectedExecutionOwnerPid: number | null;
       expectedExecutionOwnerStartedAt: string | null;
-      updatedAt: string;
-    }) => {
-      const current = fixture.sessions.get(input.id);
-      if (
-        !current ||
-        current.executionId !== input.executionId ||
-        (current.status !== "running" && current.status !== "resuming") ||
-        (current.executionPid ?? null) !== input.expectedExecutionPid ||
-        (current.executionStartedAt ?? null) !== input.expectedExecutionStartedAt ||
-        (current.executionOwnerPid ?? null) !== input.expectedExecutionOwnerPid ||
-        (current.executionOwnerStartedAt ?? null) !== input.expectedExecutionOwnerStartedAt
-      ) {
-        return false;
-      }
-      fixture.sessions.set(input.id, { ...current, status: "recovering", resuming: false, updatedAt: input.updatedAt });
-      if (fixture.abortOnAbandonedClaim) fixture.recoveryAbortController?.abort();
-      return true;
-    },
-    attachExecution: async (input: AttachExecutionInput) => {
-      const current = fixture.sessions.get(input.id);
-      if (
-        !current ||
-        current.executionId !== input.executionId ||
-        (current.status !== "running" && current.status !== "resuming") ||
-        current.executionPid !== undefined ||
-        (current.executionOwnerPid ?? null) !== input.expectedExecutionOwnerPid ||
-        (current.executionOwnerStartedAt ?? null) !== input.expectedExecutionOwnerStartedAt
-      )
-        return false;
-      fixture.sessions.set(input.id, {
-        ...current,
-        executionPid: input.executionPid,
-        executionStartedAt: input.executionStartedAt,
-        updatedAt: input.updatedAt,
-      });
-      return true;
-    },
-    delete: async (id: AgentSessionId) => {
-      fixture.sessions.delete(id);
-      fixture.deleted = true;
-    },
-    findExecutionReceipt: async (executionId: string) => fixture.receipts.get(executionId),
-    saveExecutionReceipt: async (receipt: AgentExecutionReceipt) => {
-      fixture.receipts.set(receipt.executionId, receipt);
-    },
+      lastActivityAt: string;
+    }) =>
+      Effect.sync(() => {
+        const current = fixture.sessions.get(input.id);
+        if (
+          !current ||
+          current.executionId !== input.executionId ||
+          (current.status !== "running" && current.status !== "resuming") ||
+          (current.executionPid ?? null) !== input.expectedExecutionPid ||
+          (current.executionStartedAt ?? null) !== input.expectedExecutionStartedAt ||
+          (current.executionOwnerPid ?? null) !== input.expectedExecutionOwnerPid ||
+          (current.executionOwnerStartedAt ?? null) !== input.expectedExecutionOwnerStartedAt
+        ) {
+          return false;
+        }
+        fixture.sessions.set(
+          input.id,
+          current.update({ status: "recovering", resuming: false, lastActivityAt: input.lastActivityAt }),
+        );
+        if (fixture.abortOnAbandonedClaim) fixture.recoveryAbortController?.abort();
+        return true;
+      }),
+    attachExecution: (input: AttachExecutionInput) =>
+      Effect.sync(() => {
+        const current = fixture.sessions.get(input.id);
+        if (
+          !current ||
+          current.executionId !== input.executionId ||
+          (current.status !== "running" && current.status !== "resuming") ||
+          current.executionPid !== undefined ||
+          (current.executionOwnerPid ?? null) !== input.expectedExecutionOwnerPid ||
+          (current.executionOwnerStartedAt ?? null) !== input.expectedExecutionOwnerStartedAt
+        )
+          return false;
+        fixture.sessions.set(
+          input.id,
+          current.update({
+            executionPid: input.executionPid,
+            executionStartedAt: input.executionStartedAt,
+            lastActivityAt: input.lastActivityAt,
+          }),
+        );
+        return true;
+      }),
+    delete: (id: AgentSessionId) =>
+      Effect.sync(() => {
+        fixture.sessions.delete(id);
+        fixture.deleted = true;
+      }),
+    findExecutionReceipt: (executionId: string) => Effect.succeed(fixture.receipts.get(executionId)),
+    saveExecutionReceipt: (receipt: AgentExecutionReceipt) =>
+      Effect.sync(() => {
+        fixture.receipts.set(receipt.executionId, receipt);
+      }),
   };
 }
 
@@ -296,10 +305,132 @@ function logger() {
 function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
   const sessions = repository(fixture);
   const backend = {
-    captureBaseline: async () => ({ success: true }),
-    prepareLaunch: async (session: AgentSessionRecord) => {
-      if (fixture.prepareError) throw fixture.prepareError;
-      return {
+    captureBaseline: () => Effect.succeed({ success: true }),
+    prepareLaunch: (session: AgentSession) =>
+      Effect.suspend(() => {
+        if (fixture.prepareError) return Effect.fail(fixture.prepareError);
+        return Effect.succeed({
+          execution: {
+            sessionId: session.id,
+            executionId: session.executionId ?? "execution-id",
+            sessionName: session.name,
+            backend: session.backend,
+            command: ["agent"],
+            cwd: session.workspaceRoot,
+            environment: {},
+          } satisfies AgentExecutionSpec,
+        });
+      }),
+    startLaunch: () => Effect.succeed(undefined),
+    completeLaunch: () =>
+      Effect.suspend(() => {
+        fixture.runCount += 1;
+        try {
+          if (fixture.processError) return Effect.fail(fixture.processError);
+          const sessionUpdate = fixture.provideBackendSessionId
+            ? ({ backendSessionId: "backend-session" } satisfies SessionIdentityUpdate)
+            : undefined;
+          if (sessionUpdate) fixture.providerUpdates.push(sessionUpdate);
+          return Effect.succeed(sessionUpdate);
+        } finally {
+          fixture.disposeCount += 1;
+        }
+      }),
+    disposeLaunch: () => Effect.succeed(undefined),
+  };
+  return new RunAgentSession({
+    sessions,
+    workspace: {
+      resolveCurrent: (input) =>
+        Effect.sync(() => {
+          fixture.resolvedWorkspaceInput = input;
+          return fixture.workspace;
+        }),
+    },
+    naming: { resolveName: (_workspaceId, requestedName) => Effect.succeed(requestedName ?? "session") },
+    hooks: {
+      resolveHook: (value) => Effect.succeed(value),
+      resolveStoredHook: () => Effect.succeed(undefined),
+      run: (_session, kind) =>
+        Effect.sync(() => {
+          if (kind === "cleanup") fixture.cleanupHookCount += 1;
+          return { success: true };
+        }),
+      removeOutputs: () => Effect.succeed(undefined),
+    },
+    worktrees: {
+      create: () =>
+        Effect.succeed(
+          fixture.useWorktree
+            ? {
+                worktreeRoot: "/worktrees",
+                worktreePath: "/worktrees/session",
+                branch: "muximo/session",
+                baseCommit: "base-commit",
+              }
+            : {},
+        ),
+      copyFiles: () => Effect.succeed(true),
+      isRegistered: () => Effect.succeed(true),
+      hasChanges: () =>
+        Effect.suspend(() => {
+          if (fixture.hasChangesError) return Effect.fail(fixture.hasChangesError);
+          return Effect.succeed(fixture.dirty);
+        }),
+      remove: (_session, force) =>
+        Effect.sync(() => {
+          fixture.worktreeRemoveCount += 1;
+          fixture.cleanupForce = force;
+          return cleanupResult(fixture.cleanupDisposition);
+        }),
+    },
+    launcher: backend,
+    remote: {
+      archive: () =>
+        Effect.sync(() => {
+          fixture.archiveCount += 1;
+          return true;
+        }),
+      restore: () =>
+        Effect.sync(() => {
+          fixture.restoreCount += 1;
+          return fixture.restoreSucceeded;
+        }),
+    },
+    resources: { releaseIfUnused: () => Effect.succeed(undefined) },
+    panes: {
+      adopt: (_session, hostPaneId) =>
+        Effect.sync(() => {
+          fixture.adoptCount += 1;
+          fixture.adoptedPaneId = hostPaneId;
+        }),
+      release: (_session, hostPaneId) =>
+        Effect.sync(() => {
+          fixture.releaseCount += 1;
+          fixture.releasedPaneId = hostPaneId;
+        }),
+      publish: () => Effect.succeed(undefined),
+    },
+    audit: { record: () => Effect.succeed(undefined) },
+    clock: clock(),
+    logger: logger(),
+    confirmCleanup: {
+      confirm: () =>
+        Effect.sync(() => {
+          fixture.confirmCount += 1;
+          return fixture.confirmCleanup;
+        }),
+    },
+    process: { observe: () => Effect.succeed(fixture.processAlive ? "alive" : "dead") },
+  });
+}
+
+function createResumeUseCase(fixture: LifecycleFixture): ResumeAgentSession {
+  const sessions = repository(fixture);
+  const backend = {
+    captureBaseline: () => Effect.succeed({ success: true }),
+    prepareLaunch: (session: AgentSession) =>
+      Effect.succeed({
         execution: {
           sessionId: session.id,
           executionId: session.executionId ?? "execution-id",
@@ -308,146 +439,41 @@ function createRunUseCase(fixture: LifecycleFixture): RunAgentSession {
           command: ["agent"],
           cwd: session.workspaceRoot,
           environment: {},
-        } satisfies AgentExecutionSpec,
-      };
-    },
-    startLaunch: async () => undefined,
-    completeLaunch: async () => {
-      fixture.runCount += 1;
-      try {
-        if (fixture.processError) throw fixture.processError;
-        const sessionUpdate = fixture.provideBackendSessionId
-          ? ({ backendSessionId: "backend-session" } satisfies SessionIdentityUpdate)
-          : undefined;
-        if (sessionUpdate) fixture.providerUpdates.push(sessionUpdate);
-        return sessionUpdate;
-      } finally {
-        fixture.disposeCount += 1;
-      }
-    },
-    disposeLaunch: async () => undefined,
-  };
-  return new RunAgentSession({
-    sessions,
-    workspace: {
-      resolveCurrent: async (input) => {
-        fixture.resolvedWorkspaceInput = input;
-        return fixture.workspace;
-      },
-    },
-    naming: { resolveName: async (_workspaceId, requestedName) => requestedName ?? "session" },
-    hooks: {
-      resolveHook: async (value) => value,
-      resolveStoredHook: async () => undefined,
-      run: async (_session, kind) => {
-        if (kind === "cleanup") fixture.cleanupHookCount += 1;
-        return { success: true };
-      },
-      removeOutputs: async () => undefined,
-    },
-    worktrees: {
-      create: async () =>
-        fixture.useWorktree
-          ? {
-              worktreeRoot: "/worktrees",
-              worktreePath: "/worktrees/session",
-              branch: "muximo/session",
-              baseCommit: "base-commit",
-            }
-          : {},
-      copyFiles: async () => true,
-      isRegistered: async () => true,
-      hasChanges: async () => {
-        if (fixture.hasChangesError) throw fixture.hasChangesError;
-        return fixture.dirty;
-      },
-      remove: async (_session, force) => {
-        fixture.worktreeRemoveCount += 1;
-        fixture.cleanupForce = force;
-        return cleanupResult(fixture.cleanupDisposition);
-      },
-    },
-    launcher: backend,
-    remote: {
-      archive: async () => {
-        fixture.archiveCount += 1;
-        return true;
-      },
-      restore: async () => {
-        fixture.restoreCount += 1;
-        return fixture.restoreSucceeded;
-      },
-    },
-    resources: { releaseIfUnused: async () => undefined },
-    panes: {
-      adopt: async (_session, hostPaneId) => {
-        fixture.adoptCount += 1;
-        fixture.adoptedPaneId = hostPaneId;
-      },
-      release: async (_session, hostPaneId) => {
-        fixture.releaseCount += 1;
-        fixture.releasedPaneId = hostPaneId;
-      },
-      publish: async () => undefined,
-    },
-    audit: { record: async () => undefined },
-    clock: clock(),
-    logger: logger(),
-    confirmCleanup: {
-      confirm: async () => {
-        fixture.confirmCount += 1;
-        return fixture.confirmCleanup;
-      },
-    },
-    process: { observe: async () => (fixture.processAlive ? "alive" : "dead") },
-  });
-}
-
-function createResumeUseCase(fixture: LifecycleFixture): ResumeAgentSession {
-  const sessions = repository(fixture);
-  const backend = {
-    captureBaseline: async () => ({ success: true }),
-    prepareLaunch: async (session: AgentSessionRecord) => ({
-      execution: {
-        sessionId: session.id,
-        executionId: session.executionId ?? "execution-id",
-        sessionName: session.name,
-        backend: session.backend,
-        command: ["agent"],
-        cwd: session.workspaceRoot,
-        environment: {},
-      },
-    }),
-    startLaunch: async () => undefined,
-    completeLaunch: async () => {
-      fixture.runCount += 1;
-      try {
-        if (fixture.processError) throw fixture.processError;
-        return undefined;
-      } finally {
-        fixture.disposeCount += 1;
-      }
-    },
-    disposeLaunch: async () => undefined,
+        },
+      }),
+    startLaunch: () => Effect.succeed(undefined),
+    completeLaunch: () =>
+      Effect.suspend(() => {
+        fixture.runCount += 1;
+        try {
+          if (fixture.processError) return Effect.fail(fixture.processError);
+          return Effect.succeed(undefined);
+        } finally {
+          fixture.disposeCount += 1;
+        }
+      }),
+    disposeLaunch: () => Effect.succeed(undefined),
   };
   return new ResumeAgentSession({
     sessions,
     locator: new LocateAgentSession({
       sessions,
-      workspace: { resolveCurrent: async () => fixture.workspace },
+      workspace: { resolveCurrent: () => Effect.succeed(fixture.workspace) },
     }),
-    process: { observe: async () => (fixture.processAlive ? "alive" : "dead") },
+    process: { observe: () => Effect.succeed(fixture.processAlive ? "alive" : "dead") },
     launcher: backend,
     panes: {
-      adopt: async (_session, hostPaneId) => {
-        fixture.adoptCount += 1;
-        fixture.adoptedPaneId = hostPaneId;
-      },
-      release: async (_session, hostPaneId) => {
-        fixture.releaseCount += 1;
-        fixture.releasedPaneId = hostPaneId;
-      },
-      publish: async () => undefined,
+      adopt: (_session, hostPaneId) =>
+        Effect.sync(() => {
+          fixture.adoptCount += 1;
+          fixture.adoptedPaneId = hostPaneId;
+        }),
+      release: (_session, hostPaneId) =>
+        Effect.sync(() => {
+          fixture.releaseCount += 1;
+          fixture.releasedPaneId = hostPaneId;
+        }),
+      publish: () => Effect.succeed(undefined),
     },
     clock: clock(),
     logger: logger(),
@@ -457,32 +483,34 @@ function createResumeUseCase(fixture: LifecycleFixture): ResumeAgentSession {
 function createAttachUseCase(fixture: LifecycleFixture): AttachAgentSession {
   const sessions = repository(fixture);
   const launcher = {
-    captureBaseline: async () => ({ success: true }),
-    prepareLaunch: async (session: AgentSessionRecord) => ({
-      execution: {
-        sessionId: session.id,
-        executionId: session.executionId ?? "execution-id",
-        sessionName: session.name,
-        backend: session.backend,
-        command: ["agent"],
-        cwd: session.workspaceRoot,
-        environment: {},
-      } satisfies AgentExecutionSpec,
-    }),
-    startLaunch: async () => undefined,
-    completeLaunch: async () => undefined,
-    disposeLaunch: async () => undefined,
+    captureBaseline: () => Effect.succeed({ success: true }),
+    prepareLaunch: (session: AgentSession) =>
+      Effect.succeed({
+        execution: {
+          sessionId: session.id,
+          executionId: session.executionId ?? "execution-id",
+          sessionName: session.name,
+          backend: session.backend,
+          command: ["agent"],
+          cwd: session.workspaceRoot,
+          environment: {},
+        } satisfies AgentExecutionSpec,
+      }),
+    startLaunch: () => Effect.succeed(undefined),
+    completeLaunch: () => Effect.succeed(undefined),
+    disposeLaunch: () => Effect.succeed(undefined),
   };
   return new AttachAgentSession({
     sessions,
     launcher,
     panes: {
-      adopt: async (_session, hostPaneId) => {
-        fixture.adoptCount += 1;
-        fixture.adoptedPaneId = hostPaneId;
-      },
-      release: async () => undefined,
-      publish: async () => undefined,
+      adopt: (_session, hostPaneId) =>
+        Effect.sync(() => {
+          fixture.adoptCount += 1;
+          fixture.adoptedPaneId = hostPaneId;
+        }),
+      release: () => Effect.succeed(undefined),
+      publish: () => Effect.succeed(undefined),
     },
     clock: clock(),
   });
@@ -494,35 +522,37 @@ function createCleanupUseCase(fixture: LifecycleFixture): CleanupAgentSession {
     sessions,
     locator: new LocateAgentSession({
       sessions,
-      workspace: { resolveCurrent: async () => fixture.workspace },
+      workspace: { resolveCurrent: () => Effect.succeed(fixture.workspace) },
     }),
-    process: { observe: async () => (fixture.processAlive ? "alive" : "dead") },
+    process: { observe: () => Effect.succeed(fixture.processAlive ? "alive" : "dead") },
     worktrees: {
-      create: async () => ({}),
-      copyFiles: async () => true,
-      isRegistered: async () => true,
-      hasChanges: async () => fixture.dirty,
-      remove: async () => cleanupResult(fixture.cleanupDisposition),
+      create: () => Effect.succeed({}),
+      copyFiles: () => Effect.succeed(true),
+      isRegistered: () => Effect.succeed(true),
+      hasChanges: () => Effect.succeed(fixture.dirty),
+      remove: () => Effect.succeed(cleanupResult(fixture.cleanupDisposition)),
     },
     hooks: {
-      resolveHook: async (value) => value,
-      resolveStoredHook: async () => undefined,
-      run: async () => ({ success: true }),
-      removeOutputs: async () => undefined,
+      resolveHook: (value) => Effect.succeed(value),
+      resolveStoredHook: () => Effect.succeed(undefined),
+      run: () => Effect.succeed({ success: true }),
+      removeOutputs: () => Effect.succeed(undefined),
     },
     remote: {
-      archive: async () => {
-        fixture.archiveCount += 1;
-        return true;
-      },
-      restore: async () => {
-        fixture.restoreCount += 1;
-        return fixture.restoreSucceeded;
-      },
+      archive: () =>
+        Effect.sync(() => {
+          fixture.archiveCount += 1;
+          return true;
+        }),
+      restore: () =>
+        Effect.sync(() => {
+          fixture.restoreCount += 1;
+          return fixture.restoreSucceeded;
+        }),
     },
-    resources: { releaseIfUnused: async () => undefined },
-    audit: { record: async () => undefined },
-    confirmCleanup: { confirm: async () => fixture.confirmCleanup },
+    resources: { releaseIfUnused: () => Effect.succeed(undefined) },
+    audit: { record: () => Effect.succeed(undefined) },
+    confirmCleanup: { confirm: () => Effect.succeed(fixture.confirmCleanup) },
     clock: clock(),
   });
 }
@@ -681,6 +711,7 @@ const runCases = [
     assert: [
       hasError<RunContext, RunAgentSessionResult>({
         message: "session name already exists in this workspace: session",
+        _tag: "ApplicationFailure",
       }),
     ],
   },
@@ -691,6 +722,7 @@ const runCases = [
     assert: [
       hasError<RunContext, RunAgentSessionResult>({
         message: "session name already exists in this workspace: session",
+        _tag: "ApplicationFailure",
       }),
     ],
   },
@@ -709,7 +741,7 @@ const runCases = [
     fixture: "abandoned-recovery-failed",
     steps: [{ operation: "run" }],
     assert: [
-      hasError<RunContext, RunAgentSessionResult>({ message: /could not be cleaned up/ }),
+      hasError<RunContext, RunAgentSessionResult>({ message: /could not be cleaned up/, _tag: "ApplicationFailure" }),
       hasObserved<RunContext, RunAgentSessionResult>("status", "exited"),
     ],
   },
@@ -858,45 +890,55 @@ const runTable: ScenarioTable<LifecycleFixture, RunKey, RunStep, RunAgentSession
     const useCase = createRunUseCase(fixture);
     const recoveryAbortController = fixture.abortOnAbandonedClaim ? new AbortController() : undefined;
     fixture.recoveryAbortController = recoveryAbortController;
-    const prepared = await useCase.prepare(
-      {
-        ...runInput,
-        ...(fixture.runWorkspaceInput ?? {}),
-        useWorktree: fixture.useWorktree,
-      },
-      recoveryAbortController?.signal,
+    const prepared = await resolveMaybePromise(
+      useCase.prepare(
+        {
+          ...runInput,
+          ...(fixture.runWorkspaceInput ?? {}),
+          useWorktree: fixture.useWorktree,
+        },
+        recoveryAbortController?.signal,
+      ),
     );
-    await createAttachUseCase(fixture).execute({
-      agentSessionId: prepared.session.id,
-      executionId: prepared.session.executionId ?? "",
-      executionPid: 700,
-      executionStartedAt: "2026-08-23T00:01:00.000Z",
-      executionOwnerPid: prepared.session.executionOwnerPid,
-      executionOwnerStartedAt: prepared.session.executionOwnerStartedAt,
-      hostPaneId: "%1",
-    });
-    let result = await useCase.complete({
-      agentSessionId: prepared.session.id,
-      executionId: prepared.session.executionId ?? "",
-      hostPaneId: "%1",
-      process: fixture.processResult,
-    });
-    for (let attempt = 1; attempt < (steps[0]?.repeat ?? 1); attempt += 1) {
-      result = await useCase.complete({
+    await resolveMaybePromise(
+      createAttachUseCase(fixture).execute({
+        agentSessionId: prepared.session.id,
+        executionId: prepared.session.executionId ?? "",
+        executionPid: 700,
+        executionStartedAt: "2026-08-23T00:01:00.000Z",
+        executionOwnerPid: prepared.session.executionOwnerPid,
+        executionOwnerStartedAt: prepared.session.executionOwnerStartedAt,
+        hostPaneId: "%1",
+      }),
+    );
+    let result = await resolveMaybePromise(
+      useCase.complete({
         agentSessionId: prepared.session.id,
         executionId: prepared.session.executionId ?? "",
         hostPaneId: "%1",
         process: fixture.processResult,
-      });
+      }),
+    );
+    for (let attempt = 1; attempt < (steps[0]?.repeat ?? 1); attempt += 1) {
+      result = await resolveMaybePromise(
+        useCase.complete({
+          agentSessionId: prepared.session.id,
+          executionId: prepared.session.executionId ?? "",
+          hostPaneId: "%1",
+          process: fixture.processResult,
+        }),
+      );
     }
     if (fixture.lateAttachment) {
-      await createAttachUseCase(fixture).execute({
-        agentSessionId: prepared.session.id,
-        executionId: prepared.session.executionId ?? "",
-        executionPid: 701,
-        executionStartedAt: "2026-08-23T00:01:00.000Z",
-        hostPaneId: "%1",
-      });
+      await resolveMaybePromise(
+        createAttachUseCase(fixture).execute({
+          agentSessionId: prepared.session.id,
+          executionId: prepared.session.executionId ?? "",
+          executionPid: 701,
+          executionStartedAt: "2026-08-23T00:01:00.000Z",
+          hostPaneId: "%1",
+        }),
+      );
     }
     return result;
   },
@@ -939,7 +981,7 @@ const resumeCases = [
       hasObserved<ResumeContext, ResumeAgentSessionResult>("disposeCount", 1),
       hasObserved<ResumeContext, ResumeAgentSessionResult>("adoptedPaneId", "%2"),
       hasObserved<ResumeContext, ResumeAgentSessionResult>("releasedPaneId", "%2"),
-      hasObserved<ResumeContext, ResumeAgentSessionResult>("claimUpdatedAt", "2026-08-23T00:01:00.000Z"),
+      hasObserved<ResumeContext, ResumeAgentSessionResult>("claimLastActivityAt", "2026-08-23T00:01:00.000Z"),
     ],
   },
   {
@@ -959,6 +1001,7 @@ const resumeCases = [
     assert: [
       hasError<ResumeContext, ResumeAgentSessionResult>({
         message: "session 'resume' has an active execution that has not attached a process",
+        _tag: "ApplicationFailure",
       }),
     ],
   },
@@ -998,30 +1041,36 @@ const resumeTable: ScenarioTable<LifecycleFixture, ResumeKey, ResumeStep, Resume
     const useCase = createResumeUseCase(fixture);
     const controller = fixture.abortOnClaim ? new AbortController() : undefined;
     fixture.resumeAbortController = controller;
-    const prepared = await useCase.prepare(
-      {
-        workspaceScope: "current",
-        reference: "resume",
-        hostPaneId: "%2",
-        backendArgs: [],
-      },
-      controller?.signal,
+    const prepared = await resolveMaybePromise(
+      useCase.prepare(
+        {
+          workspaceScope: "current",
+          reference: "resume",
+          hostPaneId: "%2",
+          backendArgs: [],
+        },
+        controller?.signal,
+      ),
     );
     if (steps[0]?.attach !== false) {
-      await createAttachUseCase(fixture).execute({
+      await resolveMaybePromise(
+        createAttachUseCase(fixture).execute({
+          agentSessionId: prepared.session.id,
+          executionId: prepared.session.executionId ?? "",
+          executionPid: 700,
+          executionStartedAt: "2026-08-23T00:01:00.000Z",
+          hostPaneId: "%2",
+        }),
+      );
+    }
+    return resolveMaybePromise(
+      useCase.complete({
         agentSessionId: prepared.session.id,
         executionId: prepared.session.executionId ?? "",
-        executionPid: 700,
-        executionStartedAt: "2026-08-23T00:01:00.000Z",
         hostPaneId: "%2",
-      });
-    }
-    return useCase.complete({
-      agentSessionId: prepared.session.id,
-      executionId: prepared.session.executionId ?? "",
-      hostPaneId: "%2",
-      process: fixture.processResult,
-    });
+        process: fixture.processResult,
+      }),
+    );
   },
   observe: (fixture, result) => {
     const session = [...fixture.sessions.values()][0];
@@ -1032,7 +1081,7 @@ const resumeTable: ScenarioTable<LifecycleFixture, ResumeKey, ResumeStep, Resume
       disposeCount: fixture.disposeCount,
       adoptedPaneId: fixture.adoptedPaneId,
       releasedPaneId: fixture.releasedPaneId,
-      claimUpdatedAt: fixture.claim?.updatedAt,
+      claimLastActivityAt: fixture.claim?.lastActivityAt,
     };
   },
 };
@@ -1104,7 +1153,10 @@ const cleanupCases = [
     fixture: "running",
     input: { reference: "session", force: true },
     assert: [
-      hasError<CleanupContext, CleanupAgentSessionResult>({ message: "session 'session' is still running (pid 701)" }),
+      hasError<CleanupContext, CleanupAgentSessionResult>({
+        message: "session 'session' is still running (pid 701)",
+        _tag: "ApplicationFailure",
+      }),
     ],
   },
   {
@@ -1114,6 +1166,7 @@ const cleanupCases = [
     assert: [
       hasError<CleanupContext, CleanupAgentSessionResult>({
         message: "session 'session' has an active execution that has not attached a process",
+        _tag: "ApplicationFailure",
       }),
     ],
   },

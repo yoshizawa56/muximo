@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
 import type { Logger } from "../../logging/index.js";
 import { resolveExecutable } from "../launch.js";
 import type { CodexSessionState } from "./state.js";
@@ -10,7 +10,7 @@ export function resolveCodexCommand(environment: NodeJS.ProcessEnv): string {
 }
 
 export function buildCodexRunCommand(
-  session: AgentSessionRecord,
+  session: AgentSession,
   backendArgs: readonly string[],
   defaultRemote: string,
   backendBinary: string,
@@ -29,7 +29,7 @@ export function buildCodexRunCommand(
 }
 
 export function buildCodexResumeCommand(
-  session: AgentSessionRecord,
+  session: AgentSession,
   backendArgs: readonly string[],
   defaultRemote: string,
   backendBinary: string,

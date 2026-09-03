@@ -34,8 +34,7 @@ const session = AgentSession.create({
   useWorktree: true,
   setupRan: false,
   resuming: false,
-  createdAt: "2026-08-29T00:00:00.000Z",
-  updatedAt: "2026-08-29T00:00:00.000Z",
+  lastActivityAt: "2026-08-29T00:00:00.000Z",
 });
 
 const cases = [

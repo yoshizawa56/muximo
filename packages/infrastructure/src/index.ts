@@ -1,6 +1,7 @@
 export * from "./agents/index.js";
 export * from "./auth/index.js";
 export * from "./cli/index.js";
+export { fromPromise, normalizeError, runEffectAsPromise } from "./effect.js";
 export * from "./http/index.js";
 export * from "./logging/index.js";
 export * from "./persistence/index.js";

@@ -1,4 +1,4 @@
-import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
+import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
 import {
   hasObserved,
   type OperationCase,
@@ -6,11 +6,12 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import { type AgentSessionListObservation, type AgentSessionListResult, ListAgentSessions } from "../../index.js";
 
 type Fixture = {
-  sessions: AgentSessionRecord[];
+  sessions: AgentSession[];
   observation: AgentSessionListObservation;
 };
 
@@ -23,7 +24,7 @@ type Context = {
 
 const workspaceId = WorkspaceId.create("workspace-id");
 
-function sessionFixture(overrides: Partial<AgentSessionRecord> = {}): AgentSessionRecord {
+function sessionFixture(overrides: Partial<AgentSession> = {}): AgentSession {
   return AgentSession.create({
     id: AgentSessionId.create("session-id"),
     name: "session",
@@ -35,8 +36,7 @@ function sessionFixture(overrides: Partial<AgentSessionRecord> = {}): AgentSessi
     useWorktree: false,
     setupRan: false,
     resuming: false,
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
+    lastActivityAt: "2026-08-23T00:00:00.000Z",
     ...overrides,
   });
 }
@@ -133,7 +133,7 @@ const table: OperationTable<Fixture, CaseKey, Input, AgentSessionListResult, Con
           status: "running",
           executionPid: 700,
           executionStartedAt: "2026-08-23T00:04:00.000Z",
-          updatedAt: "2026-08-23T00:04:00.000Z",
+          lastActivityAt: "2026-08-23T00:04:00.000Z",
           backendSessionId: "backend-session",
         }),
       ),
@@ -149,7 +149,7 @@ const table: OperationTable<Fixture, CaseKey, Input, AgentSessionListResult, Con
           status: "running",
           executionPid: 700,
           executionStartedAt: "2026-08-23T00:00:00.000Z",
-          updatedAt: "2026-08-23T00:00:00.000Z",
+          lastActivityAt: "2026-08-23T00:00:00.000Z",
         }),
       ),
     "worktree-missing": () =>
@@ -164,29 +164,27 @@ const table: OperationTable<Fixture, CaseKey, Input, AgentSessionListResult, Con
       ),
   },
   cases,
-  execute: async (fixture, input) => {
-    const result = await new ListAgentSessions({
+  execute: (fixture, input) =>
+    new ListAgentSessions({
       sessions: {
-        findById: async () => undefined,
-        findByName: async () => undefined,
-        list: async () => fixture.sessions,
-        insert: async () => undefined,
-        update: async () => undefined,
-        claimExecution: async () => true,
-        claimAbandonedExecution: async () => false,
-        attachExecution: async () => false,
-        findExecutionReceipt: async () => undefined,
-        saveExecutionReceipt: async () => undefined,
-        delete: async () => undefined,
+        findById: () => Effect.succeed(undefined),
+        findByName: () => Effect.succeed(undefined),
+        list: () => Effect.succeed(fixture.sessions),
+        insert: () => Effect.succeed(undefined),
+        update: () => Effect.succeed(undefined),
+        claimExecution: () => Effect.succeed(true),
+        claimAbandonedExecution: () => Effect.succeed(false),
+        attachExecution: () => Effect.succeed(false),
+        findExecutionReceipt: () => Effect.succeed(undefined),
+        saveExecutionReceipt: () => Effect.succeed(undefined),
+        delete: () => Effect.succeed(undefined),
       },
       host: {
-        resolveWorkspace: async () => ({ id: workspaceId }),
-        observeSession: async () => fixture.observation,
+        resolveWorkspace: () => Effect.succeed({ id: workspaceId }),
+        observeSession: () => Effect.succeed(fixture.observation),
       },
       clock: { now: () => fixture.observation.now },
-    }).execute({ workspaceScope: "current", includeUnavailable: input.includeUnavailable });
-    return result;
-  },
+    }).execute({ workspaceScope: "current", includeUnavailable: input.includeUnavailable }),
   observe: (_fixture, result) => ({
     resume: result.ok ? result.value.allViews[0]?.resume : undefined,
     reason: result.ok ? result.value.allViews[0]?.resumeReason : undefined,

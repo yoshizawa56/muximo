@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
+import { Workspace, WorkspaceId } from "@muximo/domain";
 import {
   type Assertion,
   type FixtureHandle,
@@ -13,6 +13,7 @@ import {
   noFixture,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   returns,
   runOperationTable,
   runScenarioTable,
@@ -20,6 +21,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { AllowedRootPolicy, allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./selection.js";
 
@@ -132,7 +134,7 @@ type CatalogFixture = {
   repository: string;
   setup: string;
   catalog: WorkspaceSelectionCatalog;
-  registered?: WorkspaceRecord;
+  registered?: Workspace;
   browseGit: boolean;
   resolvedId: string | null;
 };
@@ -193,51 +195,45 @@ const catalogTable: ScenarioTable<CatalogFixture, "default", CatalogStep, undefi
   execute: async (fixture, steps) => {
     for (const step of steps) {
       if (step.type === "browse") {
-        const workspaces = await fixture.catalog.browseDirectories(fixture.root);
+        const workspaces = await resolveMaybePromise(fixture.catalog.browseDirectories(fixture.root));
         fixture.browseGit = workspaces.some((workspace) => workspace.name === "muximo" && workspace.isGit);
       }
       if (step.type === "register") {
-        const resolved = fixture.catalog.resolveDirectory(fixture.repository);
+        const resolved = await resolveMaybePromise(fixture.catalog.resolveDirectory(fixture.repository));
         fixture.registered = Workspace.create({
           ...resolved,
-          setupScriptPath: fixture.catalog.resolveHook(fixture.setup, resolved.rootPath),
-          createdAt: "2026-08-10T00:00:00.000Z",
-          updatedAt: "2026-08-10T00:00:00.000Z",
+          setupScriptPath: await resolveMaybePromise(fixture.catalog.resolveHook(fixture.setup, resolved.rootPath)),
         });
       }
       if (step.type === "resolve") {
         const registered = fixture.registered!;
-        const resolved = await fixture.catalog.resolveSelection(
-          { workspaceId: registered.id, mode: "worktree" },
-          async () => registered,
+        const resolved = await resolveMaybePromise(
+          fixture.catalog.resolveSelection({ workspaceId: registered.id, mode: "worktree" }, () =>
+            Effect.succeed(registered),
+          ),
         );
         fixture.resolvedId = resolved.id === registered.id ? "registered" : resolved.id;
       }
       if (step.type === "resolve-missing")
-        await fixture.catalog.resolveSelection(
-          { workspaceId: WorkspaceId.create("missing"), mode: "workspace" },
-          async () => undefined,
+        await resolveMaybePromise(
+          fixture.catalog.resolveSelection({ workspaceId: WorkspaceId.create("missing"), mode: "workspace" }, () =>
+            Effect.succeed(undefined),
+          ),
         );
       if (step.type === "invalid-hook") {
         const hook = join(fixture.root, "not-executable");
         writeFileSync(hook, "#!/bin/sh\n");
-        const record = createRecord(fixture, { setupScriptPath: hook });
-        await fixture.catalog.resolveWorkspaceDirectory(record.id, async () => record);
+        const resolved = await resolveMaybePromise(fixture.catalog.resolveDirectory(fixture.repository));
+        const record = Workspace.create({
+          ...resolved,
+          setupScriptPath: hook,
+        });
+        await resolveMaybePromise(fixture.catalog.resolveWorkspaceDirectory(record.id, () => Effect.succeed(record)));
       }
     }
   },
   observe: (fixture) => ({ browseGit: fixture.browseGit, resolvedId: fixture.resolvedId }),
 };
-
-function createRecord(fixture: CatalogFixture, overrides: Partial<WorkspaceRecord> = {}): WorkspaceRecord {
-  const resolved = fixture.catalog.resolveDirectory(fixture.repository);
-  return Workspace.create({
-    ...resolved,
-    createdAt: "2026-08-10T00:00:00.000Z",
-    updatedAt: "2026-08-10T00:00:00.000Z",
-    ...overrides,
-  });
-}
 
 describe("workspace selection", () => {
   const register = it as unknown as TestRegistrar;

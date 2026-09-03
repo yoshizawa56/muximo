@@ -2,19 +2,22 @@ import type {
   AgentExecutionResult,
   AgentObservationPort,
   AgentStateObservation,
+  ApplicationEffect,
   LaunchPreparation,
   RemoteSessionPort,
   SessionBaselineResult,
   SessionLauncherPort,
   SessionResourcePort,
 } from "@muximo/application";
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
+import { Effect } from "effect";
 import type {
   AgentBackendLaunch,
   AgentBackendProviderOptions,
   AgentBackendProviderRegistry,
 } from "../agents/backend.js";
 import type { AgentMonitor, AgentObservation } from "../agents/index.js";
+import { fromPromise, runEffectAsPromise } from "../effect.js";
 import { errorFields } from "../logging/index.js";
 import { stringEnvironment } from "../process/process.js";
 
@@ -39,12 +42,23 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
 
   public constructor(private readonly options: BackendAdapterOptions) {}
 
-  public captureBaseline(session: AgentSessionRecord): Promise<SessionBaselineResult> {
-    return this.options.providers.get(session.backend).captureBaseline(session);
+  public captureBaseline(session: AgentSession): ApplicationEffect<SessionBaselineResult> {
+    return fromPromise(() => this.options.providers.get(session.backend).captureBaseline(session));
   }
 
-  public async prepareLaunch(
-    session: AgentSessionRecord,
+  public prepareLaunch(
+    session: AgentSession,
+    backendArgs: readonly string[],
+    resume: boolean,
+    signal?: AbortSignal,
+  ): ApplicationEffect<LaunchPreparation> {
+    return fromPromise((effectSignal) =>
+      this.prepareLaunchPromise(session, backendArgs, resume, signal ?? effectSignal),
+    );
+  }
+
+  private async prepareLaunchPromise(
+    session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
     signal?: AbortSignal,
@@ -81,7 +95,11 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     };
   }
 
-  public async startLaunch(session: AgentSessionRecord): Promise<void> {
+  public startLaunch(session: AgentSession): ApplicationEffect<void> {
+    return fromPromise(() => this.startLaunchPromise(session));
+  }
+
+  private async startLaunchPromise(session: AgentSession): Promise<void> {
     if (!session.executionId) throw new Error("agent execution id is missing");
     let runtime = this.prepared.get(session.executionId);
     if (!runtime) {
@@ -101,29 +119,38 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
   }
 
   /** Rebuilds observers for live host-owned executions after daemon startup. */
-  public async restoreActiveLaunches(): Promise<void> {
-    for (const session of await this.options.sessions.list()) {
-      if (
-        (session.status !== "running" && session.status !== "resuming") ||
-        session.executionId === undefined ||
-        session.executionPid === undefined
-      ) {
-        continue;
+  public restoreActiveLaunches(): ApplicationEffect<void> {
+    const self = this;
+    return Effect.gen(function* () {
+      for (const session of yield* self.options.sessions.list()) {
+        if (
+          (session.status !== "running" && session.status !== "resuming") ||
+          session.executionId === undefined ||
+          session.executionPid === undefined
+        ) {
+          continue;
+        }
+        const started = yield* Effect.result(self.startLaunch(session));
+        if (started._tag === "Failure") {
+          self.options.logger.warn("agent.monitor_restore_failed", {
+            sessionId: session.id,
+            executionId: session.executionId,
+            ...errorFields(started.failure),
+          });
+        }
       }
-      try {
-        await this.startLaunch(session);
-      } catch (error) {
-        this.options.logger.warn("agent.monitor_restore_failed", {
-          sessionId: session.id,
-          executionId: session.executionId,
-          ...errorFields(error),
-        });
-      }
-    }
+    });
   }
 
-  public async completeLaunch(
-    session: AgentSessionRecord,
+  public completeLaunch(
+    session: AgentSession,
+    process: AgentExecutionResult,
+  ): ApplicationEffect<import("@muximo/application").SessionIdentityUpdate | undefined> {
+    return fromPromise(() => this.completeLaunchPromise(session, process));
+  }
+
+  private async completeLaunchPromise(
+    session: AgentSession,
     process: AgentExecutionResult,
   ): Promise<import("@muximo/application").SessionIdentityUpdate | undefined> {
     if (!session.executionId) throw new Error("agent execution id is missing");
@@ -161,7 +188,11 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     }
   }
 
-  public async disposeLaunch(session: AgentSessionRecord): Promise<void> {
+  public disposeLaunch(session: AgentSession): ApplicationEffect<void> {
+    return fromPromise(() => this.disposeLaunchPromise(session));
+  }
+
+  private async disposeLaunchPromise(session: AgentSession): Promise<void> {
     if (!session.executionId) return;
     const runtime = this.prepared.get(session.executionId);
     if (runtime) {
@@ -207,19 +238,19 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     if (errors.length > 1) throw new AggregateError(errors, "agent monitor cleanup failed");
   }
 
-  public archive(session: AgentSessionRecord): Promise<boolean> {
-    return this.options.providers.get(session.backend).archive(session);
+  public archive(session: AgentSession): ApplicationEffect<boolean> {
+    return fromPromise(() => this.options.providers.get(session.backend).archive(session));
   }
 
-  public restore(session: AgentSessionRecord): Promise<boolean> {
-    return this.options.providers.get(session.backend).restore(session);
+  public restore(session: AgentSession): ApplicationEffect<boolean> {
+    return fromPromise(() => this.options.providers.get(session.backend).restore(session));
   }
 
-  public releaseIfUnused(session: AgentSessionRecord, remaining: readonly AgentSessionRecord[]): Promise<void> {
-    return this.options.providers.get(session.backend).releaseIfUnused(session, remaining);
+  public releaseIfUnused(session: AgentSession, remaining: readonly AgentSession[]): ApplicationEffect<void> {
+    return fromPromise(() => this.options.providers.get(session.backend).releaseIfUnused(session, remaining));
   }
 
-  private createMonitor(session: AgentSessionRecord, runDir: string, startedAt: number): AgentMonitor | undefined {
+  private createMonitor(session: AgentSession, runDir: string, startedAt: number): AgentMonitor | undefined {
     const plugin = this.options.plugins.get(session.backend);
     return plugin?.createMonitor?.({
       sessionId: session.id,
@@ -231,7 +262,7 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     });
   }
 
-  private async startMonitor(session: AgentSessionRecord, runtime: PreparedLaunchRuntime): Promise<void> {
+  private async startMonitor(session: AgentSession, runtime: PreparedLaunchRuntime): Promise<void> {
     runtime.startedAt = launchStartedAt(session);
     const monitor = runtime.launch.monitor ?? this.createMonitor(session, runtime.runDir, runtime.startedAt);
     if (!monitor) return;
@@ -244,7 +275,7 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     }
   }
 
-  private async restoreRuntime(session: AgentSessionRecord): Promise<PreparedLaunchRuntime | undefined> {
+  private async restoreRuntime(session: AgentSession): Promise<PreparedLaunchRuntime | undefined> {
     const provider = this.options.providers.get(session.backend);
     const runDir = session.worktreePath ?? session.workspaceRoot;
     const startedAt = launchStartedAt(session);
@@ -261,14 +292,14 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
     };
   }
 
-  private async publishObservation(session: AgentSessionRecord, observation: AgentObservation): Promise<void> {
+  private async publishObservation(session: AgentSession, observation: AgentObservation): Promise<void> {
     if (observation.type !== "state_changed") return;
     const stateObservation: AgentStateObservation = {
       state: observation.state,
       ...(observation.recentOutput === undefined ? {} : { recentOutput: observation.recentOutput }),
     };
     try {
-      await this.options.observations.observe(session, stateObservation);
+      await runEffectAsPromise(this.options.observations.observe(session, stateObservation));
     } catch (error) {
       // Observation delivery is best effort. The foreground agent must remain
       // usable when muximod is restarting or temporarily unavailable.
@@ -281,7 +312,7 @@ export class AgentBackendAdapter implements SessionLauncherPort, RemoteSessionPo
   }
 }
 
-function launchStartedAt(session: AgentSessionRecord): number {
+function launchStartedAt(session: AgentSession): number {
   const parsed = session.executionStartedAt === undefined ? Number.NaN : Date.parse(session.executionStartedAt) / 1_000;
   return Number.isFinite(parsed) ? parsed : Math.floor(Date.now() / 1_000);
 }

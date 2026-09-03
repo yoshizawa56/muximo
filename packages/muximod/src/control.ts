@@ -20,7 +20,8 @@ import {
   muximodControlMaxResponseBytes,
 } from "@muximo/contract/control";
 import { encodePairingCode } from "@muximo/contract/shared";
-import type { AgentSessionRecord, PaneState } from "@muximo/domain";
+import type { AgentSession, PaneState } from "@muximo/domain";
+import { Effect } from "effect";
 import { validateMuximodControlSocketPath } from "./client-paths.js";
 
 const maxControlChunkBytes = muximodControlMaxRequestBytes * muximodControlMaxPendingRequests;
@@ -45,7 +46,7 @@ export type PreparedAgentExecution = {
   agentSessionId: string;
   executionId: string;
   hostPaneId?: string;
-  session: AgentSessionRecord;
+  session: AgentSession;
   execution: AgentExecutionSpec;
 };
 
@@ -54,7 +55,7 @@ export type CompletedAgentExecution = {
   agentSessionId: string;
   executionId: string;
   process: AgentExecutionResult;
-  session: AgentSessionRecord;
+  session: AgentSession;
   cleanup?: RunAgentSessionResult["cleanup"];
 };
 
@@ -228,7 +229,7 @@ export class MuximodControlServer {
       for (const [pairingId, owner] of this.pairingOwners) {
         if (owner !== socket) continue;
         this.pairingOwners.delete(pairingId);
-        void this.options.auth.rejectPairing(pairingId).catch(() => {
+        void Effect.runPromise(this.options.auth.rejectPairing(pairingId)).catch(() => {
           // The pairing may already have been approved, rejected, or expired.
         });
       }
@@ -253,14 +254,16 @@ export class MuximodControlServer {
         this.send(socket, {
           type: "local_session_created",
           requestId: request.requestId,
-          session: await this.options.auth.createLocalSession(),
+          session: await Effect.runPromise(this.options.auth.createLocalSession()),
         });
         return;
       }
       if (request.type === "create_pairing") {
-        const payload = await this.options.auth.createPairing({ muximodBaseUrl: request.muximodBaseUrl });
+        const payload = await Effect.runPromise(
+          this.options.auth.createPairing({ muximodBaseUrl: request.muximodBaseUrl }),
+        );
         if (socket.destroyed || socket.writableEnded) {
-          await this.options.auth.rejectPairing(payload.pairingId).catch(() => {
+          await Effect.runPromise(this.options.auth.rejectPairing(payload.pairingId)).catch(() => {
             // The pairing may already have expired while the client disconnected.
           });
           return;
@@ -332,7 +335,7 @@ export class MuximodControlServer {
         return;
       }
       if (request.type === "approve_pairing") {
-        const device = await this.options.auth.approvePairing(request.pairingId);
+        const device = await Effect.runPromise(this.options.auth.approvePairing(request.pairingId));
         this.pairingOwners.delete(request.pairingId);
         this.send(socket, {
           type: "pairing_result",
@@ -344,7 +347,7 @@ export class MuximodControlServer {
         return;
       }
       if (request.type === "reject_pairing") {
-        await this.options.auth.rejectPairing(request.pairingId);
+        await Effect.runPromise(this.options.auth.rejectPairing(request.pairingId));
         this.pairingOwners.delete(request.pairingId);
         this.send(socket, {
           type: "pairing_result",

@@ -1,36 +1,32 @@
-import { z } from "zod";
+import { Schema } from "effect";
 
-const paneIdSchema = z.string().min(1).brand<"PaneId">();
-const workspaceIdSchema = z.string().min(1).brand<"WorkspaceId">();
-const agentSessionIdSchema = z.string().min(1).brand<"AgentSessionId">();
-const paneIdValueSchema = z.string().min(1);
-const workspaceIdValueSchema = z.string().min(1);
-const agentSessionIdValueSchema = z.string().min(1);
+const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 
-export type PaneId = z.infer<typeof paneIdSchema>;
-export type WorkspaceId = z.infer<typeof workspaceIdSchema>;
-export type AgentSessionId = z.infer<typeof agentSessionIdSchema>;
+const paneIdSchema = nonEmptyString.pipe(Schema.brand("PaneId"));
+const workspaceIdSchema = nonEmptyString.pipe(Schema.brand("WorkspaceId"));
+const agentSessionIdSchema = nonEmptyString.pipe(Schema.brand("AgentSessionId"));
+
+export type PaneId = (typeof paneIdSchema)["Type"];
+export type WorkspaceId = (typeof workspaceIdSchema)["Type"];
+export type AgentSessionId = (typeof agentSessionIdSchema)["Type"];
 
 export const PaneId = {
   schema: paneIdSchema,
-  valueSchema: paneIdValueSchema,
   create(value: string): PaneId {
-    return paneIdSchema.parse(value);
+    return Schema.decodeUnknownSync(paneIdSchema)(value);
   },
 } as const;
 
 export const WorkspaceId = {
   schema: workspaceIdSchema,
-  valueSchema: workspaceIdValueSchema,
   create(value: string): WorkspaceId {
-    return workspaceIdSchema.parse(value);
+    return Schema.decodeUnknownSync(workspaceIdSchema)(value);
   },
 } as const;
 
 export const AgentSessionId = {
   schema: agentSessionIdSchema,
-  valueSchema: agentSessionIdValueSchema,
   create(value: string): AgentSessionId {
-    return agentSessionIdSchema.parse(value);
+    return Schema.decodeUnknownSync(agentSessionIdSchema)(value);
   },
 } as const;

@@ -1,4 +1,4 @@
-import type { PaneRecord } from "@muximo/domain";
+import type { Pane } from "@muximo/domain";
 import {
   type FixtureHandle,
   hasObserved,
@@ -8,10 +8,20 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect, Layer } from "effect";
 import { describe, it } from "vitest";
+import { applicationClockLayer } from "../../effect-runtime.js";
 import type { ApplicationClock, MuximodSessionSummary } from "../../ports/application.js";
-import type { HostPaneSnapshot, MuximodHostPort, TerminalHostSnapshot } from "../../ports/host.js";
+import type {
+  HostPaneSnapshot,
+  MuximodHostPort,
+  MuximodSessionManagementPort,
+  MuximodViewportPort,
+  TerminalHostSnapshot,
+} from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
+import type { AgentStatusStore } from "../sessions/agent-status.js";
+import { terminalLayer } from "../terminals/terminal-services.js";
 import { listSessions } from "./list-sessions.js";
 
 type Input = { managed: boolean };
@@ -20,6 +30,7 @@ type ListFixture = {
   host: MuximodHostPort;
   paneRepository: PaneRepository;
   agentSessionRepository: AgentSessionRepository;
+  agentStatus: AgentStatusStore;
   result: MuximodSessionSummary[];
 };
 
@@ -53,17 +64,27 @@ const listCases = [
 const listTable: OperationTable<ListFixture, "default", Input, MuximodSessionSummary[], ListContext> = {
   defaultFixture: createFixture,
   cases: listCases,
-  execute: async (fixture, input) => {
+  execute: (fixture, input) => {
     const sessionName = input.managed ? "muximod" : "desktop";
     fixture.host = createHost(createSnapshot(sessionName, input.managed));
-    fixture.result = await listSessions(
-      fixture.host,
-      fixture.paneRepository,
-      fixture.agentSessionRepository,
-      new Map(),
-      clock,
+    return Effect.gen(function* () {
+      fixture.result = yield* listSessions();
+      return fixture.result;
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          terminalLayer({
+            paneRepository: fixture.paneRepository,
+            agentSessionRepository: fixture.agentSessionRepository,
+            host: fixture.host,
+            sessionManagement: createSessionManagement(),
+            viewportManager: createViewport(),
+            agentStatus: fixture.agentStatus,
+          }),
+          applicationClockLayer(clock),
+        ),
+      ),
     );
-    return fixture.result;
   },
   observe: (fixture) => ({
     managed: fixture.result.map((session) => session.managed),
@@ -73,41 +94,61 @@ const listTable: OperationTable<ListFixture, "default", Input, MuximodSessionSum
 const clock: ApplicationClock = { now: () => "2026-08-24T00:00:00.000Z" };
 
 function createFixture(): FixtureHandle<ListFixture> {
-  let records: PaneRecord[] = [];
+  let records: Pane[] = [];
   const paneRepository: PaneRepository = {
-    list: async () => records,
-    findById: async (id) => records.find((record) => record.id === id),
-    findByHostPaneIdentity: async (hostServerId, hostPaneId) =>
-      records.find((record) => record.hostServerId === hostServerId && record.hostPaneId === hostPaneId),
-    upsert: async (record) => {
-      records = [
-        ...records.filter(
-          (current) => current.hostServerId !== record.hostServerId || current.hostPaneId !== record.hostPaneId,
-        ),
-        record,
-      ];
-    },
-    pruneStalePanes: async () => 0,
+    list: () => Effect.succeed([...records]),
+    findById: (id) => Effect.succeed(records.find((record) => record.id === id)),
+    findByHostPaneIdentity: (hostServerId, hostPaneId) =>
+      Effect.succeed(
+        records.find((record) => record.hostServerId === hostServerId && record.hostPaneId === hostPaneId),
+      ),
+    upsert: (record) =>
+      Effect.sync(() => {
+        records = [
+          ...records.filter(
+            (current) => current.hostServerId !== record.hostServerId || current.hostPaneId !== record.hostPaneId,
+          ),
+          record,
+        ];
+      }),
+    pruneStalePanes: () => Effect.succeed(0),
   };
   const agentSessionRepository: AgentSessionRepository = {
-    findById: async () => undefined,
-    findByName: async () => undefined,
-    list: async () => [],
-    insert: async () => undefined,
-    update: async () => undefined,
-    claimExecution: async () => false,
-    claimAbandonedExecution: async () => false,
-    attachExecution: async () => false,
-    setBackendSessionIdIfMissing: async () => false,
-    delete: async () => undefined,
+    findById: () => Effect.succeed(undefined),
+    findByName: () => Effect.succeed(undefined),
+    list: () => Effect.succeed([]),
+    insert: () => Effect.succeed(undefined),
+    update: () => Effect.succeed(undefined),
+    claimExecution: () => Effect.succeed(false),
+    claimAbandonedExecution: () => Effect.succeed(false),
+    attachExecution: () => Effect.succeed(false),
+    setBackendSessionIdIfMissing: () => Effect.succeed(false),
+    delete: () => Effect.succeed(undefined),
   };
   return {
     fixture: {
       host: createHost(createSnapshot("desktop", false)),
       paneRepository,
       agentSessionRepository,
+      agentStatus: new Map(),
       result: [],
     },
+  };
+}
+
+function createSessionManagement(): MuximodSessionManagementPort {
+  return {
+    newId: () => "managed-session",
+    hasSession: () => Effect.succeed(false),
+    findManagedSessionId: () => Effect.succeed(undefined),
+    configureManagedSession: () => Effect.succeed(undefined),
+  };
+}
+
+function createViewport(): MuximodViewportPort {
+  return {
+    handleTerminalHostHook: () => Effect.succeed(undefined),
+    reassertMobileViewport: () => Effect.succeed(undefined),
   };
 }
 
@@ -143,22 +184,22 @@ function createSnapshot(sessionName: string, managed: boolean): TerminalHostSnap
 function createHost(snapshot: TerminalHostSnapshot): MuximodHostPort {
   return {
     newId: () => "generated-pane",
-    hasSession: async () => false,
-    createManagedSession: async () => "managed-session-id",
-    killSession: async () => undefined,
-    attachSession: async () => 0,
-    createManagedPane: async () => "%2",
-    resolvePane: async (target) => ({ hostPaneId: target, windowId: "@0", sessionName: "desktop" }),
-    isWindowZoomed: async () => false,
-    splitPane: async () => "%2",
-    listPanesSnapshot: async () => snapshot,
-    setAgentPaneMetadata: async () => undefined,
-    setAgentExecutionMetadata: async () => undefined,
-    clearAgentExecutionMetadata: async () => false,
-    resetAgentPaneMetadata: async () => undefined,
-    isProcessAlive: async () => false,
-    classifyCommand: async () => ({ kind: "shell", agentId: "shell" }),
-    observeUnmanagedAgent: async (_paneId, fallbackState) => ({ state: fallbackState }),
+    hasSession: () => Effect.succeed(false),
+    createManagedSession: () => Effect.succeed("managed-session-id"),
+    killSession: () => Effect.succeed(undefined),
+    attachSession: () => Effect.succeed(0),
+    createManagedPane: () => Effect.succeed("%2"),
+    resolvePane: (target) => Effect.succeed({ hostPaneId: target, windowId: "@0", sessionName: "desktop" }),
+    isWindowZoomed: () => Effect.succeed(false),
+    splitPane: () => Effect.succeed("%2"),
+    listPanesSnapshot: () => Effect.succeed(snapshot),
+    setAgentPaneMetadata: () => Effect.succeed(undefined),
+    setAgentExecutionMetadata: () => Effect.succeed(undefined),
+    clearAgentExecutionMetadata: () => Effect.succeed(false),
+    resetAgentPaneMetadata: () => Effect.succeed(undefined),
+    isProcessAlive: () => Effect.succeed(false),
+    classifyCommand: () => Effect.succeed({ kind: "shell", agentId: "shell" }),
+    observeUnmanagedAgent: (_paneId, fallbackState) => Effect.succeed({ state: fallbackState }),
   };
 }
 

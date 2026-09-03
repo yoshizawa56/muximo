@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRepository } from "@muximo/application";
-import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
+import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
 import {
   AgentBackendAdapter,
   AgentPluginRegistry,
@@ -13,9 +13,11 @@ import {
   hasObserved,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { CodexSessionStateRepository } from "../agents/codex/state.js";
 import { spawnAttached } from "../process/process.js";
@@ -36,7 +38,7 @@ type BackendFixture = {
   restoreAfterRestart: boolean;
   concurrentStart: boolean;
   adapter: AgentBackendAdapter;
-  session: AgentSessionRecord;
+  session: AgentSession;
 };
 
 type BackendResult = {
@@ -130,21 +132,23 @@ const table: OperationTable<BackendFixture, FixtureKey, Input, BackendResult, Ba
   },
   cases,
   execute: async (fixture) => {
-    const preparation = await fixture.adapter.prepareLaunch(fixture.session, ["--opaque"], false);
+    const preparation = await resolveMaybePromise(fixture.adapter.prepareLaunch(fixture.session, ["--opaque"], false));
     const backendSessionId = preparation.sessionUpdate?.backendSessionId;
     fixture.sessionUpdate = typeof backendSessionId === "string" ? backendSessionId : undefined;
     if (!fixture.restoreAfterRestart) {
       if (fixture.concurrentStart) {
-        await Promise.all([fixture.adapter.startLaunch(fixture.session), fixture.adapter.startLaunch(fixture.session)]);
-      } else await fixture.adapter.startLaunch(fixture.session);
+        await resolveMaybePromise(
+          Effect.all([fixture.adapter.startLaunch(fixture.session), fixture.adapter.startLaunch(fixture.session)]),
+        );
+      } else await resolveMaybePromise(fixture.adapter.startLaunch(fixture.session));
     } else {
-      await fixture.adapter.close();
-      fixture.session = AgentSession.update(fixture.session, {
+      await resolveMaybePromise(fixture.adapter.close());
+      fixture.session = fixture.session.update({
         backendSessionId: "provider-session",
         executionPid: process.pid,
         executionStartedAt: new Date(Date.now() - 1_000).toISOString(),
       });
-      await fixture.adapter.restoreActiveLaunches();
+      await resolveMaybePromise(fixture.adapter.restoreActiveLaunches());
     }
     const executable = preparation.execution.command[0];
     if (!executable) throw new Error("test command executable is missing");
@@ -155,7 +159,7 @@ const table: OperationTable<BackendFixture, FixtureKey, Input, BackendResult, Ba
       preparation.execution.environment,
       { captureFailureDiagnostic: true },
     );
-    await fixture.adapter.completeLaunch(fixture.session, first);
+    await resolveMaybePromise(fixture.adapter.completeLaunch(fixture.session, first));
     fixture.processKeys = Object.keys(first);
     fixture.runCount = readInvocationCount(fixture.log);
     fixture.processCode = first.code;
@@ -212,8 +216,7 @@ function createBackendFixture(
     setupRan: false,
     resuming: false,
     executionId: "execution-id",
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
+    lastActivityAt: "2026-08-23T00:00:00.000Z",
   });
   const disposeCount = 0;
   const environment = {
@@ -254,7 +257,7 @@ function createBackendFixture(
     environment,
     plugins: pluginRegistry,
     sessions: emptySessionRepository(() => [fixture.session]),
-    audit: { record: async () => undefined },
+    audit: { record: () => Effect.succeed(undefined) },
     logger: {
       debug: () => undefined,
       info: () => undefined,
@@ -262,9 +265,10 @@ function createBackendFixture(
       child: () => ({ debug: () => undefined, info: () => undefined, warn: () => undefined }),
     },
     observations: {
-      observe: async (_session: AgentSessionRecord, observation: { state: string; recentOutput?: string }) => {
-        fixture.observations.push(observation);
-      },
+      observe: (_session: AgentSession, observation: { state: string; recentOutput?: string }) =>
+        Effect.sync(() => {
+          fixture.observations.push(observation);
+        }),
     },
   };
   fixture.adapter = new AgentBackendAdapter({
@@ -315,18 +319,18 @@ function createPlugin(
   };
 }
 
-function emptySessionRepository(listSessions: () => readonly AgentSessionRecord[] = () => []): AgentSessionRepository {
+function emptySessionRepository(listSessions: () => readonly AgentSession[] = () => []): AgentSessionRepository {
   return {
-    findById: async () => undefined,
-    findByName: async () => undefined,
-    list: async () => [...listSessions()],
-    insert: async () => undefined,
-    update: async () => undefined,
-    claimExecution: async () => false,
-    claimAbandonedExecution: async () => false,
-    attachExecution: async () => false,
-    setBackendSessionIdIfMissing: async () => false,
-    delete: async () => undefined,
+    findById: () => Effect.succeed(undefined),
+    findByName: () => Effect.succeed(undefined),
+    list: () => Effect.succeed([...listSessions()]),
+    insert: () => Effect.succeed(undefined),
+    update: () => Effect.succeed(undefined),
+    claimExecution: () => Effect.succeed(false),
+    claimAbandonedExecution: () => Effect.succeed(false),
+    attachExecution: () => Effect.succeed(false),
+    setBackendSessionIdIfMissing: () => Effect.succeed(false),
+    delete: () => Effect.succeed(undefined),
   };
 }
 

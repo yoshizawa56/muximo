@@ -1,4 +1,4 @@
-import { muximodEventSchema } from "@muximo/contract/api";
+import type { MuximodEvent } from "@muximo/contract/api";
 import {
   type FixtureHandle,
   type OperationCase,
@@ -41,7 +41,7 @@ const queryStubFixture = (): FixtureHandle<QueryStub> => {
   };
 };
 
-type Input = { event: ReturnType<typeof muximodEventSchema.parse> };
+type Input = { event: MuximodEvent };
 type Result = readonly unknown[];
 type Context = {};
 
@@ -49,12 +49,12 @@ const cases = [
   {
     name: "invalidates every sessions-derived cache region through contract subtree keys",
     input: {
-      event: muximodEventSchema.parse({
+      event: {
         type: "session_updated",
         sessionName: "work",
         reason: "pane_created",
         revision: 4,
-      }),
+      },
     },
     assert: [
       returns<Context, Result>([

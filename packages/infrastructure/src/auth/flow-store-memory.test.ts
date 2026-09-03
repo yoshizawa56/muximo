@@ -2,6 +2,7 @@ import { authRateWindowMs } from "@muximo/application";
 import {
   type FixtureHandle,
   hasObserved,
+  resolveMaybePromise,
   runScenarioTable,
   type ScenarioCase,
   type ScenarioTable,
@@ -341,9 +342,9 @@ const connectionTable: ScenarioTable<
         if (timerId === undefined) throw new Error(`no timer registered for ${step.connection}`);
         fixture.callbacks[timerId]?.();
       } else if (step.type === "disconnect-device") {
-        await fixture.registry.disconnectDevice(step.deviceId);
+        await resolveMaybePromise(fixture.registry.disconnectDevice(step.deviceId));
       } else if (step.type === "disconnect-session") {
-        await fixture.registry.disconnectSession(step.sessionId);
+        await resolveMaybePromise(fixture.registry.disconnectSession(step.sessionId));
       } else {
         fixture.sockets[step.connection].networkClose();
       }

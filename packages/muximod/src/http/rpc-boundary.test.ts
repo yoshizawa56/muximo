@@ -13,6 +13,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
 import { createOriginPolicy, muximoCapacitorOrigin } from "./middleware.js";
@@ -107,13 +108,18 @@ type RpcContext = {
 const responseMatches = (
   status: number,
   expectedBody?: unknown,
-  schema?: { safeParse(value: unknown): { success: boolean } },
+  schema?: { readonly "~standard": { validate(value: unknown): unknown } },
 ): Assertion<HttpContext, HttpResult> => ({
   name: `returns HTTP ${status}`,
-  check: (_context, result) => {
+  check: async (_context, result) => {
     expect(result).toEqual({ ok: true, value: expect.objectContaining({ status }) });
     if (!result.ok) return;
-    if (schema) expect(schema.safeParse(result.value.body).success).toBe(true);
+    if (schema) {
+      const validation = (await schema["~standard"].validate(result.value.body)) as
+        | { value: unknown }
+        | { issues: unknown };
+      expect("value" in validation).toBe(true);
+    }
     if (expectedBody !== undefined) expect(result.value.body).toMatchObject(expectedBody as object);
   },
 });
@@ -419,23 +425,13 @@ describe("muximod transport boundary", () => {
 
 const testAuth: MuximodAuthPort = {
   serverId: authContext.serverId,
-  authenticateAccessToken: async (token) => (token === "test-token" ? authContext : undefined),
-  claimPairing: async () => {
-    throw new Error("not used");
-  },
-  pairingStatus: async () => {
-    throw new Error("not used");
-  },
-  createChallenge: async () => {
-    throw new Error("not used");
-  },
-  createSession: async () => {
-    throw new Error("not used");
-  },
-  issueWebSocketTicket: async () => {
-    throw new Error("not used");
-  },
-  consumeWebSocketTicket: async () => undefined,
+  authenticateAccessToken: (token) => Effect.succeed(token === "test-token" ? authContext : undefined),
+  claimPairing: () => Effect.fail(new Error("not used")),
+  pairingStatus: () => Effect.fail(new Error("not used")),
+  createChallenge: () => Effect.fail(new Error("not used")),
+  createSession: () => Effect.fail(new Error("not used")),
+  issueWebSocketTicket: () => Effect.fail(new Error("not used")),
+  consumeWebSocketTicket: () => Effect.succeed(undefined),
 };
 
 function createTestApplication(

@@ -1,33 +1,30 @@
-import type {
-  AgentSessionId,
-  AgentSessionRecord,
-  PaneId,
-  PaneRecord,
-  PaneState,
-  WorkspaceId,
-  WorkspaceRecord,
-} from "@muximo/domain";
+import type { AgentSession, AgentSessionId, Pane, PaneId, PaneState, Workspace, WorkspaceId } from "@muximo/domain";
+import type { ApplicationEffect } from "../effect.js";
 
 export type PaneFilter = {
   state?: PaneState;
-  kind?: PaneRecord["kind"];
+  kind?: Pane["kind"];
   sessionName?: string;
 };
 
 export interface PaneRepository {
-  list(filter?: PaneFilter): Promise<PaneRecord[]>;
-  findById(id: PaneId): Promise<PaneRecord | undefined>;
-  findByHostPaneIdentity(hostServerId: string, hostPaneId: string): Promise<PaneRecord | undefined>;
-  upsert(record: PaneRecord): Promise<void>;
-  pruneStalePanes(activePaneIds: readonly PaneId[], olderThan: string, hostServerScope: string): Promise<number>;
+  list(filter?: PaneFilter): ApplicationEffect<Pane[]>;
+  findById(id: PaneId): ApplicationEffect<Pane | undefined>;
+  findByHostPaneIdentity(hostServerId: string, hostPaneId: string): ApplicationEffect<Pane | undefined>;
+  upsert(record: Pane): ApplicationEffect<void>;
+  pruneStalePanes(
+    activePaneIds: readonly PaneId[],
+    olderThan: string,
+    hostServerScope: string,
+  ): ApplicationEffect<number>;
 }
 
 export interface WorkspaceRepository {
-  findById(id: WorkspaceId): Promise<WorkspaceRecord | undefined>;
-  list(): Promise<WorkspaceRecord[]>;
-  insert(record: WorkspaceRecord): Promise<boolean>;
-  upsert(record: WorkspaceRecord): Promise<void>;
-  delete(id: WorkspaceId): Promise<void>;
+  findById(id: WorkspaceId): ApplicationEffect<Workspace | undefined>;
+  list(): ApplicationEffect<Workspace[]>;
+  insert(record: Workspace): ApplicationEffect<boolean>;
+  upsert(record: Workspace): ApplicationEffect<void>;
+  delete(id: WorkspaceId): ApplicationEffect<void>;
 }
 
 export type ClaimExecutionInput = {
@@ -38,7 +35,7 @@ export type ClaimExecutionInput = {
   executionStartedAt: string;
   executionOwnerPid: number | null;
   executionOwnerStartedAt: string | null;
-  updatedAt: string;
+  lastActivityAt: string;
 };
 
 export type AttachExecutionInput = {
@@ -48,7 +45,7 @@ export type AttachExecutionInput = {
   expectedExecutionOwnerStartedAt: string | null;
   executionPid: number;
   executionStartedAt: string;
-  updatedAt: string;
+  lastActivityAt: string;
 };
 
 export type ClaimAbandonedExecutionInput = {
@@ -58,18 +55,18 @@ export type ClaimAbandonedExecutionInput = {
   expectedExecutionStartedAt: string | null;
   expectedExecutionOwnerPid: number | null;
   expectedExecutionOwnerStartedAt: string | null;
-  updatedAt: string;
+  lastActivityAt: string;
 };
 
 export interface AgentSessionRepository {
-  findById(id: AgentSessionId): Promise<AgentSessionRecord | undefined>;
-  findByName(workspaceId: WorkspaceId, name: string): Promise<AgentSessionRecord | undefined>;
-  list(workspaceId?: WorkspaceId): Promise<AgentSessionRecord[]>;
-  insert(record: AgentSessionRecord): Promise<void>;
-  update(record: AgentSessionRecord): Promise<void>;
-  claimExecution(input: ClaimExecutionInput): Promise<boolean>;
-  claimAbandonedExecution(input: ClaimAbandonedExecutionInput): Promise<boolean>;
-  attachExecution(input: AttachExecutionInput): Promise<boolean>;
-  setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean>;
-  delete(id: AgentSessionId): Promise<void>;
+  findById(id: AgentSessionId): ApplicationEffect<AgentSession | undefined>;
+  findByName(workspaceId: WorkspaceId, name: string): ApplicationEffect<AgentSession | undefined>;
+  list(workspaceId?: WorkspaceId): ApplicationEffect<AgentSession[]>;
+  insert(record: AgentSession): ApplicationEffect<void>;
+  update(record: AgentSession): ApplicationEffect<void>;
+  claimExecution(input: ClaimExecutionInput): ApplicationEffect<boolean>;
+  claimAbandonedExecution(input: ClaimAbandonedExecutionInput): ApplicationEffect<boolean>;
+  attachExecution(input: AttachExecutionInput): ApplicationEffect<boolean>;
+  setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): ApplicationEffect<boolean>;
+  delete(id: AgentSessionId): ApplicationEffect<void>;
 }

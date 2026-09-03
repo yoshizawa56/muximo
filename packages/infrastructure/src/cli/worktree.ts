@@ -1,13 +1,17 @@
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type {
+  ApplicationEffect,
   CleanupResult,
   ManagedWorktreeState,
   ShellWorktree,
+  ShellWorktreeAllocation,
   ShellWorktreePort,
   WorktreePort,
 } from "@muximo/application";
-import type { AgentSessionRecord, WorkspaceDirectoryOption } from "@muximo/domain";
+import type { AgentSession, WorkspaceDirectoryOption } from "@muximo/domain";
+import { Effect } from "effect";
+import { fromPromise } from "../effect.js";
 import { errorFields, type Logger } from "../logging/index.js";
 import { isPathWithin, realpathAfterMkdir, realpathSafe, resolveFromRoot, unlinkEmptyDirectory } from "./filesystem.js";
 import {
@@ -30,11 +34,15 @@ export type WorktreeAdapterOptions = {
 export class GitWorktreeAdapter implements WorktreePort {
   public constructor(private readonly options: WorktreeAdapterOptions) {}
 
-  public async create(
+  public create(
     workspace: WorkspaceDirectoryOption,
     name: string,
     override?: string,
-  ): Promise<ManagedWorktreeState> {
+  ): ApplicationEffect<ManagedWorktreeState> {
+    return fromPromise(() => this.createWorktree(workspace, name, override));
+  }
+
+  private createWorktree(workspace: WorkspaceDirectoryOption, name: string, override?: string): ManagedWorktreeState {
     if (!workspace.isGit) throw new Error("a managed worktree requires a git workspace; use --no-worktree here");
     const defaultRoot =
       this.options.environment.MUXIMO_WORKTREE_ROOT ?? join(dirname(workspace.rootPath), `${workspace.name}.worktrees`);
@@ -84,7 +92,11 @@ export class GitWorktreeAdapter implements WorktreePort {
     return { worktreeRoot, worktreePath, branch, baseCommit };
   }
 
-  public async copyFiles(target: Pick<AgentSessionRecord, "workspaceRoot" | "worktreePath">): Promise<boolean> {
+  public copyFiles(target: Pick<AgentSession, "workspaceRoot" | "worktreePath">): ApplicationEffect<boolean> {
+    return fromPromise(() => this.copyWorktreeFiles(target));
+  }
+
+  private copyWorktreeFiles(target: Pick<AgentSession, "workspaceRoot" | "worktreePath">): boolean {
     if (!target.worktreePath) return true;
 
     let include: ReturnType<typeof readWorktreeInclude>;
@@ -145,19 +157,27 @@ export class GitWorktreeAdapter implements WorktreePort {
     return true;
   }
 
-  public async isRegistered(session: AgentSessionRecord): Promise<boolean> {
-    if (!session.worktreePath) return false;
-    return this.isRegisteredAt(session.workspaceRoot, session.worktreePath);
+  public isRegistered(session: AgentSession): ApplicationEffect<boolean> {
+    return fromPromise(() => {
+      if (!session.worktreePath) return false;
+      return this.isRegisteredAt(session.workspaceRoot, session.worktreePath);
+    });
   }
 
-  public async hasChanges(session: AgentSessionRecord): Promise<boolean> {
-    if (!session.worktreePath || !existsSync(session.worktreePath)) return false;
-    return gitStatus(session.worktreePath, this.options.environment) !== (session.baselineStatus ?? "");
+  public hasChanges(session: AgentSession): ApplicationEffect<boolean> {
+    return fromPromise(() => {
+      if (!session.worktreePath || !existsSync(session.worktreePath)) return false;
+      return gitStatus(session.worktreePath, this.options.environment) !== (session.baselineStatus ?? "");
+    });
   }
 
-  public async remove(session: AgentSessionRecord, force: boolean): Promise<CleanupResult> {
+  public remove(session: AgentSession, force: boolean): ApplicationEffect<CleanupResult> {
+    return fromPromise(() => this.removeWorktree(session, force));
+  }
+
+  private removeWorktree(session: AgentSession, force: boolean): CleanupResult {
     if (!session.useWorktree || !session.worktreePath) return { disposition: "removed" };
-    if (existsSync(session.worktreePath) && !(await this.isRegistered(session))) {
+    if (existsSync(session.worktreePath) && !this.isRegisteredAt(session.workspaceRoot, session.worktreePath)) {
       this.options.logger.warn("worktree.remove_refused_unregistered", { worktreePath: session.worktreePath });
       return { disposition: "failed", reason: "unregistered_worktree" };
     }
@@ -205,17 +225,17 @@ export class GitWorktreeAdapter implements WorktreePort {
     worktreePath: string;
     branch: string | null;
     baseCommit: string | null;
-  }): void {
+  }): boolean {
     if (!this.isRegisteredAtInternal(input.workspaceRoot, input.worktreePath)) {
       this.options.logger.warn("worktree.shell_remove_refused_unregistered", { worktreePath: input.worktreePath });
-      return;
+      return false;
     }
     if (this.hasChangesAt(input.worktreePath)) {
       this.options.logger.warn("worktree.shell_remove_refused_dirty", {
         worktreePath: input.worktreePath,
         branch: input.branch,
       });
-      return;
+      return false;
     }
     try {
       gitRequired(
@@ -229,7 +249,7 @@ export class GitWorktreeAdapter implements WorktreePort {
         worktreePath: input.worktreePath,
         ...errorFields(error),
       });
-      return;
+      return false;
     }
     unlinkEmptyDirectory(input.worktreeRoot);
     if (input.branch) {
@@ -241,6 +261,7 @@ export class GitWorktreeAdapter implements WorktreePort {
       if (head && head === input.baseCommit) gitStatusCode(input.workspaceRoot, ["branch", "-d", input.branch]);
       else if (head) this.options.logger.info("worktree.branch_retained", { branch: input.branch, kind: "shell" });
     }
+    return !existsSync(input.worktreePath);
   }
 
   private branch(name: string): string {
@@ -339,16 +360,27 @@ export class GitWorktreeAdapter implements WorktreePort {
 export class GitShellWorktreeAdapter implements ShellWorktreePort {
   public constructor(private readonly worktrees: GitWorktreeAdapter) {}
 
-  public create(workspace: WorkspaceDirectoryOption, name: string): Promise<ManagedWorktreeState> {
-    return this.worktrees.create(workspace, name);
+  public create(workspace: WorkspaceDirectoryOption, name: string): ApplicationEffect<ShellWorktreeAllocation> {
+    const worktrees = this.worktrees;
+    return Effect.gen(function* () {
+      const allocation = yield* worktrees.create(workspace, name);
+      if (!allocation.worktreePath)
+        return yield* Effect.fail(new Error("git worktree creation returned no worktree path"));
+      return {
+        worktreeRoot: allocation.worktreeRoot ?? null,
+        worktreePath: allocation.worktreePath,
+        branch: allocation.branch ?? null,
+        baseCommit: allocation.baseCommit ?? null,
+      };
+    });
   }
 
-  public copyFiles(target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">): Promise<boolean> {
+  public copyFiles(target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">): ApplicationEffect<boolean> {
     return this.worktrees.copyFiles(target);
   }
 
-  public async remove(input: ShellWorktree): Promise<void> {
-    this.worktrees.removeShell(input);
+  public remove(input: ShellWorktree): ApplicationEffect<boolean> {
+    return fromPromise(() => this.worktrees.removeShell(input));
   }
 }
 

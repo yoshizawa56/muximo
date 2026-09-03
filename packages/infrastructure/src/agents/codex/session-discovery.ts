@@ -2,7 +2,8 @@ import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type AgentSessionRepository, ApplicationError } from "@muximo/application";
-import { AgentSessionId, type AgentSessionRecord } from "@muximo/domain";
+import { type AgentSession, AgentSessionId } from "@muximo/domain";
+import { runEffectAsPromise } from "../../effect.js";
 import type { Logger } from "../../logging/index.js";
 import {
   type CodexDiscoveryDiagnostics,
@@ -10,7 +11,6 @@ import {
   type CodexDiscoveryResult,
   type CodexSessionCandidate,
   codexMeta,
-  emptyCodexDiscoveryDiagnostics,
   formatCodexDiscoveryDiagnostics,
   inspectCodexMeta,
   preferredCodexSessionId,
@@ -29,9 +29,9 @@ export type CodexSessionDeps = {
   logger: Pick<Logger, "debug" | "info" | "warn"> & LoggerLike;
   sessions: AgentSessionRepository;
   state: CodexSessionStateRepository;
-  audit(eventType: string, entityId: string, payload: unknown): void;
+  audit(eventType: string, entityId: string, payload: unknown): Promise<void>;
   manageRemoteThread(
-    session: AgentSessionRecord,
+    session: AgentSession,
     operation: "name" | "archive" | "unarchive",
     signal?: AbortSignal,
   ): Promise<boolean>;
@@ -53,7 +53,7 @@ export async function discoverCodexSessionId(
   sessionId: string,
   endedAt?: number,
 ): Promise<CodexDiscoveryResult> {
-  const session = await deps.sessions.findById(AgentSessionId.create(sessionId));
+  const session = await runEffectAsPromise(deps.sessions.findById(AgentSessionId.create(sessionId)));
   const state = await deps.state.find(AgentSessionId.create(sessionId));
   const logger = deps.logger.child({ sessionId, backend: "codex" });
   const discoveryStartedAt = Date.now();
@@ -92,11 +92,11 @@ export async function filterCodexSessionCandidates(
   deps: CodexSessionDeps,
   candidates: CodexSessionCandidate[],
   diagnostics: Omit<CodexDiscoveryDiagnostics, "rootExists" | "elapsedMs">,
-  session: AgentSessionRecord | undefined,
+  session: AgentSession | undefined,
   runDir: string,
 ): Promise<CodexSessionCandidate[]> {
   if (!session) return candidates;
-  const sessions = await deps.sessions.list(session.workspaceId);
+  const sessions = await runEffectAsPromise(deps.sessions.list(session.workspaceId));
   const otherSessions = sessions.filter((candidate) => candidate.id !== session.id);
   const unboundSameDirectory = otherSessions.some(
     (candidate) =>
@@ -122,23 +122,16 @@ export async function filterCodexSessionCandidates(
 
 export async function recoverCodexSessionId(
   deps: CodexSessionDeps,
-  session: AgentSessionRecord,
+  session: AgentSession,
   runDir: string,
 ): Promise<CodexDiscoveryResult> {
-  const createdAt = Date.parse(session.createdAt);
-  if (!Number.isFinite(createdAt)) {
-    return {
-      candidates: [],
-      diagnostics: emptyCodexDiscoveryDiagnostics(existsSync(codexSessionRoot(deps))),
-    };
-  }
-  const updatedAt = session.lastExitStatus === undefined ? Number.NaN : Date.parse(session.updatedAt);
+  const lastActivityAt = session.lastExitStatus === undefined ? Number.NaN : Date.parse(session.lastActivityAt);
   const result = await discoverCodexSessionId(
     deps,
-    Math.floor(createdAt / 1_000),
+    0,
     runDir,
     session.id,
-    Number.isFinite(updatedAt) ? updatedAt / 1_000 : undefined,
+    Number.isFinite(lastActivityAt) ? lastActivityAt / 1_000 : undefined,
   );
   if (result.candidates.length === 1) return { ...result, selectedId: result.candidates[0]?.id };
   const ownershipRejected =
@@ -160,14 +153,14 @@ export async function recoverCodexSessionId(
 
 export async function repairCodexSessionId(
   deps: CodexSessionDeps,
-  session: AgentSessionRecord,
+  session: AgentSession,
   runDir: string,
   phase: "run" | "resume",
-): Promise<AgentSessionRecord> {
+): Promise<AgentSession> {
   if (session.backend !== "codex" || session.backendSessionId) return session;
   const result = await recoverCodexSessionId(deps, session, runDir);
   if (!result.selectedId) {
-    deps.audit("agent_session.codex_session_id_recovery_failed", session.id, {
+    await deps.audit("agent_session.codex_session_id_recovery_failed", session.id, {
       name: session.name,
       phase,
       runDir,
@@ -175,8 +168,8 @@ export async function repairCodexSessionId(
     });
     return session;
   }
-  await deps.sessions.setBackendSessionIdIfMissing(session.id, result.selectedId);
-  const persisted = await deps.sessions.findById(session.id);
+  await runEffectAsPromise(deps.sessions.setBackendSessionIdIfMissing(session.id, result.selectedId));
+  const persisted = await runEffectAsPromise(deps.sessions.findById(session.id));
   if (!persisted?.backendSessionId)
     throw new ApplicationError(
       "codex_session_lost",
@@ -186,13 +179,13 @@ export async function repairCodexSessionId(
   return persisted;
 }
 
-export function reportCodexDiscoveryFailure(
+export async function reportCodexDiscoveryFailure(
   deps: CodexSessionDeps,
-  session: AgentSessionRecord,
+  session: AgentSession,
   runDir: string,
   phase: "cleanup" | "finalize" | "resume" | "run",
   result: CodexDiscoveryResult,
-): void {
+): Promise<void> {
   const diagnostics = formatCodexDiscoveryDiagnostics(result.diagnostics);
   deps.logger.warn("codex.session_id_missing", {
     sessionName: session.name,
@@ -201,7 +194,7 @@ export function reportCodexDiscoveryFailure(
     diagnostics: result.diagnostics,
     formattedDiagnostics: diagnostics,
   });
-  deps.audit("agent_session.codex_session_id_missing", session.id, {
+  await deps.audit("agent_session.codex_session_id_missing", session.id, {
     name: session.name,
     phase,
     runDir,
@@ -307,7 +300,7 @@ async function codexSessionFiles(deps: CodexSessionDeps): Promise<string[]> {
 
 export function watchCodexSessionName(
   deps: CodexSessionDeps,
-  session: AgentSessionRecord,
+  session: AgentSession,
   startedAt: number,
   runDir: string,
 ): { stop: () => Promise<void> } {
@@ -320,7 +313,7 @@ export function watchCodexSessionName(
         try {
           await deps.sessions.setBackendSessionIdIfMissing(session.id, discovery.selectedId);
           await deps.manageRemoteThread(
-            { ...session, backendSessionId: discovery.selectedId },
+            session.update({ backendSessionId: discovery.selectedId }),
             "name",
             controller.signal,
           );

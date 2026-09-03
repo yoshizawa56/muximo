@@ -1,4 +1,7 @@
+import { Effect } from "effect";
+import type { ApplicationEffect } from "../../effect.js";
 import type { ProcessResult } from "../../ports/agent-sessions.js";
+import { ApplicationFailure } from "../../ports/application.js";
 import type { DaemonClock, DaemonProcessHandle, DaemonRuntimePort, DaemonScheduler } from "../../ports/daemon.js";
 
 export type DaemonLifecycleDependencies = {
@@ -13,77 +16,92 @@ export type DaemonStartupWaitResult =
   | { kind: "exited"; process: ProcessResult }
   | { kind: "timeout" };
 
-export async function waitFor(
-  condition: () => boolean | Promise<boolean>,
+export const waitFor = (
+  condition: () => ApplicationEffect<boolean>,
   timeoutMs: number,
   timing: Pick<DaemonLifecycleDependencies, "clock" | "scheduler">,
-): Promise<boolean> {
+): ApplicationEffect<boolean> => {
   const pollIntervalMs = 50;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("daemon wait timeout must be non-negative");
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0)
+    return Effect.fail(
+      new ApplicationFailure("daemon_wait_timeout_negative", "daemon wait timeout must be non-negative"),
+    );
   const deadline = timing.clock.now() + timeoutMs;
-  while (true) {
-    if (await condition()) return true;
+  const poll: ApplicationEffect<boolean> = Effect.gen(function* () {
+    if (yield* condition()) return true;
     const remainingMs = deadline - timing.clock.now();
     if (remainingMs <= 0) return false;
-    await timing.scheduler.sleep(Math.min(pollIntervalMs, remainingMs));
-  }
-}
+    yield* timing.scheduler.sleep(Math.min(pollIntervalMs, remainingMs));
+    return yield* poll;
+  });
+  return poll;
+};
 
-export async function waitForHealthyOrExit(
-  condition: () => boolean | Promise<boolean>,
+export const waitForHealthyOrExit = (
+  condition: () => ApplicationEffect<boolean>,
   child: DaemonProcessHandle,
   timeoutMs: number,
   timing: Pick<DaemonLifecycleDependencies, "clock" | "scheduler">,
-): Promise<DaemonStartupWaitResult> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("daemon wait timeout must be non-negative");
+): ApplicationEffect<DaemonStartupWaitResult> => {
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0)
+    return Effect.fail(
+      new ApplicationFailure("daemon_wait_timeout_negative", "daemon wait timeout must be non-negative"),
+    );
 
   const deadline = timing.clock.now() + timeoutMs;
-  let childWait: Promise<ProcessResult>;
-  try {
-    childWait = child.wait();
-  } catch {
-    childWait = Promise.reject(new Error("muximod process exit status was unavailable"));
-  }
-  const exit = childWait
-    .then((process) => ({ kind: "exited" as const, process }))
-    .catch(() => ({
-      kind: "exited" as const,
-      process: {
-        started: false,
-        code: 127,
-        interrupted: false,
-        signal: null,
-        failureDiagnostic: "muximod process exit status was unavailable",
-      },
-    }));
+  const exit = observeExit(child);
 
-  while (true) {
+  const poll: ApplicationEffect<DaemonStartupWaitResult> = Effect.gen(function* () {
     const remainingMs = deadline - timing.clock.now();
-    if (remainingMs <= 0) return { kind: "timeout" };
+    if (remainingMs <= 0) return { kind: "timeout" } as const;
 
-    const health = Promise.resolve()
-      .then(condition)
-      .then((healthy) => ({ kind: "health" as const, healthy }));
-    const healthResult = await Promise.race([health, exit]);
+    // The exit observation stays on the left: an already-settled child exit
+    // wins before any further health check, mirroring the shared exit promise
+    // of the original implementation.
+    const healthResult = yield* Effect.race(
+      exit,
+      condition().pipe(Effect.map((healthy) => ({ kind: "health" as const, healthy }))),
+    );
     if (healthResult.kind === "exited") return healthResult;
-    if (healthResult.healthy) return { kind: "healthy" };
+    if (healthResult.healthy) return { kind: "healthy" } as const;
 
     const sleepMs = Math.min(50, deadline - timing.clock.now());
-    if (sleepMs <= 0) return { kind: "timeout" };
-    const next = await Promise.race([
-      Promise.resolve()
-        .then(() => timing.scheduler.sleep(sleepMs))
-        .then(() => ({ kind: "sleep" as const })),
+    if (sleepMs <= 0) return { kind: "timeout" } as const;
+    const next = yield* Effect.race(
       exit,
-    ]);
+      timing.scheduler.sleep(sleepMs).pipe(Effect.map(() => ({ kind: "sleep" as const }))),
+    );
     if (next.kind === "exited") return next;
+    return yield* poll;
+  });
+  return poll;
+};
+
+export const terminateQuietly = (child: DaemonProcessHandle): ApplicationEffect<void> =>
+  child.terminate("SIGTERM").pipe(
+    // The child may have exited already; preserve the useful health error.
+    Effect.catch(() => Effect.succeed(undefined)),
+  );
+
+function observeExit(child: DaemonProcessHandle): ApplicationEffect<{ kind: "exited"; process: ProcessResult }> {
+  let waiting: ApplicationEffect<ProcessResult>;
+  try {
+    waiting = child.wait();
+  } catch {
+    return Effect.succeed({ kind: "exited" as const, process: unavailableExitStatus() });
   }
+  return waiting.pipe(
+    Effect.map((process) => ({ kind: "exited" as const, process })),
+    Effect.catch(() => Effect.succeed({ kind: "exited" as const, process: unavailableExitStatus() })),
+  );
 }
 
-export function terminateQuietly(child: DaemonProcessHandle): void {
-  try {
-    child.terminate("SIGTERM");
-  } catch {
-    // The child may have exited already; preserve the useful health error.
-  }
+function unavailableExitStatus(): ProcessResult {
+  return {
+    started: false,
+    code: 127,
+    interrupted: false,
+    signal: null,
+    failureDiagnostic: "muximod process exit status was unavailable",
+  };
 }

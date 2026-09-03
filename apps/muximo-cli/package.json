@@ -22,6 +22,7 @@
     "@orpc/client": "^1.15.0",
     "@orpc/contract": "^1.15.0",
     "commander": "^15.0.0",
+    "effect": "4.0.0-beta.107",
     "qrcode": "^1.5.4",
     "zod": "^4.4.3"
   },

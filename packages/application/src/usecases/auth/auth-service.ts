@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+import type { ApplicationEffect } from "../../effect.js";
 import type {
   AuthChallengeStorePort,
   AuthConnectionPort,
@@ -43,7 +45,9 @@ export type AuthServiceOptions = {
 
 /**
  * Transport-facing auth facade. All state lives in the injected flow-store
- * ports; every operation delegates to a single-purpose use case.
+ * ports; every operation delegates to a single-purpose use case. The class
+ * stays a stateful coordinator (in-memory local sessions) holding Effect
+ * ports via constructor injection.
  */
 export class AuthService implements MuximodAuthPort, AuthControlExtras {
   public readonly serverId: string;
@@ -53,53 +57,58 @@ export class AuthService implements MuximodAuthPort, AuthControlExtras {
     this.serverId = options.serverId;
   }
 
-  public createPairing(input: { muximodBaseUrl: string }): Promise<AuthPairingPayload> {
+  public createPairing(input: { muximodBaseUrl: string }): ApplicationEffect<AuthPairingPayload> {
     return startPairingOp(this.options, input);
   }
 
   /** Issues a short-lived in-memory token after the caller passed the private control-socket boundary. */
-  public async createLocalSession(): Promise<AuthSessionResponse> {
-    const now = this.options.clock.now();
-    const accessToken = this.options.crypto.randomOpaque(32);
-    const sessionId = this.options.crypto.randomOpaque(24);
-    const expiresAt = new Date(now.getTime() + 15 * 60_000).toISOString();
-    const session: MuximodAuthContext = {
-      sessionId,
-      serverId: this.serverId,
-      deviceId: "local-cli",
-      issuedAt: now.toISOString(),
-      expiresAt,
-    };
-    this.localSessions.set(accessToken, session);
-    return {
-      serverId: this.serverId,
-      deviceId: session.deviceId,
-      sessionId,
-      accessToken,
-      expiresAt,
-    };
+  public createLocalSession(): ApplicationEffect<AuthSessionResponse> {
+    return Effect.sync(() => {
+      const now = this.options.clock.now();
+      const accessToken = this.options.crypto.randomOpaque(32);
+      const sessionId = this.options.crypto.randomOpaque(24);
+      const expiresAt = new Date(now.getTime() + 15 * 60_000).toISOString();
+      const session: MuximodAuthContext = {
+        sessionId,
+        serverId: this.serverId,
+        deviceId: "local-cli",
+        issuedAt: now.toISOString(),
+        expiresAt,
+      };
+      this.localSessions.set(accessToken, session);
+      return {
+        serverId: this.serverId,
+        deviceId: session.deviceId,
+        sessionId,
+        accessToken,
+        expiresAt,
+      };
+    });
   }
 
-  public claimPairing(pairingId: string, request: AuthPairingClaimRequest): Promise<AuthPairingClaimResponse> {
+  public claimPairing(
+    pairingId: string,
+    request: AuthPairingClaimRequest,
+  ): ApplicationEffect<AuthPairingClaimResponse> {
     return claimPairingOp({ ...this.options, serverId: this.serverId }, pairingId, request);
   }
 
   public pairingStatus(
     pairingId: string,
     claimToken: string,
-  ): Promise<{ status: AuthPairingStatus; deviceId?: string }> {
+  ): ApplicationEffect<{ status: AuthPairingStatus; deviceId?: string }> {
     return this.options.store.getPairingStatus(pairingId, claimToken);
   }
 
-  public approvePairing(pairingId: string): Promise<AuthDeviceRecord> {
+  public approvePairing(pairingId: string): ApplicationEffect<AuthDeviceRecord> {
     return this.options.store.approvePairing(pairingId);
   }
 
-  public rejectPairing(pairingId: string): Promise<void> {
+  public rejectPairing(pairingId: string): ApplicationEffect<void> {
     return this.options.store.rejectPairing(pairingId);
   }
 
-  public createChallenge(deviceId: string): Promise<AuthChallengeResponse> {
+  public createChallenge(deviceId: string): ApplicationEffect<AuthChallengeResponse> {
     return createChallengeOp({ ...this.options, serverId: this.serverId }, deviceId);
   }
 
@@ -107,27 +116,34 @@ export class AuthService implements MuximodAuthPort, AuthControlExtras {
     deviceId: string;
     challengeId: string;
     signature: string;
-  }): Promise<AuthSessionResponse> {
+  }): ApplicationEffect<AuthSessionResponse> {
     return createAuthSession({ ...this.options, serverId: this.serverId }, input);
   }
 
-  public async authenticateAccessToken(token: string | undefined): Promise<MuximodAuthContext | undefined> {
-    if (!token) return undefined;
+  public authenticateAccessToken(token: string | undefined): ApplicationEffect<MuximodAuthContext | undefined> {
+    if (!token) return Effect.succeed(undefined);
     const localSession = this.localSessions.get(token);
     if (localSession) {
       if (localSession.expiresAt <= this.options.clock.now().toISOString()) {
         this.localSessions.delete(token);
-        return undefined;
+        return Effect.succeed(undefined);
       }
-      return localSession;
+      return Effect.succeed(localSession);
     }
-    const session = await this.options.store.findSession(token);
-    return session ? contextForSession(this.options.store, session) : undefined;
+    return this.options.store
+      .findSession(token)
+      .pipe(
+        Effect.flatMap((session) =>
+          session ? contextForSession(this.options.store, session) : Effect.succeed(undefined),
+        ),
+      );
   }
 
-  public issueWebSocketTicket(context: MuximodAuthContext, endpoint: "terminal"): Promise<WsTicketResponse> {
+  public issueWebSocketTicket(context: MuximodAuthContext, endpoint: "terminal"): ApplicationEffect<WsTicketResponse> {
     if (!context.device) {
-      throw new AuthStoreError("local_session_terminal_forbidden", "local CLI sessions cannot open terminal sockets");
+      return Effect.fail(
+        new AuthStoreError("local_session_terminal_forbidden", "local CLI sessions cannot open terminal sockets"),
+      );
     }
     return issueTicketOp(this.options, context, endpoint);
   }
@@ -135,29 +151,35 @@ export class AuthService implements MuximodAuthPort, AuthControlExtras {
   public consumeWebSocketTicket(
     ticket: string | undefined,
     endpoint: "terminal",
-  ): Promise<MuximodAuthContext | undefined> {
+  ): ApplicationEffect<MuximodAuthContext | undefined> {
     return consumeTicketOp(this.options, ticket, endpoint);
   }
 
-  public async revokeDevice(deviceId: string): Promise<void> {
-    await this.options.store.revokeDevice(deviceId);
-    await this.options.connections.disconnectDevice(deviceId);
+  public revokeDevice(deviceId: string): ApplicationEffect<void> {
+    const options = this.options;
+    return Effect.gen(function* () {
+      yield* options.store.revokeDevice(deviceId);
+      yield* options.connections.disconnectDevice(deviceId);
+    });
   }
 
-  public async revokeSession(sessionId: string): Promise<void> {
-    await this.options.store.revokeSession(sessionId);
-    await this.options.connections.disconnectSession(sessionId);
+  public revokeSession(sessionId: string): ApplicationEffect<void> {
+    const options = this.options;
+    return Effect.gen(function* () {
+      yield* options.store.revokeSession(sessionId);
+      yield* options.connections.disconnectSession(sessionId);
+    });
   }
 
-  public listDevices(): Promise<AuthDeviceRecord[]> {
+  public listDevices(): ApplicationEffect<AuthDeviceRecord[]> {
     return this.options.store.listDevices();
   }
 }
 
 export interface AuthControlExtras {
-  approvePairing(pairingId: string): Promise<AuthDeviceRecord>;
-  rejectPairing(pairingId: string): Promise<void>;
-  revokeDevice(deviceId: string): Promise<void>;
-  revokeSession(sessionId: string): Promise<void>;
-  listDevices(): Promise<AuthDeviceRecord[]>;
+  approvePairing(pairingId: string): ApplicationEffect<AuthDeviceRecord>;
+  rejectPairing(pairingId: string): ApplicationEffect<void>;
+  revokeDevice(deviceId: string): ApplicationEffect<void>;
+  revokeSession(sessionId: string): ApplicationEffect<void>;
+  listDevices(): ApplicationEffect<AuthDeviceRecord[]>;
 }

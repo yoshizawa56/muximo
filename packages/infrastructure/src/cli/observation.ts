@@ -3,30 +3,36 @@ import { existsSync } from "node:fs";
 import type {
   AgentSessionListObservation,
   AgentSessionWorktreeState,
+  ApplicationEffect,
   ProcessLiveness,
   ProcessObservationPort,
   SessionObservationPort,
 } from "@muximo/application";
 import { shouldCheckAgentSessionWorktree } from "@muximo/application";
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
+import { fromPromise } from "../effect.js";
 import { observeProcessLiveness } from "../process/process.js";
 import { realpathSafe } from "./filesystem.js";
 import { gitOutputMaxBuffer } from "./git.js";
 
 export type SessionObservationOptions = {
   environment: NodeJS.ProcessEnv;
-  resolveWorkspace(): Promise<{ id: AgentSessionRecord["workspaceId"] }>;
+  resolveWorkspace(): Promise<{ id: AgentSession["workspaceId"] }>;
 };
 
 /** Filesystem/process observation adapter for the application list projection. */
 export class AgentSessionObservationAdapter implements SessionObservationPort {
   public constructor(private readonly options: SessionObservationOptions) {}
 
-  public resolveWorkspace(): Promise<{ id: AgentSessionRecord["workspaceId"] }> {
-    return this.options.resolveWorkspace();
+  public resolveWorkspace(): ApplicationEffect<{ id: AgentSession["workspaceId"] }> {
+    return fromPromise(() => this.options.resolveWorkspace());
   }
 
-  public async observeSession(session: AgentSessionRecord, now: number): Promise<AgentSessionListObservation> {
+  public observeSession(session: AgentSession, now: number): ApplicationEffect<AgentSessionListObservation> {
+    return fromPromise(() => this.observeSessionPromise(session, now));
+  }
+
+  private async observeSessionPromise(session: AgentSession, now: number): Promise<AgentSessionListObservation> {
     const active = session.status === "running" || session.status === "resuming" || session.status === "recovering";
     const processStates = active
       ? [
@@ -51,7 +57,7 @@ export class AgentSessionObservationAdapter implements SessionObservationPort {
     };
   }
 
-  private inspectWorktree(session: AgentSessionRecord, now: number): AgentSessionWorktreeState {
+  private inspectWorktree(session: AgentSession, now: number): AgentSessionWorktreeState {
     if (!session.useWorktree) return "not_applicable";
     if (!shouldCheckAgentSessionWorktree(session, now)) return "unknown";
     if (!session.worktreePath || !existsSync(session.worktreePath)) return "missing";
@@ -77,8 +83,8 @@ export class AgentSessionObservationAdapter implements SessionObservationPort {
 }
 
 export class ProcessObservationAdapter implements ProcessObservationPort {
-  public observe(pid: number, expectedStartedAt?: string): Promise<ProcessLiveness> {
-    return Promise.resolve(observeProcessLiveness(pid, expectedStartedAt));
+  public observe(pid: number, expectedStartedAt?: string): ApplicationEffect<ProcessLiveness> {
+    return fromPromise(() => observeProcessLiveness(pid, expectedStartedAt));
   }
 }
 

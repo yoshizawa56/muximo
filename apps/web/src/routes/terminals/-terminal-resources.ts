@@ -11,8 +11,8 @@ export type TerminalResources = {
   connection: ReturnType<typeof useMuximodConnection>["connection"];
   connectionKey: string;
   utils: MuximodQueryUtils;
-  terminals: TerminalEndpoint[];
-  sessions: TmuxSession[];
+  terminals: readonly TerminalEndpoint[];
+  sessions: readonly TmuxSession[];
   selectedTerminal: TerminalEndpoint | null;
   selectedSession: TmuxSession | null;
   terminalsStatus: ResourceStatus;

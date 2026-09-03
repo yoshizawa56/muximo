@@ -1,4 +1,4 @@
-import type { AgentBackend, PaneRecord, Patch } from "@muximo/domain";
+import type { AgentBackend, Pane, Patch } from "@muximo/domain";
 import type {
   AgentSessionListInput,
   AgentSessionListResult,
@@ -26,6 +26,8 @@ export type TerminalHostHookEvent =
 
 /** A transport-neutral failure that may be mapped by an adapter. */
 export class ApplicationError extends Error {
+  public readonly _tag = "ApplicationError" as const;
+
   public constructor(
     public readonly code: string,
     message: string,
@@ -33,6 +35,67 @@ export class ApplicationError extends Error {
   ) {
     super(message);
     this.name = "ApplicationError";
+  }
+}
+
+/**
+ * Machine-readable reasons for failures without a wire code. These never
+ * reach the public contract: boundary mapping renders them exactly like an
+ * uncoded Error (generic unavailable response), so the wire stays identical
+ * while internals can narrow on reason.
+ */
+export type ApplicationFailureReason =
+  | "shell_command_executable_missing"
+  | "managed_worktree_requires_git"
+  | "worktree_file_copy_failed"
+  | "setup_hook_failed"
+  | "managed_shell_worktree_retained"
+  | "cleanup_hook_failed"
+  | "agent_execution_not_current"
+  | "agent_session_not_awaiting_process"
+  | "agent_session_already_attached"
+  | "daemon_wait_timeout_negative"
+  | "daemon_wait_timeout_negative"
+  | "agent_execution_preparation_cancelled"
+  | "invalid_session_reference"
+  | "session_reference_requires_all_scope"
+  | "ambiguous_session_name"
+  | "session_not_found"
+  | "invalid_agent_session_name"
+  | "agent_session_being_recovered"
+  | "agent_session_liveness_unverifiable"
+  | "agent_session_already_resuming"
+  | "resume_setup_failed"
+  | "resume_backend_not_started"
+  | "resume_execution_unattached"
+  | "resume_already_running"
+  | "resume_owned_by_cli"
+  | "resume_owner_unverifiable"
+  | "agent_session_not_found"
+  | "agent_session_not_resuming"
+  | "agent_execution_receipt_mismatch"
+  | "agent_session_name_exists"
+  | "backend_baseline_capture_failed"
+  | "agent_session_being_prepared"
+  | "agent_session_being_finalized"
+  | "agent_execution_being_recovered"
+  | "agent_session_not_running"
+  | "worktree_not_registered"
+  | "abandoned_release_failed"
+  | "abandoned_cleanup_failed";
+
+/** A tagged failure for application paths that previously failed with a bare Error. */
+export class ApplicationFailure extends Error {
+  public readonly _tag = "ApplicationFailure" as const;
+
+  public constructor(
+    public readonly reason: ApplicationFailureReason,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message);
+    this.name = "ApplicationFailure";
+    if (options?.cause !== undefined) this.cause = options.cause;
   }
 }
 
@@ -105,7 +168,7 @@ export type MuximodSessionSummary = {
   managed: boolean;
 };
 
-export type MuximodPaneSummary = PaneRecord;
+export type MuximodPaneSummary = Pane;
 
 export type MuximodAgentSessionApplication = {
   prepareRun(input: StartAgentSessionInput, signal?: AbortSignal): Promise<PreparedAgentSession>;

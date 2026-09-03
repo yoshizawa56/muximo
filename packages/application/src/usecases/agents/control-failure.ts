@@ -1,6 +1,16 @@
 /** Control-channel failures carry a stable machine-readable code. */
-export function controlFailure(code: string, message: string): Error & { code: string } {
-  const error = new Error(message) as Error & { code: string };
-  error.code = code;
-  return error;
+export class ControlFailure extends Error {
+  public readonly _tag = "ControlFailure" as const;
+
+  public constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ControlFailure";
+  }
+}
+
+export function controlFailure(code: string, message: string): ControlFailure {
+  return new ControlFailure(code, message);
 }

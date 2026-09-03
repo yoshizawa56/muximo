@@ -2,29 +2,25 @@ import { Database as BunDatabase } from "bun:sqlite";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentExecutionReceipt } from "@muximo/application";
-import {
-  AgentSession,
-  AgentSessionId,
-  type AgentSessionRecord,
-  clearPatch,
-  Pane,
-  PaneId,
-  type PaneRecord,
-  Workspace,
-  WorkspaceId,
-  type WorkspaceRecord,
-} from "@muximo/domain";
+import type {
+  AgentExecutionReceipt,
+  AttachExecutionInput,
+  ClaimAbandonedExecutionInput,
+  ClaimExecutionInput,
+} from "@muximo/application";
+import { AgentSession, AgentSessionId, clearPatch, Pane, PaneId, Workspace, WorkspaceId } from "@muximo/domain";
 import {
   type Assertion,
   type CleanupRegistrar,
   type FixtureHandle,
   hasObserved,
+  resolveMaybePromise,
   runScenarioTable,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
   createAgentDatabase,
@@ -35,11 +31,11 @@ import {
   defaultAgentMigrationsFolder,
   recordAuditEvent,
 } from "./index.js";
-import { auditEvents } from "./schema.js";
+import { agentSessions, auditEvents, workspaces } from "./schema.js";
 
 const migrationSchemaSynchronizer = createMigrationSchemaSynchronizer();
 
-const pane: PaneRecord = Pane.create({
+const pane: Pane = Pane.create({
   id: PaneId.create("pane-1"),
   hostPaneId: "%1",
   hostServerId: "scope-current:server-current",
@@ -55,18 +51,16 @@ const pane: PaneRecord = Pane.create({
   lastSeenAt: "2026-08-09T00:00:00.000Z",
 });
 
-const workspace: WorkspaceRecord = Workspace.create({
+const workspace: Workspace = Workspace.create({
   id: WorkspaceId.create("workspace-1"),
   rootPath: "/work/repo",
   name: "repo",
   isGit: true,
   setupScriptPath: "/config/hooks/setup",
   cleanupScriptPath: "/config/hooks/cleanup",
-  createdAt: "2026-08-09T00:00:00.000Z",
-  updatedAt: "2026-08-09T00:00:00.000Z",
 });
 
-const session: AgentSessionRecord = AgentSession.create({
+const session: AgentSession = AgentSession.create({
   id: AgentSessionId.create("session-1"),
   name: "review",
   backend: "codex",
@@ -86,8 +80,7 @@ const session: AgentSessionRecord = AgentSession.create({
   setupRan: true,
   resuming: false,
   baselineStatus: "",
-  createdAt: "2026-08-09T00:00:00.000Z",
-  updatedAt: "2026-08-09T00:00:00.000Z",
+  lastActivityAt: "2026-08-09T00:00:00.000Z",
 });
 
 type Database = ReturnType<typeof createAgentDatabase>;
@@ -95,10 +88,10 @@ type DatabaseFixture = {
   database: Database;
   root?: string;
   pruneCount?: number;
-  prePruneOld?: PaneRecord;
-  prePruneCurrent?: PaneRecord;
-  legacyPaneAfterMigration?: PaneRecord;
-  currentPaneAfterMigration?: PaneRecord;
+  prePruneOld?: Pane;
+  prePruneCurrent?: Pane;
+  legacyPaneAfterMigration?: Pane;
+  currentPaneAfterMigration?: Pane;
   claimResults: boolean[];
   backendResults: boolean[];
   ownerAttachResult?: boolean;
@@ -108,7 +101,7 @@ type DatabaseFixture = {
 type DatabaseKey = "default" | "pending" | "restart" | "legacy-pane-migration" | "auth-migration";
 type DatabaseStep =
   | { type: "write-round-trip" }
-  | { type: "verify-timestamp-preservation" }
+  | { type: "verify-row-timestamp-metadata" }
   | { type: "verify-pending" }
   | { type: "verify-restart" }
   | { type: "verify-legacy-pane-migration" }
@@ -124,32 +117,32 @@ type DatabaseStep =
   | { type: "verify-execution-receipt-retention" };
 type DatabaseResult = undefined;
 type DatabaseContext = {
-  pane: PaneRecord | undefined;
-  workspace: WorkspaceRecord | undefined;
-  session: AgentSessionRecord | undefined;
-  waitingPanes: readonly PaneRecord[];
+  pane: Pane | undefined;
+  workspace: Workspace | undefined;
+  session: AgentSession | undefined;
+  waitingPanes: readonly Pane[];
   auditCount: number;
   migrationCount: number;
   probeCount: number;
-  oldIdentity: PaneRecord | undefined;
-  currentIdentity: PaneRecord | undefined;
-  oldAfterPrune: PaneRecord | undefined;
-  currentAfterPrune: PaneRecord | undefined;
-  legacyPaneAfterMigration: PaneRecord | undefined;
-  currentPaneAfterMigration: PaneRecord | undefined;
-  identityPane: PaneRecord | undefined;
-  adoptedPane: PaneRecord | undefined;
+  oldIdentity: Pane | undefined;
+  currentIdentity: Pane | undefined;
+  oldAfterPrune: Pane | undefined;
+  currentAfterPrune: Pane | undefined;
+  legacyPaneAfterMigration: Pane | undefined;
+  currentPaneAfterMigration: Pane | undefined;
+  identityPane: Pane | undefined;
+  adoptedPane: Pane | undefined;
   pruneCount: number | undefined;
   claimResults: readonly boolean[];
   backendResults: readonly boolean[];
   authPairingColumns: readonly string[];
   authPairingCount: number;
-  claimSession: AgentSessionRecord | undefined;
+  claimSession: AgentSession | undefined;
   ownerAttachResult: boolean | undefined;
-  ownerSession: AgentSessionRecord | undefined;
+  ownerSession: AgentSession | undefined;
   abandonedClaimResults: readonly boolean[];
   abandonedAttachResult: boolean | undefined;
-  abandonedSession: AgentSessionRecord | undefined;
+  abandonedSession: AgentSession | undefined;
   timestampWorkspace: { name: string; createdAt: string; updatedAt: string } | undefined;
   timestampSession: { name: string; createdAt: string; updatedAt: string } | undefined;
   tmuxServerDefault: string | null | undefined;
@@ -189,7 +182,7 @@ const restartFixture = async (registerCleanup?: CleanupRegistrar): Promise<Fixtu
     schemaSynchronizer: migrationSchemaSynchronizer,
   });
   try {
-    await new DrizzlePaneRepository(beforeRestart.db).upsert(pane);
+    await promisePanes(new DrizzlePaneRepository(beforeRestart.db)).upsert(pane);
   } finally {
     beforeRestart.close();
   }
@@ -224,13 +217,15 @@ const legacyPaneMigrationFixture = async (
     schemaSynchronizer: migrationSchemaSynchronizer,
   });
   try {
-    const panes = new DrizzlePaneRepository(beforeMigration.db);
-    await panes.upsert({ ...pane, id: PaneId.create("pane-legacy-migrated"), hostServerId: "legacy" });
-    await panes.upsert({
-      ...pane,
-      id: PaneId.create("pane-current-migrated"),
-      hostServerId: "scope-current:server-current",
-    });
+    const panes = promisePanes(new DrizzlePaneRepository(beforeMigration.db));
+    await panes.upsert(Pane.restore({ ...pane, id: PaneId.create("pane-legacy-migrated"), hostServerId: "legacy" }));
+    await panes.upsert(
+      Pane.restore({
+        ...pane,
+        id: PaneId.create("pane-current-migrated"),
+        hostServerId: "scope-current:server-current",
+      }),
+    );
   } finally {
     beforeMigration.close();
   }
@@ -349,8 +344,8 @@ const cases = [
     ],
   },
   {
-    name: "preserves entity timestamps through workspace and session updates",
-    steps: [{ type: "verify-timestamp-preservation" }],
+    name: "stamps row creation time on insert and preserves it on update",
+    steps: [{ type: "verify-row-timestamp-metadata" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("timestampWorkspace", {
         name: "timestamped-updated",
@@ -359,7 +354,7 @@ const cases = [
       }),
       hasObserved<DatabaseContext, DatabaseResult>("timestampSession", {
         name: "timestamped-updated",
-        createdAt: "2026-08-13T00:00:00.000Z",
+        createdAt: "2026-08-10T00:00:00.000Z",
         updatedAt: "2026-08-12T00:00:00.000Z",
       }),
     ],
@@ -462,7 +457,7 @@ const cases = [
     ],
   },
   {
-    name: "persists the application timestamp during an atomic execution claim",
+    name: "persists the activity timestamp during an atomic execution claim",
     steps: [{ type: "verify-atomic-claim-timestamp" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("claimResults", [true]),
@@ -470,7 +465,7 @@ const cases = [
         executionId: "execution-timestamped",
         executionPid: 1003,
         executionStartedAt: "2026-08-14T12:02:00.000Z",
-        updatedAt: "2026-08-14T12:02:01.000Z",
+        lastActivityAt: "2026-08-14T12:02:01.000Z",
       }),
     ],
   },
@@ -541,9 +536,9 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
     for (const step of steps) {
       switch (step.type) {
         case "write-round-trip":
-          await new DrizzlePaneRepository(databases.db).upsert(pane);
-          await new DrizzleWorkspaceRepository(databases.db).upsert(workspace);
-          await new DrizzleAgentSessionRepository(databases.db).insert(session);
+          await promisePanes(new DrizzlePaneRepository(databases.db)).upsert(pane);
+          await resolveMaybePromise(new DrizzleWorkspaceRepository(databases.db).upsert(workspace));
+          await promiseSessions(new DrizzleAgentSessionRepository(databases.db)).insert(session);
           recordAuditEvent(databases.db, {
             eventType: "agent_session.waiting",
             entityId: session.id,
@@ -551,39 +546,37 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
             occurredAt: "2026-08-09T00:01:00.000Z",
           });
           break;
-        case "verify-timestamp-preservation": {
-          const workspaces = new DrizzleWorkspaceRepository(databases.db);
+        case "verify-row-timestamp-metadata": {
+          let now = "2026-08-10T00:00:00.000Z";
+          const clock = { now: () => now };
+          const workspaces = new DrizzleWorkspaceRepository(databases.db, clock);
+          const sessions = promiseSessions(new DrizzleAgentSessionRepository(databases.db, clock));
           const timestampedWorkspace = Workspace.create({
             ...workspace,
             id: WorkspaceId.create("workspace-timestamps"),
             name: "timestamped",
-            createdAt: "2026-08-10T00:00:00.000Z",
-            updatedAt: "2026-08-11T00:00:00.000Z",
           });
-          await workspaces.insert(timestampedWorkspace);
-          await workspaces.upsert(
-            Workspace.create({
-              ...timestampedWorkspace,
-              name: "timestamped-updated",
-              createdAt: "2026-08-13T00:00:00.000Z",
-              updatedAt: "2026-08-12T00:00:00.000Z",
-            }),
-          );
-
-          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          await resolveMaybePromise(workspaces.insert(timestampedWorkspace));
           const timestampedSession = AgentSession.create({
             ...session,
             id: AgentSessionId.create("session-timestamps"),
             name: "timestamped",
-            createdAt: "2026-08-10T00:00:00.000Z",
-            updatedAt: "2026-08-11T00:00:00.000Z",
+            lastActivityAt: "2026-08-10T00:00:00.000Z",
           });
           await sessions.insert(timestampedSession);
+          now = "2026-08-12T00:00:00.000Z";
+          await resolveMaybePromise(
+            workspaces.upsert(
+              Workspace.create({
+                ...timestampedWorkspace,
+                name: "timestamped-updated",
+              }),
+            ),
+          );
           await sessions.update(
-            AgentSession.update(timestampedSession, {
+            timestampedSession.update({
               name: "timestamped-updated",
-              createdAt: "2026-08-13T00:00:00.000Z",
-              updatedAt: "2026-08-12T00:00:00.000Z",
+              lastActivityAt: "2026-08-12T00:00:00.000Z",
             }),
           );
           break;
@@ -595,21 +588,21 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
         case "verify-legacy-pane-migration":
           break;
         case "verify-generations": {
-          const panes = new DrizzlePaneRepository(databases.db);
-          const oldPane = {
+          const panes = promisePanes(new DrizzlePaneRepository(databases.db));
+          const oldPane = Pane.restore({
             ...pane,
             id: PaneId.create("pane-old"),
             hostPaneId: "%0",
             hostServerId: "scope-current:server-old",
             lastSeenAt: "2026-08-01T00:00:00.000Z",
-          } satisfies PaneRecord;
-          const currentPane = {
+          });
+          const currentPane = Pane.restore({
             ...pane,
             id: PaneId.create("pane-current"),
             hostPaneId: "%0",
             hostServerId: "scope-current:server-current",
             lastSeenAt: "2026-08-10T00:00:00.000Z",
-          } satisfies PaneRecord;
+          });
           await panes.upsert(oldPane);
           await panes.upsert(currentPane);
           fixture.prePruneOld = await panes.findByHostPaneIdentity("scope-current:server-old", "%0");
@@ -622,26 +615,30 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           break;
         }
         case "verify-upsert-identity": {
-          const panes = new DrizzlePaneRepository(databases.db);
-          await panes.upsert({ ...pane, id: PaneId.create("first"), hostServerId: "server-1" });
-          await panes.upsert({ ...pane, id: PaneId.create("second"), hostServerId: "server-1", name: "updated" });
+          const panes = promisePanes(new DrizzlePaneRepository(databases.db));
+          await panes.upsert(Pane.restore({ ...pane, id: PaneId.create("first"), hostServerId: "server-1" }));
+          await panes.upsert(
+            Pane.restore({ ...pane, id: PaneId.create("second"), hostServerId: "server-1", name: "updated" }),
+          );
           break;
         }
         case "verify-agent-association": {
-          const panes = new DrizzlePaneRepository(databases.db);
-          await panes.upsert({
-            ...pane,
-            id: PaneId.create("pane-adopted"),
-            agentSessionId: session.id,
-            agentExecutionId: "execution-id-123456",
-          } satisfies PaneRecord);
+          const panes = promisePanes(new DrizzlePaneRepository(databases.db));
+          await panes.upsert(
+            Pane.restore({
+              ...pane,
+              id: PaneId.create("pane-adopted"),
+              agentSessionId: session.id,
+              agentExecutionId: "execution-id-123456",
+            }),
+          );
           break;
         }
         case "verify-auth-migration":
           break;
         case "verify-execution-claim": {
-          const sessions = new DrizzleAgentSessionRepository(databases.db);
-          await sessions.insert(AgentSession.update(session, { backendSessionId: clearPatch }));
+          const sessions = promiseSessions(new DrizzleAgentSessionRepository(databases.db));
+          await sessions.insert(session.update({ backendSessionId: clearPatch }));
           fixture.claimResults.push(
             await sessions.claimExecution({
               id: session.id,
@@ -651,7 +648,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
               executionId: "execution-1",
               executionPid: 1001,
               executionStartedAt: "2026-08-14T12:00:00.000Z",
-              updatedAt: "2026-08-14T12:00:01.000Z",
+              lastActivityAt: "2026-08-14T12:00:01.000Z",
             }),
           );
           fixture.claimResults.push(
@@ -663,7 +660,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
               executionId: "execution-2",
               executionPid: 1002,
               executionStartedAt: "2026-08-14T12:01:00.000Z",
-              updatedAt: "2026-08-14T12:01:01.000Z",
+              lastActivityAt: "2026-08-14T12:01:01.000Z",
             }),
           );
           fixture.backendResults.push(await sessions.setBackendSessionIdIfMissing(session.id, "codex-discovered"));
@@ -671,7 +668,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           break;
         }
         case "verify-atomic-claim-timestamp": {
-          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const sessions = promiseSessions(new DrizzleAgentSessionRepository(databases.db));
           await sessions.insert(session);
           fixture.claimResults.push(
             await sessions.claimExecution({
@@ -682,13 +679,13 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
               executionId: "execution-timestamped",
               executionPid: 1003,
               executionStartedAt: "2026-08-14T12:02:00.000Z",
-              updatedAt: "2026-08-14T12:02:01.000Z",
+              lastActivityAt: "2026-08-14T12:02:01.000Z",
             }),
           );
           break;
         }
         case "verify-execution-owner": {
-          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const sessions = promiseSessions(new DrizzleAgentSessionRepository(databases.db));
           const pending = AgentSession.create({
             ...session,
             id: AgentSessionId.create("session-owner"),
@@ -706,12 +703,12 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
             expectedExecutionOwnerStartedAt: pending.executionOwnerStartedAt ?? null,
             executionPid: 1004,
             executionStartedAt: "2026-08-14T12:04:00.000Z",
-            updatedAt: "2026-08-14T12:04:01.000Z",
+            lastActivityAt: "2026-08-14T12:04:01.000Z",
           });
           break;
         }
         case "verify-abandoned-execution-claim": {
-          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const sessions = promiseSessions(new DrizzleAgentSessionRepository(databases.db));
           const abandoned = AgentSession.create({
             ...session,
             id: AgentSessionId.create("session-abandoned"),
@@ -730,7 +727,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
             expectedExecutionStartedAt: abandoned.executionStartedAt ?? null,
             expectedExecutionOwnerPid: abandoned.executionOwnerPid ?? null,
             expectedExecutionOwnerStartedAt: abandoned.executionOwnerStartedAt ?? null,
-            updatedAt: "2026-08-14T12:06:00.000Z",
+            lastActivityAt: "2026-08-14T12:06:00.000Z",
           };
           fixture.abandonedClaimResults.push(await sessions.claimAbandonedExecution(claim));
           fixture.abandonedClaimResults.push(await sessions.claimAbandonedExecution(claim));
@@ -741,16 +738,16 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
             expectedExecutionOwnerStartedAt: abandoned.executionOwnerStartedAt ?? null,
             executionPid: 1006,
             executionStartedAt: "2026-08-14T12:06:01.000Z",
-            updatedAt: "2026-08-14T12:06:01.000Z",
+            lastActivityAt: "2026-08-14T12:06:01.000Z",
           });
           break;
         }
         case "verify-execution-receipt": {
-          const sessions = new DrizzleAgentSessionRepository(databases.db);
-          const finalized = AgentSession.update(session, {
+          const sessions = promiseSessions(new DrizzleAgentSessionRepository(databases.db));
+          const finalized = session.update({
             status: "exited",
             lastExitStatus: 0,
-            updatedAt: "2026-08-14T12:03:00.000Z",
+            lastActivityAt: "2026-08-14T12:03:00.000Z",
           });
           await sessions.saveExecutionReceipt({
             operation: "run",
@@ -763,20 +760,29 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           break;
         }
         case "verify-execution-receipt-retention": {
-          const sessions = new DrizzleAgentSessionRepository(databases.db);
+          const sessions = promiseSessions(
+            new DrizzleAgentSessionRepository(databases.db, {
+              now: () => "2026-08-14T00:00:00.000Z",
+            }),
+          );
+          const expiredSessions = promiseSessions(
+            new DrizzleAgentSessionRepository(databases.db, {
+              now: () => "2026-08-01T00:00:00.000Z",
+            }),
+          );
           const expiredSession = AgentSession.create({
             ...session,
             id: AgentSessionId.create("session-receipt-expired"),
             name: "expired-receipt",
-            updatedAt: "2026-08-01T00:00:00.000Z",
+            lastActivityAt: "2026-08-01T00:00:00.000Z",
           });
           const currentSession = AgentSession.create({
             ...session,
             id: AgentSessionId.create("session-receipt-current"),
             name: "current-receipt",
-            updatedAt: "2026-08-14T00:00:00.000Z",
+            lastActivityAt: "2026-08-14T00:00:00.000Z",
           });
-          await sessions.saveExecutionReceipt({
+          await expiredSessions.saveExecutionReceipt({
             operation: "run",
             agentSessionId: expiredSession.id,
             executionId: "execution-receipt-expired",
@@ -801,12 +807,12 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
   },
   observe: async (fixture) => {
     const { database } = fixture;
-    const panes = new DrizzlePaneRepository(database.db);
-    const sessions = new DrizzleAgentSessionRepository(database.db);
+    const panes = promisePanes(new DrizzlePaneRepository(database.db));
+    const sessions = promiseSessions(new DrizzleAgentSessionRepository(database.db));
     return {
       pane: await panes.findById(pane.id),
       waitingPanes: await panes.list({ state: "waiting_input" }),
-      workspace: await new DrizzleWorkspaceRepository(database.db).findById(workspace.id),
+      workspace: await resolveMaybePromise(new DrizzleWorkspaceRepository(database.db).findById(workspace.id)),
       session: await sessions.findByName(workspace.id, session.name),
       auditCount: database.db.select().from(auditEvents).all().length,
       migrationCount: database.sqlite.query('SELECT hash, created_at FROM "__drizzle_migrations"').all().length,
@@ -859,18 +865,55 @@ function assertNever(value: never): never {
   throw new Error(`unhandled persistence step: ${String(value)}`);
 }
 
+/**
+ * Promise facade over the Effect-native Drizzle repositories for the
+ * persistence round-trip assertions. Production callers consume Effects
+ * directly; this bridge exists only because these table rows assert through
+ * plain async/await.
+ */
+function promiseSessions(repository: DrizzleAgentSessionRepository) {
+  return {
+    insert: (record: AgentSession) => resolveMaybePromise(repository.insert(record)),
+    update: (record: AgentSession) => resolveMaybePromise(repository.update(record)),
+    claimExecution: (input: ClaimExecutionInput) => resolveMaybePromise(repository.claimExecution(input)),
+    claimAbandonedExecution: (input: ClaimAbandonedExecutionInput) =>
+      resolveMaybePromise(repository.claimAbandonedExecution(input)),
+    attachExecution: (input: AttachExecutionInput) => resolveMaybePromise(repository.attachExecution(input)),
+    setBackendSessionIdIfMissing: (id: AgentSessionId, backendSessionId: string) =>
+      resolveMaybePromise(repository.setBackendSessionIdIfMissing(id, backendSessionId)),
+    findById: (id: AgentSessionId) => resolveMaybePromise(repository.findById(id)),
+    findByName: (workspaceId: WorkspaceId, name: string) =>
+      resolveMaybePromise(repository.findByName(workspaceId, name)),
+    findExecutionReceipt: (executionId: string) => resolveMaybePromise(repository.findExecutionReceipt(executionId)),
+    saveExecutionReceipt: (receipt: AgentExecutionReceipt) =>
+      resolveMaybePromise(repository.saveExecutionReceipt(receipt)),
+  };
+}
+
+function promisePanes(repository: DrizzlePaneRepository) {
+  return {
+    upsert: (record: Pane) => resolveMaybePromise(repository.upsert(record)),
+    findById: (id: PaneId) => resolveMaybePromise(repository.findById(id)),
+    findByHostPaneIdentity: (hostServerId: string, hostPaneId: string) =>
+      resolveMaybePromise(repository.findByHostPaneIdentity(hostServerId, hostPaneId)),
+    list: (...args: Parameters<DrizzlePaneRepository["list"]>) => resolveMaybePromise(repository.list(...args)),
+    pruneStalePanes: (...args: Parameters<DrizzlePaneRepository["pruneStalePanes"]>) =>
+      resolveMaybePromise(repository.pruneStalePanes(...args)),
+  };
+}
+
 async function readWorkspaceTimestamps(
   database: Database,
   id: string,
 ): Promise<{ name: string; createdAt: string; updatedAt: string } | undefined> {
-  const record = await new DrizzleWorkspaceRepository(database.db).findById(WorkspaceId.create(id));
-  return record ? { name: record.name, createdAt: record.createdAt, updatedAt: record.updatedAt } : undefined;
+  const row = database.db.select().from(workspaces).where(eq(workspaces.id, id)).get();
+  return row ? { name: row.name, createdAt: row.createdAt, updatedAt: row.updatedAt } : undefined;
 }
 
 async function readSessionTimestamps(
   database: Database,
   id: string,
 ): Promise<{ name: string; createdAt: string; updatedAt: string } | undefined> {
-  const record = await new DrizzleAgentSessionRepository(database.db).findById(AgentSessionId.create(id));
-  return record ? { name: record.name, createdAt: record.createdAt, updatedAt: record.updatedAt } : undefined;
+  const row = database.db.select().from(agentSessions).where(eq(agentSessions.id, id)).get();
+  return row ? { name: row.name, createdAt: row.createdAt, updatedAt: row.updatedAt } : undefined;
 }

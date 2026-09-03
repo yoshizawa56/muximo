@@ -1,5 +1,6 @@
-import type { ProcessResult, ShellProcessInput, ShellProcessPort } from "@muximo/application";
+import type { ApplicationEffect, ProcessResult, ShellProcessInput, ShellProcessPort } from "@muximo/application";
 import { resolveExecutable } from "../agents/launch.js";
+import { fromPromise } from "../effect.js";
 import { spawnAttached } from "../process/process.js";
 
 export type ShellProcessAdapterOptions = {
@@ -10,13 +11,15 @@ export type ShellProcessAdapterOptions = {
 export class ShellProcessAdapter implements ShellProcessPort {
   public constructor(private readonly options: ShellProcessAdapterOptions) {}
 
-  public async run(input: ShellProcessInput): Promise<ProcessResult> {
-    const executable = resolveExecutable(input.executable, this.options.environment);
-    const environment: NodeJS.ProcessEnv = {
-      ...this.options.environment,
-      MUXIMOD_WRAPPED_SHELL: "1",
-    };
-    if (input.interactive) delete environment.MUXIMOD_WORKTREE_SESSION_NAME;
-    return spawnAttached(executable, [...input.args], input.cwd, environment);
+  public run(input: ShellProcessInput): ApplicationEffect<ProcessResult> {
+    return fromPromise(() => {
+      const executable = resolveExecutable(input.executable, this.options.environment);
+      const environment: NodeJS.ProcessEnv = {
+        ...this.options.environment,
+        MUXIMOD_WRAPPED_SHELL: "1",
+      };
+      if (input.interactive) delete environment.MUXIMOD_WORKTREE_SESSION_NAME;
+      return spawnAttached(executable, [...input.args], input.cwd, environment);
+    });
   }
 }

@@ -32,7 +32,11 @@ import {
 
 type EmptyContext = {};
 type ValidationResult = { success: boolean; data?: unknown; issuePath?: readonly (string | number)[] };
-type ValidationSchema = { safeParse: (input: unknown) => unknown };
+type ValidationSchema = {
+  readonly "~standard": {
+    validate(value: unknown): unknown;
+  };
+};
 
 const isValid = (expectedData?: unknown): Assertion<EmptyContext, ValidationResult> => ({
   name: "accepts the input",
@@ -62,16 +66,12 @@ const createValidationTable = (
   observe: () => ({}),
 });
 
-function parseSchema(schema: ValidationSchema, input: unknown): ValidationResult {
-  const parsed = schema.safeParse(input) as {
-    success?: boolean;
-    data?: unknown;
-    error?: { issues?: readonly { path?: readonly PropertyKey[] }[] };
-  };
-  if (parsed.success) return { success: true, data: parsed.data };
-  const path = parsed.error?.issues?.[0]?.path?.map((segment) =>
-    typeof segment === "symbol" ? segment.toString() : segment,
-  );
+async function parseSchema(schema: ValidationSchema, input: unknown): Promise<ValidationResult> {
+  const result = (await schema["~standard"].validate(input)) as
+    | { value: unknown }
+    | { issues: readonly { path?: readonly (string | number | symbol)[] }[] };
+  if ("value" in result) return { success: true, data: result.value };
+  const path = result.issues?.[0]?.path?.map((segment) => (typeof segment === "symbol" ? segment.toString() : segment));
   return { success: false, issuePath: path };
 }
 
@@ -667,8 +667,7 @@ const pairingCases = [
           setupRan: false,
           resuming: false,
           executionId: "execution-id-123456",
-          createdAt: "2026-08-30T00:00:00.000Z",
-          updatedAt: "2026-08-30T00:00:00.000Z",
+          lastActivityAt: "2026-08-30T00:00:00.000Z",
         },
         execution: {
           sessionId: "session-id",
@@ -705,8 +704,7 @@ const pairingCases = [
           setupRan: false,
           resuming: false,
           executionId: "execution-id-123456",
-          createdAt: "2026-08-30T00:00:00.000Z",
-          updatedAt: "2026-08-30T00:00:00.000Z",
+          lastActivityAt: "2026-08-30T00:00:00.000Z",
         },
         execution: {
           sessionId: "session-id",
@@ -758,8 +756,7 @@ const pairingCases = [
           useWorktree: false,
           setupRan: false,
           resuming: false,
-          createdAt: "2026-08-30T00:00:00.000Z",
-          updatedAt: "2026-08-30T00:00:00.000Z",
+          lastActivityAt: "2026-08-30T00:00:00.000Z",
         },
       },
     },

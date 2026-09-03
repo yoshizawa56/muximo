@@ -1,7 +1,8 @@
-import { z } from "zod";
 import type { MuximodHttpStatus, MuximodOriginPolicy } from "./types.js";
 
 export class MuximodHttpError extends Error {
+  public readonly _tag = "MuximodHttpError" as const;
+
   public constructor(
     public readonly status: MuximodHttpStatus,
     public readonly code: string,
@@ -15,7 +16,6 @@ export class MuximodHttpError extends Error {
 
 export function mapError(error: unknown): MuximodHttpError {
   if (error instanceof MuximodHttpError) return error;
-  if (error instanceof z.ZodError) return new MuximodHttpError(400, "invalid_request", "Request validation failed");
   if (isRecord(error) && typeof error.code === "string" && typeof error.message === "string") {
     const mappedError = mapExternalError(error.code, error.message);
     const status = errorStatus(mappedError.code, error.status);
@@ -69,6 +69,7 @@ export function errorStatus(code: string, status: unknown): MuximodHttpStatus {
     return 401;
   if (code === "challenge_rate_limited") return 429;
   if (code === "session_not_visible" || code === "pane_not_visible" || code === "tmux_unavailable") return 503;
+  if (code === "invalid_entity") return 500;
   return 400;
 }
 

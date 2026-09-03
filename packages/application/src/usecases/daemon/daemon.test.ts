@@ -6,6 +6,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import {
   type DaemonEnsureResult,
@@ -380,53 +381,61 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
   };
 
   const runtime: DaemonRuntimePort = {
-    runForeground: async () => ({ started: true, code: 0, interrupted: false }),
-    spawn: async () => {
-      fixture.spawnCount += 1;
-      fixture.alive = true;
-      if (fixture.healthyAfterSpawn) fixture.healthy = true;
-      return {
-        pid: 402,
-        wait: () =>
-          key === "startup-failed" || key === "restart-startup-failed"
-            ? Promise.resolve({ started: true, code: 1, interrupted: false, signal: null })
-            : key === "startup-wait-error"
-              ? Promise.reject(new Error("wait failed"))
-              : new Promise<ProcessResult>(() => undefined),
-        terminate: () => {
-          fixture.terminateCount += 1;
-          fixture.alive = false;
-        },
-      };
-    },
-    isHealthy: async () => fixture.healthy,
-    isProcessHealthy: async () => fixture.healthy,
-    isAlive: async () => fixture.alive,
-    signal: () => {
-      fixture.signalCount += 1;
-      if (key !== "stop-timeout") fixture.alive = false;
-      if (fixture.healthyAfterStop) fixture.healthy = true;
-      else fixture.healthy = false;
-    },
-    readPidRecord: () => fixture.record,
-    writePidRecord: () => undefined,
-    removePidRecord: () => {
-      fixture.removePidCount += 1;
-      fixture.record = undefined;
-    },
-    writeRestartMarker: (_pidFile, refreshServers) => fixture.markerWrites.push(refreshServers),
-    hasRestartMarker: () => false,
-    consumeRestartMarker: () => undefined,
-    removeRestartMarker: () => undefined,
+    runForeground: () => Effect.succeed({ started: true, code: 0, interrupted: false }),
+    spawn: () =>
+      Effect.sync(() => {
+        fixture.spawnCount += 1;
+        fixture.alive = true;
+        if (fixture.healthyAfterSpawn) fixture.healthy = true;
+        return {
+          pid: 402,
+          wait: () =>
+            key === "startup-failed" || key === "restart-startup-failed"
+              ? Effect.succeed({ started: true, code: 1, interrupted: false, signal: null })
+              : key === "startup-wait-error"
+                ? Effect.fail(new Error("wait failed"))
+                : Effect.never,
+          terminate: () =>
+            Effect.sync(() => {
+              fixture.terminateCount += 1;
+              fixture.alive = false;
+            }),
+        };
+      }),
+    isHealthy: () => Effect.succeed(fixture.healthy),
+    isProcessHealthy: () => Effect.succeed(fixture.healthy),
+    isAlive: () => Effect.succeed(fixture.alive),
+    signal: () =>
+      Effect.sync(() => {
+        fixture.signalCount += 1;
+        if (key !== "stop-timeout") fixture.alive = false;
+        if (fixture.healthyAfterStop) fixture.healthy = true;
+        else fixture.healthy = false;
+      }),
+    readPidRecord: () => Effect.succeed(fixture.record),
+    writePidRecord: () => Effect.succeed(undefined),
+    removePidRecord: () =>
+      Effect.sync(() => {
+        fixture.removePidCount += 1;
+        fixture.record = undefined;
+      }),
+    writeRestartMarker: (_pidFile, refreshServers) =>
+      Effect.sync(() => {
+        fixture.markerWrites.push(refreshServers);
+      }),
+    hasRestartMarker: () => Effect.succeed(false),
+    consumeRestartMarker: () => Effect.succeed(undefined),
+    removeRestartMarker: () => Effect.succeed(undefined),
   };
   const timing = {
     runtime,
     clock: { now: () => fixture.now },
     scheduler: {
-      sleep: async (milliseconds: number) => {
-        fixture.sleeps.push(milliseconds);
-        fixture.now += milliseconds;
-      },
+      sleep: (milliseconds: number) =>
+        Effect.sync(() => {
+          fixture.sleeps.push(milliseconds);
+          fixture.now += milliseconds;
+        }),
     },
     lifecycleTimeoutMs: 100,
   };

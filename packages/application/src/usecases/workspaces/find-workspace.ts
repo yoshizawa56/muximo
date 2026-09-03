@@ -1,29 +1,28 @@
-import type { WorkspaceRecord } from "@muximo/domain";
-import type { WorkspaceRepository } from "../../ports/repositories.js";
-import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
+import { Effect, Result } from "effect";
+import type { WorkspaceDirectoryInfo } from "../../ports/workspace.js";
 import { WorkspaceNotFoundError, WorkspaceUseCaseError } from "./workspace-errors.js";
+import { WorkspaceDirectoryService, WorkspaceRepositoryService } from "./workspace-services.js";
 
 /**
  * Resolves a workspace by registered path or unique name. Shared by the
  * workspace mutations that accept free-form selectors.
  */
-export async function findWorkspace(
-  workspaces: WorkspaceRepository,
-  directories: WorkspaceDirectoryPort,
-  selector: string,
-): Promise<WorkspaceRecord> {
+export const findWorkspace = Effect.fn("Workspaces.find")(function* (selector: string) {
+  const workspaces = yield* WorkspaceRepositoryService;
+  const directories = yield* WorkspaceDirectoryService;
   const reference = selector.trim();
-  if (!reference) throw new WorkspaceNotFoundError(selector);
-  const records = await workspaces.list();
+  if (!reference) return yield* Effect.fail(new WorkspaceNotFoundError(selector));
+  const records = yield* workspaces.list();
 
-  let resolved: Awaited<ReturnType<WorkspaceDirectoryPort["resolveDirectory"]>> | undefined;
-  try {
-    resolved = await directories.resolveDirectory(reference);
-  } catch (error) {
+  let resolved: WorkspaceDirectoryInfo | undefined;
+  const directoryResult = yield* Effect.result(directories.resolveDirectory(reference));
+  if (Result.isFailure(directoryResult)) {
     // A selector is commonly a workspace name. Directory resolution is only
     // a fallback for path selectors, so only an adapter-declared invalid
     // directory selector may fall through to name matching.
-    if (!isInvalidDirectorySelectorError(error)) throw error;
+    if (!isInvalidDirectorySelectorError(directoryResult.failure)) return yield* Effect.fail(directoryResult.failure);
+  } else {
+    resolved = directoryResult.success;
   }
   if (resolved) {
     const byPath = records.find(
@@ -36,14 +35,16 @@ export async function findWorkspace(
   const [workspace] = byName;
   if (byName.length === 1 && workspace) return workspace;
   if (byName.length > 1) {
-    throw new WorkspaceUseCaseError(
-      "workspace_name_ambiguous",
-      `workspace name is ambiguous; select its path: ${reference}`,
-      { selector: reference },
+    return yield* Effect.fail(
+      new WorkspaceUseCaseError(
+        "workspace_name_ambiguous",
+        `workspace name is ambiguous; select its path: ${reference}`,
+        { selector: reference },
+      ),
     );
   }
-  throw new WorkspaceNotFoundError(reference);
-}
+  return yield* Effect.fail(new WorkspaceNotFoundError(reference));
+});
 
 function isInvalidDirectorySelectorError(error: unknown): boolean {
   return (

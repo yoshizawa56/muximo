@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
+import { Workspace, WorkspaceId } from "@muximo/domain";
 import {
   type FixtureHandle,
   hasError,
@@ -9,9 +9,11 @@ import {
   hasObserved,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import {
   createAgentDatabase,
@@ -83,26 +85,28 @@ const table: OperationTable<Fixture, "default" | "two-database", Input, number, 
   defaultFixture: createFixture,
   fixtures: { default: createFixture, "two-database": createTwoDatabaseFixture },
   cases,
-  execute: async (fixture, input) => {
+  execute: (fixture, input) => {
     if (input.mode === "cross-database") {
-      return fixture.manager.run(async () => {
-        await fixture.otherRepository!.list();
-        return 0;
-      });
+      return fixture.manager.run(
+        Effect.gen(function* () {
+          yield* fixture.otherRepository!.list();
+          return 0;
+        }),
+      );
     }
-    return fixture.manager.run(async () => {
-      await fixture.repository.upsert(createWorkspace(input.id, input.mode === "nested" ? "nested" : "commit"));
-      if (input.mode === "rollback") throw new Error("rollback requested");
-      if (input.mode === "nested") {
-        await fixture.manager.run(async () => {
-          await fixture.repository.upsert(createWorkspace(`${input.id}-child`, "nested-child"));
-        });
-      }
-      return (await fixture.repository.list()).length;
-    });
+    return fixture.manager.run(
+      Effect.gen(function* () {
+        yield* fixture.repository.upsert(createWorkspace(input.id, input.mode === "nested" ? "nested" : "commit"));
+        if (input.mode === "rollback") return yield* Effect.fail(new Error("rollback requested"));
+        if (input.mode === "nested") {
+          yield* fixture.manager.run(fixture.repository.upsert(createWorkspace(`${input.id}-child`, "nested-child")));
+        }
+        return (yield* fixture.repository.list()).length;
+      }),
+    );
   },
   observe: async (fixture) => {
-    const records = await fixture.repository.list();
+    const records = await resolveMaybePromise(fixture.repository.list());
     return { count: records.length, names: records.map((record) => record.name) };
   },
 };
@@ -159,13 +163,11 @@ function createTwoDatabaseFixture(): FixtureHandle<Fixture> {
   };
 }
 
-function createWorkspace(id: string, name: string): WorkspaceRecord {
+function createWorkspace(id: string, name: string): Workspace {
   return Workspace.create({
     id: WorkspaceId.create(id),
     rootPath: `/tmp/${id}`,
     name,
     isGit: false,
-    createdAt: "2026-08-22T00:00:00.000Z",
-    updatedAt: "2026-08-22T00:00:00.000Z",
   });
 }

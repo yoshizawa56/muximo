@@ -1,4 +1,4 @@
-import type { CaseScope } from "@muximo/test-support";
+import { type CaseScope, type MaybePromise, resolveMaybePromise } from "@muximo/test-support";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import type { AgentDatabase } from "../index.js";
 import { runWithSqliteTransaction, type SqliteTransactionScope } from "../transaction-context.js";
@@ -15,7 +15,7 @@ export function createSqliteRollbackScope(root: AgentDatabase): { caseScope: Cas
   let tail = Promise.resolve();
   let closed = false;
 
-  const caseScope: CaseScope = async <Result>(operation: () => Result | PromiseLike<Result>): Promise<Result> => {
+  const caseScope: CaseScope = async <Result>(operation: () => MaybePromise<Result>): Promise<Result> => {
     if (closed) throw new Error("SQLite test scope is closed");
     const release = await acquire();
     try {
@@ -28,7 +28,7 @@ export function createSqliteRollbackScope(root: AgentDatabase): { caseScope: Cas
         sqlite,
       };
       try {
-        const result = await runWithSqliteTransaction(scope, async () => await operation());
+        const result = await runWithSqliteTransaction(scope, async () => resolveMaybePromise(operation()));
         rollback(sqlite);
         return result;
       } catch (error) {

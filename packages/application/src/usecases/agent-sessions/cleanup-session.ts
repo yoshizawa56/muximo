@@ -1,4 +1,5 @@
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
+import { Effect } from "effect";
 import type {
   CleanupAgentSessionInput,
   CleanupAgentSessionResult,
@@ -12,6 +13,7 @@ import type {
   SessionResourcePort,
   WorktreePort,
 } from "../../ports/agent-sessions.js";
+import { ApplicationFailure } from "../../ports/application.js";
 import type { LocateAgentSession } from "./locate-session.js";
 import { updateAgentSession } from "./session-updates.js";
 
@@ -32,98 +34,144 @@ export type CleanupAgentSessionDependencies = {
 export class CleanupAgentSession {
   public constructor(private readonly deps: CleanupAgentSessionDependencies) {}
 
-  public async execute(input: CleanupAgentSessionInput): Promise<CleanupAgentSessionResult> {
-    const session = await this.deps.locator.execute({
-      reference: input.reference,
-      workspaceScope: input.workspaceScope,
-    });
-    if (session.status === "recovering") {
-      throw new Error(`session '${session.name}' is being recovered`);
-    }
-    const providerLiveness =
-      session.executionPid === undefined
-        ? undefined
-        : await this.deps.process.observe(session.executionPid, session.executionStartedAt);
-    if (providerLiveness === "alive") {
-      throw new Error(`session '${session.name}' is still running (pid ${session.executionPid})`);
-    }
-    if (providerLiveness === "unknown") {
-      throw new Error(`could not verify whether session '${session.name}' is still running`);
-    }
-    const ownerLiveness =
-      session.executionOwnerPid === undefined
-        ? undefined
-        : await this.deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
-    if (session.executionOwnerPid !== undefined && isLiveExecutionState(session.status) && ownerLiveness === "alive") {
-      throw new Error(`session '${session.name}' is still owned by its CLI process (pid ${session.executionOwnerPid})`);
-    }
-    if (
-      session.executionOwnerPid !== undefined &&
-      isLiveExecutionState(session.status) &&
-      ownerLiveness === "unknown"
-    ) {
-      throw new Error(`could not verify whether session '${session.name}' is still owned by its CLI process`);
-    }
-    if (
-      isActiveState(session.status) &&
-      session.executionPid === undefined &&
-      session.executionOwnerPid === undefined
-    ) {
-      throw new Error(`session '${session.name}' has an active execution that has not attached a process`);
-    }
-    if (session.useWorktree && session.worktreePath && !(await this.deps.worktrees.isRegistered(session))) {
-      throw new Error(
-        `managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`,
-      );
-    }
+  public readonly execute = Effect.fn("AgentSessions.cleanup")(
+    { self: this },
+    function* (this: CleanupAgentSession, input: CleanupAgentSessionInput) {
+      const deps = this.deps;
+      const session = yield* deps.locator.execute({
+        reference: input.reference,
+        workspaceScope: input.workspaceScope,
+      });
+      if (session.status === "recovering") {
+        return yield* Effect.fail(
+          new ApplicationFailure("agent_session_being_recovered", `session '${session.name}' is being recovered`),
+        );
+      }
+      const providerLiveness =
+        session.executionPid === undefined
+          ? undefined
+          : yield* deps.process.observe(session.executionPid, session.executionStartedAt);
+      if (providerLiveness === "alive") {
+        return yield* Effect.fail(
+          new ApplicationFailure(
+            "resume_already_running",
+            `session '${session.name}' is still running (pid ${session.executionPid})`,
+          ),
+        );
+      }
+      if (providerLiveness === "unknown") {
+        return yield* Effect.fail(
+          new ApplicationFailure(
+            "agent_session_liveness_unverifiable",
+            `could not verify whether session '${session.name}' is still running`,
+          ),
+        );
+      }
+      const ownerLiveness =
+        session.executionOwnerPid === undefined
+          ? undefined
+          : yield* deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
+      if (
+        session.executionOwnerPid !== undefined &&
+        isLiveExecutionState(session.status) &&
+        ownerLiveness === "alive"
+      ) {
+        return yield* Effect.fail(
+          new ApplicationFailure(
+            "resume_owned_by_cli",
+            `session '${session.name}' is still owned by its CLI process (pid ${session.executionOwnerPid})`,
+          ),
+        );
+      }
+      if (
+        session.executionOwnerPid !== undefined &&
+        isLiveExecutionState(session.status) &&
+        ownerLiveness === "unknown"
+      ) {
+        return yield* Effect.fail(
+          new ApplicationFailure(
+            "resume_owner_unverifiable",
+            `could not verify whether session '${session.name}' is still owned by its CLI process`,
+          ),
+        );
+      }
+      if (
+        isActiveState(session.status) &&
+        session.executionPid === undefined &&
+        session.executionOwnerPid === undefined
+      ) {
+        return yield* Effect.fail(
+          new ApplicationFailure(
+            "resume_execution_unattached",
+            `session '${session.name}' has an active execution that has not attached a process`,
+          ),
+        );
+      }
+      if (session.useWorktree && session.worktreePath && !(yield* deps.worktrees.isRegistered(session))) {
+        return yield* Effect.fail(
+          new ApplicationFailure(
+            "worktree_not_registered",
+            `managed path is not registered as a git worktree; refusing to delete it: ${session.worktreePath}`,
+          ),
+        );
+      }
 
-    const dirty = session.useWorktree ? await this.deps.worktrees.hasChanges(session) : false;
-    let force = input.force;
-    if (session.useWorktree && !force && !(await this.deps.confirmCleanup.confirm(session, dirty))) {
-      return { session, cleanup: { disposition: "retained", reason: "cleanup_declined" } };
-    }
-    if (dirty) force = true;
+      const dirty = session.useWorktree ? yield* deps.worktrees.hasChanges(session) : false;
+      let force = input.force;
+      if (session.useWorktree && !force && !(yield* deps.confirmCleanup.confirm(session, dirty))) {
+        const retained: CleanupAgentSessionResult = {
+          session,
+          cleanup: { disposition: "retained", reason: "cleanup_declined" },
+        };
+        return retained;
+      }
+      if (dirty) force = true;
 
-    const result = await this.removeResources(session, force);
-    return { session, cleanup: result };
-  }
-
-  private async removeResources(session: AgentSessionRecord, force: boolean) {
-    const archiveRemote = session.backendSessionId !== undefined;
-    if (archiveRemote && !(await this.deps.remote.archive(session))) {
-      return { disposition: "failed" as const, reason: "remote_archive_failed" as const };
-    }
-
-    const hook = await this.deps.hooks.run(session, "cleanup");
-    const updated = hook.sessionUpdate ? updateAgentSession(session, hook.sessionUpdate, this.deps.clock) : session;
-    if (hook.sessionUpdate) await this.deps.sessions.update(updated);
-    if (!hook.success) {
-      const restored = !archiveRemote || (await this.deps.remote.restore(updated));
-      return {
-        disposition: "failed" as const,
-        reason: restored ? ("cleanup_hook_failed" as const) : ("remote_restore_failed" as const),
-      };
-    }
-
-    const result = await this.deps.worktrees.remove(updated, force);
-    if (result.disposition !== "removed") {
-      const restored = !archiveRemote || (await this.deps.remote.restore(updated));
-      return restored ? result : { disposition: "failed" as const, reason: "remote_restore_failed" as const };
-    }
-
-    await this.deps.sessions.delete(updated.id);
-    await this.deps.audit.record("agent_session.deleted", updated.id, { name: updated.name });
-    await this.deps.hooks.removeOutputs(updated);
-    const remaining = await this.deps.sessions.list(updated.workspaceId);
-    await this.deps.resources.releaseIfUnused(updated, remaining);
-    return result;
-  }
+      const result = yield* removeResources(deps, session, force);
+      return { session, cleanup: result };
+    },
+  );
 }
 
-function isActiveState(status: AgentSessionRecord["status"]): boolean {
+const removeResources = Effect.fn("AgentSessions.removeResources")(function* (
+  deps: CleanupAgentSessionDependencies,
+  session: AgentSession,
+  force: boolean,
+) {
+  const archiveRemote = session.backendSessionId !== undefined;
+  if (archiveRemote && !(yield* deps.remote.archive(session))) {
+    return { disposition: "failed" as const, reason: "remote_archive_failed" as const };
+  }
+
+  const hook = yield* deps.hooks.run(session, "cleanup");
+  const updated = hook.sessionUpdate ? yield* updateAgentSession(session, hook.sessionUpdate, deps.clock) : session;
+  if (hook.sessionUpdate) yield* deps.sessions.update(updated);
+  if (!hook.success) {
+    const restored = !archiveRemote || (yield* deps.remote.restore(updated));
+    return {
+      disposition: "failed" as const,
+      reason: restored ? ("cleanup_hook_failed" as const) : ("remote_restore_failed" as const),
+    };
+  }
+
+  const result = yield* deps.worktrees.remove(updated, force);
+  if (result.disposition !== "removed") {
+    const restored = !archiveRemote || (yield* deps.remote.restore(updated));
+    return restored ? result : { disposition: "failed" as const, reason: "remote_restore_failed" as const };
+  }
+
+  yield* deps.sessions.delete(updated.id);
+  yield* deps.audit.record("agent_session.deleted", updated.id, { name: updated.name });
+  yield* deps.hooks.removeOutputs(updated);
+  const remaining = yield* deps.sessions.list(updated.workspaceId);
+  yield* deps.resources.releaseIfUnused(updated, remaining);
+  return result;
+});
+
+function isActiveState(status: AgentSession["status"]): boolean {
   return status === "running" || status === "resuming";
 }
 
-function isLiveExecutionState(status: AgentSessionRecord["status"]): boolean {
+function isLiveExecutionState(status: AgentSession["status"]): boolean {
   return status !== "interrupted" && status !== "exited";
 }

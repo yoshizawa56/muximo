@@ -1,9 +1,9 @@
 import { createInterface } from "node:readline/promises";
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
 
 export async function confirmCleanup(
   environment: NodeJS.ProcessEnv,
-  session: AgentSessionRecord,
+  session: Pick<AgentSession, "name" | "worktreePath">,
   dirty?: boolean,
 ): Promise<boolean> {
   if (environment.MUXIMO_ASSUME_YES === "1") return true;

@@ -12,13 +12,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { CleanupResult } from "@muximo/application";
-import { AgentSession, AgentSessionId, type AgentSessionRecord, Workspace, WorkspaceId } from "@muximo/domain";
+import type { CleanupResult, ManagedWorktreeState } from "@muximo/application";
+import { AgentSession, AgentSessionId, Workspace, WorkspaceId } from "@muximo/domain";
 import {
   hasError,
   hasObserved,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   returns,
   runOperationTable,
   runScenarioTable,
@@ -37,8 +38,8 @@ type WorktreeFixture = {
   environment: NodeJS.ProcessEnv;
   adapter: GitWorktreeAdapter;
   workspace: ReturnType<typeof Workspace.create>;
-  session?: AgentSessionRecord;
-  created?: Awaited<ReturnType<GitWorktreeAdapter["create"]>>;
+  session?: AgentSession;
+  created?: ManagedWorktreeState;
   failedWorktreePath?: string;
   cleanup?: CleanupResult;
   shellPathExists?: boolean;
@@ -150,7 +151,7 @@ const lifecycleTable: ScenarioTable<
   execute: async (fixture, steps) => {
     for (const step of steps) {
       if (step.kind === "create") {
-        fixture.created = await fixture.adapter.create(fixture.workspace, step.name);
+        fixture.created = await resolveMaybePromise(fixture.adapter.create(fixture.workspace, step.name));
         fixture.session = createSession(fixture, fixture.created);
         continue;
       }
@@ -163,7 +164,7 @@ const lifecycleTable: ScenarioTable<
       }
       if (step.kind === "remove") {
         if (!fixture.session) throw new Error("test session was not created");
-        fixture.cleanup = await fixture.adapter.remove(fixture.session, step.force);
+        fixture.cleanup = await resolveMaybePromise(fixture.adapter.remove(fixture.session, step.force));
         continue;
       }
       if (step.kind === "remove-shell") {
@@ -314,10 +315,12 @@ const copyTable: OperationTable<WorktreeFixture, CopyFixtureKey, CopyInput, bool
   cases: copyCases,
   execute: async (fixture) => {
     if (!fixture.created?.worktreePath) throw new Error("copy fixture worktree is missing");
-    fixture.copyResult = await fixture.adapter.copyFiles({
-      workspaceRoot: fixture.workspaceRoot,
-      worktreePath: fixture.created.worktreePath,
-    });
+    fixture.copyResult = await resolveMaybePromise(
+      fixture.adapter.copyFiles({
+        workspaceRoot: fixture.workspaceRoot,
+        worktreePath: fixture.created.worktreePath,
+      }),
+    );
     return fixture.copyResult;
   },
   observe: (fixture) => ({
@@ -489,8 +492,6 @@ exec ${shellQuote(realGit)} "$@"
     rootPath: workspaceRoot,
     name: "workspace",
     isGit: true,
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
   });
   return {
     root,
@@ -526,7 +527,7 @@ function arrangeRawWorktree(fixture: WorktreeFixture, name: string): void {
 function createSession(
   fixture: WorktreeFixture,
   worktree: Pick<NonNullable<WorktreeFixture["created"]>, "worktreeRoot" | "worktreePath" | "branch" | "baseCommit">,
-): AgentSessionRecord {
+): AgentSession {
   return AgentSession.create({
     id: AgentSessionId.create("session-id"),
     name: "session",
@@ -539,8 +540,7 @@ function createSession(
     useWorktree: true,
     setupRan: false,
     resuming: false,
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
+    lastActivityAt: "2026-08-23T00:00:00.000Z",
   });
 }
 

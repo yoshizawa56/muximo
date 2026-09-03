@@ -1,10 +1,7 @@
-import type { WorkspaceRecord } from "@muximo/domain";
-import type { WorkspaceRepository } from "../../ports/repositories.js";
+import { Effect } from "effect";
+import { WorkspaceRepositoryService } from "./workspace-services.js";
 
-export class ListWorkspaces {
-  public constructor(private readonly workspaces: WorkspaceRepository) {}
-
-  public execute(): Promise<WorkspaceRecord[]> {
-    return this.workspaces.list();
-  }
-}
+export const listWorkspaces = Effect.fn("Workspaces.list")(function* () {
+  const workspaces = yield* WorkspaceRepositoryService;
+  return yield* workspaces.list();
+});

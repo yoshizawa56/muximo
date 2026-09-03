@@ -10,7 +10,7 @@ import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 export type WorkspacesStatus = "loading" | "ready" | "error";
 
 export type WorkspacesListViewModel = {
-  workspaces: WorkspaceDirectory[];
+  workspaces: readonly WorkspaceDirectory[];
   status: WorkspacesStatus;
   query: string;
   errorMessage: string | null;
@@ -24,7 +24,7 @@ export type WorkspacesListViewModel = {
 
 export type WorkspaceDetailViewModel = {
   workspace: WorkspaceDirectory | null;
-  workspaces: WorkspaceDirectory[];
+  workspaces: readonly WorkspaceDirectory[];
   status: WorkspacesStatus;
   name: string;
   setupScriptPath: string;
@@ -42,7 +42,10 @@ export type WorkspaceDetailViewModel = {
   onBack: () => void;
 };
 
-export function filterWorkspaces(workspaces: WorkspaceDirectory[], query: string): WorkspaceDirectory[] {
+export function filterWorkspaces(
+  workspaces: readonly WorkspaceDirectory[],
+  query: string,
+): readonly WorkspaceDirectory[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return workspaces;
   return workspaces.filter(

@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  type ApplicationEffect,
   type AuthDeviceRecord,
   type AuthPairingRecord,
   type AuthPairingStatus,
@@ -16,6 +17,7 @@ import {
   type PublicKeyJwk,
 } from "@muximo/application";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { fromPromise } from "../../../effect.js";
 import { authDevices, authMetadata, authPairings, authSessions } from "../../auth-schema.js";
 import type { AgentDrizzleDatabase } from "../../database-types.js";
 import { runSqliteTransaction } from "../../transaction.js";
@@ -54,252 +56,280 @@ export class AuthStore implements AuthStorePort {
     this.serverId = this.initializeServerId();
   }
 
-  public async createPairing(input: CreatePairingInput): Promise<CreatePairingResult> {
-    const pairingId = randomOpaque(16);
-    this.db()
-      .insert(authPairings)
-      .values({
+  public createPairing(input: CreatePairingInput): ApplicationEffect<CreatePairingResult> {
+    return fromPromise(() => {
+      const pairingId = randomOpaque(16);
+      this.db()
+        .insert(authPairings)
+        .values({
+          pairingId,
+          serverId: this.serverId,
+          muximodBaseUrl: input.muximodBaseUrl,
+          secretHash: hashOpaque(input.secret),
+          status: "offered",
+          offeredAt: timestamp(),
+          expiresAt: input.expiresAt,
+        })
+        .run();
+      return {
         pairingId,
         serverId: this.serverId,
+        secret: input.secret,
         muximodBaseUrl: input.muximodBaseUrl,
-        secretHash: hashOpaque(input.secret),
-        status: "offered",
-        offeredAt: timestamp(),
         expiresAt: input.expiresAt,
-      })
-      .run();
-    return {
-      pairingId,
-      serverId: this.serverId,
-      secret: input.secret,
-      muximodBaseUrl: input.muximodBaseUrl,
-      expiresAt: input.expiresAt,
-    };
-  }
-
-  public async findPairing(pairingId: string): Promise<AuthPairingRecord | undefined> {
-    return this.findPairingRecord(pairingId);
-  }
-
-  public async claimPairing(input: ClaimPairingInput): Promise<ClaimPairingResult> {
-    const claim = this.runTransaction(() => {
-      const row = this.db().select().from(authPairings).where(eq(authPairings.pairingId, input.pairingId)).get();
-      if (!row) throw new AuthStoreError("pairing_not_found", "pairing was not found");
-      const pairing = toPairingRecord(row);
-      if (pairing.serverId !== this.serverId)
-        throw new AuthStoreError("wrong_server", "pairing belongs to another authentication realm");
-      if (pairing.status !== "offered")
-        throw new AuthStoreError("pairing_unavailable", "pairing is no longer available");
-      if (isExpired(pairing.expiresAt)) {
-        this.db()
-          .update(authPairings)
-          .set({ status: "expired" })
-          .where(eq(authPairings.pairingId, input.pairingId))
-          .run();
-        throw new AuthStoreError("pairing_expired", "pairing has expired");
-      }
-      if (!timingSafeEqualText(row.secretHash, input.secretHash))
-        throw new AuthStoreError("pairing_invalid", "pairing secret is invalid");
-
-      const updated = this.db()
-        .update(authPairings)
-        .set({
-          claimTokenHash: hashOpaque(input.claimToken),
-          status: "awaiting_approval",
-          claimExpiresAt: input.claimExpiresAt,
-          claimedAt: timestamp(),
-          pendingPublicKeyJwk: JSON.stringify(input.publicKey),
-          pendingFingerprint: input.keyFingerprint,
-          pendingDisplayName: input.displayName,
-          pendingDeviceType: input.deviceType,
-          pendingPlatform: input.platform ?? null,
-          pendingClientVersion: input.clientVersion ?? null,
-        })
-        .where(and(eq(authPairings.pairingId, input.pairingId), eq(authPairings.status, "offered")))
-        .returning({ pairingId: authPairings.pairingId })
-        .all();
-      if (updated.length === 0) throw new AuthStoreError("pairing_race", "pairing was claimed by another client");
-
-      const updatedRow = this.db().select().from(authPairings).where(eq(authPairings.pairingId, input.pairingId)).get();
-      if (updatedRow?.status !== "awaiting_approval")
-        throw new AuthStoreError("pairing_race", "pairing was claimed by another client");
-      return toPairingRecord(updatedRow);
+      };
     });
-
-    return { pairing: claim, claimToken: input.claimToken };
   }
 
-  public async getPairingStatus(
+  public findPairing(pairingId: string): ApplicationEffect<AuthPairingRecord | undefined> {
+    return fromPromise(() => this.findPairingRecord(pairingId));
+  }
+
+  public claimPairing(input: ClaimPairingInput): ApplicationEffect<ClaimPairingResult> {
+    return fromPromise(() => {
+      const claim = this.runTransaction(() => {
+        const row = this.db().select().from(authPairings).where(eq(authPairings.pairingId, input.pairingId)).get();
+        if (!row) throw new AuthStoreError("pairing_not_found", "pairing was not found");
+        const pairing = toPairingRecord(row);
+        if (pairing.serverId !== this.serverId)
+          throw new AuthStoreError("wrong_server", "pairing belongs to another authentication realm");
+        if (pairing.status !== "offered")
+          throw new AuthStoreError("pairing_unavailable", "pairing is no longer available");
+        if (isExpired(pairing.expiresAt)) {
+          this.db()
+            .update(authPairings)
+            .set({ status: "expired" })
+            .where(eq(authPairings.pairingId, input.pairingId))
+            .run();
+          throw new AuthStoreError("pairing_expired", "pairing has expired");
+        }
+        if (!timingSafeEqualText(row.secretHash, input.secretHash))
+          throw new AuthStoreError("pairing_invalid", "pairing secret is invalid");
+
+        const updated = this.db()
+          .update(authPairings)
+          .set({
+            claimTokenHash: hashOpaque(input.claimToken),
+            status: "awaiting_approval",
+            claimExpiresAt: input.claimExpiresAt,
+            claimedAt: timestamp(),
+            pendingPublicKeyJwk: JSON.stringify(input.publicKey),
+            pendingFingerprint: input.keyFingerprint,
+            pendingDisplayName: input.displayName,
+            pendingDeviceType: input.deviceType,
+            pendingPlatform: input.platform ?? null,
+            pendingClientVersion: input.clientVersion ?? null,
+          })
+          .where(and(eq(authPairings.pairingId, input.pairingId), eq(authPairings.status, "offered")))
+          .returning({ pairingId: authPairings.pairingId })
+          .all();
+        if (updated.length === 0) throw new AuthStoreError("pairing_race", "pairing was claimed by another client");
+
+        const updatedRow = this.db()
+          .select()
+          .from(authPairings)
+          .where(eq(authPairings.pairingId, input.pairingId))
+          .get();
+        if (updatedRow?.status !== "awaiting_approval")
+          throw new AuthStoreError("pairing_race", "pairing was claimed by another client");
+        return toPairingRecord(updatedRow);
+      });
+
+      return { pairing: claim, claimToken: input.claimToken };
+    });
+  }
+
+  public getPairingStatus(
     pairingId: string,
     claimToken: string,
-  ): Promise<{ status: AuthPairingStatus; deviceId?: string }> {
-    const pairing = this.findPairingRecord(pairingId);
-    if (!pairing) throw new AuthStoreError("pairing_not_found", "pairing was not found");
-    const row = this.db()
-      .select({ claimTokenHash: authPairings.claimTokenHash, claimExpiresAt: authPairings.claimExpiresAt })
-      .from(authPairings)
-      .where(eq(authPairings.pairingId, pairingId))
-      .get();
-    if (!row?.claimTokenHash || !timingSafeEqualText(row.claimTokenHash, hashOpaque(claimToken))) {
-      throw new AuthStoreError("claim_token_invalid", "claim token is invalid");
-    }
-    if (!row.claimExpiresAt || isExpired(row.claimExpiresAt))
-      throw new AuthStoreError("claim_token_expired", "claim token has expired");
-    return { status: pairing.status, ...(pairing.deviceId === undefined ? {} : { deviceId: pairing.deviceId }) };
-  }
-
-  public async approvePairing(pairingId: string): Promise<AuthDeviceRecord> {
-    return this.runTransaction(() => {
-      const row = this.db().select().from(authPairings).where(eq(authPairings.pairingId, pairingId)).get();
-      if (!row) throw new AuthStoreError("pairing_not_found", "pairing was not found");
-      const pairing = toPairingRecord(row);
-      if (pairing.status !== "awaiting_approval" || !pairing.pendingPublicKey || !pairing.pendingFingerprint) {
-        throw new AuthStoreError("pairing_not_awaiting_approval", "pairing is not awaiting approval");
-      }
-      if (!pairing.claimExpiresAt || isExpired(pairing.claimExpiresAt)) {
-        this.db().update(authPairings).set({ status: "expired" }).where(eq(authPairings.pairingId, pairingId)).run();
-        throw new AuthStoreError("pairing_expired", "pairing approval has expired");
-      }
-
-      const deviceId = `device-${randomOpaque(16)}`;
-      const approvedAt = timestamp();
-      this.db()
-        .insert(authDevices)
-        .values({
-          deviceId,
-          serverId: pairing.serverId,
-          publicKeyJwk: JSON.stringify(pairing.pendingPublicKey),
-          keyFingerprint: pairing.pendingFingerprint,
-          displayName: pairing.pendingDisplayName ?? "Unnamed device",
-          deviceType: pairing.pendingDeviceType ?? "browser",
-          platform: pairing.pendingPlatform ?? null,
-          clientVersion: pairing.pendingClientVersion ?? null,
-          status: "active",
-          createdAt: approvedAt,
-          approvedAt,
-        })
-        .run();
-      this.db()
-        .update(authPairings)
-        .set({ status: "approved", approvedAt, deviceId })
+  ): ApplicationEffect<{ status: AuthPairingStatus; deviceId?: string }> {
+    return fromPromise(() => {
+      const pairing = this.findPairingRecord(pairingId);
+      if (!pairing) throw new AuthStoreError("pairing_not_found", "pairing was not found");
+      const row = this.db()
+        .select({ claimTokenHash: authPairings.claimTokenHash, claimExpiresAt: authPairings.claimExpiresAt })
+        .from(authPairings)
         .where(eq(authPairings.pairingId, pairingId))
-        .run();
-      const inserted = this.db().select().from(authDevices).where(eq(authDevices.deviceId, deviceId)).get();
-      if (!inserted) throw new AuthStoreError("device_registration_failed", "device registration failed");
-      return toDeviceRecord(inserted);
+        .get();
+      if (!row?.claimTokenHash || !timingSafeEqualText(row.claimTokenHash, hashOpaque(claimToken))) {
+        throw new AuthStoreError("claim_token_invalid", "claim token is invalid");
+      }
+      if (!row.claimExpiresAt || isExpired(row.claimExpiresAt))
+        throw new AuthStoreError("claim_token_expired", "claim token has expired");
+      return { status: pairing.status, ...(pairing.deviceId === undefined ? {} : { deviceId: pairing.deviceId }) };
     });
   }
 
-  public async rejectPairing(pairingId: string): Promise<void> {
-    const result = this.db()
-      .update(authPairings)
-      .set({ status: "rejected" })
-      .where(and(eq(authPairings.pairingId, pairingId), inArray(authPairings.status, ["offered", "awaiting_approval"])))
-      .returning({ pairingId: authPairings.pairingId })
-      .all();
-    if (result.length === 0) throw new AuthStoreError("pairing_not_rejectable", "pairing is no longer pending");
+  public approvePairing(pairingId: string): ApplicationEffect<AuthDeviceRecord> {
+    return fromPromise(() =>
+      this.runTransaction(() => {
+        const row = this.db().select().from(authPairings).where(eq(authPairings.pairingId, pairingId)).get();
+        if (!row) throw new AuthStoreError("pairing_not_found", "pairing was not found");
+        const pairing = toPairingRecord(row);
+        if (pairing.status !== "awaiting_approval" || !pairing.pendingPublicKey || !pairing.pendingFingerprint) {
+          throw new AuthStoreError("pairing_not_awaiting_approval", "pairing is not awaiting approval");
+        }
+        if (!pairing.claimExpiresAt || isExpired(pairing.claimExpiresAt)) {
+          this.db().update(authPairings).set({ status: "expired" }).where(eq(authPairings.pairingId, pairingId)).run();
+          throw new AuthStoreError("pairing_expired", "pairing approval has expired");
+        }
+
+        const deviceId = `device-${randomOpaque(16)}`;
+        const approvedAt = timestamp();
+        this.db()
+          .insert(authDevices)
+          .values({
+            deviceId,
+            serverId: pairing.serverId,
+            publicKeyJwk: JSON.stringify(pairing.pendingPublicKey),
+            keyFingerprint: pairing.pendingFingerprint,
+            displayName: pairing.pendingDisplayName ?? "Unnamed device",
+            deviceType: pairing.pendingDeviceType ?? "browser",
+            platform: pairing.pendingPlatform ?? null,
+            clientVersion: pairing.pendingClientVersion ?? null,
+            status: "active",
+            createdAt: approvedAt,
+            approvedAt,
+          })
+          .run();
+        this.db()
+          .update(authPairings)
+          .set({ status: "approved", approvedAt, deviceId })
+          .where(eq(authPairings.pairingId, pairingId))
+          .run();
+        const inserted = this.db().select().from(authDevices).where(eq(authDevices.deviceId, deviceId)).get();
+        if (!inserted) throw new AuthStoreError("device_registration_failed", "device registration failed");
+        return toDeviceRecord(inserted);
+      }),
+    );
   }
 
-  public async findDevice(deviceId: string): Promise<AuthDeviceRecord | undefined> {
-    return this.findDeviceRecord(deviceId);
+  public rejectPairing(pairingId: string): ApplicationEffect<void> {
+    return fromPromise(() => {
+      const result = this.db()
+        .update(authPairings)
+        .set({ status: "rejected" })
+        .where(
+          and(eq(authPairings.pairingId, pairingId), inArray(authPairings.status, ["offered", "awaiting_approval"])),
+        )
+        .returning({ pairingId: authPairings.pairingId })
+        .all();
+      if (result.length === 0) throw new AuthStoreError("pairing_not_rejectable", "pairing is no longer pending");
+    });
   }
 
-  public async createSession(input: {
+  public findDevice(deviceId: string): ApplicationEffect<AuthDeviceRecord | undefined> {
+    return fromPromise(() => this.findDeviceRecord(deviceId));
+  }
+
+  public createSession(input: {
     sessionId: string;
     token: string;
     deviceId: string;
     expiresAt: string;
-  }): Promise<AuthSessionRecord> {
-    const device = this.findDeviceRecord(input.deviceId);
-    if (device?.status !== "active") throw new AuthStoreError("device_inactive", "device is not active");
-    const issuedAt = timestamp();
-    this.db()
-      .insert(authSessions)
-      .values({
+  }): ApplicationEffect<AuthSessionRecord> {
+    return fromPromise(() => {
+      const device = this.findDeviceRecord(input.deviceId);
+      if (device?.status !== "active") throw new AuthStoreError("device_inactive", "device is not active");
+      const issuedAt = timestamp();
+      this.db()
+        .insert(authSessions)
+        .values({
+          sessionId: input.sessionId,
+          serverId: device.serverId,
+          deviceId: input.deviceId,
+          tokenHash: hashOpaque(input.token),
+          issuedAt,
+          expiresAt: input.expiresAt,
+        })
+        .run();
+      return {
         sessionId: input.sessionId,
         serverId: device.serverId,
         deviceId: input.deviceId,
-        tokenHash: hashOpaque(input.token),
         issuedAt,
         expiresAt: input.expiresAt,
-      })
-      .run();
-    return {
-      sessionId: input.sessionId,
-      serverId: device.serverId,
-      deviceId: input.deviceId,
-      issuedAt,
-      expiresAt: input.expiresAt,
-    };
+      };
+    });
   }
 
-  public async findSession(token: string): Promise<AuthSessionRecord | undefined> {
-    const now = timestamp();
-    const row = this.db()
-      .select({
-        sessionId: authSessions.sessionId,
-        serverId: authSessions.serverId,
-        deviceId: authSessions.deviceId,
-        issuedAt: authSessions.issuedAt,
-        expiresAt: authSessions.expiresAt,
-        revokedAt: authSessions.revokedAt,
-        deviceStatus: authDevices.status,
-      })
-      .from(authSessions)
-      .innerJoin(authDevices, eq(authDevices.deviceId, authSessions.deviceId))
-      .where(eq(authSessions.tokenHash, hashOpaque(token)))
-      .get();
-    if (row?.deviceStatus !== "active" || row.revokedAt || row.expiresAt <= now) return undefined;
-    this.db().update(authSessions).set({ lastUsedAt: now }).where(eq(authSessions.sessionId, row.sessionId)).run();
-    this.db().update(authDevices).set({ lastSeenAt: now }).where(eq(authDevices.deviceId, row.deviceId)).run();
-    return toSessionRecord(row);
+  public findSession(token: string): ApplicationEffect<AuthSessionRecord | undefined> {
+    return fromPromise(() => {
+      const now = timestamp();
+      const row = this.db()
+        .select({
+          sessionId: authSessions.sessionId,
+          serverId: authSessions.serverId,
+          deviceId: authSessions.deviceId,
+          issuedAt: authSessions.issuedAt,
+          expiresAt: authSessions.expiresAt,
+          revokedAt: authSessions.revokedAt,
+          deviceStatus: authDevices.status,
+        })
+        .from(authSessions)
+        .innerJoin(authDevices, eq(authDevices.deviceId, authSessions.deviceId))
+        .where(eq(authSessions.tokenHash, hashOpaque(token)))
+        .get();
+      if (row?.deviceStatus !== "active" || row.revokedAt || row.expiresAt <= now) return undefined;
+      this.db().update(authSessions).set({ lastUsedAt: now }).where(eq(authSessions.sessionId, row.sessionId)).run();
+      this.db().update(authDevices).set({ lastSeenAt: now }).where(eq(authDevices.deviceId, row.deviceId)).run();
+      return toSessionRecord(row);
+    });
   }
 
-  public async findSessionById(sessionId: string): Promise<AuthSessionRecord | undefined> {
-    const row = this.db()
-      .select({
-        sessionId: authSessions.sessionId,
-        serverId: authSessions.serverId,
-        deviceId: authSessions.deviceId,
-        issuedAt: authSessions.issuedAt,
-        expiresAt: authSessions.expiresAt,
-        revokedAt: authSessions.revokedAt,
-      })
-      .from(authSessions)
-      .where(eq(authSessions.sessionId, sessionId))
-      .get();
-    if (!row || row.revokedAt || row.expiresAt <= timestamp()) return undefined;
-    const device = this.findDeviceRecord(row.deviceId);
-    if (device?.status !== "active") return undefined;
-    return toSessionRecord(row);
+  public findSessionById(sessionId: string): ApplicationEffect<AuthSessionRecord | undefined> {
+    return fromPromise(() => {
+      const row = this.db()
+        .select({
+          sessionId: authSessions.sessionId,
+          serverId: authSessions.serverId,
+          deviceId: authSessions.deviceId,
+          issuedAt: authSessions.issuedAt,
+          expiresAt: authSessions.expiresAt,
+          revokedAt: authSessions.revokedAt,
+        })
+        .from(authSessions)
+        .where(eq(authSessions.sessionId, sessionId))
+        .get();
+      if (!row || row.revokedAt || row.expiresAt <= timestamp()) return undefined;
+      const device = this.findDeviceRecord(row.deviceId);
+      if (device?.status !== "active") return undefined;
+      return toSessionRecord(row);
+    });
   }
 
-  public async revokeSession(sessionId: string): Promise<void> {
-    this.db()
-      .update(authSessions)
-      .set({ revokedAt: timestamp() })
-      .where(and(eq(authSessions.sessionId, sessionId), isNull(authSessions.revokedAt)))
-      .run();
-  }
-
-  public async revokeDevice(deviceId: string): Promise<void> {
-    const now = timestamp();
-    this.runTransaction(() => {
-      this.db()
-        .update(authDevices)
-        .set({ status: "revoked", revokedAt: now })
-        .where(and(eq(authDevices.deviceId, deviceId), eq(authDevices.status, "active")))
-        .run();
+  public revokeSession(sessionId: string): ApplicationEffect<void> {
+    return fromPromise(() => {
       this.db()
         .update(authSessions)
-        .set({ revokedAt: now })
-        .where(and(eq(authSessions.deviceId, deviceId), isNull(authSessions.revokedAt)))
+        .set({ revokedAt: timestamp() })
+        .where(and(eq(authSessions.sessionId, sessionId), isNull(authSessions.revokedAt)))
         .run();
     });
   }
 
-  public async listDevices(): Promise<AuthDeviceRecord[]> {
-    return this.db().select().from(authDevices).orderBy(asc(authDevices.createdAt)).all().map(toDeviceRecord);
+  public revokeDevice(deviceId: string): ApplicationEffect<void> {
+    return fromPromise(() => {
+      const now = timestamp();
+      this.runTransaction(() => {
+        this.db()
+          .update(authDevices)
+          .set({ status: "revoked", revokedAt: now })
+          .where(and(eq(authDevices.deviceId, deviceId), eq(authDevices.status, "active")))
+          .run();
+        this.db()
+          .update(authSessions)
+          .set({ revokedAt: now })
+          .where(and(eq(authSessions.deviceId, deviceId), isNull(authSessions.revokedAt)))
+          .run();
+      });
+    });
+  }
+
+  public listDevices(): ApplicationEffect<AuthDeviceRecord[]> {
+    return fromPromise(() =>
+      this.db().select().from(authDevices).orderBy(asc(authDevices.createdAt)).all().map(toDeviceRecord),
+    );
   }
 
   private initializeServerId(): string {

@@ -7,7 +7,7 @@ import { useMuximodConnection } from "../../app/api/use-muximod-connection";
 
 export type TerminalsViewModel = {
   connectionName: string | null;
-  terminals: TerminalEndpoint[];
+  terminals: readonly TerminalEndpoint[];
   status?: "loading" | "ready" | "error";
   errorMessage?: string | null;
   onSelectTerminal: (terminal: TerminalEndpoint) => void;

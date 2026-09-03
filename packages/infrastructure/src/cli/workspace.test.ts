@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkspaceRepository, WorkspaceResolutionInput } from "@muximo/application";
-import { Workspace, type WorkspaceRecord } from "@muximo/domain";
+import { Workspace } from "@muximo/domain";
 import {
   hasError,
   hasObserved,
@@ -11,6 +11,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import { workspaceIdForPath } from "../workspace/selection.js";
 import { realpathSafe } from "./filesystem.js";
@@ -25,7 +26,7 @@ type WorkspaceFixture = {
 };
 
 type ResolverInput = WorkspaceResolutionInput;
-type ResolverResult = WorkspaceRecord;
+type ResolverResult = Workspace;
 type ResolverContext = {
   resolvedName: string;
   isTarget: boolean;
@@ -113,24 +114,20 @@ function createFixture(
     rootPath: realpathSafe(targetPath),
     name: "target",
     isGit: false,
-    createdAt: "2026-08-29T00:00:00.000Z",
-    updatedAt: "2026-08-29T00:00:00.000Z",
   });
   const other = Workspace.create({
     id: workspaceIdForPath(realpathSafe(otherPath)),
     rootPath: realpathSafe(otherPath),
     name: "other",
     isGit: false,
-    createdAt: "2026-08-29T00:00:00.000Z",
-    updatedAt: "2026-08-29T00:00:00.000Z",
   });
   const records = [target, other];
   const workspaces: WorkspaceRepository = {
-    findById: async (id) => records.find((workspace) => workspace.id === id),
-    list: async () => [...records],
-    insert: async () => true,
-    upsert: async () => undefined,
-    delete: async () => undefined,
+    findById: (id) => Effect.succeed(records.find((workspace) => workspace.id === id)),
+    list: () => Effect.succeed([...records]),
+    insert: () => Effect.succeed(true),
+    upsert: () => Effect.succeed(undefined),
+    delete: () => Effect.succeed(undefined),
   };
   const resolver = new WorkspaceResolverAdapter({
     cwd: otherPath,
@@ -141,11 +138,11 @@ function createFixture(
           directory: {
             resolveDirectory: (directory: string) => {
               if (options.rejectNamedWorkspace && directory === realpathSafe(targetPath)) {
-                throw new Error("workspace root is outside the allowed roots");
+                return Effect.fail(new Error("workspace root is outside the allowed roots"));
               }
-              throw new Error("caller cwd should not be resolved");
+              return Effect.fail(new Error("caller cwd should not be resolved"));
             },
-            resolveHook: () => "",
+            resolveHook: () => Effect.succeed(""),
           },
         }
       : {}),

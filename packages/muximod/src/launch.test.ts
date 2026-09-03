@@ -11,6 +11,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Schema } from "effect";
 import { describe, it } from "vitest";
 import {
   type MuximodConfig,
@@ -204,7 +205,7 @@ const bindHostTable: OperationTable<undefined, "default", BindHostInput, Muximod
   defaultFixture: noFixture(),
   cases: bindHostCases,
   execute: (_fixture, input) =>
-    muximodConfigSchema.parse({
+    Schema.decodeUnknownSync(muximodConfigSchema, { onExcessProperty: "error" })({
       ...bootstrapOptions.config,
       host:
         input === "loopback"

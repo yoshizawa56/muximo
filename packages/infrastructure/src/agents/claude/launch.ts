@@ -1,15 +1,11 @@
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
 import { resolveExecutable } from "../launch.js";
 
 export function resolveClaudeCommand(environment: NodeJS.ProcessEnv): string {
   return resolveExecutable(environment.MUXIMO_CLAUDE_BIN ?? "claude", environment);
 }
 
-export function buildClaudeRunCommand(
-  session: AgentSessionRecord,
-  backendArgs: readonly string[],
-  binary: string,
-): string[] {
+export function buildClaudeRunCommand(session: AgentSession, backendArgs: readonly string[], binary: string): string[] {
   const args = [binary];
   if (!hasOption("--name", backendArgs) && !hasOption("-n", backendArgs)) args.push("--name", session.name);
   if (!hasOption("--session-id", backendArgs)) args.push("--session-id", session.backendSessionId ?? "");
@@ -21,7 +17,7 @@ export function buildClaudeRunCommand(
 }
 
 export function buildClaudeResumeCommand(
-  session: AgentSessionRecord,
+  session: AgentSession,
   backendArgs: readonly string[],
   binary: string,
 ): string[] {

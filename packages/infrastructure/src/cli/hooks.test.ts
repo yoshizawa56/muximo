@@ -1,12 +1,14 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentSession, AgentSessionId, type AgentSessionRecord, WorkspaceId } from "@muximo/domain";
+import type { HookResult } from "@muximo/application";
+import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
 import {
   hasError,
   hasObserved,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   runOperationTable,
   runScenarioTable,
   type ScenarioCase,
@@ -26,9 +28,9 @@ type HookFixture = {
   failureHook: string;
   missingRunDirectory?: string;
   adapter: WorkspaceHookAdapter;
-  session: AgentSessionRecord;
+  session: AgentSession;
   records: LogRecord[];
-  latest?: Awaited<ReturnType<WorkspaceHookAdapter["run"]>>;
+  latest?: HookResult;
   outputFiles: { setup?: string; cleanup?: string };
 };
 
@@ -66,7 +68,7 @@ const resolveTable: OperationTable<HookFixture, "default", ResolveInput, string,
   defaultFixture: createHookFixture,
   cases: resolveCases,
   execute: async (fixture, input) => {
-    const resolved = await fixture.adapter.resolveHook(input.path, fixture.workspaceRoot);
+    const resolved = await resolveMaybePromise(fixture.adapter.resolveHook(input.path, fixture.workspaceRoot));
     return resolved;
   },
   observe: (_fixture, result) => ({
@@ -157,14 +159,14 @@ const hookTable: ScenarioTable<HookFixture, HookFixtureKey, HookStep, HookScenar
   execute: async (fixture, steps) => {
     for (const step of steps) {
       if (step.kind === "run") {
-        fixture.latest = await fixture.adapter.run(fixture.session, step.hook);
-        if (fixture.latest.sessionUpdate) {
-          fixture.session = AgentSession.update(fixture.session, fixture.latest.sessionUpdate);
+        fixture.latest = await resolveMaybePromise(fixture.adapter.run(fixture.session, step.hook));
+        if (fixture.latest?.sessionUpdate) {
+          fixture.session = fixture.session.update(fixture.latest.sessionUpdate);
           fixture.outputFiles[step.hook] =
             step.hook === "setup" ? fixture.session.setupOutputFile : fixture.session.cleanupOutputFile;
         }
       } else {
-        await fixture.adapter.removeOutputs(fixture.session);
+        await resolveMaybePromise(fixture.adapter.removeOutputs(fixture.session));
       }
     }
     return observeHookScenario(fixture);
@@ -178,7 +180,7 @@ function createSuccessFixture(registerCleanup?: (cleanup: () => void) => void): 
 
 function createFailureFixture(registerCleanup?: (cleanup: () => void) => void): { fixture: HookFixture } {
   const handle = createHookFixture(registerCleanup);
-  handle.fixture.session = AgentSession.update(handle.fixture.session, { setupHook: handle.fixture.failureHook });
+  handle.fixture.session = handle.fixture.session.update({ setupHook: handle.fixture.failureHook });
   return handle;
 }
 
@@ -186,7 +188,7 @@ function createMissingDirectoryFixture(registerCleanup?: (cleanup: () => void) =
   const handle = createHookFixture(registerCleanup);
   const missing = join(handle.fixture.root, "missing-run-directory");
   mkdirSync(missing, { recursive: true });
-  handle.fixture.session = AgentSession.update(handle.fixture.session, { workspaceRoot: missing });
+  handle.fixture.session = handle.fixture.session.update({ workspaceRoot: missing });
   rmSync(missing, { recursive: true, force: true });
   handle.fixture.missingRunDirectory = missing;
   return handle;
@@ -229,8 +231,7 @@ function createHookFixture(registerCleanup?: (cleanup: () => void) => void): { f
     cleanupHook,
     setupRan: false,
     resuming: false,
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
+    lastActivityAt: "2026-08-23T00:00:00.000Z",
   });
   const fixture: HookFixture = {
     root,

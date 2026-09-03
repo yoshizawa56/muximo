@@ -1,4 +1,14 @@
-import { AuthService, AuthStoreError, type AuthStorePort } from "@muximo/application";
+import {
+  type ApplicationEffect,
+  type AuthChallengeResponse,
+  type AuthDeviceRecord,
+  type AuthPairingClaimResponse,
+  type AuthPairingPayload,
+  AuthService,
+  type AuthSessionResponse,
+  AuthStoreError,
+  type AuthStorePort,
+} from "@muximo/application";
 import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 import {
   type FixtureHandle,
@@ -7,12 +17,14 @@ import {
   hasObserved,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   runOperationTable,
   runScenarioTable,
   type ScenarioCase,
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { AuthStore, createAgentDatabase, createMigrationSchemaSynchronizer } from "../persistence/index.js";
 import { nodeAuthCrypto } from "./crypto.js";
@@ -24,12 +36,12 @@ type AuthFixture = {
   keyPair: CryptoKeyPair;
   publicKey: { kty: "EC"; crv: "P-256"; x: string; y: string };
   keyFingerprint: string;
-  payload?: Awaited<ReturnType<AuthService["createPairing"]>>;
-  claim?: Awaited<ReturnType<AuthService["claimPairing"]>>;
-  device?: Awaited<ReturnType<AuthService["approvePairing"]>>;
-  challenge?: Awaited<ReturnType<AuthService["createChallenge"]>>;
-  session?: Awaited<ReturnType<AuthService["createSession"]>>;
-  localSession?: Awaited<ReturnType<AuthService["createLocalSession"]>>;
+  payload?: AuthPairingPayload;
+  claim?: AuthPairingClaimResponse;
+  device?: AuthDeviceRecord;
+  challenge?: AuthChallengeResponse;
+  session?: AuthSessionResponse;
+  localSession?: AuthSessionResponse;
   contextDeviceId: string | null;
   localContextSessionId: string | null;
   localContextDeviceId: string | null;
@@ -77,17 +89,19 @@ const authFixture = async (): Promise<FixtureHandle<AuthFixture>> => {
     serverId: store.serverId,
     crypto: nodeAuthCrypto,
     clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
-    claimSink: { publish: () => undefined },
+    claimSink: { publish: () => Effect.succeed(undefined) },
     challenges: new MemoryAuthChallengeStore(),
     rateLimits: new MemoryAuthRateLimitStore(),
     wsTickets: new MemoryAuthWsTicketStore(),
     connections: {
-      disconnectDevice: async (deviceId) => {
-        disconnectDeviceCalls.push(deviceId);
-      },
-      disconnectSession: async (sessionId) => {
-        disconnectSessionCalls.push(sessionId);
-      },
+      disconnectDevice: (deviceId) =>
+        Effect.sync(() => {
+          disconnectDeviceCalls.push(deviceId);
+        }),
+      disconnectSession: (sessionId) =>
+        Effect.sync(() => {
+          disconnectSessionCalls.push(sessionId);
+        }),
     },
   });
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
@@ -163,7 +177,9 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
   execute: async (fixture, steps) => {
     for (const step of steps) {
       if (step.type === "create-pairing") {
-        fixture.payload = await fixture.auth.createPairing({ muximodBaseUrl: "http://127.0.0.1:4317" });
+        fixture.payload = await resolveMaybePromise(
+          fixture.auth.createPairing({ muximodBaseUrl: "http://127.0.0.1:4317" }),
+        );
         continue;
       }
       if (step.type === "claim") {
@@ -180,32 +196,36 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
             clientNonce,
           }),
         );
-        fixture.claim = await fixture.auth.claimPairing(payload.pairingId, {
-          pairingSecret: payload.pairingSecret,
-          publicKey: fixture.publicKey,
-          deviceName: "Test browser",
-          deviceType: "browser",
-          platform: "test",
-          clientVersion: "test",
-          clientNonce,
-          signature: claimSignature,
-        });
-        fixture.claimStatus = (await fixture.auth.pairingStatus(payload.pairingId, fixture.claim.claimToken)).status;
+        fixture.claim = await resolveMaybePromise(
+          fixture.auth.claimPairing(payload.pairingId, {
+            pairingSecret: payload.pairingSecret,
+            publicKey: fixture.publicKey,
+            deviceName: "Test browser",
+            deviceType: "browser",
+            platform: "test",
+            clientVersion: "test",
+            clientNonce,
+            signature: claimSignature,
+          }),
+        );
+        fixture.claimStatus = (
+          await resolveMaybePromise(fixture.auth.pairingStatus(payload.pairingId, fixture.claim.claimToken))
+        ).status;
         continue;
       }
       if (step.type === "approve") {
         const payload = fixture.payload!;
-        fixture.device = await fixture.auth.approvePairing(payload.pairingId);
+        fixture.device = await resolveMaybePromise(fixture.auth.approvePairing(payload.pairingId));
         fixture.deviceId = fixture.device.deviceId;
         fixture.deviceKeyFingerprint = fixture.device.keyFingerprint;
         fixture.approvedStatus = (
-          await fixture.auth.pairingStatus(payload.pairingId, fixture.claim!.claimToken)
+          await resolveMaybePromise(fixture.auth.pairingStatus(payload.pairingId, fixture.claim!.claimToken))
         ).status;
         continue;
       }
       if (step.type === "create-session") {
         const device = fixture.device!;
-        fixture.challenge = await fixture.auth.createChallenge(device.deviceId);
+        fixture.challenge = await resolveMaybePromise(fixture.auth.createChallenge(device.deviceId));
         const challenge = fixture.challenge;
         const signature = await signEcdsa(
           fixture.keyPair.privateKey,
@@ -217,30 +237,35 @@ const table: ScenarioTable<AuthFixture, "default", AuthStep, undefined, AuthCont
             expiresAt: challenge.expiresAt,
           }),
         );
-        fixture.session = await fixture.auth.createSession({
-          deviceId: device.deviceId,
-          challengeId: challenge.challengeId,
-          signature,
-        });
+        fixture.session = await resolveMaybePromise(
+          fixture.auth.createSession({
+            deviceId: device.deviceId,
+            challengeId: challenge.challengeId,
+            signature,
+          }),
+        );
         fixture.sessionId = fixture.session.sessionId;
-        const context = await fixture.auth.authenticateAccessToken(fixture.session.accessToken);
+        const context = await resolveMaybePromise(fixture.auth.authenticateAccessToken(fixture.session.accessToken));
         fixture.contextDeviceId = context?.deviceId ?? null;
         continue;
       }
       if (step.type === "consume-ticket") {
-        const context = await fixture.auth.authenticateAccessToken(fixture.session!.accessToken);
-        const ticket = await fixture.auth.issueWebSocketTicket(context!, "terminal");
+        const context = await resolveMaybePromise(fixture.auth.authenticateAccessToken(fixture.session!.accessToken));
+        const ticket = await resolveMaybePromise(fixture.auth.issueWebSocketTicket(context!, "terminal"));
         fixture.ticketSessionId =
-          (await fixture.auth.consumeWebSocketTicket(ticket.ticket, "terminal"))?.sessionId ?? null;
-        fixture.ticketSecondUse = await fixture.auth.consumeWebSocketTicket(ticket.ticket, "terminal");
+          (await resolveMaybePromise(fixture.auth.consumeWebSocketTicket(ticket.ticket, "terminal")))?.sessionId ??
+          null;
+        fixture.ticketSecondUse = await resolveMaybePromise(
+          fixture.auth.consumeWebSocketTicket(ticket.ticket, "terminal"),
+        );
         continue;
       }
       if (step.type === "revoke-session") {
-        await fixture.auth.revokeSession(fixture.sessionId!);
+        await resolveMaybePromise(fixture.auth.revokeSession(fixture.sessionId!));
         continue;
       }
       if (step.type === "revoke-device") {
-        await fixture.auth.revokeDevice(fixture.deviceId!);
+        await resolveMaybePromise(fixture.auth.revokeDevice(fixture.deviceId!));
       }
     }
   },
@@ -291,23 +316,23 @@ const localAuthTable: ScenarioTable<AuthFixture, "default", LocalAuthStep, undef
   execute: async (fixture, steps) => {
     for (const step of steps) {
       if (step.type === "create-local-session") {
-        fixture.localSession = await fixture.auth.createLocalSession();
+        fixture.localSession = await resolveMaybePromise(fixture.auth.createLocalSession());
         continue;
       }
       if (step.type === "authenticate-local-session") {
         const session = fixture.localSession;
         if (!session) throw new Error("local session was not created");
-        const context = await fixture.auth.authenticateAccessToken(session.accessToken);
+        const context = await resolveMaybePromise(fixture.auth.authenticateAccessToken(session.accessToken));
         fixture.localContextSessionId = context?.sessionId ?? null;
         fixture.localContextDeviceId = context?.deviceId ?? null;
         continue;
       }
       const session = fixture.localSession;
       if (!session) throw new Error("local session was not created");
-      const context = await fixture.auth.authenticateAccessToken(session.accessToken);
+      const context = await resolveMaybePromise(fixture.auth.authenticateAccessToken(session.accessToken));
       if (!context) throw new Error("local session could not be authenticated");
       try {
-        await fixture.auth.issueWebSocketTicket(context, "terminal");
+        await resolveMaybePromise(fixture.auth.issueWebSocketTicket(context, "terminal"));
       } catch (error) {
         if (!(error instanceof AuthStoreError)) throw error;
         fixture.localTicketError = error.code;
@@ -348,13 +373,13 @@ const createRevokeFixture = (storeFails: boolean): FixtureHandle<RevokeFixture> 
     serverId: "server-1",
     crypto: nodeAuthCrypto,
     clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
-    claimSink: { publish: () => undefined },
+    claimSink: { publish: () => Effect.succeed(undefined) },
     challenges: new MemoryAuthChallengeStore(),
     rateLimits: new MemoryAuthRateLimitStore(),
     wsTickets: new MemoryAuthWsTicketStore(),
     connections: {
-      disconnectDevice: async (deviceId) => disconnectConnection(events, state, "device", deviceId),
-      disconnectSession: async (sessionId) => disconnectConnection(events, state, "session", sessionId),
+      disconnectDevice: (deviceId) => Effect.sync(() => disconnectConnection(events, state, "device", deviceId)),
+      disconnectSession: (sessionId) => Effect.sync(() => disconnectConnection(events, state, "session", sessionId)),
     },
   });
   return { fixture: { auth, events, state } };
@@ -419,9 +444,9 @@ const revokeTable: OperationTable<RevokeFixture, RevokeFixtureKey, RevokeInput, 
   defaultFixture: () => createRevokeFixture(false),
   fixtures: { "store-failure": () => createRevokeFixture(true) },
   cases: revokeCases,
-  execute: async (fixture, input) => {
-    if (input.target === "device") await fixture.auth.revokeDevice("device-1");
-    else await fixture.auth.revokeSession("session-1");
+  execute: (fixture, input) => {
+    if (input.target === "device") return fixture.auth.revokeDevice("device-1");
+    return fixture.auth.revokeSession("session-1");
   },
   observe: (fixture) => ({
     events: [...fixture.events],
@@ -435,19 +460,17 @@ describe("authentication revocation ordering", () => {
 });
 
 function createRevokeStore(events: string[], state: RevokeState, storeFails: boolean): AuthStorePort {
-  const unused = async (): Promise<never> => {
-    throw new Error("unused authentication store operation");
-  };
-  const persist = async (target: RevokeTarget, id: string): Promise<void> => {
-    events.push(`store:${target}:${id}:started`);
-    await Promise.resolve();
-    if (storeFails) {
-      events.push(`store:${target}:${id}:failed`);
-      throw new Error("auth persistence failed");
-    }
-    state.credentialActive = false;
-    events.push(`store:${target}:${id}:committed`);
-  };
+  const unused = (): ApplicationEffect<never> => Effect.fail(new Error("unused authentication store operation"));
+  const persist = (target: RevokeTarget, id: string): ApplicationEffect<void> =>
+    Effect.sync(() => {
+      events.push(`store:${target}:${id}:started`);
+      if (storeFails) {
+        events.push(`store:${target}:${id}:failed`);
+        throw new Error("auth persistence failed");
+      }
+      state.credentialActive = false;
+      events.push(`store:${target}:${id}:committed`);
+    });
   return {
     createPairing: unused,
     findPairing: unused,
@@ -465,14 +488,8 @@ function createRevokeStore(events: string[], state: RevokeState, storeFails: boo
   };
 }
 
-async function disconnectConnection(
-  events: string[],
-  state: RevokeState,
-  target: RevokeTarget,
-  id: string,
-): Promise<void> {
+function disconnectConnection(events: string[], state: RevokeState, target: RevokeTarget, id: string): void {
   events.push(`connection:${target}:${id}:started`);
-  await Promise.resolve();
   state.connectionActive = false;
   events.push(`connection:${target}:${id}:disconnected`);
 }
