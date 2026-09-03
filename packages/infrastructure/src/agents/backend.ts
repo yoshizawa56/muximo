@@ -4,7 +4,7 @@ import type {
   SessionBaselineResult,
   SessionIdentityUpdate,
 } from "@muximo/application";
-import type { AgentBackend, AgentSessionRecord } from "@muximo/domain";
+import type { AgentBackend, AgentSession } from "@muximo/domain";
 import type { Logger } from "../logging/index.js";
 import { ClaudeBackendProvider } from "./claude/backend.js";
 import { CodexBackendProvider } from "./codex/backend.js";
@@ -37,20 +37,20 @@ export type AgentBackendProviderOptions = {
 
 export interface AgentBackendProvider {
   readonly backend: AgentBackend;
-  captureBaseline(session: AgentSessionRecord): Promise<SessionBaselineResult>;
+  captureBaseline(session: AgentSession): Promise<SessionBaselineResult>;
   prepareLaunch(
-    session: AgentSessionRecord,
+    session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
     signal?: AbortSignal,
   ): Promise<AgentBackendProviderPreparation>;
   /** Reconstructs daemon-side observation for a process that survived a daemon restart. */
-  restoreLaunch?(session: AgentSessionRecord): Promise<AgentBackendLaunch | undefined>;
-  afterRun(session: AgentSessionRecord, runDir: string, startedAt: number): Promise<SessionIdentityUpdate | undefined>;
-  disposeLaunch(session: AgentSessionRecord, runDir: string): Promise<void>;
-  archive(session: AgentSessionRecord): Promise<boolean>;
-  restore(session: AgentSessionRecord): Promise<boolean>;
-  releaseIfUnused(session: AgentSessionRecord, remaining: readonly AgentSessionRecord[]): Promise<void>;
+  restoreLaunch?(session: AgentSession): Promise<AgentBackendLaunch | undefined>;
+  afterRun(session: AgentSession, runDir: string, startedAt: number): Promise<SessionIdentityUpdate | undefined>;
+  disposeLaunch(session: AgentSession, runDir: string): Promise<void>;
+  archive(session: AgentSession): Promise<boolean>;
+  restore(session: AgentSession): Promise<boolean>;
+  releaseIfUnused(session: AgentSession, remaining: readonly AgentSession[]): Promise<void>;
 }
 
 export class AgentBackendProviderRegistry {

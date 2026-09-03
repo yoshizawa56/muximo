@@ -1,13 +1,8 @@
-import {
-  AgentSession,
-  AgentSessionId,
-  type AgentSessionRecord,
-  WorkspaceId,
-  type WorkspaceRecord,
-} from "@muximo/domain";
+import { AgentSession, AgentSessionId, Workspace, WorkspaceId } from "@muximo/domain";
 import {
   type FixtureHandle,
   hasObserved,
+  resolveMaybePromise,
   runScenarioTable,
   type ScenarioCase,
   type ScenarioTable,
@@ -19,7 +14,7 @@ import { createAgentPanePublication } from "./server.js";
 type PaneStep = { operation: "adopt" | "publish" | "observe" | "release" };
 type PaneFixture = {
   publication: ReturnType<typeof createAgentPanePublication>;
-  session: AgentSessionRecord;
+  session: AgentSession;
   calls: string[];
   logEvents: string[];
 };
@@ -28,16 +23,14 @@ type PaneContext = {
   logEvents: readonly string[];
 };
 
-const workspace: WorkspaceRecord = {
+const workspace: Workspace = Workspace.create({
   id: WorkspaceId.create("workspace-id"),
   rootPath: "/workspace",
   name: "workspace",
   isGit: false,
-  createdAt: "2026-08-23T00:00:00.000Z",
-  updatedAt: "2026-08-23T00:00:00.000Z",
-};
+});
 
-function session(): AgentSessionRecord {
+function session(): AgentSession {
   return AgentSession.create({
     id: AgentSessionId.create("session-id"),
     name: "session",
@@ -52,8 +45,7 @@ function session(): AgentSessionRecord {
     executionId: "execution-id-123456",
     executionPid: 700,
     executionStartedAt: "2026-08-23T00:00:00.000Z",
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
+    lastActivityAt: "2026-08-23T00:00:00.000Z",
   });
 }
 
@@ -112,12 +104,13 @@ const table: ScenarioTable<PaneFixture, "default", PaneStep, undefined, PaneCont
   cases,
   execute: async (testFixture, steps) => {
     for (const step of steps) {
-      if (step.operation === "adopt") await testFixture.publication.adopt(testFixture.session, "%1");
+      if (step.operation === "adopt")
+        await resolveMaybePromise(testFixture.publication.adopt(testFixture.session, "%1"));
       else if (step.operation === "publish")
-        await testFixture.publication.publish(testFixture.session, "completed", "%1");
+        await resolveMaybePromise(testFixture.publication.publish(testFixture.session, "completed", "%1"));
       else if (step.operation === "observe")
-        await testFixture.publication.observe(testFixture.session, { state: "waiting_input" });
-      else await testFixture.publication.release(testFixture.session, "%1");
+        await resolveMaybePromise(testFixture.publication.observe(testFixture.session, { state: "waiting_input" }));
+      else await resolveMaybePromise(testFixture.publication.release(testFixture.session, "%1"));
     }
   },
   observe: (testFixture) => ({ calls: [...testFixture.calls], logEvents: [...testFixture.logEvents] }),

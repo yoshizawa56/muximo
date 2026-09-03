@@ -19,7 +19,10 @@ const NOTICE_DURATION_MS = 5_000;
 const NOTICE_CLEANUP_MS = NOTICE_DURATION_MS + 400;
 const MAX_NOTICES = 3;
 
-export function useWaitingNotices(panes: PaneSummary[]): { notices: WaitingNotice[]; open: (id: string) => void } {
+export function useWaitingNotices(panes: readonly PaneSummary[]): {
+  notices: WaitingNotice[];
+  open: (id: string) => void;
+} {
   const [notices, setNotices] = useState<WaitingNotice[]>([]);
   const previousWaitingIdsRef = useRef<Set<string>>(new Set());
   const primedRef = useRef(false);

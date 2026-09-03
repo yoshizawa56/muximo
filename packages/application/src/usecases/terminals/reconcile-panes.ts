@@ -1,58 +1,45 @@
+import { type AgentSession, AgentSessionId, clearPatch, Pane, type PaneCreateInput, PaneId } from "@muximo/domain";
+import { Effect } from "effect";
+import { ApplicationClockService } from "../../effect-runtime.js";
+import { ApplicationError } from "../../ports/application.js";
+import type { HostPaneSnapshot, MuximodPaneClassification, TerminalHostSnapshot } from "../../ports/host.js";
+import { type AgentStatusObservation, agentStatusKey, readManagedAgentObservation } from "../sessions/agent-status.js";
 import {
-  AgentSessionId,
-  type AgentSessionRecord,
-  clearPatch,
-  Pane,
-  type PaneCreateInput,
-  PaneId,
-  type PaneRecord,
-} from "@muximo/domain";
-import { type ApplicationClock, ApplicationError } from "../../ports/application.js";
-import type {
-  HostPaneSnapshot,
-  MuximodHostPort,
-  MuximodPaneClassification,
-  TerminalHostSnapshot,
-} from "../../ports/host.js";
-import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
-import {
-  type AgentStatusObservation,
-  type AgentStatusStore,
-  agentStatusKey,
-  readManagedAgentObservation,
-} from "../sessions/agent-status.js";
+  AgentSessionRepositoryService,
+  AgentStatusService,
+  MuximodHostService,
+  PaneRepositoryService,
+} from "./terminal-services.js";
 
 /**
  * Reconciles live terminal-host pane snapshots with persisted pane records.
  * This is the single write path that turns host observations into durable pane state.
  */
-export async function reconcilePanes(
-  host: MuximodHostPort,
-  repository: PaneRepository,
-  agentSessionRepository: AgentSessionRepository,
-  agentStatus: AgentStatusStore,
-  clock: ApplicationClock,
-  live?: TerminalHostSnapshot,
-): Promise<PaneRecord[]> {
-  const snapshot = live ?? (await host.listPanesSnapshot());
+export const reconcilePanes = Effect.fn("Terminals.reconcilePanes")(function* (live?: TerminalHostSnapshot) {
+  const host = yield* MuximodHostService;
+  const repository = yield* PaneRepositoryService;
+  const agentSessionRepository = yield* AgentSessionRepositoryService;
+  const agentStatus = yield* AgentStatusService;
+  const clock = yield* ApplicationClockService;
+  const snapshot = live ?? (yield* host.listPanesSnapshot());
   const now = clock.now();
-  const records: PaneRecord[] = [];
+  const records: Pane[] = [];
   if (snapshot.panes.length > 0 && !snapshot.hostServerId) {
-    throw new ApplicationError("terminal_host_unavailable", "tmux server identity is unavailable");
+    return yield* Effect.fail(new ApplicationError("terminal_host_unavailable", "tmux server identity is unavailable"));
   }
 
   for (const hostPane of snapshot.panes) {
     const paneHostServerId = hostPane.hostServerId;
-    const existing = await repository.findByHostPaneIdentity(paneHostServerId, hostPane.hostPaneId);
+    const existing = yield* repository.findByHostPaneIdentity(paneHostServerId, hostPane.hostPaneId);
     const sessionCandidate = hostPane.muximodSessionId
-      ? await agentSessionRepository.findById(AgentSessionId.create(hostPane.muximodSessionId))
+      ? yield* agentSessionRepository.findById(AgentSessionId.create(hostPane.muximodSessionId))
       : undefined;
     // Adoption writes execution metadata before the backend process is spawned, so the pane command is still the
     // caller's shell. The session/execution identity and its live owner process are the authoritative checks here.
     const adoptedSession =
       sessionCandidate &&
       hostPane.muximodExecutionId === sessionCandidate.executionId &&
-      (await isLiveAgentExecution(host, sessionCandidate))
+      (yield* isLiveAgentExecution(sessionCandidate))
         ? sessionCandidate
         : undefined;
     const staleAgentMetadata =
@@ -60,25 +47,30 @@ export async function reconcilePanes(
     if (hostPane.muximodSessionId && !adoptedSession) {
       if (hostPane.muximodExecutionId)
         agentStatus.delete(agentStatusKey(hostPane.muximodSessionId, hostPane.muximodExecutionId));
-      try {
-        const cleared = await host.clearAgentExecutionMetadata(hostPane.hostPaneId, hostPane.muximodExecutionId ?? "");
-        if (cleared && hostPane.muximodKind === "agent") {
-          await host.resetAgentPaneMetadata(hostPane.hostPaneId);
-        }
-      } catch {
+      yield* Effect.catch(
+        Effect.gen(function* () {
+          const cleared = yield* host.clearAgentExecutionMetadata(
+            hostPane.hostPaneId,
+            hostPane.muximodExecutionId ?? "",
+          );
+          if (cleared && hostPane.muximodKind === "agent") {
+            yield* host.resetAgentPaneMetadata(hostPane.hostPaneId);
+          }
+        }),
         // The pane may disappear while stale adoption metadata is being cleared.
-      }
+        () => Effect.succeed(undefined),
+      );
     }
     const metadataId = hostPane.muximodPaneId;
     const metadataPaneId = metadataId ? PaneId.create(metadataId) : undefined;
-    const conflictingId = !existing && metadataPaneId ? await repository.findById(metadataPaneId) : undefined;
+    const conflictingId = !existing && metadataPaneId ? yield* repository.findById(metadataPaneId) : undefined;
     const reusableMetadataId =
       metadataPaneId &&
       (!conflictingId ||
         (conflictingId.hostServerId === paneHostServerId && conflictingId.hostPaneId === hostPane.hostPaneId))
         ? metadataPaneId
         : undefined;
-    const commandObservation = await host.classifyCommand(hostPane.command);
+    const commandObservation = yield* host.classifyCommand(hostPane.command);
     const kind = resolvePaneKind(
       hostPane,
       existing,
@@ -110,7 +102,7 @@ export async function reconcilePanes(
                   }
                 : undefined,
             )
-          : await host.observeUnmanagedAgent(hostPane.hostPaneId, existing?.state ?? "running");
+          : yield* host.observeUnmanagedAgent(hostPane.hostPaneId, existing?.state ?? "running");
     const name = staleAgentMetadata
       ? hostPane.title || hostPane.command || hostPane.hostPaneId
       : (hostPane.muximodName ??
@@ -153,11 +145,11 @@ export async function reconcilePanes(
       windowWidth: hostPane.windowWidth,
       windowHeight: hostPane.windowHeight,
     };
-    let record: PaneRecord;
+    let record: Pane;
     if (!existing) {
       record = Pane.create(createInput);
     } else {
-      record = Pane.update(existing, {
+      record = existing.update({
         agentSessionId: adoptedSession?.id ?? clearPatch,
         agentExecutionId: agentExecutionId ?? clearPatch,
         sessionName: hostPane.sessionName,
@@ -182,26 +174,26 @@ export async function reconcilePanes(
       });
       if (record.state !== observation.state) {
         record = executionChanged
-          ? Pane.resetState(record, observation.state, "new execution observed", now)
-          : Pane.transitionState(record, observation.state, "terminal observation", now);
+          ? record.resetTo(observation.state, "new execution observed", now)
+          : record.transitionTo(observation.state, "terminal observation", now);
       }
     }
-    await repository.upsert(record);
+    yield* repository.upsert(record);
     // Geometry and pane indexes are live host state rather than durable identity.
     // Return the live record so the API/UI never loses it during reconciliation.
     records.push(record);
   }
 
   return records;
-}
+});
 
 function resolvePaneKind(
   hostPane: HostPaneSnapshot,
-  existing: PaneRecord | undefined,
+  existing: Pane | undefined,
   adopted: boolean,
   staleAgentMetadata: boolean,
   commandObservation: MuximodPaneClassification,
-): PaneRecord["kind"] {
+): Pane["kind"] {
   if (staleAgentMetadata) return "shell";
   if (adopted) return "agent";
   if (hostPane.muximodKind === "agent" && !hostPane.muximodSessionId) return "agent";
@@ -211,11 +203,11 @@ function resolvePaneKind(
   return detected;
 }
 
-async function isLiveAgentExecution(
-  host: MuximodHostPort,
-  session: Pick<AgentSessionRecord, "status" | "executionPid" | "executionStartedAt">,
-): Promise<boolean> {
+const isLiveAgentExecution = Effect.fn("Terminals.isLiveAgentExecution")(function* (
+  session: Pick<AgentSession, "status" | "executionPid" | "executionStartedAt">,
+) {
   if (session.status !== "running" && session.status !== "resuming") return false;
   if (session.executionPid === undefined || session.executionStartedAt === undefined) return false;
-  return await host.isProcessAlive(session.executionPid, session.executionStartedAt);
-}
+  const host = yield* MuximodHostService;
+  return yield* host.isProcessAlive(session.executionPid, session.executionStartedAt);
+});

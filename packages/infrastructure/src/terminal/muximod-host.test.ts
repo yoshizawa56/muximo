@@ -7,6 +7,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import { mapTmuxSnapshotToTerminalHostSnapshot, TmuxMuximodHostAdapter } from "./muximod-host.js";
 import { TmuxAdapter, type TmuxLiveSnapshot } from "./tmux.js";
@@ -143,7 +144,7 @@ const findCases = [
 const findTable: OperationTable<ManagementFixture, "default", FindInput, string | undefined, EmptyContext> = {
   defaultFixture: createManagementFixture,
   cases: findCases,
-  execute: async (fixture, input) => {
+  execute: (fixture, input) => {
     fixture.adapter.snapshot = input.snapshot;
     return fixture.host.findManagedSessionId(input.target);
   },
@@ -175,10 +176,11 @@ const configureCases = [
 const configureTable: OperationTable<ManagementFixture, "default", ConfigureInput, string[][], EmptyContext> = {
   defaultFixture: createManagementFixture,
   cases: configureCases,
-  execute: async (fixture, input) => {
-    await fixture.host.configureManagedSession(input.target, input.managedSessionId);
-    return fixture.adapter.commands;
-  },
+  execute: (fixture, input) =>
+    Effect.gen(function* () {
+      yield* fixture.host.configureManagedSession(input.target, input.managedSessionId);
+      return fixture.adapter.commands;
+    }),
   observe: () => ({}),
 };
 

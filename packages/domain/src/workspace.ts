@@ -1,6 +1,7 @@
-import { z } from "zod";
+import { Schema } from "effect";
+import { InvalidEntityError } from "./entity-errors.js";
 import { WorkspaceId, type WorkspaceId as WorkspaceIdType } from "./ids.js";
-import { applyPatch, type Patch } from "./patch.js";
+import { applyPatch, type EntityPatch } from "./patch.js";
 
 const workspaceNameMaxLength = 120;
 
@@ -18,30 +19,25 @@ export class InvalidWorkspaceNameError extends Error {
 }
 
 export const workspaceSelectionModes = ["workspace", "worktree"] as const;
-export const workspaceSelectionModeSchema = z.enum(workspaceSelectionModes);
-export type WorkspaceSelectionMode = z.infer<typeof workspaceSelectionModeSchema>;
+export const workspaceSelectionModeSchema = Schema.Literals(workspaceSelectionModes);
+export type WorkspaceSelectionMode = (typeof workspaceSelectionModeSchema)["Type"];
 
-const workspaceNameSchema = z
-  .string()
-  .min(1)
-  .max(workspaceNameMaxLength)
-  .refine((value) => !/[\u0000\r\n\t]/.test(value), "workspace name contains a control character");
-const workspacePathSchema = z.string().min(1);
-const workspaceSchema = z
-  .object({
-    id: WorkspaceId.schema,
-    rootPath: workspacePathSchema,
-    name: workspaceNameSchema,
-    isGit: z.boolean(),
-    setupScriptPath: workspacePathSchema.optional(),
-    cleanupScriptPath: workspacePathSchema.optional(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+const workspaceNameSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(workspaceNameMaxLength),
+  Schema.isPattern(/^[^\u0000\r\n\t]*$/),
+);
+const workspacePathSchema = Schema.String.check(Schema.isMinLength(1));
 
-export type Workspace = z.infer<typeof workspaceSchema>;
-export type WorkspaceRecord = Workspace;
+/** Bare field schemas shared by the entity definition and wire derivations. */
+export const WorkspaceFields = {
+  id: WorkspaceId.schema,
+  rootPath: workspacePathSchema,
+  name: workspaceNameSchema,
+  isGit: Schema.Boolean,
+  setupScriptPath: workspacePathSchema,
+  cleanupScriptPath: workspacePathSchema,
+} as const;
 
 export type WorkspaceCreateInput = {
   id: WorkspaceIdType;
@@ -50,49 +46,60 @@ export type WorkspaceCreateInput = {
   isGit: boolean;
   setupScriptPath?: string;
   cleanupScriptPath?: string;
-  createdAt: string;
-  updatedAt: string;
 };
 
-export type WorkspaceUpdateInput = {
-  name?: string;
-  setupScriptPath?: Patch<string>;
-  cleanupScriptPath?: Patch<string>;
-  updatedAt?: string;
-};
-const parseWorkspace = (input: unknown): Workspace => workspaceSchema.parse(input);
+const workspaceImmutableFields = ["id", "rootPath", "isGit"] as const;
+type WorkspaceImmutableFields = (typeof workspaceImmutableFields)[number];
+export type WorkspaceUpdateInput = EntityPatch<(typeof Workspace)["Encoded"], WorkspaceImmutableFields>;
 
-export const Workspace = {
-  schema: workspaceSchema,
-
-  /** Rehydrates a persisted workspace. This is the only re-entry point for raw data. */
-  restore(input: unknown): Workspace {
-    return parseWorkspace(input);
-  },
-
-  create(input: WorkspaceCreateInput): Workspace {
-    return parseWorkspace({
+export class Workspace extends Schema.Class<Workspace>("Workspace")({
+  id: WorkspaceId.schema,
+  rootPath: workspacePathSchema,
+  name: workspaceNameSchema,
+  isGit: Schema.Boolean,
+  setupScriptPath: Schema.optional(workspacePathSchema),
+  cleanupScriptPath: Schema.optional(workspacePathSchema),
+}) {
+  static create(input: WorkspaceCreateInput): Workspace {
+    return decodeWorkspace({
       ...input,
       name: validateWorkspaceName(input.name),
     });
-  },
+  }
 
-  update(entity: Workspace, input: WorkspaceUpdateInput): Workspace {
-    const current = parseWorkspace(entity);
+  /** Rehydrates a persisted workspace. This is the only re-entry point for raw data. */
+  static restore(input: unknown): Workspace {
+    return decodeWorkspace(input);
+  }
+
+  update(input: WorkspaceUpdateInput): Workspace {
+    for (const key of Object.keys(input)) {
+      if (immutableWorkspaceUpdateKeys.has(key)) {
+        throw new Error(`Workspace update cannot change immutable field: ${key}`);
+      }
+    }
     if (!hasWorkspaceUpdate(input)) throw new WorkspaceUpdateEmptyError();
-
-    return parseWorkspace({
-      ...current,
-      name: input.name === undefined ? current.name : validateWorkspaceName(input.name),
-      setupScriptPath: applyPatch(current.setupScriptPath, input.setupScriptPath),
-      cleanupScriptPath: applyPatch(current.cleanupScriptPath, input.cleanupScriptPath),
-      updatedAt: input.updatedAt === undefined ? current.updatedAt : input.updatedAt,
+    return decodeWorkspace({
+      ...this,
+      name: input.name === undefined ? this.name : validateWorkspaceName(input.name),
+      setupScriptPath: applyPatch(this.setupScriptPath, input.setupScriptPath),
+      cleanupScriptPath: applyPatch(this.cleanupScriptPath, input.cleanupScriptPath),
     });
-  },
+  }
 
-  validateName: validateWorkspaceName,
-  selection: validateWorkspaceSelection,
-} as const;
+  static validateName = validateWorkspaceName;
+  static selection = validateWorkspaceSelection;
+}
+
+const decodeWorkspace = (input: unknown): Workspace => {
+  try {
+    return Schema.decodeUnknownSync(Workspace, { onExcessProperty: "error" })(input);
+  } catch (error) {
+    throw new InvalidEntityError("Workspace", { cause: error });
+  }
+};
+
+const immutableWorkspaceUpdateKeys = new Set<string>(workspaceImmutableFields);
 
 export class WorkspaceUpdateEmptyError extends Error {
   public readonly code = "workspace_update_empty" as const;
@@ -132,7 +139,7 @@ export function validateWorkspaceSelection(
 ): WorkspaceSelection {
   const checkedSelection = {
     ...selection,
-    workspaceId: WorkspaceId.schema.parse(selection.workspaceId),
+    workspaceId: WorkspaceId.create(selection.workspaceId),
   };
   if (!workspace) {
     throw new WorkspaceSelectionError(
@@ -160,12 +167,7 @@ export function validateWorkspaceName(value: string): string {
 }
 
 function hasWorkspaceUpdate(input: WorkspaceUpdateInput): boolean {
-  return (
-    input.name !== undefined ||
-    input.setupScriptPath !== undefined ||
-    input.cleanupScriptPath !== undefined ||
-    input.updatedAt !== undefined
-  );
+  return input.name !== undefined || input.setupScriptPath !== undefined || input.cleanupScriptPath !== undefined;
 }
 
 function invalidWorkspaceNameMessage(value: string): string {

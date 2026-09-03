@@ -7,6 +7,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import type { PairingClaim, PairingControlPort, PairingOffer, PairingPresenterPort } from "../../ports/pairing.js";
 import type { PairDeviceResult } from "./pair-device.js";
@@ -32,32 +33,44 @@ const claim: PairingClaim = {
 
 class FakeControl implements PairingControlPort {
   public readonly calls: string[] = [];
-  public async createPairing(): Promise<PairingOffer> {
-    this.calls.push("create");
-    return offer;
+  public createPairing() {
+    return Effect.sync(() => {
+      this.calls.push("create");
+      return offer;
+    });
   }
-  public async waitForClaim(pairingId: string): Promise<PairingClaim> {
-    this.calls.push(`wait:${pairingId}`);
-    return claim;
+  public waitForClaim(pairingId: string) {
+    return Effect.sync(() => {
+      this.calls.push(`wait:${pairingId}`);
+      return claim;
+    });
   }
-  public async approvePairing(pairingId: string) {
-    this.calls.push(`approve:${pairingId}`);
-    return { deviceId: "device-1" };
+  public approvePairing(pairingId: string) {
+    return Effect.sync(() => {
+      this.calls.push(`approve:${pairingId}`);
+      return { deviceId: "device-1" };
+    });
   }
-  public async rejectPairing(pairingId: string): Promise<void> {
-    this.calls.push(`reject:${pairingId}`);
+  public rejectPairing(pairingId: string) {
+    return Effect.sync(() => {
+      this.calls.push(`reject:${pairingId}`);
+    });
   }
 }
 
 class FakePresenter implements PairingPresenterPort {
   public readonly calls: string[] = [];
   public constructor(private readonly answer: boolean) {}
-  public async showPairing(received: PairingOffer): Promise<void> {
-    this.calls.push(`show:${received.pairingId}`);
+  public showPairing(received: PairingOffer) {
+    return Effect.sync(() => {
+      this.calls.push(`show:${received.pairingId}`);
+    });
   }
-  public async confirmPairing(received: PairingClaim): Promise<boolean> {
-    this.calls.push(`confirm:${received.pairingId}`);
-    return this.answer;
+  public confirmPairing(received: PairingClaim) {
+    return Effect.sync(() => {
+      this.calls.push(`confirm:${received.pairingId}`);
+      return this.answer;
+    });
   }
 }
 

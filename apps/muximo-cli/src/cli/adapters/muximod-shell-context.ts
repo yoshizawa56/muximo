@@ -1,10 +1,16 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, normalize, resolve } from "node:path";
-import type { SessionWorktreeLookupPort, ShellWorkspaceResolverPort } from "@muximo/application";
+import type { ApplicationEffect, SessionWorktreeLookupPort, ShellWorkspaceResolverPort } from "@muximo/application";
 import type { WorkspaceDirectory } from "@muximo/contract/api";
 import { type WorkspaceDirectoryOption, WorkspaceId } from "@muximo/domain";
-import { gitWorkspaceRoot, isPathWithin, realpathSafe, workspaceIdForPath } from "@muximo/infrastructure/cli-client";
+import {
+  fromPromise,
+  gitWorkspaceRoot,
+  isPathWithin,
+  realpathSafe,
+  workspaceIdForPath,
+} from "@muximo/infrastructure/cli-client";
 import type { MuximodApiClient } from "./muximod-api-client.js";
 
 type MuximodApiProvider = () => Promise<MuximodApiClient>;
@@ -23,7 +29,11 @@ export class MuximodShellWorkspaceResolver implements ShellWorkspaceResolverPort
     this.cwd = realpathSafe(options.cwd);
   }
 
-  public async resolveCurrent(): Promise<WorkspaceDirectoryOption> {
+  public resolveCurrent(): ApplicationEffect<WorkspaceDirectoryOption> {
+    return fromPromise(() => this.resolveCurrentPromise());
+  }
+
+  private async resolveCurrentPromise(): Promise<WorkspaceDirectoryOption> {
     const workspaces = (await this.options.api()).workspaces;
     const records = (await workspaces.list()).map((value) => toWorkspaceDirectoryOption(value, this.cwd));
     const selectedWorkspaceId = this.options.environment.MUXIMOD_WORKSPACE_ID?.trim();
@@ -45,7 +55,15 @@ export class MuximodShellWorkspaceResolver implements ShellWorkspaceResolverPort
 export class MuximodShellSessionWorktreeLookup implements SessionWorktreeLookupPort {
   public constructor(private readonly api: MuximodApiProvider) {}
 
-  public async findWorktreePath(
+  public findWorktreePath(
+    workspaceId: WorkspaceDirectoryOption["id"],
+    sessionName: string,
+    fallbackCwd: string,
+  ): ApplicationEffect<string> {
+    return fromPromise(() => this.findWorktreePathPromise(workspaceId, sessionName, fallbackCwd));
+  }
+
+  private async findWorktreePathPromise(
     workspaceId: WorkspaceDirectoryOption["id"],
     sessionName: string,
     fallbackCwd: string,

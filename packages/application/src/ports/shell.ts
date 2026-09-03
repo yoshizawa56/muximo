@@ -1,4 +1,5 @@
-import type { WorkspaceDirectoryOption, WorkspaceRecord } from "@muximo/domain";
+import type { Workspace, WorkspaceDirectoryOption } from "@muximo/domain";
+import type { ApplicationEffect } from "../effect.js";
 import type { ProcessResult } from "./agent-sessions.js";
 
 export type RunShellInput = {
@@ -17,7 +18,7 @@ export type ShellProcessInput = {
 };
 
 export interface ShellProcessPort {
-  run(input: ShellProcessInput): Promise<ProcessResult>;
+  run(input: ShellProcessInput): ApplicationEffect<ProcessResult>;
 }
 
 export type ShellWorktree = {
@@ -31,22 +32,23 @@ export type ShellWorktree = {
   cleanupHook: string | null;
 };
 
+/** Complete allocation returned after a managed shell worktree is created. */
+export type ShellWorktreeAllocation = {
+  worktreeRoot: string | null;
+  worktreePath: string;
+  branch: string | null;
+  baseCommit: string | null;
+};
+
 export interface ShellWorktreePort {
-  create(
-    workspace: WorkspaceDirectoryOption,
-    name: string,
-  ): Promise<{
-    worktreeRoot?: string;
-    worktreePath?: string;
-    branch?: string;
-    baseCommit?: string;
-  }>;
-  copyFiles(target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">): Promise<boolean>;
-  remove(input: ShellWorktree): Promise<void>;
+  create(workspace: WorkspaceDirectoryOption, name: string): ApplicationEffect<ShellWorktreeAllocation>;
+  copyFiles(target: Pick<ShellWorktree, "workspaceRoot" | "worktreePath">): ApplicationEffect<boolean>;
+  /** Returns false when safety policy deliberately retains the worktree. */
+  remove(input: ShellWorktree): ApplicationEffect<boolean>;
 }
 
 export interface ShellHookPort {
-  resolveHook(value: string, workspaceRoot: string): Promise<string>;
+  resolveHook(value: string, workspaceRoot: string): ApplicationEffect<string>;
   runShell(input: {
     hook: string | null;
     kind: "setup" | "cleanup";
@@ -54,7 +56,7 @@ export interface ShellHookPort {
     name: string;
     workspaceRoot: string;
     worktreePath: string;
-  }): Promise<boolean>;
+  }): ApplicationEffect<boolean>;
 }
 
 export interface ShellPanePort {
@@ -64,11 +66,11 @@ export interface ShellPanePort {
 
 /** Resolves host shell context from daemon contract data and local host inputs. */
 export interface ShellWorkspaceResolverPort {
-  resolveCurrent(): Promise<WorkspaceDirectoryOption>;
+  resolveCurrent(): ApplicationEffect<WorkspaceDirectoryOption>;
 }
 
 export interface SessionWorktreeLookupPort {
-  findWorktreePath(workspaceId: WorkspaceRecord["id"], sessionName: string, fallbackCwd: string): Promise<string>;
+  findWorktreePath(workspaceId: Workspace["id"], sessionName: string, fallbackCwd: string): ApplicationEffect<string>;
 }
 
 export type RunShellDependencies = {

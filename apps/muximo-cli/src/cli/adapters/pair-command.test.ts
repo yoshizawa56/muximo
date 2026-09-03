@@ -1,5 +1,4 @@
 import { Readable, Writable } from "node:stream";
-import type { PairDevice } from "@muximo/application";
 import {
   hasError,
   hasObserved,
@@ -9,6 +8,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import { PairCommand, type PairDeviceRuntime, type ResolvedPairCommandOptions } from "./pair-command.js";
 
@@ -35,12 +35,14 @@ const createFixture = (key: Key) => () => {
   const fixture = { out, received: undefined as unknown, closed: false, command: undefined as PairCommand | undefined };
   const runtime: PairDeviceRuntime = {
     useCase: {
-      execute: async (input) => {
+      execute: (input) => {
         fixture.received = input;
-        if (key === "failed") throw new Error("pairing transport failed");
-        return key === "approved" ? { status: "approved", deviceId: "device-1" } : { status: "rejected" };
+        if (key === "failed") return Effect.fail(new Error("pairing transport failed"));
+        return Effect.succeed(
+          key === "approved" ? { status: "approved", deviceId: "device-1" } : { status: "rejected" },
+        );
       },
-    } as PairDevice,
+    },
     close: () => {
       fixture.closed = true;
     },

@@ -1,10 +1,11 @@
-import { z } from "zod";
+import { Schema } from "effect";
+import { InvalidEntityError } from "./entity-errors.js";
 import { AgentSessionId, WorkspaceId } from "./ids.js";
-import { applyObjectPatch, type ObjectPatch } from "./patch.js";
+import { applyObjectPatch, type EntityPatch } from "./patch.js";
 
 export const agentBackends = ["codex", "claude", "opencode"] as const;
-export const agentBackendSchema = z.enum(agentBackends);
-export type AgentBackend = z.infer<typeof agentBackendSchema>;
+export const agentBackendSchema = Schema.Literals(agentBackends);
+export type AgentBackend = (typeof agentBackendSchema)["Type"];
 
 export const agentSessionStates = [
   "starting",
@@ -17,57 +18,57 @@ export const agentSessionStates = [
   "interrupted",
   "exited",
 ] as const;
-export const agentSessionStateSchema = z.enum(agentSessionStates);
-export type AgentSessionState = z.infer<typeof agentSessionStateSchema>;
+export const agentSessionStateSchema = Schema.Literals(agentSessionStates);
+export type AgentSessionState = (typeof agentSessionStateSchema)["Type"];
 
 export const agentSessionNameLimits = {
   maxLength: 64,
   maxUtf8Bytes: 240,
 } as const;
 
-const agentSessionNameSchema = z
-  .string()
-  .min(1)
-  .max(agentSessionNameLimits.maxLength)
-  .refine((value) => !/[\u0000\r\n]/.test(value), "agent session name contains a control character");
+const agentSessionNameSchema = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(agentSessionNameLimits.maxLength),
+  Schema.isPattern(/^[^\u0000\r\n]*$/),
+);
 
-const optionalPathSchema = z.string().min(1).optional();
-const agentSessionSchema = z
-  .object({
-    id: AgentSessionId.schema,
-    name: agentSessionNameSchema,
-    backend: agentBackendSchema,
-    status: agentSessionStateSchema,
-    workspaceId: WorkspaceId.schema,
-    workspaceRoot: z.string().min(1),
-    workspaceName: z.string().min(1),
-    worktreeRoot: optionalPathSchema,
-    worktreePath: optionalPathSchema,
-    branch: z.string().min(1).optional(),
-    baseCommit: z.string().min(1).optional(),
-    useWorktree: z.boolean(),
-    setupHook: optionalPathSchema,
-    cleanupHook: optionalPathSchema,
-    setupOutputFile: optionalPathSchema,
-    cleanupOutputFile: optionalPathSchema,
-    backendSessionId: z.string().min(1).optional(),
-    setupRan: z.boolean(),
-    resuming: z.boolean(),
-    baselineStatus: z.string().optional(),
-    lastExitStatus: z.number().int().optional(),
-    executionId: z.string().min(1).optional(),
-    executionPid: z.number().int().positive().optional(),
-    executionStartedAt: z.string().min(1).optional(),
-    executionOwnerPid: z.number().int().positive().optional(),
-    executionOwnerStartedAt: z.string().min(1).optional(),
-    createdAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-  })
-  .strict();
+const optionalPathSchema = Schema.String.check(Schema.isMinLength(1));
 
-export type AgentSession = z.infer<typeof agentSessionSchema>;
-export type AgentSessionRecord = AgentSession;
-export type AgentSessionUpdateInput = ObjectPatch<AgentSession>;
+/** Bare field schemas shared by the entity definition and wire derivations. */
+export const AgentSessionFields = {
+  id: AgentSessionId.schema,
+  name: agentSessionNameSchema,
+  backend: agentBackendSchema,
+  status: agentSessionStateSchema,
+  workspaceId: WorkspaceId.schema,
+  workspaceRoot: Schema.String.check(Schema.isMinLength(1)),
+  workspaceName: Schema.String.check(Schema.isMinLength(1)),
+  worktreeRoot: optionalPathSchema,
+  worktreePath: optionalPathSchema,
+  branch: Schema.String.check(Schema.isMinLength(1)),
+  baseCommit: Schema.String.check(Schema.isMinLength(1)),
+  useWorktree: Schema.Boolean,
+  setupHook: optionalPathSchema,
+  cleanupHook: optionalPathSchema,
+  setupOutputFile: optionalPathSchema,
+  cleanupOutputFile: optionalPathSchema,
+  backendSessionId: Schema.String.check(Schema.isMinLength(1)),
+  setupRan: Schema.Boolean,
+  resuming: Schema.Boolean,
+  baselineStatus: Schema.String,
+  lastExitStatus: Schema.Number.check(Schema.isInt()),
+  executionId: Schema.String.check(Schema.isMinLength(1)),
+  executionPid: Schema.Number.check(positiveInteger()),
+  executionStartedAt: Schema.String.check(Schema.isMinLength(1)),
+  executionOwnerPid: Schema.Number.check(positiveInteger()),
+  executionOwnerStartedAt: Schema.String.check(Schema.isMinLength(1)),
+  lastActivityAt: Schema.String.check(Schema.isMinLength(1)),
+} as const;
+
+const agentSessionImmutableFields = ["id"] as const;
+type AgentSessionImmutableFields = (typeof agentSessionImmutableFields)[number];
+export type AgentSessionEncoded = (typeof AgentSession)["Encoded"];
+export type AgentSessionUpdateInput = EntityPatch<AgentSessionEncoded, AgentSessionImmutableFields>;
 
 export class InvalidAgentSessionNameError extends Error {
   public readonly code = "invalid_agent_name" as const;
@@ -78,38 +79,78 @@ export class InvalidAgentSessionNameError extends Error {
   }
 }
 
-const parseAgentSession = (input: unknown): AgentSession => agentSessionSchema.parse(input);
-
-export const AgentSession = {
-  schema: agentSessionSchema,
+export class AgentSession extends Schema.Class<AgentSession>("AgentSession")({
+  id: AgentSessionId.schema,
+  name: agentSessionNameSchema,
+  backend: agentBackendSchema,
+  status: agentSessionStateSchema,
+  workspaceId: WorkspaceId.schema,
+  workspaceRoot: AgentSessionFields.workspaceRoot,
+  workspaceName: AgentSessionFields.workspaceName,
+  worktreeRoot: Schema.optional(optionalPathSchema),
+  worktreePath: Schema.optional(optionalPathSchema),
+  branch: Schema.optional(AgentSessionFields.branch),
+  baseCommit: Schema.optional(AgentSessionFields.baseCommit),
+  useWorktree: Schema.Boolean,
+  setupHook: Schema.optional(optionalPathSchema),
+  cleanupHook: Schema.optional(optionalPathSchema),
+  setupOutputFile: Schema.optional(optionalPathSchema),
+  cleanupOutputFile: Schema.optional(optionalPathSchema),
+  backendSessionId: Schema.optional(AgentSessionFields.backendSessionId),
+  setupRan: Schema.Boolean,
+  resuming: Schema.Boolean,
+  baselineStatus: Schema.optional(AgentSessionFields.baselineStatus),
+  lastExitStatus: Schema.optional(AgentSessionFields.lastExitStatus),
+  executionId: Schema.optional(AgentSessionFields.executionId),
+  executionPid: Schema.optional(AgentSessionFields.executionPid),
+  executionStartedAt: Schema.optional(AgentSessionFields.executionStartedAt),
+  executionOwnerPid: Schema.optional(AgentSessionFields.executionOwnerPid),
+  executionOwnerStartedAt: Schema.optional(AgentSessionFields.executionOwnerStartedAt),
+  lastActivityAt: AgentSessionFields.lastActivityAt,
+}) {
+  static create(input: Omit<AgentSessionEncoded, "name"> & { name: string }): AgentSession {
+    return decodeAgentSession({ ...input, name: normalizeAgentSessionName(input.name) });
+  }
 
   /** Rehydrates a persisted agent session. This is the only re-entry point for raw data. */
-  restore(input: unknown): AgentSession {
-    return parseAgentSession(input);
-  },
+  static restore(input: unknown): AgentSession {
+    return decodeAgentSession(input);
+  }
 
-  create(input: Omit<AgentSession, "name"> & { name: string }): AgentSession {
-    return parseAgentSession({ ...input, name: normalizeAgentSessionName(input.name) });
-  },
-
-  update(entity: AgentSession, input: AgentSessionUpdateInput): AgentSession {
-    const current = parseAgentSession(entity);
-    const next = applyObjectPatch(current, input);
-    if (input.name !== undefined && typeof input.name === "string") {
-      next.name = normalizeAgentSessionName(input.name);
+  update(input: AgentSessionUpdateInput): AgentSession {
+    for (const key of Object.keys(input)) {
+      if (immutableAgentSessionUpdateKeys.has(key)) {
+        throw new Error(`AgentSession update cannot change immutable field: ${key}`);
+      }
     }
-    return parseAgentSession(next);
-  },
+    const current = { ...this } as AgentSessionEncoded;
+    const patched = applyObjectPatch(current, input);
+    const next =
+      input.name !== undefined && typeof input.name === "string"
+        ? { ...patched, name: normalizeAgentSessionName(input.name) }
+        : patched;
+    return decodeAgentSession(next);
+  }
 
-  normalizeName: normalizeAgentSessionName,
-  hasActiveExecution(entity: AgentSession): boolean {
-    const current = parseAgentSession(entity);
+  hasActiveExecution(): boolean {
     return (
-      (current.status === "running" || current.status === "resuming" || current.status === "recovering") &&
-      current.executionId !== undefined
+      (this.status === "running" || this.status === "resuming" || this.status === "recovering") &&
+      this.executionId !== undefined
     );
-  },
-} as const;
+  }
+
+  static normalizeName = normalizeAgentSessionName;
+}
+
+const decodeAgentSession = (input: unknown): AgentSession => {
+  try {
+    return Schema.decodeUnknownSync(AgentSession, { onExcessProperty: "error" })(input);
+  } catch (error) {
+    throw new InvalidEntityError("AgentSession", { cause: error });
+  }
+};
+
+const immutableAgentSessionUpdateKeys = new Set<string>(agentSessionImmutableFields);
 
 export function normalizeAgentSessionName(value: string): string {
   let normalized = value
@@ -140,4 +181,8 @@ export function normalizeAgentSessionName(value: string): string {
 
   if (!normalized || !/^[\p{L}\p{N}]/u.test(normalized)) throw new InvalidAgentSessionNameError();
   return normalized;
+}
+
+function positiveInteger() {
+  return Schema.makeFilter((value: number) => Number.isInteger(value) && value > 0);
 }

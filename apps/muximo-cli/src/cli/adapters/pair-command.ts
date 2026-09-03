@@ -1,5 +1,6 @@
 import type { Readable, Writable } from "node:stream";
 import type { PairDevice } from "@muximo/application";
+import { Effect } from "effect";
 
 export type PairCommandIo = {
   out: Writable;
@@ -15,7 +16,7 @@ export type ResolvedPairCommandOptions = {
 };
 
 export type PairDeviceRuntime = {
-  useCase: PairDevice;
+  useCase: Pick<PairDevice, "execute">;
   close(): void | Promise<void>;
 };
 
@@ -36,7 +37,7 @@ export class PairCommand {
   public async execute(input: ResolvedPairCommandOptions): Promise<number> {
     const runtime = await this.options.createRuntime(input, this.options.io);
     try {
-      const result = await runtime.useCase.execute({ muximodBaseUrl: input.muximodBaseUrl });
+      const result = await Effect.runPromise(runtime.useCase.execute({ muximodBaseUrl: input.muximodBaseUrl }));
       if (result.status === "approved") {
         this.options.io.out.write(`Approved. deviceId: ${result.deviceId}\n`);
         return 0;

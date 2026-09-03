@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 import type {
+  ApplicationEffect,
   ManagedAgentSessionRepository,
   SessionNamingPort,
   WorkspaceDirectoryPort,
@@ -9,8 +10,9 @@ import type {
   WorkspaceResolutionInput,
   WorkspaceResolverPort,
 } from "@muximo/application";
-import { type AgentBackend, Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
-import { isPathWithin, localTimestamp, realpathSafe, timestamp } from "./filesystem.js";
+import { type AgentBackend, Workspace, WorkspaceId } from "@muximo/domain";
+import { Effect } from "effect";
+import { isPathWithin, localTimestamp, realpathSafe } from "./filesystem.js";
 import { gitWorkspaceRoot } from "./git.js";
 
 export type WorkspaceResolverOptions = {
@@ -28,80 +30,93 @@ export class WorkspaceResolverAdapter implements WorkspaceResolverPort {
     this.cwd = realpathSafe(options.cwd);
   }
 
-  public async resolveCurrent(input: WorkspaceResolutionInput = {}): Promise<WorkspaceRecord> {
-    const workspaceSelector = input.workspace?.trim();
-    if (workspaceSelector) return this.resolveExplicit(workspaceSelector, input.cwd ?? this.cwd);
+  public resolveCurrent(input: WorkspaceResolutionInput = {}): ApplicationEffect<Workspace> {
+    const self = this;
+    return Effect.gen(function* () {
+      const workspaceSelector = input.workspace?.trim();
+      if (workspaceSelector) return yield* self.resolveExplicit(workspaceSelector, input.cwd ?? self.cwd);
 
-    const selectedWorkspaceId = this.options.environment.MUXIMOD_WORKSPACE_ID?.trim();
-    if (selectedWorkspaceId) {
-      const selected = await this.options.workspaces.findById(WorkspaceId.create(selectedWorkspaceId));
-      if (selected) return selected;
-    }
+      const selectedWorkspaceId = self.options.environment.MUXIMOD_WORKSPACE_ID?.trim();
+      if (selectedWorkspaceId) {
+        const selected = yield* self.options.workspaces.findById(WorkspaceId.create(selectedWorkspaceId));
+        if (selected) return selected;
+      }
 
-    const cwd = await this.resolveCwd(input.cwd);
+      const cwd = yield* self.resolveCwd(input.cwd);
 
-    const gitRoot = gitWorkspaceRoot(cwd);
-    const root = gitRoot ?? cwd;
-    const id = workspaceIdForPath(root);
-    const existing =
-      (await this.options.workspaces.findById(id)) ?? (await this.findRegisteredWorkspaceForCwd(gitRoot, cwd));
-    if (existing) return existing;
+      const gitRoot = gitWorkspaceRoot(cwd);
+      const root = gitRoot ?? cwd;
+      const id = workspaceIdForPath(root);
+      const existing =
+        (yield* self.options.workspaces.findById(id)) ?? (yield* self.findRegisteredWorkspaceForCwd(gitRoot, cwd));
+      if (existing) return existing;
 
-    const now = timestamp();
-    return Workspace.create({
-      id,
-      rootPath: root,
-      name: basename(root),
-      isGit: Boolean(gitRoot),
-      createdAt: now,
-      updatedAt: now,
+      return Workspace.create({
+        id,
+        rootPath: root,
+        name: basename(root),
+        isGit: Boolean(gitRoot),
+      });
     });
   }
 
-  private async resolveCwd(cwd: string | undefined): Promise<string> {
+  private resolveCwd(cwd: string | undefined): ApplicationEffect<string> {
     const resolved = realpathSafe(cwd ?? this.cwd);
-    await this.options.directory?.resolveDirectory(resolved);
-    return resolved;
+    if (!this.options.directory) return Effect.succeed(resolved);
+    return this.options.directory.resolveDirectory(resolved).pipe(Effect.as(resolved));
   }
 
-  private async resolveExplicit(selector: string, cwd: string): Promise<WorkspaceRecord> {
-    const records = await this.options.workspaces.list();
-    const named = records.filter((workspace) => workspace.name === selector);
-    if (named.length > 1) throw new Error(`workspace name is ambiguous; select its path: ${selector}`);
-    const [namedWorkspace] = named;
-    if (namedWorkspace) {
-      await this.options.directory?.resolveDirectory(namedWorkspace.rootPath);
-      return namedWorkspace;
-    }
+  private resolveExplicit(selector: string, cwd: string): ApplicationEffect<Workspace> {
+    const self = this;
+    return Effect.gen(function* () {
+      const records = yield* self.options.workspaces.list();
+      const named = records.filter((workspace) => workspace.name === selector);
+      if (named.length > 1)
+        return yield* Effect.fail(new Error(`workspace name is ambiguous; select its path: ${selector}`));
+      const [namedWorkspace] = named;
+      if (namedWorkspace) {
+        if (self.options.directory) {
+          yield* self.options.directory.resolveDirectory(namedWorkspace.rootPath);
+        }
+        return namedWorkspace;
+      }
 
-    const candidate = resolveWorkspacePath(selector, cwd);
-    let resolvedRoot: string | undefined;
-    try {
-      resolvedRoot = (await this.options.directory?.resolveDirectory(candidate))?.rootPath;
-    } catch (error) {
-      if (!isMissingDirectoryError(error)) throw error;
-    }
-    resolvedRoot ??= gitWorkspaceRoot(candidate) ?? realpathSafe(candidate);
-    const matches = records.filter((workspace) => samePath(workspace.rootPath, resolvedRoot));
-    const [workspace] = matches;
-    if (matches.length === 1 && workspace) return workspace;
-    throw new Error(`workspace not found: ${selector}`);
+      const candidate = resolveWorkspacePath(selector, cwd);
+      const resolvedRoot = self.options.directory
+        ? yield* self.options.directory.resolveDirectory(candidate).pipe(
+            Effect.map((directory) => directory.rootPath),
+            Effect.catch((error) => {
+              if (!isMissingDirectoryError(error)) return Effect.fail(error);
+              return Effect.succeed(undefined);
+            }),
+          )
+        : undefined;
+      const root = resolvedRoot ?? gitWorkspaceRoot(candidate) ?? realpathSafe(candidate);
+      const matches = records.filter((workspace) => samePath(workspace.rootPath, root));
+      const [workspace] = matches;
+      if (matches.length === 1 && workspace) return workspace;
+      return yield* Effect.fail(new Error(`workspace not found: ${selector}`));
+    });
   }
 
-  private async findRegisteredWorkspaceForCwd(
+  private findRegisteredWorkspaceForCwd(
     repositoryRoot: string | undefined,
     cwd: string,
-  ): Promise<WorkspaceRecord | undefined> {
-    if (repositoryRoot && cwd === repositoryRoot) return undefined;
-    const candidates = (await this.options.workspaces.list())
-      .filter((workspace) => !repositoryRoot || workspace.rootPath !== repositoryRoot)
-      .filter(
-        (workspace) =>
-          (!repositoryRoot || isPathWithin(repositoryRoot, workspace.rootPath)) &&
-          isPathWithin(workspace.rootPath, cwd),
-      )
-      .sort((left, right) => right.rootPath.length - left.rootPath.length);
-    return candidates[0];
+  ): ApplicationEffect<Workspace | undefined> {
+    if (repositoryRoot && cwd === repositoryRoot) return Effect.succeed(undefined);
+    return this.options.workspaces.list().pipe(
+      Effect.map(
+        (records) =>
+          records
+            .filter((workspace) => !repositoryRoot || workspace.rootPath !== repositoryRoot)
+            .filter(
+              (workspace) =>
+                (!repositoryRoot || isPathWithin(repositoryRoot, workspace.rootPath)) &&
+                isPathWithin(workspace.rootPath, cwd),
+            )
+            .sort((left, right) => right.rootPath.length - left.rootPath.length)[0],
+      ),
+    );
   }
 }
 
@@ -109,20 +124,23 @@ export class WorkspaceResolverAdapter implements WorkspaceResolverPort {
 export class SessionNamingAdapter implements SessionNamingPort {
   public constructor(private readonly sessions: ManagedAgentSessionRepository) {}
 
-  public async resolveName(
+  public resolveName(
     workspaceId: WorkspaceId,
     requestedName: string | undefined,
     backend: AgentBackend,
-  ): Promise<string> {
-    if (requestedName !== undefined) return requestedName;
-    const prefix = `${backend}-${localTimestamp()}`;
-    let candidate = prefix;
-    let suffix = 0;
-    while (await this.sessions.findByName(workspaceId, candidate)) {
-      suffix += 1;
-      candidate = `${prefix}-${suffix}`;
-    }
-    return candidate;
+  ): ApplicationEffect<string> {
+    if (requestedName !== undefined) return Effect.succeed(requestedName);
+    const self = this;
+    return Effect.gen(function* () {
+      const prefix = `${backend}-${localTimestamp()}`;
+      let candidate = prefix;
+      let suffix = 0;
+      while (yield* self.sessions.findByName(workspaceId, candidate)) {
+        suffix += 1;
+        candidate = `${prefix}-${suffix}`;
+      }
+      return candidate;
+    });
   }
 }
 

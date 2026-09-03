@@ -1,6 +1,5 @@
-import { WorkspaceId } from "@muximo/domain";
 import { eventIterator, oc } from "@orpc/contract";
-import { z } from "zod";
+import { Schema } from "effect";
 import {
   agentSessionListResponseSchema,
   authChallengeRequestSchema,
@@ -26,6 +25,7 @@ import {
   registerWorkspaceRequestSchema,
   sessionListResponseSchema,
   sessionResponseSchema,
+  struct,
   terminalListResponseSchema,
   updateWorkspaceRequestSchema,
   workspaceBrowseResponseSchema,
@@ -35,23 +35,23 @@ import {
   wsTicketResponseSchema,
 } from "./protocol.js";
 
-const emptyInput = z.object({}).strict();
-const _pairingIdInput = z.object({ pairingId: z.string().trim().min(1).max(256) }).strict();
-const workspaceIdInput = z.object({ workspaceId: WorkspaceId.valueSchema }).strict();
-const workspaceBrowseInput = z.object({ path: z.string().trim().max(4_096).optional() }).strict();
-const paneListInput = z.object({ session: z.string().trim().min(1).max(64).optional() }).strict();
-const pairingClaimInput = z
-  .object({
-    pairingId: z.string().trim().min(1).max(256),
-    request: pairingClaimRequestSchema,
-  })
-  .strict();
-const pairingStatusInput = z
-  .object({
-    pairingId: z.string().trim().min(1).max(256),
-    claimToken: z.string().min(1).max(512),
-  })
-  .strict();
+const emptyInput = struct({});
+const workspaceIdField = Schema.String.check(Schema.isMinLength(1));
+const workspaceIdInput = struct({ workspaceId: workspaceIdField });
+const workspaceBrowseInput = struct({
+  path: Schema.optional(Schema.Trim.check(Schema.isMaxLength(4_096))),
+});
+const paneListInput = struct({
+  session: Schema.optional(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64))),
+});
+const pairingClaimInput = struct({
+  pairingId: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  request: pairingClaimRequestSchema,
+});
+const pairingStatusInput = struct({
+  pairingId: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  claimToken: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+});
 
 export const muximodContract = {
   health: oc.input(emptyInput).output(muximodHealthSchema),
@@ -68,7 +68,9 @@ export const muximodContract = {
     list: oc.input(emptyInput).output(workspaceListResponseSchema),
     browse: oc.input(workspaceBrowseInput).output(workspaceBrowseResponseSchema),
     register: oc.input(registerWorkspaceRequestSchema).output(workspaceResponseSchema),
-    update: oc.input(workspaceIdInput.extend({ input: updateWorkspaceRequestSchema })).output(workspaceResponseSchema),
+    update: oc
+      .input(struct({ workspaceId: workspaceIdField, input: updateWorkspaceRequestSchema }))
+      .output(workspaceResponseSchema),
     delete: oc.input(workspaceIdInput).output(emptyInput),
   },
   terminals: {

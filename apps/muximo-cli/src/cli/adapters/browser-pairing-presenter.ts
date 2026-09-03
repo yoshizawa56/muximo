@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
-import type { PairingClaim, PairingOffer, PairingPresenterPort } from "@muximo/application";
+import type { ApplicationEffect, PairingClaim, PairingOffer, PairingPresenterPort } from "@muximo/application";
+import { fromPromise } from "@muximo/infrastructure/cli-client";
 import { SvgQrRenderer } from "./svg-qr-renderer.js";
 import type { QrRendererPort } from "./terminal-qr-renderer.js";
 
@@ -34,7 +35,11 @@ export class BrowserPairingPresenter implements PairingPresenterPort {
     this.qrRenderer = options.qrRenderer ?? new SvgQrRenderer();
   }
 
-  public async showPairing(offer: PairingOffer): Promise<void> {
+  public showPairing(offer: PairingOffer): ApplicationEffect<void> {
+    return fromPromise(() => this.showPairingPromise(offer));
+  }
+
+  private async showPairingPromise(offer: PairingOffer): Promise<void> {
     await this.close();
     const qr = await this.qrRenderer.render(offer.pairingCode);
     const directory = await mkdtemp(join(tmpdir(), "muximo-pair-"));
@@ -57,7 +62,11 @@ export class BrowserPairingPresenter implements PairingPresenterPort {
     this.write("Scan this QR code in the Muximo app. Waiting for a connection request.\n");
   }
 
-  public async confirmPairing(claim: PairingClaim): Promise<boolean> {
+  public confirmPairing(claim: PairingClaim): ApplicationEffect<boolean> {
+    return fromPromise(() => this.confirmPairingPromise(claim));
+  }
+
+  private async confirmPairingPromise(claim: PairingClaim): Promise<boolean> {
     this.write(
       `\nConnection request received.\n  name: ${claim.deviceName}\n  type: ${claim.deviceType}\n  platform: ${claim.platform ?? "(not provided)"}\n  clientVersion: ${claim.clientVersion ?? "(not provided)"}\n  public key fingerprint: ${claim.keyFingerprint}\n`,
     );

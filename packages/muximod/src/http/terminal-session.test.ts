@@ -19,6 +19,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Schema } from "effect";
 import { describe, it, vi } from "vitest";
 import { TerminalSession, type TerminalSessionOptions, TerminalSessionRegistry } from "./terminal-session.js";
 
@@ -575,7 +576,7 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
 
 function attachFrame(target: string, credentials: { sessionId?: string; resumeToken?: string } = {}): string {
   return JSON.stringify(
-    clientControlMessageSchema.parse({
+    Schema.decodeUnknownSync(clientControlMessageSchema, { onExcessProperty: "error" })({
       type: "attach",
       version: terminalProtocolVersion,
       target,
@@ -625,7 +626,9 @@ class FakeSocket extends EventEmitter {
   public controls() {
     return this.sent
       .filter((frame): frame is string => typeof frame === "string")
-      .map((frame) => serverControlMessageSchema.parse(JSON.parse(frame)));
+      .map((frame) =>
+        Schema.decodeUnknownSync(serverControlMessageSchema, { onExcessProperty: "error" })(JSON.parse(frame)),
+      );
   }
   public binaryFrames(): string[] {
     return this.sent

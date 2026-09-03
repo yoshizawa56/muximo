@@ -1,5 +1,6 @@
 import type { MuximodSocketAdapter } from "@muximo/infrastructure/runtime";
 import type { WebSocketHandler } from "bun";
+import { Effect } from "effect";
 import { corsResponse } from "./middleware.js";
 import type { MuximodHttpDependencies } from "./types.js";
 
@@ -55,7 +56,7 @@ export async function handleTerminalUpgrade(
     );
 
   const ticket = new URL(request.url).searchParams.get("ticket") ?? undefined;
-  const context = await deps.auth.consumeWebSocketTicket(ticket, "terminal");
+  const context = await Effect.runPromise(deps.auth.consumeWebSocketTicket(ticket, "terminal"));
   if (!context)
     return corsResponse(
       { error: "unauthorized", message: "WebSocket authentication is required" },

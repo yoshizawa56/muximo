@@ -9,19 +9,18 @@ import {
   AuthService,
   CleanupAgentSession,
   createMuximodApplication,
-  DeleteWorkspace,
   ListAgentSessions,
-  ListWorkspaces,
   LocateAgentSession,
+  type MuximodViewportPort,
   type PanePublicationPort,
-  RegisterWorkspace,
   ResumeAgentSession,
   RunAgentSession,
-  UpdateWorkspace,
+  type SessionAuditPort,
+  terminalLayer,
   type WorkspaceAuditPort,
-  WorkspaceRecordFactory,
+  workspaceLayer,
 } from "@muximo/application";
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
 import {
   AgentBackendAdapter,
   AgentSessionObservationAdapter,
@@ -42,6 +41,7 @@ import {
   defaultPaneRetentionMs,
   defaultTmuxPollIntervalMs,
   errorFields,
+  fromPromise,
   GitWorktreeAdapter,
   getLocalTerminal,
   type Logger,
@@ -57,6 +57,7 @@ import {
   ProcessObservationAdapter,
   readDaemonLog,
   recordAuditEvent,
+  runEffectAsPromise,
   SessionNamingAdapter,
   SqliteTransactionManager,
   spawnPty,
@@ -68,6 +69,7 @@ import {
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
 } from "@muximo/infrastructure/runtime";
+import { Effect } from "effect";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
@@ -129,10 +131,9 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const tmux = new TmuxAdapter(environment.MUXIMOD_TMUX_SOCKET, undefined, environment);
   const host = new TmuxMuximodHostAdapter(tmux, environment);
   const viewportManager = new TmuxViewportManager(tmux);
-  const applicationViewportManager = {
-    handleTerminalHostHook: (event: Parameters<typeof viewportManager.handleTmuxHook>[0], client: string) =>
-      viewportManager.handleTmuxHook(event, client),
-    reassertMobileViewport: (target: string) => viewportManager.reassertMobileViewport(target),
+  const applicationViewportManager: MuximodViewportPort = {
+    handleTerminalHostHook: (event, client) => fromPromise(() => viewportManager.handleTmuxHook(event, client)),
+    reassertMobileViewport: (target: string) => fromPromise(() => viewportManager.reassertMobileViewport(target)),
   };
   const databaseFile = join(options.instanceDirectory, "muximod.sqlite");
   const database = createAgentDatabase(databaseFile, {
@@ -148,29 +149,11 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots, options.workingDirectory);
   const clock: ApplicationClock = { now: () => new Date().toISOString() };
   const workspaceAudit: WorkspaceAuditPort = {
-    record: (eventType, entityId, payload) => recordAuditEvent(database.db, { eventType, entityId, payload }),
+    record: (eventType, entityId, payload) =>
+      fromPromise(() => {
+        recordAuditEvent(database.db, { eventType, entityId, payload });
+      }),
   };
-  const workspaceRecordFactory = new WorkspaceRecordFactory(workspaceCatalog, clock);
-  const listWorkspaces = new ListWorkspaces(workspaceRepository);
-  const registerWorkspace = new RegisterWorkspace(
-    workspaceRepository,
-    workspaceRecordFactory,
-    workspaceAudit,
-    transactionManager,
-  );
-  const updateWorkspace = new UpdateWorkspace(
-    workspaceRepository,
-    workspaceCatalog,
-    workspaceRecordFactory,
-    workspaceAudit,
-    transactionManager,
-  );
-  const deleteWorkspace = new DeleteWorkspace(
-    workspaceRepository,
-    workspaceCatalog,
-    workspaceAudit,
-    transactionManager,
-  );
   const agentStatus = new Map() as AgentStatusStore;
   const workspaceResolver = new WorkspaceResolverAdapter({
     cwd: options.workingDirectory,
@@ -187,7 +170,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   const observations = new AgentSessionObservationAdapter({
     environment,
-    resolveWorkspace: () => workspaceResolver.resolveCurrent(),
+    resolveWorkspace: () => runEffectAsPromise(workspaceResolver.resolveCurrent()),
   });
   const processObservation = new ProcessObservationAdapter();
   const naming = new SessionNamingAdapter(agentSessionRepository);
@@ -196,9 +179,11 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     debug: (event: string, fields?: Record<string, unknown>) => logger.debug(event, fields),
   };
   const sessionClock = { now: () => new Date().toISOString(), id: () => randomBytes(16).toString("hex") };
-  const sessionAudit = {
-    record: (eventType: string, entityId: string, payload: unknown) =>
-      recordAuditEvent(database.db, { eventType, entityId, payload }),
+  const sessionAudit: SessionAuditPort = {
+    record: (eventType, entityId, payload) =>
+      fromPromise(() => {
+        recordAuditEvent(database.db, { eventType, entityId, payload });
+      }),
   };
   let application: ReturnType<typeof createMuximodApplication>;
   const applicationForAgentPane = () => {
@@ -244,7 +229,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     audit: sessionAudit,
     clock: sessionClock,
     logger: sessionLogger,
-    confirmCleanup: { confirm: async () => false },
+    confirmCleanup: { confirm: () => fromPromise(() => false) },
     process: processObservation,
   });
   const resumeAgentSession = new ResumeAgentSession({
@@ -271,36 +256,58 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     remote: backend,
     resources: backend,
     audit: sessionAudit,
-    confirmCleanup: { confirm: async () => false },
+    confirmCleanup: { confirm: () => fromPromise(() => false) },
     clock: sessionClock,
   });
   application = createMuximodApplication({
     agentSessions: {
       prepareRun: (input, signal) =>
-        executeAgentSession("prepare_run", input, () => runAgentSession.prepare(input, signal), logger),
+        executeAgentSession(
+          "prepare_run",
+          input,
+          () => Effect.runPromise(runAgentSession.prepare(input, signal)),
+          logger,
+        ),
       prepareResume: (input, signal) =>
-        executeAgentSession("prepare_resume", input, () => resumeAgentSession.prepare(input, signal), logger),
-      attach: (input) => executeAgentSession("attach", input, () => attachAgentSession.execute(input), logger),
-      completeRun: (input) => executeAgentSession("complete_run", input, () => runAgentSession.complete(input), logger),
+        executeAgentSession(
+          "prepare_resume",
+          input,
+          () => Effect.runPromise(resumeAgentSession.prepare(input, signal)),
+          logger,
+        ),
+      attach: (input) =>
+        executeAgentSession("attach", input, () => Effect.runPromise(attachAgentSession.execute(input)), logger),
+      completeRun: (input) =>
+        executeAgentSession("complete_run", input, () => Effect.runPromise(runAgentSession.complete(input)), logger),
       completeResume: (input) =>
-        executeAgentSession("complete_resume", input, () => resumeAgentSession.complete(input), logger),
-      cleanup: (input) => executeAgentSession("cleanup", input, () => cleanupAgentSession.execute(input), logger),
-      list: (input) => listAgentSessions.execute(input),
+        executeAgentSession(
+          "complete_resume",
+          input,
+          () => Effect.runPromise(resumeAgentSession.complete(input)),
+          logger,
+        ),
+      cleanup: (input) =>
+        executeAgentSession("cleanup", input, () => Effect.runPromise(cleanupAgentSession.execute(input)), logger),
+      list: (input) => Effect.runPromise(listAgentSessions.execute(input)),
     },
     getTerminal: () => getLocalTerminal(environment),
-    host,
-    sessionManagement: host,
     clock,
-    paneRepository,
-    agentSessionRepository,
     workspaceCatalog,
-    workspaceRepository,
-    listWorkspaces,
-    registerWorkspace,
-    updateWorkspace,
-    deleteWorkspace,
-    viewportManager: applicationViewportManager,
-    agentStatus,
+    workspaceLayer: workspaceLayer({
+      repository: workspaceRepository,
+      directories: workspaceCatalog,
+      audit: workspaceAudit,
+      ...(transactionManager === undefined ? {} : { transactions: transactionManager }),
+      catalog: workspaceCatalog,
+    }),
+    terminalLayer: terminalLayer({
+      paneRepository,
+      agentSessionRepository,
+      host,
+      sessionManagement: host,
+      viewportManager: applicationViewportManager,
+      agentStatus,
+    }),
   });
   const eventHub = new MuximodEventHub();
   const hookToken = randomBytes(24).toString("hex");
@@ -322,7 +329,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     serverId: authStore.serverId,
     crypto: nodeAuthCrypto,
     clock: { now: () => new Date() },
-    claimSink: { publish: (notification) => controlServer.notifyPairingClaim(notification) },
+    claimSink: { publish: (notification) => fromPromise(() => controlServer.notifyPairingClaim(notification)) },
     challenges: authChallenges,
     rateLimits: authRateLimits,
     wsTickets: authWsTickets,
@@ -425,7 +432,9 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         paneRecentOutputs: new Map(records.map((record) => [record.hostPaneId, record.recentOutput])),
       })),
     cleanup: (activePaneIds, olderThan, hostServerScope) =>
-      paneRepository.pruneStalePanes(activePaneIds, olderThan, hostServerScope).then(() => undefined),
+      Effect.runPromise(paneRepository.pruneStalePanes(activePaneIds, olderThan, hostServerScope)).then(
+        () => undefined,
+      ),
     onChange: (changes) => {
       const revision = ++eventRevision;
       for (const change of changes) {
@@ -661,51 +670,57 @@ export function createAgentPanePublication(
 ): PanePublicationPort & AgentObservationPort {
   const paneByExecution = new Map<string, string | undefined>();
   const defaultHostPaneId = normalizeHostPaneId(environment.TMUX_PANE);
-  const resolveHostPaneId = (session: AgentSessionRecord, requested?: string): string | undefined =>
+  const resolveHostPaneId = (session: AgentSession, requested?: string): string | undefined =>
     requested ?? (session.executionId ? paneByExecution.get(session.executionId) : undefined) ?? defaultHostPaneId;
 
   return {
-    adopt: async (session, hostPaneId) => {
-      const resolvedHostPaneId = resolveHostPaneId(session, hostPaneId);
-      if (session.executionId) paneByExecution.set(session.executionId, resolvedHostPaneId);
-      const request = agentPaneRequest(session, resolvedHostPaneId);
+    adopt: (session, hostPaneId) => fromPromise(() => adoptPane(session, hostPaneId)),
+    release: (session, hostPaneId) => fromPromise(() => releasePane(session, hostPaneId)),
+    publish: (session, state, hostPaneId) =>
+      fromPromise(() =>
+        observe(session, { state }, resolveHostPaneId(session, hostPaneId), getApplication, logger, "warn"),
+      ),
+    observe: (session, observation) =>
+      fromPromise(() => observe(session, observation, resolveHostPaneId(session), getApplication, logger, "debug")),
+  };
+
+  async function adoptPane(session: AgentSession, hostPaneId: string | undefined): Promise<void> {
+    const resolvedHostPaneId = resolveHostPaneId(session, hostPaneId);
+    if (session.executionId) paneByExecution.set(session.executionId, resolvedHostPaneId);
+    const request = agentPaneRequest(session, resolvedHostPaneId);
+    if (!request) return;
+    try {
+      await getApplication().adoptAgentSession(request);
+    } catch (error) {
+      logger.warn("pane.adopt_failed", {
+        pane: request.hostPaneId,
+        sessionId: request.agentSessionId,
+        ...errorFields(error),
+      });
+    }
+  }
+
+  async function releasePane(session: AgentSession, hostPaneId: string | undefined): Promise<void> {
+    try {
+      const request = agentPaneRequest(session, resolveHostPaneId(session, hostPaneId));
       if (!request) return;
       try {
-        await getApplication().adoptAgentSession(request);
+        await getApplication().releaseAgentSession(request);
       } catch (error) {
-        logger.warn("pane.adopt_failed", {
+        logger.warn("pane.release_failed", {
           pane: request.hostPaneId,
           sessionId: request.agentSessionId,
           ...errorFields(error),
         });
       }
-    },
-    release: async (session, hostPaneId) => {
-      try {
-        const request = agentPaneRequest(session, resolveHostPaneId(session, hostPaneId));
-        if (!request) return;
-        try {
-          await getApplication().releaseAgentSession(request);
-        } catch (error) {
-          logger.warn("pane.release_failed", {
-            pane: request.hostPaneId,
-            sessionId: request.agentSessionId,
-            ...errorFields(error),
-          });
-        }
-      } finally {
-        if (session.executionId) paneByExecution.delete(session.executionId);
-      }
-    },
-    publish: (session, state, hostPaneId) =>
-      observe(session, { state }, resolveHostPaneId(session, hostPaneId), getApplication, logger, "warn"),
-    observe: (session, observation) =>
-      observe(session, observation, resolveHostPaneId(session), getApplication, logger, "debug"),
-  };
+    } finally {
+      if (session.executionId) paneByExecution.delete(session.executionId);
+    }
+  }
 }
 
 function agentPaneRequest(
-  session: AgentSessionRecord,
+  session: AgentSession,
   hostPaneId: string | undefined,
 ): { agentSessionId: string; hostPaneId: string; executionId: string } | undefined {
   const normalizedHostPaneId = hostPaneId?.trim();
@@ -719,7 +734,7 @@ function normalizeHostPaneId(value: string | undefined): string | undefined {
 }
 
 function observe(
-  session: AgentSessionRecord,
+  session: AgentSession,
   observation: AgentStateObservation,
   hostPaneId: string | undefined,
   getApplication: () => AgentPaneApplication,

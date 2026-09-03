@@ -6,7 +6,6 @@ import {
   type PairingCodePayload,
   type PublicKeyJwk,
   pairingClaimMessage,
-  pairingCodePayloadSchema,
   sessionMessage,
 } from "@muximo/contract/shared";
 import { createBrowserAuthCoordinator } from "./browser-auth-coordinator.js";
@@ -49,7 +48,7 @@ export type BrowserPairingPreview = {
 
 export function parsePairingQrPayload(value: string): PairingCodePayload {
   try {
-    return pairingCodePayloadSchema.parse(decodePairingCode(value));
+    return decodePairingCode(value);
   } catch {
     throw new Error("QR code does not contain a valid muximo pairing code");
   }

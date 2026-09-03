@@ -1,4 +1,6 @@
-export type MaybePromise<T> = T | PromiseLike<T>;
+import { Effect } from "effect";
+
+export type MaybePromise<T> = T | PromiseLike<T> | Effect.Effect<T, unknown, never>;
 export type Cleanup = () => MaybePromise<void>;
 export type CleanupRegistrar = (cleanup: Cleanup) => void;
 export type CaseScope = <Result>(operation: () => MaybePromise<Result>) => MaybePromise<Result>;
@@ -160,18 +162,20 @@ async function runCase<Fixture, Result, Context>({
   let failure: unknown;
 
   const body = async (): Promise<void> => {
-    const current = await fixtureFactory((cleanup) => {
-      cleanups.push(cleanup);
-    });
+    const current = await resolveMaybePromise(
+      fixtureFactory((cleanup) => {
+        cleanups.push(cleanup);
+      }),
+    );
     if (current.cleanup) cleanups.push(current.cleanup);
     const result = await captureOutcome(() => execute(current.fixture));
-    const ctx = await observe(current.fixture, result);
+    const ctx = await resolveMaybePromise(observe(current.fixture, result));
     await assertAll(caseName, assert, ctx, result);
   };
 
   try {
     if (caseScope) {
-      await caseScope(body);
+      await resolveMaybePromise(caseScope(body));
     } else {
       await body();
     }
@@ -183,7 +187,7 @@ async function runCase<Fixture, Result, Context>({
   const cleanupErrors: unknown[] = [];
   for (const cleanup of [...cleanups].reverse()) {
     try {
-      await cleanup();
+      await resolveMaybePromise(cleanup());
     } catch (error) {
       cleanupErrors.push(error);
     }
@@ -199,10 +203,15 @@ async function runCase<Fixture, Result, Context>({
 
 async function captureOutcome<Result>(execute: () => MaybePromise<Result>): Promise<Outcome<Result>> {
   try {
-    return { ok: true, value: await execute() };
+    return { ok: true, value: await resolveMaybePromise(execute()) };
   } catch (error) {
     return { ok: false, error };
   }
+}
+
+export async function resolveMaybePromise<Result>(value: MaybePromise<Result>): Promise<Result> {
+  if (Effect.isEffect(value)) return Effect.runPromise(value) as Promise<Result>;
+  return await value;
 }
 
 export async function assertAll<Context, Result>(
@@ -222,7 +231,7 @@ export async function assertAll<Context, Result>(
 
   for (const assertion of assertions) {
     try {
-      await assertion.check(ctx, result);
+      await resolveMaybePromise(assertion.check(ctx, result));
     } catch (error) {
       failures.push({ name: assertion.name, error });
     }

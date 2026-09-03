@@ -16,7 +16,7 @@ export function PaneSelectionModal({
   onRefresh,
   onCreatePane,
 }: {
-  panes: PaneSummary[];
+  panes: readonly PaneSummary[];
   selectedTarget: string;
   status: PaneSelectionModalStatus;
   errorMessage: string | null;

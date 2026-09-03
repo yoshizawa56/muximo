@@ -50,7 +50,7 @@ const cases = [
 const table: OperationTable<undefined, "default", Input, AgentSessionListObservation, Context> = {
   defaultFixture: noFixture(),
   cases,
-  execute: async (_fixture, input) => {
+  execute: (_fixture, input) => {
     const adapter = new AgentSessionObservationAdapter({
       environment: { PATH: process.env.PATH ?? "" },
       resolveWorkspace: async () => ({ id: WorkspaceId.create("workspace-id") }),
@@ -67,8 +67,7 @@ const table: OperationTable<undefined, "default", Input, AgentSessionListObserva
       ...(input.backendSessionId ? { backendSessionId: input.backendSessionId } : {}),
       setupRan: false,
       resuming: false,
-      createdAt: "2026-08-23T00:00:00.000Z",
-      updatedAt: "2026-08-23T00:00:00.000Z",
+      lastActivityAt: "2026-08-23T00:00:00.000Z",
     });
     return adapter.observeSession(session, 1_725_000_000_000);
   },

@@ -1,4 +1,4 @@
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
 import { resolveExecutable } from "../launch.js";
 
 export function resolveOpenCodeCommand(environment: NodeJS.ProcessEnv): string {
@@ -6,7 +6,7 @@ export function resolveOpenCodeCommand(environment: NodeJS.ProcessEnv): string {
 }
 
 export function buildOpenCodeRunCommand(
-  session: AgentSessionRecord,
+  session: AgentSession,
   backendArgs: readonly string[],
   binary: string,
 ): string[] {
@@ -21,7 +21,7 @@ export function buildOpenCodeRunCommand(
 }
 
 export function buildOpenCodeResumeCommand(
-  session: AgentSessionRecord,
+  session: AgentSession,
   backendArgs: readonly string[],
   binary: string,
 ): string[] {

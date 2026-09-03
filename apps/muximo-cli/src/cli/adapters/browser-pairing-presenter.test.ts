@@ -9,6 +9,7 @@ import {
   noFixture,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   returns,
   runOperationTable,
   type TestRegistrar,
@@ -115,8 +116,8 @@ const presenterTable: OperationTable<PresenterFixture, "default", PresenterInput
         fixture.openedContent = readFileSync(filePath, "utf8");
       },
     });
-    await presenter.showPairing(offer);
-    return presenter.confirmPairing(claim);
+    await resolveMaybePromise(presenter.showPairing(offer));
+    return resolveMaybePromise(presenter.confirmPairing(claim));
   },
   observe: (fixture) => ({
     received: fixture.received,

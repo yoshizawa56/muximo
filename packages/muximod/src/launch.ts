@@ -26,6 +26,7 @@ import type {
   StartDaemonInput,
 } from "@muximo/application";
 import {
+  type ApplicationEffect,
   type DaemonProcessHandle,
   type DaemonRuntimePort,
   EnsureDaemon,
@@ -35,9 +36,9 @@ import {
   StopDaemon,
 } from "@muximo/application";
 import { muximodHealthSchema } from "@muximo/contract/api";
-import { sanitizeProcessDiagnostic } from "@muximo/infrastructure/runtime";
+import { fromPromise, runEffectAsPromise, sanitizeProcessDiagnostic } from "@muximo/infrastructure/runtime";
 import { isLoopbackOrPrivateBindHost } from "@muximo/profile";
-import { z } from "zod";
+import { Effect, Result, Schema } from "effect";
 import {
   consumeMuximodRestartMarker,
   hasMuximodRestartMarker,
@@ -56,59 +57,74 @@ const bootstrapPollIntervalMs = 25;
 const healthProbeTimeoutMs = 500;
 const lifecycleTimeoutMs = 5_000;
 
-const httpUrlSchema = z
-  .string()
-  .url()
-  .refine((value) => {
-    const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
-  }, "URL must use http or https without credentials");
-const muximodRuntimeEnvironmentSchema = z
-  .object({
-    homeDirectory: z.string().min(1).nullable(),
-    path: z.string().min(1).nullable(),
-    codexHome: z.string().min(1).nullable(),
-    claudeConfigDirectory: z.string().min(1).nullable(),
-    tailscaleBinary: z.string().min(1).nullable(),
-    tmuxPane: z.string().min(1).nullable(),
-    tmuxSocket: z.string().min(1).nullable(),
-    worktreeId: z.string().min(1).nullable(),
-    worktreeRoot: z.string().min(1).nullable(),
-    muximoCommand: z.string().min(1).nullable(),
-    codexRemote: z.string(),
-    codexBinary: z.string().min(1).nullable(),
-    claudeBinary: z.string().min(1).nullable(),
-    opencodeBinary: z.string().min(1).nullable(),
-    migrationsDirectory: z.string().min(1).nullable(),
-  })
-  .strict();
+const httpUrlSchema = Schema.String.check(
+  Schema.makeFilter((value: string) => {
+    try {
+      const url = new URL(value);
+      return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+    } catch {
+      return false;
+    }
+  }),
+);
+const nullableIdString = Schema.NullOr(Schema.String.check(Schema.isMinLength(1)));
 
-export const muximodConfigSchema = z
-  .object({
-    host: z
-      .string()
-      .min(1)
-      .refine(isLoopbackOrPrivateBindHost, "host must be localhost, a loopback address, or a private IP address"),
-    port: z.number().int().min(1).max(65_535),
-    instanceDirectory: z.string().min(1),
-    hookOutputDirectory: z.string().min(1),
-    pidFile: z.string().min(1),
-    controlSocket: z.string().min(1),
-    allowedOrigins: z.array(httpUrlSchema),
-    allowedRoots: z.array(z.string().min(1)),
-    logLevel: z.enum(["error", "warn", "info", "debug"]),
-    logFile: z.string().min(1).optional(),
-    workingDirectory: z.string().min(1),
-    runtimeEnvironment: muximodRuntimeEnvironmentSchema,
-    authSweepIntervalMs: z.number().int().min(1).optional(),
-    tmuxPollIntervalMs: z.number().int().min(1).optional(),
-    paneCleanupIntervalMs: z.number().int().min(1).optional(),
-    paneRetentionMs: z.number().int().min(0).optional(),
-  })
-  .strict();
+const positiveDaemonInteger = (minimum: number) =>
+  Schema.makeFilter((value: number) => Number.isInteger(value) && value >= minimum);
 
-export type MuximodConfig = z.infer<typeof muximodConfigSchema>;
-export type MuximodRuntimeEnvironment = z.infer<typeof muximodRuntimeEnvironmentSchema>;
+const nonNegativeDaemonInteger = () => Schema.makeFilter((value: number) => Number.isInteger(value) && value >= 0);
+
+const muximodRuntimeEnvironmentSchema = Schema.Struct({
+  homeDirectory: nullableIdString,
+  path: nullableIdString,
+  codexHome: nullableIdString,
+  claudeConfigDirectory: nullableIdString,
+  tailscaleBinary: nullableIdString,
+  tmuxPane: nullableIdString,
+  tmuxSocket: nullableIdString,
+  worktreeId: nullableIdString,
+  worktreeRoot: nullableIdString,
+  muximoCommand: nullableIdString,
+  codexRemote: Schema.String,
+  codexBinary: nullableIdString,
+  claudeBinary: nullableIdString,
+  opencodeBinary: nullableIdString,
+  migrationsDirectory: nullableIdString,
+});
+
+export const muximodConfigSchema = Schema.Struct({
+  host: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.makeFilter((value: string) =>
+      isLoopbackOrPrivateBindHost(value)
+        ? undefined
+        : "host must be localhost, a loopback address, or a private IP address",
+    ),
+  ),
+  port: Schema.Int.check(
+    Schema.makeFilter((value: number) => Number.isInteger(value) && value >= 1 && value <= 65_535),
+  ),
+  instanceDirectory: Schema.String.check(Schema.isMinLength(1)),
+  hookOutputDirectory: Schema.String.check(Schema.isMinLength(1)),
+  pidFile: Schema.String.check(Schema.isMinLength(1)),
+  controlSocket: Schema.String.check(Schema.isMinLength(1)),
+  allowedOrigins: Schema.Array(httpUrlSchema),
+  allowedRoots: Schema.Array(Schema.String.check(Schema.isMinLength(1))),
+  logLevel: Schema.Literals(["error", "warn", "info", "debug"]),
+  logFile: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+  workingDirectory: Schema.String.check(Schema.isMinLength(1)),
+  runtimeEnvironment: muximodRuntimeEnvironmentSchema,
+  authSweepIntervalMs: Schema.optional(Schema.Int.check(positiveDaemonInteger(1))),
+  tmuxPollIntervalMs: Schema.optional(Schema.Int.check(positiveDaemonInteger(1))),
+  paneCleanupIntervalMs: Schema.optional(Schema.Int.check(positiveDaemonInteger(1))),
+  paneRetentionMs: Schema.optional(Schema.Int.check(nonNegativeDaemonInteger())),
+});
+
+const decodeMuximodConfig = (input: unknown) =>
+  Schema.decodeUnknownSync(muximodConfigSchema, { onExcessProperty: "error" })(input);
+
+export type MuximodConfig = (typeof muximodConfigSchema)["Type"];
+export type MuximodRuntimeEnvironment = (typeof muximodRuntimeEnvironmentSchema)["Type"];
 
 export type MuximodLaunchOptions = {
   schemaMode: "migrate" | "push";
@@ -285,12 +301,12 @@ export function createMuximodLifecycle(options: MuximodLifecycleOptions): Muximo
   const status = new StatusDaemon(timing);
   const restart = new RestartDaemon({ ...timing, stop });
   return {
-    ensure: (input) => ensure.execute(input),
+    ensure: (input) => Effect.runPromise(ensure.execute(input)),
     startForeground: (input) => runtime.startForeground(input),
-    start: (input) => start.execute(input),
-    status: (input) => status.execute(input),
-    stop: (input) => stop.execute(input),
-    restart: (input) => restart.execute(input),
+    start: (input) => Effect.runPromise(start.execute(input)),
+    status: (input) => Effect.runPromise(status.execute(input)),
+    stop: (input) => Effect.runPromise(stop.execute(input)),
+    restart: (input) => Effect.runPromise(restart.execute(input)),
   };
 }
 
@@ -305,8 +321,8 @@ export function parseMuximodBootstrap(value: string | undefined): MuximodLaunchO
   } catch (error) {
     throw new Error(`invalid ${bootstrapPayloadName} payload`, { cause: error });
   }
-  const schema = z.object({ schemaMode: z.enum(["migrate", "push"]), config: muximodConfigSchema }).strict();
-  return schema.parse(parsed);
+  const schema = Schema.Struct({ schemaMode: Schema.Literals(["migrate", "push"]), config: muximodConfigSchema });
+  return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(parsed);
 }
 
 export function readMuximodBootstrap(fd = bootstrapFileDescriptor): MuximodLaunchOptions {
@@ -446,7 +462,7 @@ class MuximodRuntime implements DaemonRuntimePort {
     const startupAbort = new AbortController();
     try {
       const outcome = await Promise.race([
-        this.waitForHealthy(options, handle.pid, startupAbort.signal).then((ready) => ({
+        runEffectAsPromise(this.waitForHealthy(options, handle.pid, startupAbort.signal)).then((ready) => ({
           kind: "health" as const,
           ready,
         })),
@@ -494,7 +510,7 @@ class MuximodRuntime implements DaemonRuntimePort {
     } catch (error) {
       if (!hasErrorCode(error, "ESRCH")) throw error;
     }
-    const stopped = await waitForProcessExit(record.pid, lifecycleTimeoutMs);
+    const stopped = await runEffectAsPromise(waitForProcessExit(record.pid, lifecycleTimeoutMs));
     if (!stopped) throw new Error(`muximod process ${record.pid} did not stop before foreground replacement`);
     removeMuximodPidRecord(pidFile, record.pid);
   }
@@ -503,8 +519,11 @@ class MuximodRuntime implements DaemonRuntimePort {
     return this.probeProcessHealth(record.host, record.port, record.pid);
   }
 
-  public isProcessHealthy(options: Pick<DaemonOptions, "host" | "port">, expectedPid: number): Promise<boolean> {
-    return this.probeProcessHealth(options.host, options.port, expectedPid);
+  public isProcessHealthy(
+    options: Pick<DaemonOptions, "host" | "port">,
+    expectedPid: number,
+  ): ApplicationEffect<boolean> {
+    return fromPromise(() => this.probeProcessHealth(options.host, options.port, expectedPid));
   }
 
   private async probeProcessHealth(host: string, port: number, expectedPid: number): Promise<boolean> {
@@ -515,8 +534,11 @@ class MuximodRuntime implements DaemonRuntimePort {
         signal: controller.signal,
       });
       if (!response.ok) return false;
-      const parsed = muximodHealthSchema.safeParse(await response.json());
-      return parsed.success && parsed.data.pid === expectedPid;
+      const result = Schema.decodeUnknownResult(muximodHealthSchema, { onExcessProperty: "error" })(
+        await response.json(),
+      );
+      if (Result.isFailure(result)) return false;
+      return result.success.pid === expectedPid;
     } catch {
       return false;
     } finally {
@@ -524,9 +546,8 @@ class MuximodRuntime implements DaemonRuntimePort {
     }
   }
 
-  public async runForeground(options: DaemonOptions): Promise<ProcessResult> {
-    const handle = await this.startForeground(options);
-    return handle.wait();
+  public runForeground(options: DaemonOptions): ApplicationEffect<ProcessResult> {
+    return fromPromise(() => this.startForeground(options).then((handle) => handle.wait()));
   }
 
   private async createForegroundHandle(options: DaemonOptions): Promise<MuximodProcessHandle> {
@@ -566,138 +587,180 @@ class MuximodRuntime implements DaemonRuntimePort {
     };
   }
 
-  public async spawn(options: DaemonOptions): Promise<DaemonProcessHandle> {
-    const handle = await spawnMuximod(this.launchOptions(options), {
-      detached: true,
-      stdio: "ignore",
-      environment: this.options.environment,
+  public spawn(options: DaemonOptions): ApplicationEffect<DaemonProcessHandle> {
+    return fromPromise(async () => {
+      const handle = await spawnMuximod(this.launchOptions(options), {
+        detached: true,
+        stdio: "ignore",
+        environment: this.options.environment,
+      });
+      let terminated = false;
+      return {
+        pid: handle.pid,
+        wait: () => fromPromise(() => handle.wait()),
+        terminate: () =>
+          fromPromise(() => {
+            if (terminated) return;
+            terminated = true;
+            handle.terminate();
+          }),
+      };
     });
-    let terminated = false;
-    return {
-      pid: handle.pid,
-      wait: () => handle.wait(),
-      terminate: () => {
-        if (terminated) return;
-        terminated = true;
-        handle.terminate();
-      },
-    };
   }
 
-  public async isHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean> {
-    const requestedLaunchOptions = this.launchOptions(options);
-    const record = readMuximodPidRecord(requestedLaunchOptions.config.pidFile);
-    if (record && expectedPid !== undefined && record.pid !== expectedPid) {
-      const configurationFingerprint = muximodConfigurationFingerprint(requestedLaunchOptions);
-      return this.probeHealthy(options.host, options.port, expectedPid, configurationFingerprint, healthProbeTimeoutMs);
-    }
-
-    const effectiveOptions = record ? { ...options, host: record.host, port: record.port } : options;
-    const launchOptions = record ? this.launchOptions(effectiveOptions) : requestedLaunchOptions;
-    const configurationFingerprint = muximodConfigurationFingerprint(launchOptions);
-    return this.probeHealthy(
-      effectiveOptions.host,
-      effectiveOptions.port,
-      record?.pid ?? expectedPid,
-      configurationFingerprint,
-      healthProbeTimeoutMs,
-    );
+  public isHealthy(options: DaemonOptions, expectedPid?: number): ApplicationEffect<boolean> {
+    return this.checkHealthy(options, expectedPid);
   }
 
-  private async probeHealthy(
+  private checkHealthy(options: DaemonOptions, expectedPid?: number): ApplicationEffect<boolean> {
+    const self = this;
+    return Effect.gen(function* () {
+      const requestedLaunchOptions = self.launchOptions(options);
+      const record = yield* fromPromise(() => readMuximodPidRecord(requestedLaunchOptions.config.pidFile));
+      if (record && expectedPid !== undefined && record.pid !== expectedPid) {
+        const configurationFingerprint = muximodConfigurationFingerprint(requestedLaunchOptions);
+        return yield* self.probeHealthy(
+          options.host,
+          options.port,
+          expectedPid,
+          configurationFingerprint,
+          healthProbeTimeoutMs,
+        );
+      }
+
+      const effectiveOptions = record ? { ...options, host: record.host, port: record.port } : options;
+      const launchOptions = record ? self.launchOptions(effectiveOptions) : requestedLaunchOptions;
+      const configurationFingerprint = muximodConfigurationFingerprint(launchOptions);
+      return yield* self.probeHealthy(
+        effectiveOptions.host,
+        effectiveOptions.port,
+        record?.pid ?? expectedPid,
+        configurationFingerprint,
+        healthProbeTimeoutMs,
+      );
+    });
+  }
+
+  private probeHealthy(
     host: string,
     port: number,
     expectedPid: number | undefined,
     configurationFingerprint: string,
     timeoutMs: number,
     signal?: AbortSignal,
-  ): Promise<boolean> {
-    const controller = new AbortController();
-    const abortProbe = () => controller.abort();
-    signal?.addEventListener("abort", abortProbe, { once: true });
-    const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
-    try {
-      if (signal?.aborted) return false;
-      const response = await fetch(`http://${displayHost(host)}:${port}/health`, { signal: controller.signal });
-      if (!response.ok) return false;
-      const parsed = muximodHealthSchema.safeParse(await response.json());
-      return (
-        parsed.success &&
-        parsed.data.configurationFingerprint === configurationFingerprint &&
-        (expectedPid === undefined || parsed.data.pid === expectedPid)
-      );
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", abortProbe);
-    }
+  ): ApplicationEffect<boolean> {
+    return Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const controller = new AbortController();
+        const abortProbe = () => controller.abort();
+        signal?.addEventListener("abort", abortProbe, { once: true });
+        const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+        return { controller, timeout, abortProbe };
+      }),
+      ({ controller }) =>
+        Effect.gen(function* () {
+          if (signal?.aborted) return false;
+          const response = yield* fromPromise(() =>
+            fetch(`http://${displayHost(host)}:${port}/health`, { signal: controller.signal }),
+          );
+          if (!response.ok) return false;
+          const body = yield* fromPromise(() => response.json());
+          const result = Schema.decodeUnknownResult(muximodHealthSchema, { onExcessProperty: "error" })(body);
+          if (Result.isFailure(result)) return false;
+          return (
+            result.success.configurationFingerprint === configurationFingerprint &&
+            (expectedPid === undefined || result.success.pid === expectedPid)
+          );
+        }).pipe(Effect.catch(() => Effect.succeed(false))),
+      ({ timeout, abortProbe }) =>
+        Effect.sync(() => {
+          clearTimeout(timeout);
+          signal?.removeEventListener("abort", abortProbe);
+        }),
+    );
   }
 
-  private async waitForHealthy(options: DaemonOptions, expectedPid?: number, signal?: AbortSignal): Promise<boolean> {
-    const launchOptions = this.launchOptions(options);
-    const configurationFingerprint = muximodConfigurationFingerprint(launchOptions);
-    const deadline = systemClock.now() + lifecycleTimeoutMs;
-    while (true) {
-      if (signal?.aborted) return false;
-      const remainingMs = deadline - systemClock.now();
-      if (remainingMs <= 0) return false;
-      if (
-        await this.probeHealthy(
-          options.host,
-          options.port,
-          expectedPid,
-          configurationFingerprint,
-          Math.min(healthProbeTimeoutMs, remainingMs),
-          signal,
+  private waitForHealthy(
+    options: DaemonOptions,
+    expectedPid?: number,
+    signal?: AbortSignal,
+  ): ApplicationEffect<boolean> {
+    const self = this;
+    return Effect.gen(function* () {
+      const launchOptions = self.launchOptions(options);
+      const configurationFingerprint = muximodConfigurationFingerprint(launchOptions);
+      const deadline = systemClock.now() + lifecycleTimeoutMs;
+      while (true) {
+        if (signal?.aborted) return false;
+        const remainingMs = deadline - systemClock.now();
+        if (remainingMs <= 0) return false;
+        if (
+          yield* self.probeHealthy(
+            options.host,
+            options.port,
+            expectedPid,
+            configurationFingerprint,
+            Math.min(healthProbeTimeoutMs, remainingMs),
+            signal,
+          )
         )
-      )
-        return true;
-      if (signal?.aborted) return false;
-      const sleepMs = Math.min(bootstrapPollIntervalMs, deadline - systemClock.now());
-      if (sleepMs <= 0) return false;
-      await systemScheduler.sleep(sleepMs);
-    }
+          return true;
+        if (signal?.aborted) return false;
+        const sleepMs = Math.min(bootstrapPollIntervalMs, deadline - systemClock.now());
+        if (sleepMs <= 0) return false;
+        yield* systemScheduler.sleep(sleepMs);
+      }
+    });
   }
 
-  public isAlive(pid: number): Promise<boolean> {
-    return Promise.resolve(isProcessAlive(pid));
+  public isAlive(pid: number): ApplicationEffect<boolean> {
+    return fromPromise(() => isProcessAlive(pid));
   }
 
-  public signal(pid: number, signal: "SIGTERM"): void {
-    process.kill(pid, signal);
+  public signal(pid: number, signal: "SIGTERM"): ApplicationEffect<void> {
+    return fromPromise(() => {
+      process.kill(pid, signal);
+    });
   }
 
-  public readPidRecord(path: string): DaemonPidRecord | undefined {
-    return readMuximodPidRecord(path);
+  public readPidRecord(path: string): ApplicationEffect<DaemonPidRecord | undefined> {
+    return fromPromise(() => readMuximodPidRecord(path));
   }
 
-  public writePidRecord(path: string, record: DaemonPidRecord): void {
-    writeMuximodPidRecord(path, record);
+  public writePidRecord(path: string, record: DaemonPidRecord): ApplicationEffect<void> {
+    return fromPromise(() => {
+      writeMuximodPidRecord(path, record);
+    });
   }
 
-  public removePidRecord(path: string, expectedPid: number): void {
-    removeMuximodPidRecord(path, expectedPid);
+  public removePidRecord(path: string, expectedPid: number): ApplicationEffect<void> {
+    return fromPromise(() => {
+      removeMuximodPidRecord(path, expectedPid);
+    });
   }
 
-  public writeRestartMarker(pidFile: string, refreshServers: boolean): void {
-    writeMuximodRestartMarker(pidFile, refreshServers);
+  public writeRestartMarker(pidFile: string, refreshServers: boolean): ApplicationEffect<void> {
+    return fromPromise(() => {
+      writeMuximodRestartMarker(pidFile, refreshServers);
+    });
   }
 
-  public hasRestartMarker(pidFile: string): boolean {
-    return hasMuximodRestartMarker(pidFile);
+  public hasRestartMarker(pidFile: string): ApplicationEffect<boolean> {
+    return fromPromise(() => hasMuximodRestartMarker(pidFile));
   }
 
-  public consumeRestartMarker(pidFile: string): boolean | undefined {
-    return consumeMuximodRestartMarker(pidFile);
+  public consumeRestartMarker(pidFile: string): ApplicationEffect<boolean | undefined> {
+    return fromPromise(() => consumeMuximodRestartMarker(pidFile));
   }
 
-  public removeRestartMarker(pidFile: string): void {
-    removeMuximodRestartMarker(pidFile);
+  public removeRestartMarker(pidFile: string): ApplicationEffect<void> {
+    return fromPromise(() => {
+      removeMuximodRestartMarker(pidFile);
+    });
   }
 
   private launchOptions(options: DaemonOptions): MuximodLaunchOptions {
-    const config = normalizeMuximodConfig(muximodConfigSchema.parse(this.options.resolveConfig(options)));
+    const config = normalizeMuximodConfig(decodeMuximodConfig(this.options.resolveConfig(options)));
     return { schemaMode: this.options.schemaMode, config };
   }
 }
@@ -736,7 +799,8 @@ function normalizeMuximodConfig(config: MuximodConfig): MuximodConfig {
 /** Monotonic lifecycle time; persisted/user-facing timestamps use Date separately. */
 export const systemClock = { now: () => performance.now() };
 export const systemScheduler = {
-  sleep: (milliseconds: number) => new Promise<void>((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
+  sleep: (milliseconds: number) =>
+    fromPromise(() => new Promise<void>((resolvePromise) => setTimeout(resolvePromise, milliseconds))),
 };
 
 export function muximodRestartMarkerPath(pidFile: string): string {
@@ -755,14 +819,16 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function waitForProcessExit(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = systemClock.now() + timeoutMs;
-  while (isProcessAlive(pid)) {
-    const remainingMs = deadline - systemClock.now();
-    if (remainingMs <= 0) return false;
-    await systemScheduler.sleep(Math.min(bootstrapPollIntervalMs, remainingMs));
-  }
-  return true;
+function waitForProcessExit(pid: number, timeoutMs: number): ApplicationEffect<boolean> {
+  return Effect.gen(function* () {
+    const deadline = systemClock.now() + timeoutMs;
+    while (isProcessAlive(pid)) {
+      const remainingMs = deadline - systemClock.now();
+      if (remainingMs <= 0) return false;
+      yield* systemScheduler.sleep(Math.min(bootstrapPollIntervalMs, remainingMs));
+    }
+    return true;
+  });
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {

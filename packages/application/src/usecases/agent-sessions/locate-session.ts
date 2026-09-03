@@ -1,4 +1,5 @@
-import { AgentSession, type AgentSessionRecord } from "@muximo/domain";
+import { AgentSession } from "@muximo/domain";
+import { Effect } from "effect";
 import type {
   ManagedAgentSessionRepository,
   WorkspaceResolverPort,
@@ -19,54 +20,68 @@ export type LocateAgentSessionDependencies = {
 export class LocateAgentSession {
   public constructor(private readonly deps: LocateAgentSessionDependencies) {}
 
-  public async execute(input: LocateAgentSessionInput): Promise<AgentSessionRecord> {
-    const separatorIndex = input.reference.indexOf("/");
-    if (input.workspaceScope === "current" && separatorIndex >= 0) {
-      throw new Error(`workspace-qualified session references require all-workspace scope: ${input.reference}`);
-    }
-    const selector = separatorIndex >= 0 ? input.reference.slice(0, separatorIndex) : undefined;
-    const requestedName = separatorIndex >= 0 ? input.reference.slice(separatorIndex + 1) : input.reference;
-    if (requestedName.includes("/")) throw new Error(`invalid session reference: ${input.reference}`);
+  public readonly execute = Effect.fn("AgentSessions.locate")(
+    { self: this },
+    function* (this: LocateAgentSession, input: LocateAgentSessionInput) {
+      const separatorIndex = input.reference.indexOf("/");
+      if (input.workspaceScope === "current" && separatorIndex >= 0) {
+        return yield* Effect.fail(
+          new Error(`workspace-qualified session references require all-workspace scope: ${input.reference}`),
+        );
+      }
+      const selector = separatorIndex >= 0 ? input.reference.slice(0, separatorIndex) : undefined;
+      const requestedName = separatorIndex >= 0 ? input.reference.slice(separatorIndex + 1) : input.reference;
+      if (requestedName.includes("/"))
+        return yield* Effect.fail(new Error(`invalid session reference: ${input.reference}`));
 
-    const sessions = await this.deps.sessions.list(
-      input.workspaceScope === "all" ? undefined : (await this.deps.workspace.resolveCurrent()).id,
-    );
-    const scoped = sessions.filter(
-      (session) => !selector || session.workspaceId === selector || session.workspaceName === selector,
-    );
-    const exactMatches = scoped.filter((session) => session.name === requestedName);
-    const exactMatch = exactMatches[0];
-    if (exactMatches.length === 1 && exactMatch) return exactMatch;
-    if (exactMatches.length > 1) {
-      throw new Error(
-        `${input.workspaceScope === "all" ? "global " : ""}session name is ambiguous; use WORKSPACE/${requestedName}`,
+      const sessions = yield* this.deps.sessions.list(
+        input.workspaceScope === "all" ? undefined : (yield* this.deps.workspace.resolveCurrent()).id,
       );
-    }
+      const scoped = sessions.filter(
+        (session) => !selector || session.workspaceId === selector || session.workspaceName === selector,
+      );
+      const exactMatches = scoped.filter((session) => session.name === requestedName);
+      const exactMatch = exactMatches[0];
+      if (exactMatches.length === 1 && exactMatch) return exactMatch;
+      if (exactMatches.length > 1) {
+        return yield* Effect.fail(
+          new Error(
+            `${input.workspaceScope === "all" ? "global " : ""}session name is ambiguous; use WORKSPACE/${requestedName}`,
+          ),
+        );
+      }
 
-    const normalizedName = normalizeSessionName(requestedName);
-    const matches = scoped.filter((session) => session.name === normalizedName);
-    if (matches.length === 0) {
-      throw new Error(
-        input.workspaceScope === "all"
-          ? `global session not found: ${input.reference}`
-          : `session not found in this workspace: ${input.reference}`,
-      );
-    }
-    if (matches.length > 1) {
-      throw new Error(
-        `${input.workspaceScope === "all" ? "global " : ""}session name is ambiguous; use WORKSPACE/${normalizedName}`,
-      );
-    }
-    const match = matches[0];
-    if (!match) throw new Error(`session not found: ${input.reference}`);
-    return match;
-  }
+      const normalizedName = yield* normalizeSessionName(requestedName);
+      const matches = scoped.filter((session) => session.name === normalizedName);
+      if (matches.length === 0) {
+        return yield* Effect.fail(
+          new Error(
+            input.workspaceScope === "all"
+              ? `global session not found: ${input.reference}`
+              : `session not found in this workspace: ${input.reference}`,
+          ),
+        );
+      }
+      if (matches.length > 1) {
+        return yield* Effect.fail(
+          new Error(
+            `${input.workspaceScope === "all" ? "global " : ""}session name is ambiguous; use WORKSPACE/${normalizedName}`,
+          ),
+        );
+      }
+      const match = matches[0];
+      if (!match) return yield* Effect.fail(new Error(`session not found: ${input.reference}`));
+      return match;
+    },
+  );
 }
 
-function normalizeSessionName(value: string): string {
-  try {
-    return AgentSession.normalizeName(value);
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : String(error));
-  }
+function normalizeSessionName(value: string): Effect.Effect<string, Error> {
+  return Effect.suspend(() => {
+    try {
+      return Effect.succeed(AgentSession.normalizeName(value));
+    } catch (error) {
+      return Effect.fail(new Error(error instanceof Error ? error.message : String(error)));
+    }
+  });
 }

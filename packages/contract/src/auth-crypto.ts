@@ -1,3 +1,4 @@
+import { Schema } from "effect";
 import { type PairingCodePayload, type PairingQrPayload, pairingCodePayloadSchema } from "./protocol.js";
 
 export { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
@@ -68,7 +69,11 @@ export function decodePairingCode(value: string): PairingCodePayload {
   }
   if (offset >= bytes.length) throw new Error("pairing code is missing its secret");
   fields.push(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(offset)));
-  return pairingCodePayloadSchema.parse({ muximodBaseUrl: fields[0], pairingId: fields[1], pairingSecret: fields[2] });
+  return Schema.decodeUnknownSync(pairingCodePayloadSchema)({
+    muximodBaseUrl: fields[0],
+    pairingId: fields[1],
+    pairingSecret: fields[2],
+  });
 }
 
 function normalizePairingEndpoint(value: string): string {

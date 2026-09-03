@@ -1,68 +1,84 @@
-import type { WorkspaceRepository } from "@muximo/application";
-import { Workspace, WorkspaceId, type WorkspaceRecord } from "@muximo/domain";
+import type { ApplicationClock, ApplicationEffect, WorkspaceRepository } from "@muximo/application";
+import { Workspace, WorkspaceId } from "@muximo/domain";
 import { asc, eq } from "drizzle-orm";
+import { fromPromise } from "../../../effect.js";
+import type { AgentDrizzleDatabase } from "../../database-types.js";
 import { type WorkspaceRow, workspaces } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
 export class DrizzleWorkspaceRepository extends DrizzleRepositoryBase implements WorkspaceRepository {
-  public async findById(id: WorkspaceId): Promise<WorkspaceRecord | undefined> {
-    const row = this.db().select().from(workspaces).where(eq(workspaces.id, id)).get();
-    return row ? toWorkspaceRecord(row) : undefined;
+  public constructor(
+    database: AgentDrizzleDatabase,
+    private readonly clock: ApplicationClock = { now: () => new Date().toISOString() },
+  ) {
+    super(database);
   }
 
-  public async list(): Promise<WorkspaceRecord[]> {
-    return this.db().select().from(workspaces).orderBy(asc(workspaces.name)).all().map(toWorkspaceRecord);
+  public findById(id: WorkspaceId): ApplicationEffect<Workspace | undefined> {
+    return fromPromise(() => {
+      const row = this.db().select().from(workspaces).where(eq(workspaces.id, id)).get();
+      return row ? toWorkspace(row) : undefined;
+    });
   }
 
-  public async insert(record: WorkspaceRecord): Promise<boolean> {
-    const inserted = this.db()
-      .insert(workspaces)
-      .values(toWorkspaceRow(record))
-      .onConflictDoNothing({ target: workspaces.id })
-      .returning({ id: workspaces.id })
-      .all();
-    return inserted.length > 0;
+  public list(): ApplicationEffect<Workspace[]> {
+    return fromPromise(() => this.db().select().from(workspaces).orderBy(asc(workspaces.name)).all().map(toWorkspace));
   }
 
-  public async upsert(record: WorkspaceRecord): Promise<void> {
-    const row = toWorkspaceRow(record);
-    this.db()
-      .insert(workspaces)
-      .values(row)
-      .onConflictDoUpdate({
-        target: workspaces.id,
-        set: {
-          rootPath: row.rootPath,
-          name: row.name,
-          isGit: row.isGit,
-          setupScriptPath: row.setupScriptPath,
-          cleanupScriptPath: row.cleanupScriptPath,
-          updatedAt: row.updatedAt,
-        },
-      })
-      .run();
+  public insert(record: Workspace): ApplicationEffect<boolean> {
+    return fromPromise(() => {
+      const inserted = this.db()
+        .insert(workspaces)
+        .values(toWorkspaceRow(record, this.clock.now()))
+        .onConflictDoNothing({ target: workspaces.id })
+        .returning({ id: workspaces.id })
+        .all();
+      return inserted.length > 0;
+    });
   }
 
-  public async delete(id: WorkspaceId): Promise<void> {
-    this.db().delete(workspaces).where(eq(workspaces.id, id)).run();
+  public upsert(record: Workspace): ApplicationEffect<void> {
+    return fromPromise(() => {
+      const row = toWorkspaceRow(record, this.clock.now());
+      this.db()
+        .insert(workspaces)
+        .values(row)
+        .onConflictDoUpdate({
+          target: workspaces.id,
+          set: {
+            rootPath: row.rootPath,
+            name: row.name,
+            isGit: row.isGit,
+            setupScriptPath: row.setupScriptPath,
+            cleanupScriptPath: row.cleanupScriptPath,
+            updatedAt: row.updatedAt,
+          },
+        })
+        .run();
+    });
+  }
+
+  public delete(id: WorkspaceId): ApplicationEffect<void> {
+    return fromPromise(() => {
+      this.db().delete(workspaces).where(eq(workspaces.id, id)).run();
+    });
   }
 }
 
-function toWorkspaceRow(record: WorkspaceRecord): typeof workspaces.$inferInsert {
-  const workspace = Workspace.restore(record);
+function toWorkspaceRow(record: Workspace, now: string): typeof workspaces.$inferInsert {
   return {
-    id: workspace.id,
-    rootPath: workspace.rootPath,
-    name: workspace.name,
-    isGit: workspace.isGit,
-    setupScriptPath: workspace.setupScriptPath ?? null,
-    cleanupScriptPath: workspace.cleanupScriptPath ?? null,
-    createdAt: workspace.createdAt,
-    updatedAt: workspace.updatedAt,
+    id: record.id,
+    rootPath: record.rootPath,
+    name: record.name,
+    isGit: record.isGit,
+    setupScriptPath: record.setupScriptPath ?? null,
+    cleanupScriptPath: record.cleanupScriptPath ?? null,
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
-function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
+function toWorkspace(row: WorkspaceRow): Workspace {
   return Workspace.restore({
     id: WorkspaceId.create(row.id),
     rootPath: row.rootPath,
@@ -70,7 +86,5 @@ function toWorkspaceRecord(row: WorkspaceRow): WorkspaceRecord {
     isGit: row.isGit,
     ...(row.setupScriptPath !== null ? { setupScriptPath: row.setupScriptPath } : {}),
     ...(row.cleanupScriptPath !== null ? { cleanupScriptPath: row.cleanupScriptPath } : {}),
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
   });
 }

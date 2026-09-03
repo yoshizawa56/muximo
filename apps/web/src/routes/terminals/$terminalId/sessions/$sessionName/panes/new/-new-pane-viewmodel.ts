@@ -23,7 +23,7 @@ export type NewPaneViewModel = {
   workspacePicker: WorkspacePickerViewModel;
   kind: NewPaneKind;
   agentId: NewPaneAgent;
-  existingPanes: PaneSummary[];
+  existingPanes: readonly PaneSummary[];
   placement: PanePlacement;
   targetPaneId: string | null;
   isCreating: boolean;

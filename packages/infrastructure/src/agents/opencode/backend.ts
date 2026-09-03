@@ -1,5 +1,5 @@
 import type { SessionBaselineResult, SessionIdentityUpdate } from "@muximo/application";
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
 import { timestamp } from "../../cli/filesystem.js";
 import { stringEnvironment } from "../../process/process.js";
 import type {
@@ -16,12 +16,12 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
 
   public constructor(private readonly options: AgentBackendProviderOptions) {}
 
-  public async captureBaseline(_session: AgentSessionRecord): Promise<SessionBaselineResult> {
+  public async captureBaseline(_session: AgentSession): Promise<SessionBaselineResult> {
     return { success: true };
   }
 
   public async prepareLaunch(
-    session: AgentSessionRecord,
+    session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
     signal?: AbortSignal,
@@ -37,39 +37,39 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
     return { sessionUpdate, launch };
   }
 
-  public async restoreLaunch(session: AgentSessionRecord): Promise<AgentBackendLaunch | undefined> {
+  public async restoreLaunch(session: AgentSession): Promise<AgentBackendLaunch | undefined> {
     const plugin = this.options.plugins.get(this.backend);
     if (!plugin?.prepareLaunch || !session.backendSessionId) return undefined;
     return this.preparePluginLaunch(session, [], plugin.prepareLaunch, true, undefined, session.executionStartedAt);
   }
 
   public async afterRun(
-    _session: AgentSessionRecord,
+    _session: AgentSession,
     _runDir: string,
     _startedAt: number,
   ): Promise<SessionIdentityUpdate | undefined> {
     return undefined;
   }
 
-  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {
+  public async disposeLaunch(_session: AgentSession, _runDir: string): Promise<void> {
     // OpenCode servers are shared service references. Releasing a session must
     // never terminate a server that may be used by another daemon or client.
   }
 
-  public async archive(_session: AgentSessionRecord): Promise<boolean> {
+  public async archive(_session: AgentSession): Promise<boolean> {
     return true;
   }
 
-  public async restore(_session: AgentSessionRecord): Promise<boolean> {
+  public async restore(_session: AgentSession): Promise<boolean> {
     return true;
   }
 
-  public async releaseIfUnused(_session: AgentSessionRecord, _remaining: readonly AgentSessionRecord[]): Promise<void> {
+  public async releaseIfUnused(_session: AgentSession, _remaining: readonly AgentSession[]): Promise<void> {
     // OpenCode server lifetime is independent from agent-session cleanup.
   }
 
   private async preparePluginLaunch(
-    session: AgentSessionRecord,
+    session: AgentSession,
     backendArgs: readonly string[],
     prepare: NonNullable<NonNullable<import("../index.js").AgentPluginV1["prepareLaunch"]>>,
     resume: boolean,
@@ -106,7 +106,7 @@ export class OpenCodeBackendProvider implements AgentBackendProvider {
   }
 
   private prepareCommandLaunch(
-    session: AgentSessionRecord,
+    session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
   ): AgentBackendLaunch {

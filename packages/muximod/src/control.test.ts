@@ -22,6 +22,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import { MuximodControlServer } from "./control.js";
 
@@ -68,8 +69,7 @@ const executionSession = AgentSession.create({
   setupRan: false,
   resuming: false,
   executionId: request.executionId,
-  createdAt: "2026-08-30T00:00:00.000Z",
-  updatedAt: "2026-08-30T00:00:00.000Z",
+  lastActivityAt: "2026-08-30T00:00:00.000Z",
 });
 const execution = {
   sessionId: request.agentSessionId,
@@ -126,11 +126,14 @@ const fixture = (
     serverId: store.serverId,
     crypto: nodeAuthCrypto,
     clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
-    claimSink: { publish: () => undefined },
+    claimSink: { publish: () => Effect.succeed(undefined) },
     challenges: new MemoryAuthChallengeStore(),
     rateLimits: new MemoryAuthRateLimitStore(),
     wsTickets: new MemoryAuthWsTicketStore(),
-    connections: { disconnectDevice: async () => undefined, disconnectSession: async () => undefined },
+    connections: {
+      disconnectDevice: () => Effect.succeed(undefined),
+      disconnectSession: () => Effect.succeed(undefined),
+    },
   });
   const calls: string[] = [];
   const applicationRequests: unknown[] = [];

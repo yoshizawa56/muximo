@@ -1,4 +1,4 @@
-import type { AgentBackend, PaneRecord, Patch } from "@muximo/domain";
+import type { AgentBackend, Pane, Patch } from "@muximo/domain";
 import type {
   AgentSessionListInput,
   AgentSessionListResult,
@@ -105,7 +105,7 @@ export type MuximodSessionSummary = {
   managed: boolean;
 };
 
-export type MuximodPaneSummary = PaneRecord;
+export type MuximodPaneSummary = Pane;
 
 export type MuximodAgentSessionApplication = {
   prepareRun(input: StartAgentSessionInput, signal?: AbortSignal): Promise<PreparedAgentSession>;

@@ -1,10 +1,16 @@
 import { resolve } from "node:path";
-import { tmuxSessionNameSchema } from "@muximo/contract/api";
 import type { Command } from "commander";
 import { z } from "zod";
 import { defineOptions, registerOptions } from "../options/index.js";
 import type { CliCommandContext, CliHandlers } from "./types.js";
 import { invokeCliHandler, resolveCommandOptions } from "./validation.js";
+
+const tmuxSessionNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9._-]+$/);
 
 export const tmuxNewSessionOptionSpecs = defineOptions(
   {

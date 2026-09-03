@@ -9,8 +9,8 @@ export type WorkspacePickerStatus = "loading" | "ready" | "error";
 export type WorkspaceSelectionMode = "workspace" | "worktree";
 
 export type WorkspacePickerInput = {
-  workspaces: WorkspaceDirectory[];
-  workspaceCandidates: WorkspaceDirectory[];
+  workspaces: readonly WorkspaceDirectory[];
+  workspaceCandidates: readonly WorkspaceDirectory[];
   workspaceId: string;
   mode: WorkspaceSelectionMode;
   workspaceStatus: WorkspacePickerStatus;
@@ -74,7 +74,7 @@ export function useWorkspacePickerViewModel({
   const { connection, utils } = useMuximodConnection();
   const [workspaceId, setWorkspaceId] = useState("");
   const [mode, setMode] = useState<WorkspaceSelectionMode>(initialMode);
-  const [workspaceCandidates, setWorkspaceCandidates] = useState<WorkspaceDirectory[]>([]);
+  const [workspaceCandidates, setWorkspaceCandidates] = useState<readonly WorkspaceDirectory[]>([]);
   const [browserPath, setBrowserPath] = useState<string | null>(null);
   const [browserStatus, setBrowserStatus] = useState<WorkspacePickerStatus>("ready");
   const [browserError, setBrowserError] = useState<string | null>(null);

@@ -8,7 +8,8 @@ import type {
   PendingChallengeRecord,
   PendingWsTicketRecord,
 } from "@muximo/application";
-import { authRateWindowMs } from "@muximo/application";
+import { type ApplicationEffect, authRateWindowMs } from "@muximo/application";
+import { fromPromise } from "../effect.js";
 import { type MuximodSocket, muximodSocketReadyState } from "../http/socket.js";
 
 export class MemoryAuthChallengeStore implements AuthChallengeStorePort {
@@ -193,16 +194,20 @@ export class MemoryAuthenticatedConnectionRegistry implements AuthConnectionPort
     (connection.expiryTimer as { unref?: () => void } | undefined)?.unref?.();
   }
 
-  public async disconnectDevice(deviceId: string): Promise<void> {
-    for (const connection of [...this.tracked]) {
-      if (connection.deviceId === deviceId) this.disconnect(connection, "device revoked");
-    }
+  public disconnectDevice(deviceId: string): ApplicationEffect<void> {
+    return fromPromise(() => {
+      for (const connection of [...this.tracked]) {
+        if (connection.deviceId === deviceId) this.disconnect(connection, "device revoked");
+      }
+    });
   }
 
-  public async disconnectSession(sessionId: string): Promise<void> {
-    for (const connection of [...this.tracked]) {
-      if (connection.sessionId === sessionId) this.disconnect(connection, "session revoked");
-    }
+  public disconnectSession(sessionId: string): ApplicationEffect<void> {
+    return fromPromise(() => {
+      for (const connection of [...this.tracked]) {
+        if (connection.sessionId === sessionId) this.disconnect(connection, "session revoked");
+      }
+    });
   }
 
   public get size(): number {

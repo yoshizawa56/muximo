@@ -1,5 +1,6 @@
 import { Workspace, WorkspaceId } from "@muximo/domain";
 import {
+  hasError,
   hasEvents,
   hasObserved,
   type OperationCase,
@@ -7,6 +8,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import type { ShellProcessInput } from "../../ports/shell.js";
 import { RunShell, type RunShellResult } from "./run-shell.js";
@@ -26,7 +28,7 @@ type ShellResult = {
   shell: ShellProcessInput | undefined;
 };
 
-type ShellFixtureKey = "success" | "failure";
+type ShellFixtureKey = "success" | "failure" | "copy-failure" | "setup-failure" | "cleanup-failure" | "retained";
 type Input = { shell?: string };
 
 const cases = [
@@ -57,6 +59,91 @@ const cases = [
     input: {},
     assert: [
       hasObserved<ShellResult, ShellResult>("process", { started: true, code: 3, interrupted: false }),
+      hasEvents<ShellResult, ShellResult>("events", [
+        "mark-shell",
+        "resolve-workspace",
+        "create-worktree",
+        "resolve-setup",
+        "resolve-cleanup",
+        "copy-files",
+        "setup-hook",
+        "shell",
+        "cleanup-hook",
+        "remove-worktree",
+        "restore-shell",
+      ]),
+    ],
+  },
+  {
+    name: "cleans up a worktree when copying workspace files fails",
+    fixture: "copy-failure",
+    input: {},
+    assert: [
+      hasError<ShellResult, ShellResult>({ message: "worktree file copy failed" }),
+      hasObserved<ShellResult, ShellResult>("process", { started: false, code: -1, interrupted: false }),
+      hasEvents<ShellResult, ShellResult>("events", [
+        "mark-shell",
+        "resolve-workspace",
+        "create-worktree",
+        "resolve-setup",
+        "resolve-cleanup",
+        "copy-files",
+        "cleanup-hook",
+        "remove-worktree",
+        "restore-shell",
+      ]),
+    ],
+  },
+  {
+    name: "cleans up a worktree when the setup hook fails",
+    fixture: "setup-failure",
+    input: {},
+    assert: [
+      hasError<ShellResult, ShellResult>({ message: "setup hook failed" }),
+      hasObserved<ShellResult, ShellResult>("process", { started: false, code: -1, interrupted: false }),
+      hasEvents<ShellResult, ShellResult>("events", [
+        "mark-shell",
+        "resolve-workspace",
+        "create-worktree",
+        "resolve-setup",
+        "resolve-cleanup",
+        "copy-files",
+        "setup-hook",
+        "cleanup-hook",
+        "remove-worktree",
+        "restore-shell",
+      ]),
+    ],
+  },
+  {
+    name: "removes a worktree even when its cleanup hook reports failure",
+    fixture: "cleanup-failure",
+    input: {},
+    assert: [
+      hasError<ShellResult, ShellResult>({ message: "cleanup hook failed" }),
+      hasObserved<ShellResult, ShellResult>("process", { started: false, code: -1, interrupted: false }),
+      hasEvents<ShellResult, ShellResult>("events", [
+        "mark-shell",
+        "resolve-workspace",
+        "create-worktree",
+        "resolve-setup",
+        "resolve-cleanup",
+        "copy-files",
+        "setup-hook",
+        "shell",
+        "cleanup-hook",
+        "remove-worktree",
+        "restore-shell",
+      ]),
+    ],
+  },
+  {
+    name: "reports when worktree safety policy retains the worktree",
+    fixture: "retained",
+    input: {},
+    assert: [
+      hasError<ShellResult, ShellResult>({ message: "managed shell worktree was retained" }),
+      hasObserved<ShellResult, ShellResult>("process", { started: false, code: -1, interrupted: false }),
       hasEvents<ShellResult, ShellResult>("events", [
         "mark-shell",
         "resolve-workspace",
@@ -105,22 +192,27 @@ const table: OperationTable<ShellFixture, ShellFixtureKey, Input, ShellResult, S
   fixtures: {
     success: () => createShellFixture(0),
     failure: () => createShellFixture(3),
+    "copy-failure": () => createShellFixture(0, { copyFiles: false }),
+    "setup-failure": () => createShellFixture(0, { setupHook: false }),
+    "cleanup-failure": () => createShellFixture(0, { cleanupHook: false }),
+    retained: () => createShellFixture(0, { removeWorktree: false }),
   },
   cases,
-  execute: async (fixture, input) => {
-    const result = await fixture.service.execute({
-      shell: input.shell,
-      command: [],
-      exitAfterCommand: false,
-      worktree: true,
-      worktreeName: "review",
-    });
-    return {
-      process: result.process,
-      events: [...fixture.events],
-      shell: fixture.shellInputs.find((shellInput) => shellInput.interactive),
-    };
-  },
+  execute: (fixture, input) =>
+    Effect.gen(function* () {
+      const result = yield* fixture.service.execute({
+        shell: input.shell,
+        command: [],
+        exitAfterCommand: false,
+        worktree: true,
+        worktreeName: "review",
+      });
+      return {
+        process: result.process,
+        events: [...fixture.events],
+        shell: fixture.shellInputs.find((shellInput) => shellInput.interactive),
+      };
+    }),
   observe: (fixture, result) => ({
     process: result.ok ? result.value.process : { started: false, code: -1, interrupted: false },
     events: [...fixture.events],
@@ -130,7 +222,7 @@ const table: OperationTable<ShellFixture, ShellFixtureKey, Input, ShellResult, S
 
 function createShellFixture(
   exitCode: number,
-  registerCleanup?: (cleanup: () => void) => void,
+  behavior: Partial<{ copyFiles: boolean; setupHook: boolean; cleanupHook: boolean; removeWorktree: boolean }> = {},
 ): { fixture: ShellFixture } {
   const workspaceRoot = "/workspace";
   const worktreePath = "/workspace/.worktrees/review";
@@ -141,8 +233,6 @@ function createShellFixture(
     isGit: true,
     setupScriptPath: "setup-hook",
     cleanupScriptPath: "cleanup-hook",
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
   });
   const events: string[] = [];
   const record = (event: string) => events.push(event);
@@ -159,55 +249,62 @@ function createShellFixture(
     paneName: "shell-pane",
     defaultShell: "/bin/zsh",
     workspace: {
-      resolveCurrent: async () => {
-        record("resolve-workspace");
-        return workspace;
-      },
+      resolveCurrent: () =>
+        Effect.sync(() => {
+          record("resolve-workspace");
+          return workspace;
+        }),
     },
     sessions: {
-      findWorktreePath: async () => workspaceRoot,
+      findWorktreePath: () => Effect.succeed(workspaceRoot),
     },
     process: {
-      run: async (input) => {
-        fixture.shellInputs.push({ ...input, args: [...input.args] });
-        record("shell");
-        return { started: true, code: exitCode, interrupted: false };
-      },
+      run: (input) =>
+        Effect.sync(() => {
+          fixture.shellInputs.push({ ...input, args: [...input.args] });
+          record("shell");
+          return { started: true, code: exitCode, interrupted: false };
+        }),
     },
     worktrees: {
-      create: async () => {
-        record("create-worktree");
-        return {
-          worktreeRoot: "/workspace/.worktrees",
-          worktreePath,
-          branch: "muximo/review",
-          baseCommit: "base-commit",
-        };
-      },
-      copyFiles: async () => {
-        record("copy-files");
-        return true;
-      },
-      remove: async () => {
-        record("remove-worktree");
-      },
+      create: () =>
+        Effect.sync(() => {
+          record("create-worktree");
+          return {
+            worktreeRoot: "/workspace/.worktrees",
+            worktreePath,
+            branch: "muximo/review",
+            baseCommit: "base-commit",
+          };
+        }),
+      copyFiles: () =>
+        Effect.sync(() => {
+          record("copy-files");
+          return behavior.copyFiles ?? true;
+        }),
+      remove: () =>
+        Effect.sync(() => {
+          record("remove-worktree");
+          return behavior.removeWorktree ?? true;
+        }),
     },
     hooks: {
-      resolveHook: async (value: string) => {
-        record(value === "setup-hook" ? "resolve-setup" : "resolve-cleanup");
-        return value;
-      },
-      runShell: async (input) => {
-        record(`${input.kind}-hook`);
-        return true;
-      },
+      resolveHook: (value: string) =>
+        Effect.sync(() => {
+          record(value === "setup-hook" ? "resolve-setup" : "resolve-cleanup");
+          return value;
+        }),
+      runShell: (input) =>
+        Effect.sync(() => {
+          record(`${input.kind}-hook`);
+          return input.kind === "setup" ? (behavior.setupHook ?? true) : (behavior.cleanupHook ?? true);
+        }),
     },
     panes: {
       markShell: () => record("mark-shell"),
       restoreShell: () => record("restore-shell"),
     },
   });
-  if (registerCleanup) registerCleanup(() => undefined);
   return { fixture };
 }
 

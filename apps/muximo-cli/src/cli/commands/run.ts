@@ -1,4 +1,4 @@
-import { agentBackendSchema } from "@muximo/domain";
+import { agentBackends } from "@muximo/domain";
 import type { Command } from "commander";
 import { z } from "zod";
 import { defineOptions, registerOptions } from "../options/index.js";
@@ -61,7 +61,7 @@ const optionalHookSchema = z.union([z.string(), z.literal(false)]).optional();
 
 export const runSchema = z
   .object({
-    backend: agentBackendSchema,
+    backend: z.enum(agentBackends),
     name: z.string().min(1).optional(),
     workspace: z.string().trim().min(1).optional(),
     worktree: optionalWorktreeSchema,

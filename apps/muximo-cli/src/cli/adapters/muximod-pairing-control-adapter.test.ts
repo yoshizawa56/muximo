@@ -53,8 +53,7 @@ const session = AgentSession.create({
   resuming: false,
   executionId,
   executionStartedAt: "2026-08-30T00:00:00.000Z",
-  createdAt: "2026-08-30T00:00:00.000Z",
-  updatedAt: "2026-08-30T00:00:00.000Z",
+  lastActivityAt: "2026-08-30T00:00:00.000Z",
 });
 
 const cases = [

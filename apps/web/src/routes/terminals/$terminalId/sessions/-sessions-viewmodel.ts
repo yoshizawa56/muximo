@@ -3,8 +3,8 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useTerminalResources } from "../../-terminal-resources";
 
 export type SessionsViewModel = {
-  terminals: TerminalEndpoint[];
-  sessions: TmuxSession[];
+  terminals: readonly TerminalEndpoint[];
+  sessions: readonly TmuxSession[];
   selectedTerminal: TerminalEndpoint | null;
   selectedSession: TmuxSession | null;
   status: "loading" | "ready" | "error" | undefined;

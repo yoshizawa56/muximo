@@ -1,18 +1,19 @@
-import { AgentSession, type AgentSessionRecord, type AgentSessionUpdateInput } from "@muximo/domain";
+import type { AgentSession, AgentSessionUpdateInput } from "@muximo/domain";
+import { Effect } from "effect";
 import type { SessionClock } from "../../ports/agent-sessions.js";
 
 export function updateAgentSession(
-  session: AgentSessionRecord,
+  session: AgentSession,
   input: AgentSessionUpdateInput,
   clock: SessionClock,
-): AgentSessionRecord {
-  return AgentSession.update(session, { ...input, updatedAt: clock.now() });
+): AgentSession {
+  return session.update({ ...input, lastActivityAt: clock.now() });
 }
 
-export function applyAdapterUpdate(
-  session: AgentSessionRecord,
-  input: AgentSessionUpdateInput | undefined,
-  clock: SessionClock,
-): AgentSessionRecord {
-  return input === undefined ? session : updateAgentSession(session, input, clock);
-}
+/** Fails with the abort reason when the caller's signal was already aborted. */
+export const checkAborted = (signal: AbortSignal | undefined): Effect.Effect<void, Error> =>
+  signal?.aborted
+    ? Effect.fail(
+        signal.reason instanceof Error ? signal.reason : new Error("agent execution preparation was cancelled"),
+      )
+    : Effect.succeed(undefined);

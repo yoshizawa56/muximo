@@ -1,5 +1,6 @@
 import { type MuximodHealth, muximodHealthSchema } from "@muximo/contract/api";
 import { protocolVersion } from "@muximo/contract/shared";
+import { Schema } from "effect";
 
 export type MuximodHealthUnavailable = {
   error: "muximod_unavailable";
@@ -22,7 +23,7 @@ export function presentMuximodHealth(configurationFingerprint: string, isReady =
   return {
     ready: true,
     status: 200,
-    body: muximodHealthSchema.parse({
+    body: Schema.decodeUnknownSync(muximodHealthSchema)({
       ok: true,
       service: "muximod",
       protocolVersion,

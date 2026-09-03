@@ -7,6 +7,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import { createMuximodApp, type MuximodApp } from "./app.js";
 import { createOriginPolicy, muximoCapacitorOrigin } from "./middleware.js";
@@ -71,30 +72,22 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
   };
   const auth: MuximodAuthPort = {
     serverId: authContext.serverId,
-    authenticateAccessToken: async (token) => {
-      state.authCalls += 1;
-      return token === "origin-token" ? authContext : undefined;
-    },
-    claimPairing: async () => {
-      throw new Error("not used");
-    },
-    pairingStatus: async () => {
-      throw new Error("not used");
-    },
-    createChallenge: async () => {
-      throw new Error("not used");
-    },
-    createSession: async () => {
-      throw new Error("not used");
-    },
-    issueWebSocketTicket: async () => {
-      throw new Error("not used");
-    },
-    consumeWebSocketTicket: async (ticket) => {
-      if (ticket !== "origin-ticket") return undefined;
-      state.consumedTickets += 1;
-      return authContext;
-    },
+    authenticateAccessToken: (token) =>
+      Effect.sync(() => {
+        state.authCalls += 1;
+        return token === "origin-token" ? authContext : undefined;
+      }),
+    claimPairing: () => Effect.fail(new Error("not used")),
+    pairingStatus: () => Effect.fail(new Error("not used")),
+    createChallenge: () => Effect.fail(new Error("not used")),
+    createSession: () => Effect.fail(new Error("not used")),
+    issueWebSocketTicket: () => Effect.fail(new Error("not used")),
+    consumeWebSocketTicket: (ticket) =>
+      Effect.sync(() => {
+        if (ticket !== "origin-ticket") return undefined;
+        state.consumedTickets += 1;
+        return authContext;
+      }),
   };
   const application = createApplication(state);
   const originPolicy = allowNoOrigin

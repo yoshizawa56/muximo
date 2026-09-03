@@ -119,7 +119,7 @@ Application lifecycle policy is split into `RunAgentSession`, `ResumeAgentSessio
 `ListAgentSessions`, `CleanupAgentSession`, and `LocateAgentSession`. Their focused ports
 are provider-neutral and asynchronous for filesystem, Git, process, and observation I/O.
 Launch plans return typed session updates and own exactly-once disposal. Resume claims
-receive an application-generated `ClaimExecutionInput.updatedAt`.
+receive an application-generated `ClaimExecutionInput.lastActivityAt`.
 
 Concrete CLI capabilities live under `packages/infrastructure/src/cli/`: backend
 launch/discovery, worktrees, hooks, panes, workspace, observations, shell, tmux sessions,

@@ -1,13 +1,4 @@
-import {
-  AgentSession,
-  AgentSessionId,
-  type AgentSessionRecord,
-  Pane,
-  PaneId,
-  type PaneRecord,
-  type PaneState,
-  WorkspaceId,
-} from "@muximo/domain";
+import { AgentSession, AgentSessionId, clearPatch, Pane, PaneId, type PaneState, WorkspaceId } from "@muximo/domain";
 import {
   hasObserved,
   type OperationCase,
@@ -16,11 +7,19 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
+import { applicationClockLayer } from "../../effect-runtime.js";
 import type { ApplicationClock } from "../../ports/application.js";
-import type { MuximodHostPort, TerminalHostSnapshot } from "../../ports/host.js";
+import type {
+  MuximodHostPort,
+  MuximodSessionManagementPort,
+  MuximodViewportPort,
+  TerminalHostSnapshot,
+} from "../../ports/host.js";
 import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
 import { reconcilePanes } from "./reconcile-panes.js";
+import { terminalLayer } from "./terminal-services.js";
 
 type Input = {
   execution: "adopted" | "manual";
@@ -39,12 +38,12 @@ type ReconcileContext = {
 };
 
 type ReconcileFixture = {
-  session: AgentSessionRecord;
+  session: AgentSession;
   host: MuximodHostPort;
   repository: PaneRepository;
   sessions: AgentSessionRepository;
   status: Map<string, { state: PaneState; recentOutput?: string }>;
-  records: PaneRecord[];
+  records: Pane[];
   record: { kind: ReconcileResult; agentSessionId?: string; state?: PaneState } | undefined;
 };
 
@@ -110,7 +109,7 @@ const cases = [
 const table: OperationTable<ReconcileFixture, "default", Input, ReconcileResult, ReconcileContext> = {
   defaultFixture: createFixture,
   cases,
-  execute: async (fixture, input) => {
+  execute: (fixture, input) => {
     fixture.records = input.existingState
       ? [
           Pane.create({
@@ -161,22 +160,31 @@ const table: OperationTable<ReconcileFixture, "default", Input, ReconcileResult,
         },
       ],
     };
-    if (input.identity === "missing") fixture.session = { ...fixture.session, executionStartedAt: undefined };
+    if (input.identity === "missing") fixture.session = fixture.session.update({ executionStartedAt: clearPatch });
     fixture.host = createHost(snapshot);
-    const [record] = await reconcilePanes(
-      fixture.host,
-      fixture.repository,
-      fixture.sessions,
-      fixture.status,
-      clock,
-      snapshot,
+    return Effect.gen(function* () {
+      const [record] = yield* reconcilePanes(snapshot);
+      fixture.record = {
+        kind: record?.kind ?? "unknown",
+        ...(record?.agentSessionId ? { agentSessionId: record.agentSessionId } : {}),
+        ...(record?.state ? { state: record.state } : {}),
+      };
+      return record?.kind ?? "unknown";
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          terminalLayer({
+            paneRepository: fixture.repository,
+            agentSessionRepository: fixture.sessions,
+            host: fixture.host,
+            sessionManagement: createSessionManagement(),
+            viewportManager: createViewport(),
+            agentStatus: fixture.status,
+          }),
+          applicationClockLayer(clock),
+        ),
+      ),
     );
-    fixture.record = {
-      kind: record?.kind ?? "unknown",
-      ...(record?.agentSessionId ? { agentSessionId: record.agentSessionId } : {}),
-      ...(record?.state ? { state: record.state } : {}),
-    };
-    return record?.kind ?? "unknown";
   },
   observe: (fixture) => ({
     kind: fixture.record?.kind,
@@ -202,78 +210,99 @@ function createFixture(): { fixture: ReconcileFixture } {
     executionId: "execution-id-123456",
     executionPid: 1234,
     executionStartedAt: "2026-08-23T00:00:00.000Z",
-    createdAt: "2026-08-23T00:00:00.000Z",
-    updatedAt: "2026-08-23T00:00:00.000Z",
+    lastActivityAt: "2026-08-23T00:00:00.000Z",
   });
   const status = new Map<string, { state: PaneState; recentOutput?: string }>();
-  const sessions = new Map<string, AgentSessionRecord>([[session.id, session]]);
+  const sessions = new Map<string, AgentSession>([[session.id, session]]);
   const fixture = {
     session,
     host: createHost({ available: false, hostServerId: null, hostServerScope: null, panes: [] }),
     repository: undefined as unknown as PaneRepository,
     sessions: undefined as unknown as AgentSessionRepository,
     status,
-    records: [] as PaneRecord[],
+    records: [] as Pane[],
     record: undefined as ReconcileFixture["record"],
   } satisfies ReconcileFixture;
   const repository: PaneRepository = {
-    list: async () => fixture.records,
-    findById: async (id) => fixture.records.find((record) => record.id === id),
-    findByHostPaneIdentity: async (hostServerId, hostPaneId) =>
-      fixture.records.find((record) => record.hostServerId === hostServerId && record.hostPaneId === hostPaneId),
-    upsert: async (record) => {
-      fixture.records = [
-        ...fixture.records.filter(
-          (current) => current.hostServerId !== record.hostServerId || current.hostPaneId !== record.hostPaneId,
-        ),
-        record,
-      ];
-    },
-    pruneStalePanes: async () => 0,
+    list: () => Effect.succeed([...fixture.records]),
+    findById: (id) => Effect.succeed(fixture.records.find((record) => record.id === id)),
+    findByHostPaneIdentity: (hostServerId, hostPaneId) =>
+      Effect.succeed(
+        fixture.records.find((record) => record.hostServerId === hostServerId && record.hostPaneId === hostPaneId),
+      ),
+    upsert: (record) =>
+      Effect.sync(() => {
+        fixture.records = [
+          ...fixture.records.filter(
+            (current) => current.hostServerId !== record.hostServerId || current.hostPaneId !== record.hostPaneId,
+          ),
+          record,
+        ];
+      }),
+    pruneStalePanes: () => Effect.succeed(0),
   };
   const sessionRepository: AgentSessionRepository = {
-    findById: async (id) => (id === fixture.session.id ? fixture.session : sessions.get(id)),
-    findByName: async () => undefined,
-    list: async () => [...sessions.values()],
-    insert: async (record) => {
-      sessions.set(record.id, record);
-    },
-    update: async (record) => {
-      sessions.set(record.id, record);
-    },
-    claimExecution: async () => false,
-    claimAbandonedExecution: async () => false,
-    attachExecution: async () => false,
-    setBackendSessionIdIfMissing: async () => false,
-    delete: async (id) => {
-      sessions.delete(id);
-    },
+    findById: (id) => Effect.succeed(id === fixture.session.id ? fixture.session : sessions.get(id)),
+    findByName: () => Effect.succeed(undefined),
+    list: () => Effect.succeed([...sessions.values()]),
+    insert: (record) =>
+      Effect.sync(() => {
+        sessions.set(record.id, record);
+      }),
+    update: (record) =>
+      Effect.sync(() => {
+        sessions.set(record.id, record);
+      }),
+    claimExecution: () => Effect.succeed(false),
+    claimAbandonedExecution: () => Effect.succeed(false),
+    attachExecution: () => Effect.succeed(false),
+    setBackendSessionIdIfMissing: () => Effect.succeed(false),
+    delete: (id) =>
+      Effect.sync(() => {
+        sessions.delete(id);
+      }),
   };
   fixture.repository = repository;
   fixture.sessions = sessionRepository;
   return { fixture };
 }
 
+function createSessionManagement(): MuximodSessionManagementPort {
+  return {
+    newId: () => "managed-session",
+    hasSession: () => Effect.succeed(false),
+    findManagedSessionId: () => Effect.succeed(undefined),
+    configureManagedSession: () => Effect.succeed(undefined),
+  };
+}
+
+function createViewport(): MuximodViewportPort {
+  return {
+    handleTerminalHostHook: () => Effect.succeed(undefined),
+    reassertMobileViewport: () => Effect.succeed(undefined),
+  };
+}
+
 function createHost(snapshot: TerminalHostSnapshot): MuximodHostPort {
   return {
     newId: () => "generated-pane",
-    hasSession: async () => false,
-    createManagedSession: async () => "managed",
-    killSession: async () => undefined,
-    attachSession: async () => 0,
-    createManagedPane: async () => "%2",
-    resolvePane: async (target) => ({ hostPaneId: target, windowId: "@0", sessionName: "managed" }),
-    isWindowZoomed: async () => false,
-    splitPane: async () => "%2",
-    listPanesSnapshot: async () => snapshot,
-    setAgentPaneMetadata: async () => undefined,
-    setAgentExecutionMetadata: async () => undefined,
-    clearAgentExecutionMetadata: async () => false,
-    resetAgentPaneMetadata: async () => undefined,
-    isProcessAlive: async () => true,
-    classifyCommand: async (command) =>
-      command === "codex" ? { kind: "agent", agentId: "codex" } : { kind: "shell", agentId: "shell" },
-    observeUnmanagedAgent: async (_paneId, fallbackState) => ({ state: fallbackState }),
+    hasSession: () => Effect.succeed(false),
+    createManagedSession: () => Effect.succeed("managed"),
+    killSession: () => Effect.succeed(undefined),
+    attachSession: () => Effect.succeed(0),
+    createManagedPane: () => Effect.succeed("%2"),
+    resolvePane: (target) => Effect.succeed({ hostPaneId: target, windowId: "@0", sessionName: "managed" }),
+    isWindowZoomed: () => Effect.succeed(false),
+    splitPane: () => Effect.succeed("%2"),
+    listPanesSnapshot: () => Effect.succeed(snapshot),
+    setAgentPaneMetadata: () => Effect.succeed(undefined),
+    setAgentExecutionMetadata: () => Effect.succeed(undefined),
+    clearAgentExecutionMetadata: () => Effect.succeed(false),
+    resetAgentPaneMetadata: () => Effect.succeed(undefined),
+    isProcessAlive: () => Effect.succeed(true),
+    classifyCommand: (command) =>
+      Effect.succeed(command === "codex" ? { kind: "agent", agentId: "codex" } : { kind: "shell", agentId: "shell" }),
+    observeUnmanagedAgent: (_paneId, fallbackState) => Effect.succeed({ state: fallbackState }),
   };
 }
 

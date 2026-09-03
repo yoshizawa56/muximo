@@ -8,9 +8,11 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import type { ManageSessionResult } from "../../ports/application.js";
 import type { MuximodSessionManagementPort } from "../../ports/host.js";
+import { muximodSessionManagementLayer } from "../terminals/terminal-services.js";
 import { manageSession } from "./manage-session.js";
 
 type Input = {
@@ -67,9 +69,9 @@ const cases = [
 const table: OperationTable<Fixture, "default", Input, ManageSessionResult, Context> = {
   defaultFixture: createFixture,
   cases,
-  execute: async (fixture, input) => {
+  execute: (fixture, input) => {
     fixture.input = input;
-    return manageSession(input, fixture.host);
+    return manageSession(input).pipe(Effect.provide(muximodSessionManagementLayer(fixture.host)));
   },
   observe: (fixture) => ({ calls: [...fixture.calls] }),
 };
@@ -84,17 +86,20 @@ function createFixture(): FixtureHandle<Fixture> {
       fixture.calls.push("newId");
       return "managed-session-1";
     },
-    hasSession: async (target) => {
-      fixture.calls.push(`hasSession:${target}`);
-      return fixture.input?.exists ?? false;
-    },
-    findManagedSessionId: async (target) => {
-      fixture.calls.push(`findManagedSessionId:${target}`);
-      return fixture.input?.managedSessionId;
-    },
-    configureManagedSession: async (target, managedSessionId) => {
-      fixture.calls.push(`configureManagedSession:${target}:${managedSessionId}`);
-    },
+    hasSession: (target) =>
+      Effect.sync(() => {
+        fixture.calls.push(`hasSession:${target}`);
+        return fixture.input?.exists ?? false;
+      }),
+    findManagedSessionId: (target) =>
+      Effect.sync(() => {
+        fixture.calls.push(`findManagedSessionId:${target}`);
+        return fixture.input?.managedSessionId;
+      }),
+    configureManagedSession: (target, managedSessionId) =>
+      Effect.sync(() => {
+        fixture.calls.push(`configureManagedSession:${target}:${managedSessionId}`);
+      }),
   };
   return { fixture };
 }

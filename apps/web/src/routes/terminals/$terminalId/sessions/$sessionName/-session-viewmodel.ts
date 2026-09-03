@@ -7,7 +7,7 @@ import { fallbackSession, fallbackTerminal, useTerminalResources } from "../../.
 export type SessionOverviewViewModel = {
   terminal: TerminalEndpoint;
   session: TmuxSession;
-  panes: PaneSummary[];
+  panes: readonly PaneSummary[];
   status?: "loading" | "ready" | "error";
   errorMessage?: string | null;
   onSelectPane: (pane: PaneSummary) => void;

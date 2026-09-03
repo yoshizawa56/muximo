@@ -1,3 +1,4 @@
+import type { ApplicationEffect } from "../effect.js";
 import type {
   AuthChallengeResponse,
   AuthDeviceRecord,
@@ -24,40 +25,43 @@ export interface Clock {
 
 /** Semantic capability for disconnecting active authenticated connections. */
 export interface AuthConnectionPort {
-  disconnectDevice(deviceId: string): Promise<void>;
-  disconnectSession(sessionId: string): Promise<void>;
+  disconnectDevice(deviceId: string): ApplicationEffect<void>;
+  disconnectSession(sessionId: string): ApplicationEffect<void>;
 }
 
 export interface AuthStorePort {
-  createPairing(input: CreatePairingInput): Promise<CreatePairingResult>;
-  findPairing(pairingId: string): Promise<AuthPairingRecord | undefined>;
-  claimPairing(input: ClaimPairingInput): Promise<ClaimPairingResult>;
-  getPairingStatus(pairingId: string, claimToken: string): Promise<{ status: AuthPairingStatus; deviceId?: string }>;
-  approvePairing(pairingId: string): Promise<AuthDeviceRecord>;
-  rejectPairing(pairingId: string): Promise<void>;
-  findDevice(deviceId: string): Promise<AuthDeviceRecord | undefined>;
+  createPairing(input: CreatePairingInput): ApplicationEffect<CreatePairingResult>;
+  findPairing(pairingId: string): ApplicationEffect<AuthPairingRecord | undefined>;
+  claimPairing(input: ClaimPairingInput): ApplicationEffect<ClaimPairingResult>;
+  getPairingStatus(
+    pairingId: string,
+    claimToken: string,
+  ): ApplicationEffect<{ status: AuthPairingStatus; deviceId?: string }>;
+  approvePairing(pairingId: string): ApplicationEffect<AuthDeviceRecord>;
+  rejectPairing(pairingId: string): ApplicationEffect<void>;
+  findDevice(deviceId: string): ApplicationEffect<AuthDeviceRecord | undefined>;
   createSession(input: {
     sessionId: string;
     token: string;
     deviceId: string;
     expiresAt: string;
-  }): Promise<AuthSessionRecord>;
-  findSession(token: string): Promise<AuthSessionRecord | undefined>;
-  findSessionById(sessionId: string): Promise<AuthSessionRecord | undefined>;
-  revokeSession(sessionId: string): Promise<void>;
-  revokeDevice(deviceId: string): Promise<void>;
-  listDevices(): Promise<AuthDeviceRecord[]>;
+  }): ApplicationEffect<AuthSessionRecord>;
+  findSession(token: string): ApplicationEffect<AuthSessionRecord | undefined>;
+  findSessionById(sessionId: string): ApplicationEffect<AuthSessionRecord | undefined>;
+  revokeSession(sessionId: string): ApplicationEffect<void>;
+  revokeDevice(deviceId: string): ApplicationEffect<void>;
+  listDevices(): ApplicationEffect<AuthDeviceRecord[]>;
 }
 
 export interface AuthPairingClaimSinkPort {
-  publish(notification: AuthPairingClaimNotification): void | Promise<void>;
+  publish(notification: AuthPairingClaimNotification): ApplicationEffect<void>;
 }
 
 export interface MuximodAuthControlPort {
-  createLocalSession(): Promise<AuthSessionResponse>;
-  createPairing(input: { muximodBaseUrl: string }): Promise<AuthPairingPayload>;
-  approvePairing(pairingId: string): Promise<AuthDeviceRecord>;
-  rejectPairing(pairingId: string): Promise<void>;
+  createLocalSession(): ApplicationEffect<AuthSessionResponse>;
+  createPairing(input: { muximodBaseUrl: string }): ApplicationEffect<AuthPairingPayload>;
+  approvePairing(pairingId: string): ApplicationEffect<AuthDeviceRecord>;
+  rejectPairing(pairingId: string): ApplicationEffect<void>;
 }
 
 export interface AuthCryptoPort {
@@ -83,13 +87,23 @@ export interface AuthCryptoPort {
 
 export interface MuximodAuthPort {
   readonly serverId: string;
-  authenticateAccessToken(token: string | undefined): Promise<MuximodAuthContext | undefined>;
-  claimPairing(pairingId: string, request: AuthPairingClaimRequest): Promise<AuthPairingClaimResponse>;
-  pairingStatus(pairingId: string, claimToken: string): Promise<{ status: AuthPairingStatus; deviceId?: string }>;
-  createChallenge(deviceId: string): Promise<AuthChallengeResponse>;
-  createSession(input: { deviceId: string; challengeId: string; signature: string }): Promise<AuthSessionResponse>;
-  issueWebSocketTicket(context: MuximodAuthContext, endpoint: "terminal"): Promise<WsTicketResponse>;
-  consumeWebSocketTicket(ticket: string | undefined, endpoint: "terminal"): Promise<MuximodAuthContext | undefined>;
+  authenticateAccessToken(token: string | undefined): ApplicationEffect<MuximodAuthContext | undefined>;
+  claimPairing(pairingId: string, request: AuthPairingClaimRequest): ApplicationEffect<AuthPairingClaimResponse>;
+  pairingStatus(
+    pairingId: string,
+    claimToken: string,
+  ): ApplicationEffect<{ status: AuthPairingStatus; deviceId?: string }>;
+  createChallenge(deviceId: string): ApplicationEffect<AuthChallengeResponse>;
+  createSession(input: {
+    deviceId: string;
+    challengeId: string;
+    signature: string;
+  }): ApplicationEffect<AuthSessionResponse>;
+  issueWebSocketTicket(context: MuximodAuthContext, endpoint: "terminal"): ApplicationEffect<WsTicketResponse>;
+  consumeWebSocketTicket(
+    ticket: string | undefined,
+    endpoint: "terminal",
+  ): ApplicationEffect<MuximodAuthContext | undefined>;
 }
 
 /** One-time challenge awaiting a signed session request. */

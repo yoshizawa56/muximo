@@ -1,11 +1,12 @@
 import type {
   AgentBackend,
-  AgentSessionRecord,
+  AgentSession,
   PaneState,
+  Workspace,
   WorkspaceDirectoryOption,
   WorkspaceId,
-  WorkspaceRecord,
 } from "@muximo/domain";
+import type { ApplicationEffect } from "../effect.js";
 import type { ClaimAbandonedExecutionInput, ClaimExecutionInput } from "./repositories.js";
 
 /** Provider-neutral input for starting a managed agent session. */
@@ -74,7 +75,7 @@ export type AgentSessionListObservation = {
 };
 
 export type AgentSessionListProjection = {
-  session: AgentSessionRecord;
+  session: AgentSession;
   executionHealth: AgentSessionExecutionHealth;
   resume: AgentSessionResumeState;
   resumeReason: AgentSessionResumeReason | null;
@@ -138,7 +139,7 @@ export type AgentExecutionResult = ProcessResult & {
 };
 
 export type PreparedAgentSession = {
-  session: AgentSessionRecord;
+  session: AgentSession;
   execution: AgentExecutionSpec;
 };
 
@@ -185,13 +186,13 @@ export type LaunchPreparation = {
 
 export type RunAgentSessionResult = {
   process: ProcessResult;
-  session: AgentSessionRecord;
+  session: AgentSession;
   cleanup: CleanupResult | { disposition: "not_requested"; reason: "interrupted" | "no_worktree" };
 };
 
 export type ResumeAgentSessionResult = {
   process: ProcessResult;
-  session: AgentSessionRecord;
+  session: AgentSession;
 };
 
 /** Durable result returned after a host-owned execution has been finalized. */
@@ -201,7 +202,7 @@ export type AgentExecutionReceipt =
       agentSessionId: string;
       executionId: string;
       process: AgentExecutionResult;
-      session: AgentSessionRecord;
+      session: AgentSession;
       cleanup: RunAgentSessionResult["cleanup"];
     }
   | {
@@ -209,67 +210,71 @@ export type AgentExecutionReceipt =
       agentSessionId: string;
       executionId: string;
       process: AgentExecutionResult;
-      session: AgentSessionRecord;
+      session: AgentSession;
     };
 
 export type CleanupAgentSessionResult = {
-  session: AgentSessionRecord;
+  session: AgentSession;
   cleanup: CleanupResult;
 };
 
 /** Resolves the workspace selected by the current runtime context. */
 export interface WorkspaceResolverPort {
-  resolveCurrent(input?: WorkspaceResolutionInput): Promise<WorkspaceRecord>;
+  resolveCurrent(input?: WorkspaceResolutionInput): ApplicationEffect<Workspace>;
 }
 
 /** Generates collision-free names without inspecting provider arguments. */
 export interface SessionNamingPort {
-  resolveName(workspaceId: WorkspaceId, requestedName: string | undefined, backend: AgentBackend): Promise<string>;
+  resolveName(
+    workspaceId: WorkspaceId,
+    requestedName: string | undefined,
+    backend: AgentBackend,
+  ): ApplicationEffect<string>;
 }
 
 /** Resolves and executes workspace hooks; it never mutates a session record. */
 export interface HookPort {
-  resolveHook(value: string, workspaceRoot: string): Promise<string>;
-  resolveStoredHook(path: string | undefined): Promise<string | undefined>;
-  run(session: AgentSessionRecord, kind: "setup" | "cleanup"): Promise<HookResult>;
-  removeOutputs(session: AgentSessionRecord): Promise<void>;
+  resolveHook(value: string, workspaceRoot: string): ApplicationEffect<string>;
+  resolveStoredHook(path: string | undefined): ApplicationEffect<string | undefined>;
+  run(session: AgentSession, kind: "setup" | "cleanup"): ApplicationEffect<HookResult>;
+  removeOutputs(session: AgentSession): ApplicationEffect<void>;
 }
 
 /** Owns Git worktree creation, copy, inspection, and removal. */
 export interface WorktreePort {
-  create(workspace: WorkspaceDirectoryOption, name: string, override?: string): Promise<ManagedWorktreeState>;
-  copyFiles(target: Pick<AgentSessionRecord, "workspaceRoot" | "worktreePath">): Promise<boolean>;
-  isRegistered(session: AgentSessionRecord): Promise<boolean>;
-  hasChanges(session: AgentSessionRecord): Promise<boolean>;
-  remove(session: AgentSessionRecord, force: boolean): Promise<CleanupResult>;
+  create(workspace: WorkspaceDirectoryOption, name: string, override?: string): ApplicationEffect<ManagedWorktreeState>;
+  copyFiles(target: Pick<AgentSession, "workspaceRoot" | "worktreePath">): ApplicationEffect<boolean>;
+  isRegistered(session: AgentSession): ApplicationEffect<boolean>;
+  hasChanges(session: AgentSession): ApplicationEffect<boolean>;
+  remove(session: AgentSession, force: boolean): ApplicationEffect<CleanupResult>;
 }
 
 /** Provider-neutral launch and baseline capability. */
 export interface SessionLauncherPort {
-  captureBaseline(session: AgentSessionRecord): Promise<SessionBaselineResult>;
+  captureBaseline(session: AgentSession): ApplicationEffect<SessionBaselineResult>;
   prepareLaunch(
-    session: AgentSessionRecord,
+    session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
     signal?: AbortSignal,
-  ): Promise<LaunchPreparation>;
-  startLaunch(session: AgentSessionRecord): Promise<void>;
+  ): ApplicationEffect<LaunchPreparation>;
+  startLaunch(session: AgentSession): ApplicationEffect<void>;
   completeLaunch(
-    session: AgentSessionRecord,
+    session: AgentSession,
     process: AgentExecutionResult,
-  ): Promise<SessionIdentityUpdate | undefined>;
-  disposeLaunch(session: AgentSessionRecord): Promise<void>;
+  ): ApplicationEffect<SessionIdentityUpdate | undefined>;
+  disposeLaunch(session: AgentSession): ApplicationEffect<void>;
 }
 
 /** Provider-neutral remote-session lifecycle used by cleanup policy. */
 export interface RemoteSessionPort {
-  archive(session: AgentSessionRecord): Promise<boolean>;
-  restore(session: AgentSessionRecord): Promise<boolean>;
+  archive(session: AgentSession): ApplicationEffect<boolean>;
+  restore(session: AgentSession): ApplicationEffect<boolean>;
 }
 
 /** Releases provider-owned resources after the session record is deleted. */
 export interface SessionResourcePort {
-  releaseIfUnused(session: AgentSessionRecord, remaining: readonly AgentSessionRecord[]): Promise<void>;
+  releaseIfUnused(session: AgentSession, remaining: readonly AgentSession[]): ApplicationEffect<void>;
 }
 
 /** Provider state and output observed for a managed agent session. */
@@ -280,30 +285,30 @@ export type AgentStateObservation = {
 
 /** Receives provider observations for the currently running agent session. */
 export interface AgentObservationPort {
-  observe(session: AgentSessionRecord, observation: AgentStateObservation): Promise<void>;
+  observe(session: AgentSession, observation: AgentStateObservation): ApplicationEffect<void>;
 }
 
 /** Publishes agent lifecycle state to the current pane/control transport. */
 export interface PanePublicationPort {
-  adopt(session: AgentSessionRecord, hostPaneId?: string): Promise<void>;
-  release(session: AgentSessionRecord, hostPaneId?: string): Promise<void>;
+  adopt(session: AgentSession, hostPaneId?: string): ApplicationEffect<void>;
+  release(session: AgentSession, hostPaneId?: string): ApplicationEffect<void>;
   publish(
-    session: AgentSessionRecord,
+    session: AgentSession,
     state: "running" | "completed" | "failed" | "stopped",
     hostPaneId?: string,
-  ): Promise<void>;
+  ): ApplicationEffect<void>;
 }
 
 export type ProcessLiveness = "alive" | "dead" | "unknown";
 
 export interface ProcessObservationPort {
-  observe(pid: number, expectedStartedAt?: string): Promise<ProcessLiveness>;
+  observe(pid: number, expectedStartedAt?: string): ApplicationEffect<ProcessLiveness>;
 }
 
 /** Concrete observations used by the application-owned session list policy. */
 export type SessionObservationPort = {
-  resolveWorkspace(): Promise<Pick<WorkspaceRecord, "id">>;
-  observeSession(session: AgentSessionRecord, now: number): Promise<AgentSessionListObservation>;
+  resolveWorkspace(): ApplicationEffect<Pick<Workspace, "id">>;
+  observeSession(session: AgentSession, now: number): ApplicationEffect<AgentSessionListObservation>;
 };
 
 export type SessionListClock = {
@@ -311,7 +316,7 @@ export type SessionListClock = {
 };
 
 export interface SessionAuditPort {
-  record(eventType: string, entityId: string, payload: unknown): void | Promise<void>;
+  record(eventType: string, entityId: string, payload: unknown): ApplicationEffect<void>;
 }
 
 export type SessionClock = {
@@ -320,17 +325,17 @@ export type SessionClock = {
 };
 
 export type ManagedAgentSessionRepository = {
-  findById(id: AgentSessionRecord["id"]): Promise<AgentSessionRecord | undefined>;
-  findByName(workspaceId: WorkspaceId, name: string): Promise<AgentSessionRecord | undefined>;
-  list(workspaceId?: WorkspaceId): Promise<AgentSessionRecord[]>;
-  insert(record: AgentSessionRecord): Promise<void>;
-  update(record: AgentSessionRecord): Promise<void>;
-  claimExecution(input: ClaimExecutionInput): Promise<boolean>;
-  claimAbandonedExecution(input: ClaimAbandonedExecutionInput): Promise<boolean>;
-  attachExecution(input: import("./repositories.js").AttachExecutionInput): Promise<boolean>;
-  delete(id: AgentSessionRecord["id"]): Promise<void>;
-  findExecutionReceipt(executionId: string): Promise<AgentExecutionReceipt | undefined>;
-  saveExecutionReceipt(receipt: AgentExecutionReceipt): Promise<void>;
+  findById(id: AgentSession["id"]): ApplicationEffect<AgentSession | undefined>;
+  findByName(workspaceId: WorkspaceId, name: string): ApplicationEffect<AgentSession | undefined>;
+  list(workspaceId?: WorkspaceId): ApplicationEffect<AgentSession[]>;
+  insert(record: AgentSession): ApplicationEffect<void>;
+  update(record: AgentSession): ApplicationEffect<void>;
+  claimExecution(input: ClaimExecutionInput): ApplicationEffect<boolean>;
+  claimAbandonedExecution(input: ClaimAbandonedExecutionInput): ApplicationEffect<boolean>;
+  attachExecution(input: import("./repositories.js").AttachExecutionInput): ApplicationEffect<boolean>;
+  delete(id: AgentSession["id"]): ApplicationEffect<void>;
+  findExecutionReceipt(executionId: string): ApplicationEffect<AgentExecutionReceipt | undefined>;
+  saveExecutionReceipt(receipt: AgentExecutionReceipt): ApplicationEffect<void>;
 };
 
 export type SessionLogger = {
@@ -339,5 +344,5 @@ export type SessionLogger = {
 };
 
 export type SessionCleanupConfirmationPort = {
-  confirm(session: AgentSessionRecord, dirty: boolean): Promise<boolean>;
+  confirm(session: AgentSession, dirty: boolean): ApplicationEffect<boolean>;
 };

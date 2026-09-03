@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
-import type { TransactionManager } from "@muximo/application";
+import type { ApplicationEffect, TransactionManager } from "@muximo/application";
 import { drizzle } from "drizzle-orm/bun-sqlite";
+import { fromPromise, runEffectAsPromise } from "../effect.js";
 import type { AgentDatabase } from "./index.js";
 import {
   currentSqliteTransaction,
@@ -46,24 +47,28 @@ export class SqliteTransactionManager implements TransactionManager {
     this.database = drizzle({ client: this.sqlite });
   }
 
-  public async run<Result>(operation: () => Promise<Result>): Promise<Result> {
-    const current = currentSqliteTransaction();
-    if (current?.owner === this) return operation();
-    if (current) throw new Error("SQLite transaction owner mismatch");
-    if (this.closed) throw new Error("SQLite transaction manager is closed");
-
-    const release = await this.mutex.acquire();
-    try {
-      return await this.runWithRetry(operation);
-    } finally {
-      release();
-    }
+  public run<A>(operation: ApplicationEffect<A>): ApplicationEffect<A> {
+    return fromPromise(() => this.execute(operation));
   }
 
   public close(): void {
     if (this.closed) return;
     this.closed = true;
     this.sqlite.close();
+  }
+
+  private async execute<A>(operation: ApplicationEffect<A>): Promise<A> {
+    const current = currentSqliteTransaction();
+    if (current?.owner === this) return runEffectAsPromise(operation);
+    if (current) throw new Error("SQLite transaction owner mismatch");
+    if (this.closed) throw new Error("SQLite transaction manager is closed");
+
+    const release = await this.mutex.acquire();
+    try {
+      return await this.runWithRetry(() => runEffectAsPromise(operation));
+    } finally {
+      release();
+    }
   }
 
   private async runWithRetry<Result>(operation: () => Promise<Result>): Promise<Result> {

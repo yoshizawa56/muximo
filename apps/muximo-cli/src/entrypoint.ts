@@ -86,7 +86,8 @@ function isCompletionInvocation(args: readonly string[], buildMode: CliBuildMode
 
 function isParserOnlyInvocation(args: readonly string[], buildMode: CliBuildMode): boolean {
   const commandIndex = firstCommandIndex(args, buildMode);
-  const parserArguments = commandIndex < 0 ? args : args.slice(0, commandIndex);
+  const delimiterIndex = args.indexOf("--");
+  const parserArguments = args.slice(0, delimiterIndex < 0 ? args.length : delimiterIndex);
   const hasCommand = commandIndex >= 0;
   return (
     args.length === 0 ||

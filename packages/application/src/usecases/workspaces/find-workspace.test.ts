@@ -8,14 +8,20 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect, Layer } from "effect";
 import { describe, it } from "vitest";
 import type { WorkspaceRepository } from "../../ports/repositories.js";
 import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
 import { findWorkspace } from "./find-workspace.js";
+import {
+  type WorkspaceDirectoryService,
+  type WorkspaceRepositoryService,
+  workspaceDirectoryLayer,
+  workspaceRepositoryLayer,
+} from "./workspace-services.js";
 
 type FindWorkspaceFixture = {
-  repository: WorkspaceRepository;
-  directories: WorkspaceDirectoryPort;
+  layer: Layer.Layer<WorkspaceRepositoryService | WorkspaceDirectoryService>;
   expected: ReturnType<typeof Workspace.create>;
 };
 type FindWorkspaceInput = { selector: string };
@@ -55,7 +61,7 @@ const table: OperationTable<
     "unexpected-error": createUnexpectedErrorFixture,
   },
   cases,
-  execute: (fixture, input) => findWorkspace(fixture.repository, fixture.directories, input.selector),
+  execute: (fixture, input) => findWorkspace(input.selector).pipe(Effect.provide(fixture.layer)),
   observe: () => ({}),
 };
 
@@ -64,29 +70,37 @@ describe("workspace selector resolution", () => {
 });
 
 function createInvalidDirectoryFixture(): FixtureHandle<FindWorkspaceFixture> {
-  return { fixture: createFixture({ code: "invalid_directory", reason: "not_found" }) };
+  return {
+    fixture: createFixture(
+      Object.assign(new Error("workspace directory is invalid"), {
+        code: "invalid_directory",
+        reason: "not_found",
+      }),
+    ),
+  };
 }
 
 function createUnexpectedErrorFixture(): FixtureHandle<FindWorkspaceFixture> {
   return { fixture: createFixture(new Error("directory resolver unavailable")) };
 }
 
-function createFixture(directoryError: unknown): FindWorkspaceFixture {
+function createFixture(directoryError: Error): FindWorkspaceFixture {
   const expected = createWorkspace();
   const repository: WorkspaceRepository = {
-    findById: async (id) => (id === expected.id ? expected : undefined),
-    list: async () => [expected],
-    insert: async () => true,
-    upsert: async () => undefined,
-    delete: async () => undefined,
+    findById: (id) => Effect.succeed(id === expected.id ? expected : undefined),
+    list: () => Effect.succeed([expected]),
+    insert: () => Effect.succeed(true),
+    upsert: () => Effect.succeed(undefined),
+    delete: () => Effect.succeed(undefined),
   };
   const directories: WorkspaceDirectoryPort = {
-    resolveDirectory: () => {
-      throw directoryError;
-    },
-    resolveHook: () => "/work/project/hook.sh",
+    resolveDirectory: () => Effect.fail(directoryError),
+    resolveHook: () => Effect.succeed("/work/project/hook.sh"),
   };
-  return { repository, directories, expected };
+  return {
+    layer: Layer.mergeAll(workspaceRepositoryLayer(repository), workspaceDirectoryLayer(directories)),
+    expected,
+  };
 }
 
 function createWorkspace(): FindWorkspaceResult {
@@ -95,7 +109,5 @@ function createWorkspace(): FindWorkspaceResult {
     rootPath: "/work/project",
     name: "project",
     isGit: true,
-    createdAt: "2026-08-15T00:00:00.000Z",
-    updatedAt: "2026-08-15T00:00:00.000Z",
   });
 }

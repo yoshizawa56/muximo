@@ -1,4 +1,5 @@
-import type { AgentSessionRecord, PaneKind, PaneState, WorkspaceId, WorkspaceRecord } from "@muximo/domain";
+import type { AgentSession, PaneKind, PaneState, Workspace, WorkspaceId } from "@muximo/domain";
+import type { ApplicationEffect } from "../effect.js";
 import type { CreatePaneInput, MuximodPanePlacement, MuximodWorkspaceDirectory } from "./application.js";
 import type { WorkspaceDirectoryPort } from "./workspace.js";
 
@@ -53,71 +54,71 @@ export type MuximodPaneObservation = {
 export interface MuximodSessionManagementPort {
   /** UUID generation is local identity construction and has no host I/O. */
   newId(): string;
-  hasSession(target: string): Promise<boolean>;
-  findManagedSessionId(target: string): Promise<string | undefined>;
-  configureManagedSession(target: string, managedSessionId: string): Promise<void>;
+  hasSession(target: string): ApplicationEffect<boolean>;
+  findManagedSessionId(target: string): ApplicationEffect<string | undefined>;
+  configureManagedSession(target: string, managedSessionId: string): ApplicationEffect<void>;
 }
 
 /** Provider-neutral terminal observation and classification owned by application. */
 export interface MuximodTerminalObservationPort {
-  classifyCommand(command: string): Promise<MuximodPaneClassification>;
-  observeUnmanagedAgent(paneId: string, fallbackState: PaneState): Promise<MuximodPaneObservation>;
+  classifyCommand(command: string): ApplicationEffect<MuximodPaneClassification>;
+  observeUnmanagedAgent(paneId: string, fallbackState: PaneState): ApplicationEffect<MuximodPaneObservation>;
 }
 
 /** Host operations required by muximod use cases. */
 export interface MuximodHostPort extends MuximodTerminalObservationPort {
   /** UUID generation is local identity construction and has no host I/O. */
   newId(): string;
-  hasSession(target: string): Promise<boolean>;
-  createManagedSession(target: string, cwd: string): Promise<string>;
-  killSession(target: string): Promise<void>;
-  attachSession(target: string): Promise<number>;
+  hasSession(target: string): ApplicationEffect<boolean>;
+  createManagedSession(target: string, cwd: string): ApplicationEffect<string>;
+  killSession(target: string): ApplicationEffect<void>;
+  attachSession(target: string): ApplicationEffect<number>;
   createManagedPane(
     input: CreatePaneInput,
-    workspace: WorkspaceRecord | undefined,
+    workspace: Workspace | undefined,
     cwd: string | undefined,
-  ): Promise<string>;
-  resolvePane(target: string): Promise<HostPaneReference>;
-  isWindowZoomed(pane: HostPaneReference): Promise<boolean>;
+  ): ApplicationEffect<string>;
+  resolvePane(target: string): ApplicationEffect<HostPaneReference>;
+  isWindowZoomed(pane: HostPaneReference): ApplicationEffect<boolean>;
   splitPane(
     command: string | undefined,
     placement: Exclude<MuximodPanePlacement, "window">,
     targetPaneId: string,
     zoomed: boolean,
-  ): Promise<string>;
-  listPanesSnapshot(): Promise<TerminalHostSnapshot>;
+  ): ApplicationEffect<string>;
+  listPanesSnapshot(): ApplicationEffect<TerminalHostSnapshot>;
   setAgentPaneMetadata(
     paneId: string,
     field: "pane_id" | "pane_name" | "kind" | "agent_id" | "workspace_id" | "managed_session_id",
     value: string,
-  ): Promise<void>;
-  setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): Promise<void>;
-  clearAgentExecutionMetadata(paneId: string, expectedExecutionId?: string): Promise<boolean>;
-  resetAgentPaneMetadata(paneId: string): Promise<void>;
-  isProcessAlive(pid: number, expectedStartedAt?: string): Promise<boolean>;
+  ): ApplicationEffect<void>;
+  setAgentExecutionMetadata(paneId: string, agentSessionId: string, executionId: string): ApplicationEffect<void>;
+  clearAgentExecutionMetadata(paneId: string, expectedExecutionId?: string): ApplicationEffect<boolean>;
+  resetAgentPaneMetadata(paneId: string): ApplicationEffect<void>;
+  isProcessAlive(pid: number, expectedStartedAt?: string): ApplicationEffect<boolean>;
 }
 
 export interface MuximodViewportPort {
   handleTerminalHostHook(
     event: "client-attached" | "client-active" | "client-resized" | "client-focus-in" | "client-detached",
     client: string,
-  ): Promise<void>;
-  reassertMobileViewport(target: string): Promise<void>;
+  ): ApplicationEffect<void>;
+  reassertMobileViewport(target: string): ApplicationEffect<void>;
 }
 
 export interface MuximodWorkspaceCatalogPort extends WorkspaceDirectoryPort {
-  toDirectoryOption(workspace: WorkspaceRecord): MuximodWorkspaceDirectory;
-  browseDirectories(parentPath?: string): Promise<MuximodWorkspaceDirectory[]>;
+  toDirectoryOption(workspace: Workspace): MuximodWorkspaceDirectory;
+  browseDirectories(parentPath?: string): ApplicationEffect<MuximodWorkspaceDirectory[]>;
   resolveWorkspaceDirectory(
     workspaceId: WorkspaceId,
-    findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
-  ): Promise<WorkspaceRecord>;
+    findWorkspace: (id: WorkspaceId) => ApplicationEffect<Workspace | undefined>,
+  ): ApplicationEffect<Workspace>;
   resolveSelection(
     selection: { workspaceId: WorkspaceId; mode: "workspace" | "worktree" },
-    findWorkspace: (id: WorkspaceId) => Promise<WorkspaceRecord | undefined>,
-  ): Promise<WorkspaceRecord>;
+    findWorkspace: (id: WorkspaceId) => ApplicationEffect<Workspace | undefined>,
+  ): ApplicationEffect<Workspace>;
 }
 
-export type AgentExecutionObservation = Pick<AgentSessionRecord, "status" | "executionPid"> & {
+export type AgentExecutionObservation = Pick<AgentSession, "status" | "executionPid"> & {
   state?: PaneState;
 };

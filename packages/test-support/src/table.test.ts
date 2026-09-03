@@ -6,6 +6,7 @@ import {
   type OperationCase,
   type OperationTable,
   type Outcome,
+  resolveMaybePromise,
   runOperationTable,
   TableAssertionError,
   TableCleanupError,
@@ -307,7 +308,7 @@ describe("operation table support", () => {
       scopeEvents.length = 0;
       scopeEvents.push("scope-start");
       try {
-        return await operation();
+        return await resolveMaybePromise(operation());
       } finally {
         scopeEvents.push("scope-end");
       }

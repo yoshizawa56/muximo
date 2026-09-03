@@ -196,7 +196,7 @@ function isConnectionError(error: unknown): boolean {
 }
 
 async function resolveWorkspaceSelector(
-  listWorkspaces: () => Promise<{ workspaces: WorkspaceDirectory[] }>,
+  listWorkspaces: () => Promise<{ workspaces: readonly WorkspaceDirectory[] }>,
   selector: string,
   cwd = process.cwd(),
 ): Promise<WorkspaceDirectory> {

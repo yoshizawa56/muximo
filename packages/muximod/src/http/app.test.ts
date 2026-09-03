@@ -9,6 +9,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { MuximodApp } from "./app.js";
 import { createMuximodApp } from "./app.js";
@@ -77,29 +78,20 @@ const fixture = (): FixtureHandle<SocketFixture> => {
   let socketFactoryCalls = 0;
   const auth: MuximodAuthPort = {
     serverId: authContext.serverId,
-    authenticateAccessToken: async () => authContext,
-    claimPairing: async () => {
-      throw new Error("not used");
-    },
-    pairingStatus: async () => {
-      throw new Error("not used");
-    },
-    createChallenge: async () => {
-      throw new Error("not used");
-    },
-    createSession: async () => {
-      throw new Error("not used");
-    },
-    issueWebSocketTicket: async () => {
-      throw new Error("not used");
-    },
-    consumeWebSocketTicket: async (ticket, endpoint) => {
-      const expected = `ticket-${endpoint}`;
-      if (!ticket || ticket !== expected || !validTickets.has(ticket)) return undefined;
-      consumedTickets.push(`${endpoint}:${ticket}`);
-      validTickets.delete(ticket);
-      return authContext;
-    },
+    authenticateAccessToken: () => Effect.succeed(authContext),
+    claimPairing: () => Effect.fail(new Error("not used")),
+    pairingStatus: () => Effect.fail(new Error("not used")),
+    createChallenge: () => Effect.fail(new Error("not used")),
+    createSession: () => Effect.fail(new Error("not used")),
+    issueWebSocketTicket: () => Effect.fail(new Error("not used")),
+    consumeWebSocketTicket: (ticket, endpoint) =>
+      Effect.sync(() => {
+        const expected = `ticket-${endpoint}`;
+        if (!ticket || ticket !== expected || !validTickets.has(ticket)) return undefined;
+        consumedTickets.push(`${endpoint}:${ticket}`);
+        validTickets.delete(ticket);
+        return authContext;
+      }),
   };
   const application: MuximodApplication = {
     agentSessions: {

@@ -1,5 +1,6 @@
 import type { SessionBaselineResult, SessionIdentityUpdate } from "@muximo/application";
-import { AgentSession, type AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
+import { runEffectAsPromise } from "../../effect.js";
 import { errorFields } from "../../logging/index.js";
 import type { AgentBackendProvider, AgentBackendProviderOptions, AgentBackendProviderPreparation } from "../backend.js";
 import {
@@ -29,16 +30,16 @@ export class CodexBackendProvider implements AgentBackendProvider {
     private readonly defaultRemote: string,
   ) {}
 
-  public async captureBaseline(session: AgentSessionRecord): Promise<SessionBaselineResult> {
+  public async captureBaseline(session: AgentSession): Promise<SessionBaselineResult> {
     if (session.backend !== this.backend) return { success: true };
     const collected = await collectCodexSessionBaseline(this.codexDeps());
     const current = (await this.state.find(session.id)) ?? {};
-    await this.state.save(session.id, { ...current, sessionBaseline: collected.baseline }, session.updatedAt);
+    await this.state.save(session.id, { ...current, sessionBaseline: collected.baseline }, session.lastActivityAt);
     return { success: true };
   }
 
   public async prepareLaunch(
-    session: AgentSessionRecord,
+    session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
     _signal?: AbortSignal,
@@ -54,7 +55,7 @@ export class CodexBackendProvider implements AgentBackendProvider {
         throw new Error(`session '${session.name}' has no backend session ID; it cannot be resumed`);
       }
       sessionUpdate = { backendSessionId: recovered.selectedId };
-      effective = AgentSession.update(effective, sessionUpdate);
+      effective = effective.update(sessionUpdate);
     }
 
     const profile = currentState.profile ?? profileFromArgs(backendArgs);
@@ -63,7 +64,7 @@ export class CodexBackendProvider implements AgentBackendProvider {
       ...(profile === undefined ? {} : { profile }),
       remote: currentState.remote ?? codexRemoteEndpoint(backendArgs, this.defaultRemote),
     };
-    await this.state.save(session.id, state, session.updatedAt);
+    await this.state.save(session.id, state, session.lastActivityAt);
 
     const binary = resolveCodexCommand(this.options.environment);
     ensureCodexRemoteControl(backendArgs, binary, this.defaultRemote, this.options.environment, this.options.logger);
@@ -74,37 +75,37 @@ export class CodexBackendProvider implements AgentBackendProvider {
   }
 
   public async afterRun(
-    session: AgentSessionRecord,
+    session: AgentSession,
     runDir: string,
     startedAt: number,
   ): Promise<SessionIdentityUpdate | undefined> {
     if (session.backendSessionId) return undefined;
     const discovery = await discoverCodexSessionId(this.codexDeps(), startedAt, runDir, session.id);
     if (!discovery.selectedId) {
-      reportCodexDiscoveryFailure(this.codexDeps(), session, runDir, "finalize", discovery);
+      await reportCodexDiscoveryFailure(this.codexDeps(), session, runDir, "finalize", discovery);
       return undefined;
     }
     const sessionUpdate = { backendSessionId: discovery.selectedId } satisfies SessionIdentityUpdate;
-    await this.manageRemoteOperation({ ...session, backendSessionId: discovery.selectedId }, "name");
+    await this.manageRemoteOperation(session.update({ backendSessionId: discovery.selectedId }), "name");
     return sessionUpdate;
   }
 
-  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {}
+  public async disposeLaunch(_session: AgentSession, _runDir: string): Promise<void> {}
 
-  public archive(session: AgentSessionRecord): Promise<boolean> {
+  public archive(session: AgentSession): Promise<boolean> {
     return this.manageRemoteOperation(session, "archive");
   }
 
-  public restore(session: AgentSessionRecord): Promise<boolean> {
+  public restore(session: AgentSession): Promise<boolean> {
     return this.manageRemoteOperation(session, "unarchive");
   }
 
-  public async releaseIfUnused(session: AgentSessionRecord, _remaining: readonly AgentSessionRecord[]): Promise<void> {
+  public async releaseIfUnused(session: AgentSession, _remaining: readonly AgentSession[]): Promise<void> {
     await this.state.delete(session.id);
   }
 
   private async manageRemoteOperation(
-    session: AgentSessionRecord,
+    session: AgentSession,
     operation: "name" | "archive" | "unarchive",
   ): Promise<boolean> {
     const state = await this.state.find(session.id);
@@ -164,7 +165,8 @@ export class CodexBackendProvider implements AgentBackendProvider {
       logger: this.options.logger,
       sessions: this.options.sessions,
       state: this.state,
-      audit: (eventType, entityId, payload) => void this.options.audit.record(eventType, entityId, payload),
+      audit: (eventType, entityId, payload) =>
+        runEffectAsPromise(this.options.audit.record(eventType, entityId, payload)),
       manageRemoteThread: (session, operation, signal) =>
         signal?.aborted ? Promise.resolve(false) : this.manageRemoteOperation(session, operation),
     };

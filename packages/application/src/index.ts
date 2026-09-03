@@ -1,4 +1,6 @@
 export { InvalidWorkspaceNameError, WorkspaceUpdateEmptyError } from "@muximo/domain";
+export type { ApplicationEffect } from "./effect.js";
+export { ApplicationClockService, applicationClockLayer } from "./effect-runtime.js";
 export type {
   AgentBackendResumeState,
   AgentExecutionReceipt,
@@ -143,7 +145,6 @@ export type {
   PairingDeviceType,
   PairingOffer,
 } from "./ports/pairing-types.js";
-export type { PaneGateway } from "./ports/panes.js";
 export type {
   AgentSessionRepository,
   AttachExecutionInput,
@@ -163,6 +164,7 @@ export type {
   ShellProcessPort,
   ShellWorkspaceResolverPort,
   ShellWorktree,
+  ShellWorktreeAllocation,
   ShellWorktreePort,
 } from "./ports/shell.js";
 export type { TransactionManager } from "./ports/transactions.js";
@@ -198,9 +200,6 @@ export {
 } from "./usecases/muximod/muximod-service.js";
 export type { PairDeviceResult } from "./usecases/pairing/pair-device.js";
 export { PairDevice } from "./usecases/pairing/pair-device.js";
-export { ListPanes } from "./usecases/panes/list-panes.js";
-export { ResizePane } from "./usecases/panes/resize-pane.js";
-export { SendPaneInput } from "./usecases/panes/send-pane-input.js";
 export {
   type AgentStatusObservation,
   type AgentStatusStore,
@@ -211,15 +210,47 @@ export {
 } from "./usecases/sessions/agent-status.js";
 export { manageSession } from "./usecases/sessions/manage-session.js";
 export { RunShell, type RunShellResult } from "./usecases/shell/run-shell.js";
+export {
+  AgentSessionRepositoryService,
+  AgentStatusService,
+  agentSessionRepositoryLayer,
+  agentStatusLayer,
+  MuximodHostService,
+  MuximodSessionManagementService,
+  MuximodViewportService,
+  muximodHostLayer,
+  muximodSessionManagementLayer,
+  muximodViewportLayer,
+  PaneRepositoryService,
+  paneRepositoryLayer,
+  type TerminalServices,
+  terminalLayer,
+} from "./usecases/terminals/terminal-services.js";
 // Workspace use cases (one file per operation)
-export { DeleteWorkspace } from "./usecases/workspaces/delete-workspace.js";
-export { ListWorkspaces } from "./usecases/workspaces/list-workspaces.js";
-export { RegisterWorkspace } from "./usecases/workspaces/register-workspace.js";
-export { UpdateWorkspace } from "./usecases/workspaces/update-workspace.js";
+export { deleteWorkspace } from "./usecases/workspaces/delete-workspace.js";
+export { listWorkspaces } from "./usecases/workspaces/list-workspaces.js";
+export { registerWorkspace } from "./usecases/workspaces/register-workspace.js";
+export { updateWorkspace } from "./usecases/workspaces/update-workspace.js";
 export {
   WorkspaceAlreadyRegisteredError,
   WorkspaceNotFoundError,
   WorkspaceUseCaseError,
 } from "./usecases/workspaces/workspace-errors.js";
 export type { RegisterWorkspaceInput, UpdateWorkspaceInput } from "./usecases/workspaces/workspace-inputs.js";
-export { WorkspaceRecordFactory } from "./usecases/workspaces/workspace-record-factory.js";
+export { createWorkspaceRecord, updateWorkspaceRecord } from "./usecases/workspaces/workspace-record-factory.js";
+export {
+  MuximodWorkspaceCatalogService,
+  noopWorkspaceAuditLayer,
+  passthroughTransactionManagerLayer,
+  TransactionManagerService,
+  transactionManagerLayer,
+  WorkspaceAuditService,
+  WorkspaceDirectoryService,
+  WorkspaceRepositoryService,
+  type WorkspaceServices,
+  workspaceAuditLayer,
+  workspaceCatalogLayer,
+  workspaceDirectoryLayer,
+  workspaceLayer,
+  workspaceRepositoryLayer,
+} from "./usecases/workspaces/workspace-services.js";

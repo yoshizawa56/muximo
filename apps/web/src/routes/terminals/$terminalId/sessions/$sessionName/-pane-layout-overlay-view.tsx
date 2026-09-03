@@ -13,7 +13,7 @@ export function PaneLayoutOverlay({
   onCreatePane,
 }: {
   id?: string;
-  panes: PaneSummary[];
+  panes: readonly PaneSummary[];
   selectedTarget: string;
   onSelect: (pane: PaneSummary) => void;
   onClose?: () => void;
@@ -255,7 +255,7 @@ export function PaneLayoutOverlay({
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function groupByWindow(panes: PaneSummary[]): Array<{
+function groupByWindow(panes: readonly PaneSummary[]): Array<{
   id: string;
   sessionName: string;
   name: string;

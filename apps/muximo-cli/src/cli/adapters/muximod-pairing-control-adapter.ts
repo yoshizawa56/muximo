@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { createInterface, type Interface } from "node:readline";
 import type {
+  ApplicationEffect,
   ApprovedDevice,
   PairDeviceInput,
   PairingClaim,
@@ -18,6 +19,7 @@ import {
   type MuximodControlResponse,
   muximodControlMaxResponseBytes,
 } from "@muximo/contract/control";
+import { fromPromise } from "@muximo/infrastructure/cli-client";
 
 type AgentStatus = Extract<MuximodControlRequest, { type: "observe_agent_session" }>["state"];
 type AgentExecutionPrepareRequest = Extract<MuximodControlRequest, { type: "prepare_agent_execution" }>;
@@ -95,7 +97,11 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     return new MuximodPairingControlAdapter(await connectControlSocket(socketPath), options);
   }
 
-  public async createPairing(input: PairDeviceInput): Promise<PairingOffer> {
+  public createPairing(input: PairDeviceInput): ApplicationEffect<PairingOffer> {
+    return fromPromise(() => this.createPairingRequest(input));
+  }
+
+  private async createPairingRequest(input: PairDeviceInput): Promise<PairingOffer> {
     const response = await this.request({ type: "create_pairing", muximodBaseUrl: input.muximodBaseUrl });
     if (response.type !== "pairing_created" || response.pairingId !== response.payload.pairingId) {
       throw unexpectedResponse("pairing_created", response.type);
@@ -163,7 +169,11 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     return response;
   }
 
-  public async waitForClaim(pairingId: string): Promise<PairingClaim> {
+  public waitForClaim(pairingId: string): ApplicationEffect<PairingClaim> {
+    return fromPromise(() => this.waitForClaimRequest(pairingId));
+  }
+
+  private async waitForClaimRequest(pairingId: string): Promise<PairingClaim> {
     while (true) {
       const pendingIndex = this.pendingClaims.findIndex((claim) => claim.pairingId === pairingId);
       if (pendingIndex >= 0) {
@@ -181,7 +191,11 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     }
   }
 
-  public async approvePairing(pairingId: string): Promise<ApprovedDevice> {
+  public approvePairing(pairingId: string): ApplicationEffect<ApprovedDevice> {
+    return fromPromise(() => this.approvePairingRequest(pairingId));
+  }
+
+  private async approvePairingRequest(pairingId: string): Promise<ApprovedDevice> {
     const response = await this.request({ type: "approve_pairing", pairingId });
     if (
       response.type !== "pairing_result" ||
@@ -194,7 +208,11 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     return { deviceId: response.deviceId };
   }
 
-  public async rejectPairing(pairingId: string): Promise<void> {
+  public rejectPairing(pairingId: string): ApplicationEffect<void> {
+    return fromPromise(() => this.rejectPairingRequest(pairingId));
+  }
+
+  private async rejectPairingRequest(pairingId: string): Promise<void> {
     const response = await this.request({ type: "reject_pairing", pairingId });
     if (response.type !== "pairing_result" || response.pairingId !== pairingId || response.status !== "rejected") {
       throw unexpectedResponse("rejected pairing_result", response.type);

@@ -1,9 +1,9 @@
-import type { AgentSessionRecord, AgentSessionState } from "@muximo/domain";
+import type { AgentSession, AgentSessionState } from "@muximo/domain";
+import { Effect } from "effect";
 import type {
   AgentSessionListInput,
   AgentSessionListObservation,
   AgentSessionListProjection,
-  AgentSessionListResult,
   ManagedAgentSessionRepository,
   SessionListClock,
   SessionObservationPort,
@@ -28,23 +28,30 @@ const resumableStates = new Set<AgentSessionState>(["exited", "interrupted"]);
 export class ListAgentSessions {
   public constructor(private readonly deps: ListAgentSessionsDependencies) {}
 
-  public async execute(input: AgentSessionListInput): Promise<AgentSessionListResult> {
-    const workspaceId = input.workspaceScope === "all" ? undefined : (await this.deps.host.resolveWorkspace()).id;
-    const now = this.deps.clock.now();
-    const allViews = await Promise.all(
-      (await this.deps.sessions.list(workspaceId)).map(async (session) =>
-        projectAgentSession(session, await this.deps.host.observeSession(session, now)),
-      ),
-    );
-    return {
-      allViews,
-      views: input.includeUnavailable ? allViews : allViews.filter((view) => view.visibleByDefault),
-    };
-  }
+  public readonly execute = Effect.fn("AgentSessions.list")(
+    { self: this },
+    function* (this: ListAgentSessions, input: AgentSessionListInput) {
+      const deps = this.deps;
+      const workspaceId = input.workspaceScope === "all" ? undefined : (yield* deps.host.resolveWorkspace()).id;
+      const now = deps.clock.now();
+      const sessions = yield* deps.sessions.list(workspaceId);
+      const allViews = yield* Effect.all(
+        sessions.map((session) =>
+          deps.host
+            .observeSession(session, now)
+            .pipe(Effect.map((observation) => projectAgentSession(session, observation))),
+        ),
+      );
+      return {
+        allViews,
+        views: input.includeUnavailable ? allViews : allViews.filter((view) => view.visibleByDefault),
+      };
+    },
+  );
 }
 
 export function projectAgentSession(
-  session: AgentSessionRecord,
+  session: AgentSession,
   observation: AgentSessionListObservation,
 ): AgentSessionListProjection {
   const executionHealth = classifyExecutionHealth(session, observation);
@@ -65,22 +72,22 @@ export function projectAgentSession(
   };
 }
 
-export function shouldCheckAgentSessionWorktree(session: AgentSessionRecord, now: number): boolean {
+export function shouldCheckAgentSessionWorktree(session: AgentSession, now: number): boolean {
   if (!session.useWorktree) return false;
   const reference = activeStates.has(session.status)
-    ? (session.executionStartedAt ?? session.updatedAt)
-    : session.updatedAt;
+    ? (session.executionStartedAt ?? session.lastActivityAt)
+    : session.lastActivityAt;
   const age = ageMs(reference, now);
   return age === null || age >= sessionListPolicy.worktreeCheckGraceMs;
 }
 
 function classifyExecutionHealth(
-  session: AgentSessionRecord,
+  session: AgentSession,
   observation: AgentSessionListObservation,
 ): AgentSessionListProjection["executionHealth"] {
   if (!activeStates.has(session.status)) return "inactive";
 
-  const reference = session.executionStartedAt ?? session.updatedAt;
+  const reference = session.executionStartedAt ?? session.lastActivityAt;
   const age = ageMs(reference, observation.now);
   if (session.executionPid === undefined) return "unknown";
   if (observation.processAlive === false) {
@@ -92,7 +99,7 @@ function classifyExecutionHealth(
 }
 
 function classifyResumeState(
-  session: AgentSessionRecord,
+  session: AgentSession,
   executionHealth: AgentSessionListProjection["executionHealth"],
   observation: AgentSessionListObservation,
 ): { state: AgentSessionListProjection["resume"]; reason: AgentSessionListProjection["resumeReason"] } {

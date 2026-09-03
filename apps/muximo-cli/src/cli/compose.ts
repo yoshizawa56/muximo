@@ -40,6 +40,7 @@ import {
   resolveMuximodClientPaths,
   validateMuximodControlSocketPath,
 } from "@muximo/muximod/client";
+import { Effect } from "effect";
 import { confirmCleanup } from "./adapters/cleanup-prompt.js";
 import { BrowserPairingPresenter, PairCommand, TerminalPairingPresenter } from "./adapters/index.js";
 import { connectMuximodApi, type MuximodApiClient, readMuximodDaemonLog } from "./adapters/muximod-api-client.js";
@@ -206,6 +207,9 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     hooks,
     panes: pane,
   });
+  const shellExecutor = {
+    execute: (input: Parameters<RunShell["execute"]>[0]) => Effect.runPromise(shell.execute(input)),
+  };
   const tmuxSession = new TmuxNewSessionService({ environment, tmux });
   const daemonDefaults: DaemonOptions = {
     host: runtime.muximodHost,
@@ -510,7 +514,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       io,
     }),
     ...createInteractiveHandlers({
-      shell,
+      shell: shellExecutor,
       tmux: tmuxSession,
       manageSession: { execute: (input) => ensureApi().then((api) => api.sessions.manage(input)) },
       io,

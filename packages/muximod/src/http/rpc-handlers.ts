@@ -23,7 +23,7 @@ import {
   type ManageSessionRequest,
   muximodCapabilitiesSchema,
   muximodContract,
-  type pairingClaimRequestSchema,
+  type PairingClaimRequest,
   pairingStatusSchema,
   paneSummarySchema,
   type RegisterWorkspaceRequest,
@@ -32,7 +32,7 @@ import {
 import { protocolVersion } from "@muximo/contract/shared";
 import { clearPatch, type Patch } from "@muximo/domain";
 import { implement, ORPCError } from "@orpc/server";
-import type { z } from "zod";
+import { Effect, Schema } from "effect";
 import { presentMuximodHealth } from "./health.js";
 import { MuximodHttpError, mapError } from "./middleware.js";
 import type { MuximodAuthContext as HttpAuthContext, MuximodHttpDependencies, MuximodHttpStatus } from "./types.js";
@@ -46,7 +46,7 @@ export async function contextForRequest(request: Request, deps: MuximodHttpDepen
   const authorization = request.headers.get("authorization");
   const token = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length).trim() : undefined;
   return {
-    auth: await deps.auth.authenticateAccessToken(token || undefined),
+    auth: await Effect.runPromise(deps.auth.authenticateAccessToken(token || undefined)),
     pairingToken: request.headers.get("x-muximod-pairing-token") ?? undefined,
   };
 }
@@ -134,9 +134,7 @@ function toApplicationManageSession(input: ManageSessionRequest): ManageSessionI
   return { name: input.name };
 }
 
-function toApplicationPairingClaim(
-  input: z.infer<typeof pairingClaimRequestSchema>,
-): ApplicationAuthPairingClaimRequest {
+function toApplicationPairingClaim(input: PairingClaimRequest): ApplicationAuthPairingClaimRequest {
   return {
     pairingSecret: input.pairingSecret,
     publicKey: input.publicKey,
@@ -183,7 +181,7 @@ function toProtocolSession(value: MuximodSessionSummary) {
 }
 
 function toProtocolPane(value: MuximodPaneSummary) {
-  return paneSummarySchema.parse({
+  return Schema.decodeUnknownSync(paneSummarySchema)({
     id: value.id,
     hostPaneId: value.hostPaneId,
     sessionName: value.sessionName,
@@ -210,11 +208,11 @@ function toProtocolPane(value: MuximodPaneSummary) {
 }
 
 function toProtocolCleanupAgentSession(value: CleanupAgentSessionResult) {
-  return cleanupAgentSessionResponseSchema.parse(value);
+  return Schema.decodeUnknownSync(cleanupAgentSessionResponseSchema)(value);
 }
 
 function toProtocolAgentSessionList(value: AgentSessionListResult) {
-  return agentSessionListResponseSchema.parse(value);
+  return Schema.decodeUnknownSync(agentSessionListResponseSchema)(value);
 }
 
 function toApplicationPatch(value: string | null | undefined): Patch<string> {
@@ -239,7 +237,7 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
     ),
     capabilities: os.capabilities.handler(({ context }) => {
       requireAuth(context);
-      return muximodCapabilitiesSchema.parse({
+      return Schema.decodeUnknownSync(muximodCapabilitiesSchema)({
         protocolVersion,
         features: {
           tmuxSessions: true,
@@ -251,37 +249,44 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
     }),
     auth: {
       info: os.auth.info.handler(() =>
-        authInfoSchema.parse({
+        Schema.decodeUnknownSync(authInfoSchema)({
           protocolVersion,
           serverId: deps.auth.serverId,
           serverTime: new Date().toISOString(),
         }),
       ),
       claimPairing: os.auth.claimPairing.handler(({ input }) =>
-        safeAsyncCall(() => deps.auth.claimPairing(input.pairingId, toApplicationPairingClaim(input.request))),
+        safeAsyncCall(() =>
+          Effect.runPromise(deps.auth.claimPairing(input.pairingId, toApplicationPairingClaim(input.request))),
+        ),
       ),
       pairingStatus: os.auth.pairingStatus.handler(({ input, context }) =>
         safeAsyncCall(async () => {
           const claimToken = context.pairingToken;
           if (!claimToken) throw new MuximodHttpError(401, "claim_token_required", "Pairing authorization is required");
-          const status = await deps.auth.pairingStatus(input.pairingId, claimToken);
-          return pairingStatusSchema.parse({ status: status.status, deviceId: status.deviceId ?? null });
+          const status = await Effect.runPromise(deps.auth.pairingStatus(input.pairingId, claimToken));
+          return Schema.decodeUnknownSync(pairingStatusSchema)({
+            status: status.status,
+            deviceId: status.deviceId ?? null,
+          });
         }),
       ),
       createChallenge: os.auth.createChallenge.handler(({ input }) =>
-        safeAsyncCall(() => deps.auth.createChallenge(input.deviceId)),
+        safeAsyncCall(() => Effect.runPromise(deps.auth.createChallenge(input.deviceId))),
       ),
       createSession: os.auth.createSession.handler(({ input }) =>
         safeAsyncCall(() =>
-          deps.auth.createSession({
-            deviceId: input.deviceId,
-            challengeId: input.challengeId,
-            signature: input.signature,
-          }),
+          Effect.runPromise(
+            deps.auth.createSession({
+              deviceId: input.deviceId,
+              challengeId: input.challengeId,
+              signature: input.signature,
+            }),
+          ),
         ),
       ),
       issueWebSocketTicket: os.auth.issueWebSocketTicket.handler(({ input, context }) =>
-        safeAsyncCall(() => deps.auth.issueWebSocketTicket(requireAuth(context), input.endpoint)),
+        safeAsyncCall(() => Effect.runPromise(deps.auth.issueWebSocketTicket(requireAuth(context), input.endpoint))),
       ),
     },
     workspaces: {

@@ -5,6 +5,7 @@ import {
   hasObserved,
   type OperationCase,
   type OperationTable,
+  resolveMaybePromise,
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
@@ -58,7 +59,7 @@ const table: OperationTable<PresenterFixture, "default", PairingOffer, undefined
         },
       },
     });
-    await presenter.showPairing(input);
+    await resolveMaybePromise(presenter.showPairing(input));
   },
   observe: (fixture) => ({
     received: fixture.received,

@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import type { PairDeviceInput, PairingControlPort, PairingPresenterPort } from "../../ports/pairing.js";
 
 export type PairDeviceResult = { status: "approved"; deviceId: string } | { status: "rejected" };
@@ -12,18 +13,23 @@ export class PairDevice {
     private readonly presenter: PairingPresenterPort,
   ) {}
 
-  public async execute(input: PairDeviceInput): Promise<PairDeviceResult> {
-    const offer = await this.control.createPairing(input);
-    await this.presenter.showPairing(offer);
+  public readonly execute = Effect.fn("Pairing.pairDevice")(
+    { self: this },
+    function* (this: PairDevice, input: PairDeviceInput) {
+      const control = this.control;
+      const presenter = this.presenter;
+      const offer = yield* control.createPairing(input);
+      yield* presenter.showPairing(offer);
 
-    const claim = await this.control.waitForClaim(offer.pairingId);
-    const approved = await this.presenter.confirmPairing(claim);
-    if (!approved) {
-      await this.control.rejectPairing(claim.pairingId);
-      return { status: "rejected" };
-    }
+      const claim = yield* control.waitForClaim(offer.pairingId);
+      const approved = yield* presenter.confirmPairing(claim);
+      if (!approved) {
+        yield* control.rejectPairing(claim.pairingId);
+        return { status: "rejected" } as const;
+      }
 
-    const device = await this.control.approvePairing(claim.pairingId);
-    return { status: "approved", deviceId: device.deviceId };
-  }
+      const device = yield* control.approvePairing(claim.pairingId);
+      return { status: "approved", deviceId: device.deviceId } as const;
+    },
+  );
 }

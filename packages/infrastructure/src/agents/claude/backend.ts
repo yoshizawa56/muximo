@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { SessionBaselineResult, SessionIdentityUpdate } from "@muximo/application";
-import { AgentSession, type AgentSessionRecord } from "@muximo/domain";
+import type { AgentSession } from "@muximo/domain";
 import type { AgentBackendProvider, AgentBackendProviderOptions, AgentBackendProviderPreparation } from "../backend.js";
 import { buildClaudeResumeCommand, buildClaudeRunCommand, resolveClaudeCommand } from "./launch.js";
 
@@ -9,12 +9,12 @@ export class ClaudeBackendProvider implements AgentBackendProvider {
 
   public constructor(private readonly options: AgentBackendProviderOptions) {}
 
-  public async captureBaseline(_session: AgentSessionRecord): Promise<SessionBaselineResult> {
+  public async captureBaseline(_session: AgentSession): Promise<SessionBaselineResult> {
     return { success: true };
   }
 
   public async prepareLaunch(
-    session: AgentSessionRecord,
+    session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
     _signal?: AbortSignal,
@@ -33,29 +33,26 @@ export class ClaudeBackendProvider implements AgentBackendProvider {
   }
 
   public async afterRun(
-    _session: AgentSessionRecord,
+    _session: AgentSession,
     _runDir: string,
     _startedAt: number,
   ): Promise<SessionIdentityUpdate | undefined> {
     return undefined;
   }
 
-  public async disposeLaunch(_session: AgentSessionRecord, _runDir: string): Promise<void> {}
+  public async disposeLaunch(_session: AgentSession, _runDir: string): Promise<void> {}
 
-  public async archive(_session: AgentSessionRecord): Promise<boolean> {
+  public async archive(_session: AgentSession): Promise<boolean> {
     return true;
   }
 
-  public async restore(_session: AgentSessionRecord): Promise<boolean> {
+  public async restore(_session: AgentSession): Promise<boolean> {
     return true;
   }
 
-  public async releaseIfUnused(
-    _session: AgentSessionRecord,
-    _remaining: readonly AgentSessionRecord[],
-  ): Promise<void> {}
+  public async releaseIfUnused(_session: AgentSession, _remaining: readonly AgentSession[]): Promise<void> {}
 
-  private update(session: AgentSessionRecord, input: SessionIdentityUpdate): AgentSessionRecord {
-    return AgentSession.update(session, input);
+  private update(session: AgentSession, input: SessionIdentityUpdate): AgentSession {
+    return session.update(input);
   }
 }
