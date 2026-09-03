@@ -503,6 +503,7 @@ export class TerminalSession {
         this.sendReady(false, shouldRedraw ? "redraw" : "live");
         for (const chunk of initialOutput) this.sendBinary(chunk);
       } else {
+        await this.returnViewportToDesktop();
         this.scheduleResumeExpiry();
       }
     } catch (error) {
@@ -606,6 +607,7 @@ export class TerminalSession {
     this.transportBackpressured = true;
     if (this.state === "attached") {
       this.state = "parked";
+      void this.returnViewportToDesktop();
       this.scheduleResumeExpiry();
     }
     closeSocket(socket, 1013, "terminal output backpressure");
@@ -694,7 +696,17 @@ export class TerminalSession {
     }
 
     this.state = "parked";
+    await this.returnViewportToDesktop();
     this.scheduleResumeExpiry();
+  }
+
+  private async returnViewportToDesktop(): Promise<void> {
+    try {
+      await this.lease?.returnToDesktop();
+    } catch {
+      // The lease expiry path still releases the viewport if tmux is
+      // temporarily unavailable during transport loss.
+    }
   }
 
   private scheduleResumeExpiry(): void {

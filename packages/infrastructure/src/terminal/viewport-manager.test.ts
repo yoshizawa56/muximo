@@ -13,6 +13,7 @@ import { describe, it } from "vitest";
 import {
   TmuxAdapter,
   type TmuxClient,
+  type TmuxLiveSnapshot,
   type TmuxPaneRef,
   type TmuxWindowMouse,
   type TmuxWindowSize,
@@ -36,7 +37,9 @@ type ViewportStep =
   | { type: "desktop-size"; width: number; height: number }
   | { type: "hook"; event: "client-active" | "client-resized" | "client-focus-in" }
   | { type: "release" }
+  | { type: "return-to-desktop" }
   | { type: "clear-mobile-zoom" }
+  | { type: "desktop-layout" }
   | { type: "reassert" }
   | { type: "poll" }
   | { type: "unfocus" };
@@ -66,6 +69,7 @@ type ViewportContext = {
   statusHidden: boolean;
   groupedSessionSources: readonly string[];
   killedSessionCount: number;
+  originalLayout: readonly [string, number, number, number, number, number, number][];
 };
 
 const viewportFixture = (): FixtureHandle<ViewportFixture> => {
@@ -110,6 +114,16 @@ const cases = [
     ],
   },
   {
+    name: "keeps the pre-mobile split geometry available while mobile owns the viewport",
+    steps: [prepare, attach],
+    assert: [
+      hasObserved<ViewportContext, undefined>("originalLayout", [
+        ["%0", 0, 0, 60, 40, 120, 40],
+        ["%1", 60, 0, 60, 40, 120, 40],
+      ]),
+    ],
+  },
+  {
     name: "returns to the desktop viewport when desktop becomes active",
     steps: [prepare, attach, { type: "desktop-activity" }, { type: "hook", event: "client-active" }],
     assert: [
@@ -122,6 +136,24 @@ const cases = [
       hasObserved<ViewportContext, undefined>("width", 120),
       hasObserved<ViewportContext, undefined>("height", 40),
       hasObserved<ViewportContext, undefined>("zoomed", false),
+    ],
+  },
+  {
+    name: "returns to the desktop viewport when the mobile transport is lost",
+    steps: [prepare, attach, { type: "return-to-desktop" }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("activePaneId", "%1"),
+      hasObserved<ViewportContext, undefined>("width", 120),
+      hasObserved<ViewportContext, undefined>("height", 40),
+      hasObserved<ViewportContext, undefined>("zoomed", false),
+      hasObserved<ViewportContext, undefined>("mouse", "off"),
+      hasObserved<ViewportContext, undefined>("desktopFlags", "attached,focused"),
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "transport_lost" },
+      ]),
+      hasObserved<ViewportContext, undefined>("killedSessionCount", 0),
+      hasObserved<ViewportContext, undefined>("originalLayout", []),
     ],
   },
   {
@@ -138,6 +170,7 @@ const cases = [
       hasObserved<ViewportContext, undefined>("mouse", "off"),
       hasObserved<ViewportContext, undefined>("desktopStatus", "on"),
       hasObserved<ViewportContext, undefined>("killedSessionCount", 1),
+      hasObserved<ViewportContext, undefined>("originalLayout", []),
     ],
   },
   {
@@ -294,6 +327,16 @@ const cases = [
       ]),
     ],
   },
+  {
+    name: "captures the latest desktop split before reclaiming the mobile viewport",
+    steps: [prepare, attach, { type: "hook", event: "client-active" }, { type: "desktop-layout" }, { type: "claim" }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("originalLayout", [
+        ["%0", 0, 0, 40, 40, 160, 40],
+        ["%1", 40, 0, 120, 40, 160, 40],
+      ]),
+    ],
+  },
 ] satisfies readonly ScenarioCase<ViewportFixtureKey, ViewportStep, undefined, ViewportContext>[];
 
 const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, undefined, ViewportContext> = {
@@ -315,6 +358,7 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
       if (step.type === "copy-mode") await fixture.lease?.enterCopyMode();
       if (step.type === "paste-buffer") await fixture.lease?.pasteTmuxBuffer();
       if (step.type === "resize") await fixture.lease?.resize(step.cols, step.rows);
+      if (step.type === "return-to-desktop") await fixture.lease?.returnToDesktop();
       if (step.type === "desktop-activity") fixture.adapter.desktop.activity += 1;
       if (step.type === "desktop-size") {
         fixture.adapter.desktop.width = step.width;
@@ -326,6 +370,7 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
         fixture.adapter.state.zoomed = false;
         fixture.adapter.state.activePaneId = "%1";
       }
+      if (step.type === "desktop-layout") fixture.adapter.paneLayoutVariant = "updated";
       if (step.type === "reassert") await fixture.manager.reassertMobileViewport("%0");
       if (step.type === "poll")
         await (fixture.manager as unknown as { pollDesktopClients: () => Promise<void> }).pollDesktopClients();
@@ -353,6 +398,20 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
     ),
     groupedSessionSources: fixture.adapter.groupedSessions.map(([source]) => source),
     killedSessionCount: fixture.adapter.killedSessions.length,
+    originalLayout: fixture.manager
+      .paneLayoutOverrides()
+      .map(
+        (pane) =>
+          [pane.paneId, pane.left, pane.top, pane.width, pane.height, pane.windowWidth, pane.windowHeight] as [
+            string,
+            number,
+            number,
+            number,
+            number,
+            number,
+            number,
+          ],
+      ),
   }),
 };
 
@@ -362,6 +421,7 @@ describe("tmux viewport manager", () => {
 
 class FakeTmuxAdapter extends TmuxAdapter {
   public missingTarget = false;
+  public paneLayoutVariant: "initial" | "updated" = "initial";
   public readonly ensureSessionCalls: Array<{ target: string; cwd: string }> = [];
   public readonly groupedSessions: Array<[string, string]> = [];
   public readonly sessionOptions: Array<[string, string, string]> = [];
@@ -410,6 +470,56 @@ class FakeTmuxAdapter extends TmuxAdapter {
   public override resolvePane(target: string): TmuxPaneRef {
     if (this.missingTarget) throw new Error(`Could not resolve tmux pane: ${target}`);
     return { paneId: "%0", windowId: "@0", sessionName: "muximod" };
+  }
+  public override listPanesSnapshot(): TmuxLiveSnapshot {
+    const serverId = "scope-1:server-1:started-at";
+    const updated = this.paneLayoutVariant === "updated";
+    const windowWidth = updated ? 160 : 120;
+    return {
+      available: true,
+      tmuxServerId: serverId,
+      tmuxServerScope: "scope-1",
+      panes: [
+        {
+          paneId: "%0",
+          windowId: "@0",
+          sessionName: "muximod",
+          tmuxServerId: serverId,
+          windowName: "muximod",
+          windowIndex: 0,
+          paneIndex: 0,
+          cwd: "/tmp",
+          command: "zsh",
+          title: "zsh",
+          active: false,
+          left: 0,
+          top: 0,
+          width: updated ? 40 : 60,
+          height: 40,
+          windowWidth,
+          windowHeight: 40,
+        },
+        {
+          paneId: "%1",
+          windowId: "@0",
+          sessionName: "muximod",
+          tmuxServerId: serverId,
+          windowName: "muximod",
+          windowIndex: 0,
+          paneIndex: 1,
+          cwd: "/tmp",
+          command: "zsh",
+          title: "zsh",
+          active: true,
+          left: updated ? 40 : 60,
+          top: 0,
+          width: updated ? 120 : 60,
+          height: 40,
+          windowWidth,
+          windowHeight: 40,
+        },
+      ],
+    };
   }
   public override ensureSession(target: string, cwd: string): boolean {
     this.ensureSessionCalls.push({ target, cwd });

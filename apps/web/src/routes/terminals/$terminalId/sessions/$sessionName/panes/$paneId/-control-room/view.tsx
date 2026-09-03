@@ -317,7 +317,7 @@ export function ControlRoomView({
           ) : null}
         </section>
 
-        <aside className="min-w-0 min-h-0 max-[920px]:fixed max-[920px]:inset-0 max-[920px]:z-20 max-[920px]:pointer-events-none">
+        <aside className="min-w-0 min-h-0 max-[920px]:fixed max-[920px]:inset-0 max-[920px]:z-[60] max-[920px]:pointer-events-none">
           <div className="h-full max-[920px]:pointer-events-none">
             <PaneBoardView viewModel={paneBoard} isOpen={paneBoardOpen} onClose={() => setPaneBoardOpen(false)} />
           </div>

@@ -128,3 +128,13 @@ export const storyPanes: PaneSummary[] = [
     windowIndex: 2,
   },
 ];
+
+export const storyPanesWithGeometry: PaneSummary[] = storyPanes.map((pane) => ({
+  ...pane,
+  left: pane.windowId === "@0" && pane.paneIndex === 1 ? 80 : 0,
+  top: 0,
+  width: pane.windowId === "@0" ? 80 : 160,
+  height: 48,
+  windowWidth: 160,
+  windowHeight: 48,
+}));

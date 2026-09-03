@@ -1057,7 +1057,15 @@ export const serverControlMessageSchema = z.discriminatedUnion("type", [
       type: z.literal("viewport"),
       ...terminalFrameVersionSchema.shape,
       owner: z.enum(["mobile", "desktop"]),
-      reason: z.enum(["attached", "mobile_claim", "desktop_activity", "desktop_resize", "desktop_focus", "detached"]),
+      reason: z.enum([
+        "attached",
+        "mobile_claim",
+        "desktop_activity",
+        "desktop_resize",
+        "desktop_focus",
+        "transport_lost",
+        "detached",
+      ]),
     })
     .strict(),
   z
