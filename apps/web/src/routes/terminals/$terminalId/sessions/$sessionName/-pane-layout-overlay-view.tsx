@@ -19,42 +19,48 @@ export function PaneLayoutOverlay({
   onClose?: () => void;
   onCreatePane?: () => void;
 }) {
-  const windows = useMemo(() => groupByWindow(panes), [panes]);
+  const windows = useMemo(() => buildPaneWindows(panes), [panes]);
   const selectedPane = panes.find((pane) => pane.hostPaneId === selectedTarget);
-  const [activeWindowId, setActiveWindowId] = useState(selectedPane?.windowId ?? windows[0]?.id ?? "");
+  const selectedWindowId = selectedPane ? paneWindowId(selectedPane) : undefined;
+  const [activeWindowId, setActiveWindowId] = useState(() => selectedWindowId ?? windows[0]?.id ?? "");
   const overlayRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const onCloseRef = useRef(onClose);
   const activeWindow = windows.find((window) => window.id === activeWindowId) ?? windows[0];
   const activeSessionPaneCount = activeWindow
-    ? panes.filter((pane) => pane.sessionName === activeWindow.sessionName).length
+    ? windows
+        .filter((window) => window.sessionName === activeWindow.sessionName)
+        .reduce((count, window) => count + window.panes.length, 0)
     : 0;
-  const selectedPaneUnavailable = Boolean(selectedTarget) && !selectedPane;
-  const useCompactPaneList = activeWindow
-    ? selectedPaneUnavailable ||
-      (activeWindow.hasGeometry &&
-        paneLayoutNeedsCompactTargets(activeWindow.panes, activeWindow.windowWidth, activeWindow.windowHeight))
-    : selectedPaneUnavailable;
-  const paneGridClass = useCompactPaneList
-    ? "grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] content-stretch overflow-auto"
-    : activeWindow?.hasGeometry
-      ? "relative min-h-0 overflow-hidden bg-terminal-grid bg-[length:100%_16px]"
-      : activeWindow?.panes.length === 1
-        ? "grid-cols-[minmax(0,1fr)]"
-        : activeWindow?.panes.length === 2
-          ? "grid-cols-2"
-          : "grid-cols-2 [&>button:first-child]:row-span-2";
-  useEffect(() => {
-    if (selectedPane && selectedPane.windowId !== activeWindowId) setActiveWindowId(selectedPane.windowId);
-  }, [activeWindowId, selectedPane]);
+  const isGeometricLayout = Boolean(activeWindow?.hasGeometry);
+  const paneAreaClass = isGeometricLayout
+    ? "relative min-h-0 flex-1 overflow-hidden bg-terminal-grid bg-[length:100%_16px]"
+    : "grid min-h-0 flex-1 auto-rows-min content-start grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-1 overflow-y-auto overscroll-contain p-1 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch] max-[620px]:gap-[3px] max-[620px]:p-[3px]";
 
   useEffect(() => {
-    if (!onClose) return;
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (selectedWindowId) setActiveWindowId(selectedWindowId);
+  }, [selectedWindowId]);
+
+  useEffect(() => {
+    setActiveWindowId((current) => {
+      if (current && windows.some((window) => window.id === current)) return current;
+      return selectedWindowId ?? windows[0]?.id ?? "";
+    });
+  }, [selectedWindowId, windows]);
+
+  const isModal = Boolean(onClose);
+  useEffect(() => {
+    if (!isModal) return;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current?.();
         return;
       }
       if (event.key !== "Tab") return;
@@ -79,9 +85,10 @@ export function PaneLayoutOverlay({
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus({ preventScroll: true });
     };
-  }, [onClose]);
+  }, [isModal]);
 
-  const overlayRole = onClose ? "dialog" : "region";
+  const overlayRole = isModal ? "dialog" : "region";
+  const panelId = `${id ?? "tmux-window-layout"}-panel`;
 
   return (
     <section
@@ -89,11 +96,11 @@ export function PaneLayoutOverlay({
       id={id}
       className="relative flex h-full min-h-0 w-full flex-col gap-3 overflow-hidden rounded-[15px] border border-[#2b6036] bg-[#071108] p-[18px] text-ink shadow-[0_24px_80px_rgb(0_0_0_/_52%),inset_0_0_0_1px_rgb(139_255_154_/_4%)] max-[920px]:rounded-xl max-[620px]:gap-2 max-[620px]:rounded-[10px] max-[620px]:p-3"
       role={overlayRole}
-      aria-modal={overlayRole === "dialog" ? true : undefined}
+      aria-modal={isModal ? true : undefined}
       aria-label="tmux window layout"
-      tabIndex={onClose ? -1 : undefined}
+      tabIndex={isModal ? -1 : undefined}
     >
-      <div className="flex min-w-0 items-center justify-between gap-3">
+      <div className="flex min-w-0 shrink-0 items-center justify-between gap-3">
         <div className="flex min-w-0 flex-col items-start gap-[7px]">
           <span className="flex items-center gap-[7px] font-mono text-[0.62rem] font-bold leading-none tracking-[0.13em] text-muted">
             <span className="size-1.5 rounded-full bg-lime-deep shadow-[0_0_0_3px_rgb(97_143_55_/_12%)]" /> WINDOW MAP
@@ -132,7 +139,7 @@ export function PaneLayoutOverlay({
       </div>
 
       <div
-        className="flex min-w-0 gap-[5px] overflow-x-auto p-0.5 [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]"
+        className="flex min-w-0 shrink-0 gap-[5px] overflow-x-auto p-0.5 [scrollbar-width:none] [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable]"
         role="tablist"
         aria-label="tmux windows"
       >
@@ -151,6 +158,8 @@ export function PaneLayoutOverlay({
               type="button"
               role="tab"
               aria-selected={selected}
+              aria-controls={panelId}
+              tabIndex={selected ? 0 : -1}
               onClick={() => setActiveWindowId(window.id)}
             >
               <span
@@ -167,18 +176,19 @@ export function PaneLayoutOverlay({
 
       {activeWindow ? (
         <div
-          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[11px] border border-[#2b6036] bg-[#020503] shadow-[inset_0_0_30px_rgb(57_214_91_/_5%)]"
+          id={panelId}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[11px] border border-[#2b6036] bg-[#020503] shadow-[inset_0_0_30px_rgb(57_214_91_/_5%)]"
           role="tabpanel"
           aria-label={`${activeWindow.sessionName} window ${activeWindow.index}`}
         >
-          <div className="flex min-h-[30px] items-center justify-between gap-2.5 border-b border-[#1d4426] px-2.5 font-mono text-[0.53rem] text-[#5d9168] max-[620px]:min-h-[26px] max-[620px]:px-2 max-[620px]:text-[0.47rem]">
+          <div className="flex min-h-[30px] shrink-0 items-center justify-between gap-2.5 border-b border-[#1d4426] px-2.5 font-mono text-[0.53rem] text-[#5d9168] max-[620px]:min-h-[26px] max-[620px]:px-2 max-[620px]:text-[0.47rem]">
             <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[#9fd5a6]">
               {activeWindow.sessionName}
             </span>
             <span>window {activeWindow.index}</span>
             <span>{activeWindow.panes.length} panes in window</span>
           </div>
-          <div className={`grid min-h-0 flex-1 gap-1 p-1 max-[620px]:gap-[3px] max-[620px]:p-[3px] ${paneGridClass}`}>
+          <div className={paneAreaClass}>
             {activeWindow.panes.map((pane) => {
               const waiting = pane.state === "waiting_input" || pane.state === "waiting_approval";
               const selected = pane.hostPaneId === selectedTarget;
@@ -192,31 +202,25 @@ export function PaneLayoutOverlay({
                 : pane.state === "failed"
                   ? "bg-[#f07e7e]"
                   : "bg-lime-deep";
-              const paneButtonLayoutClass =
-                activeWindow.hasGeometry && !useCompactPaneList
-                  ? "absolute min-h-0"
-                  : useCompactPaneList
-                    ? "relative min-h-14"
-                    : "min-h-[72px]";
-              const paneButtonShapeClass =
-                activeWindow.hasGeometry && !useCompactPaneList ? "rounded-none" : "rounded-[7px]";
+              const paneButtonLayoutClass = isGeometricLayout
+                ? "absolute min-h-0"
+                : "relative h-[84px] min-h-0 max-[620px]:h-[72px]";
+              const paneButtonShapeClass = isGeometricLayout ? "rounded-none" : "rounded-[7px]";
               const paneButtonSurfaceClass = selected
                 ? "border-lime-deep bg-[#0b2511] text-[#e0ffe3] shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)]"
                 : "border-[#1b4526] bg-[#071409] text-[#89bd91]";
               const paneButtonInteractionClass =
                 "hover:border-lime-deep hover:bg-[#0b2511] hover:text-[#e0ffe3] hover:shadow-[inset_3px_0_0_var(--color-lime),0_0_18px_rgb(57_214_91_/_13%)]";
-              const paneButtonSpacingClass = `p-[9px] ${useCompactPaneList ? "" : "max-[620px]:min-h-[62px] max-[620px]:p-[7px]"}`;
+              const paneButtonSpacingClass = "p-[9px] max-[620px]:p-[7px]";
               return (
                 <button
-                  className={`flex min-w-0 flex-col items-start justify-end overflow-hidden border bg-pane-grid bg-[length:100%_16px] text-left transition-[border-color,background,box-shadow] ${paneButtonLayoutClass} ${paneButtonShapeClass} ${paneButtonSurfaceClass} ${paneButtonInteractionClass} ${paneButtonSpacingClass}`}
+                  className={`flex w-full min-w-0 flex-col items-start justify-end overflow-hidden border bg-pane-grid bg-[length:100%_16px] text-left transition-[border-color,background,box-shadow] ${paneButtonLayoutClass} ${paneButtonShapeClass} ${paneButtonSurfaceClass} ${paneButtonInteractionClass} ${paneButtonSpacingClass}`}
                   key={pane.id}
                   type="button"
                   onClick={() => onSelect(pane)}
                   aria-label={`Select pane ${pane.paneIndex ?? "unknown"}: ${pane.name}`}
                   title={pane.recentOutput ? `${pane.hostPaneId}\n${pane.recentOutput}` : pane.hostPaneId}
-                  style={
-                    activeWindow.hasGeometry && !useCompactPaneList ? paneGeometryStyle(pane, activeWindow) : undefined
-                  }
+                  style={isGeometricLayout ? paneGeometryStyle(pane, activeWindow) : undefined}
                 >
                   <span className="font-mono text-[0.52rem] text-lime max-[620px]:text-[0.45rem]">
                     PANE {pane.paneIndex ?? "?"}
@@ -244,7 +248,7 @@ export function PaneLayoutOverlay({
         <p className="m-0 text-[0.7rem] text-muted">No tmux windows found.</p>
       )}
 
-      <div className="flex items-center justify-between gap-2.5 font-mono text-[0.52rem] text-[#4b7c54]">
+      <div className="flex shrink-0 items-center justify-between gap-2.5 font-mono text-[0.52rem] text-[#4b7c54]">
         <span>tap a pane to open</span>
         <span>⌁ live tmux layout</span>
       </div>
@@ -255,8 +259,9 @@ export function PaneLayoutOverlay({
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function groupByWindow(panes: PaneSummary[]): Array<{
+export type PaneLayoutWindow = {
   id: string;
+  windowId: string;
   sessionName: string;
   name: string;
   index: number;
@@ -264,86 +269,141 @@ function groupByWindow(panes: PaneSummary[]): Array<{
   windowHeight?: number;
   hasGeometry: boolean;
   panes: PaneSummary[];
-}> {
+};
+
+export function buildPaneWindows(panes: readonly PaneSummary[]): PaneLayoutWindow[] {
   const windows = new Map<
     string,
     {
       id: string;
+      windowId: string;
       sessionName: string;
       name: string;
       index: number;
       windowWidth?: number;
       windowHeight?: number;
-      hasGeometry: boolean;
       panes: PaneSummary[];
-      windowWidths: number[];
-      windowHeights: number[];
     }
   >();
-  for (const pane of panes) {
-    const current = windows.get(pane.windowId) ?? {
-      id: pane.windowId,
+  const uniquePanes = uniquePaneSummaries(panes);
+
+  for (const pane of uniquePanes) {
+    const id = paneWindowId(pane);
+    const current = windows.get(id) ?? {
+      id,
+      windowId: pane.windowId,
       sessionName: pane.sessionName,
       name: pane.windowName ?? "",
-      index: pane.windowIndex ?? (Number(windowIdNumber(pane.windowId)) || 0),
-      windowWidth: pane.windowWidth,
-      windowHeight: pane.windowHeight,
-      hasGeometry: true,
+      index: pane.windowIndex ?? tmuxWindowIndex(pane.windowId),
       panes: [],
-      windowWidths: [],
-      windowHeights: [],
     };
-    current.hasGeometry = current.hasGeometry && hasPaneGeometry(pane);
-    if (typeof pane.windowWidth === "number" && pane.windowWidth > 0) current.windowWidths.push(pane.windowWidth);
-    if (typeof pane.windowHeight === "number" && pane.windowHeight > 0) current.windowHeights.push(pane.windowHeight);
     current.panes.push(pane);
-    windows.set(pane.windowId, current);
+    windows.set(id, current);
   }
-  return [...windows.values()].map(({ windowWidths, windowHeights, ...rest }) => {
-    const consensusWidth = consensusWindowDimension(windowWidths);
-    const consensusHeight = consensusWindowDimension(windowHeights);
-    // If window dimensions are inconsistent across panes (stale snapshot during
-    // viewport resize), prefer the consensus value and mark geometry as
-    // unavailable when no consensus exists. This prevents absolute panes from
-    // being rendered with a mismatched 200%-wide window that looks translucent.
-    const windowWidth = consensusWidth ?? rest.windowWidth;
-    const windowHeight = consensusHeight ?? rest.windowHeight;
-    const validWindow =
-      typeof windowWidth === "number" &&
-      typeof windowHeight === "number" &&
-      windowWidth >= 20 &&
-      windowWidth <= 500 &&
-      windowHeight >= 5 &&
-      windowHeight <= 300;
-    return {
-      ...rest,
-      windowWidth,
-      windowHeight,
-      hasGeometry: rest.hasGeometry && validWindow,
-    };
-  });
+  return [...windows.values()]
+    .map((window) => {
+      const panes = [...window.panes].sort(comparePanes);
+      const dimensions = sharedWindowDimensions(panes);
+      const hasGeometry =
+        dimensions !== undefined &&
+        panes.every((pane) => hasPaneGeometryInWindow(pane, dimensions.width, dimensions.height)) &&
+        !hasOverlappingPanes(panes);
+      return {
+        ...window,
+        panes,
+        windowWidth: dimensions?.width ?? firstPositiveDimension(panes, "windowWidth"),
+        windowHeight: dimensions?.height ?? firstPositiveDimension(panes, "windowHeight"),
+        hasGeometry,
+      } satisfies PaneLayoutWindow;
+    })
+    .sort(compareWindows);
 }
 
-function consensusWindowDimension(values: number[]): number | undefined {
-  if (!values.length) return undefined;
-  const counts = new Map<number, number>();
-  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
-  let best: number | undefined;
-  let bestCount = 0;
-  for (const [value, count] of counts) {
-    if (count > bestCount || (count === bestCount && (best === undefined || value > best))) {
-      best = value;
-      bestCount = count;
+function uniquePaneSummaries(panes: readonly PaneSummary[]): PaneSummary[] {
+  const unique = new Map<string, PaneSummary>();
+  for (const pane of panes) {
+    const identity = `${pane.sessionName}\u0000${pane.windowId}\u0000${pane.id || pane.hostPaneId}`;
+    if (!unique.has(identity)) unique.set(identity, pane);
+  }
+  return [...unique.values()];
+}
+
+function paneWindowId(pane: Pick<PaneSummary, "sessionName" | "windowId">): string {
+  return JSON.stringify([pane.sessionName, pane.windowId]);
+}
+
+function tmuxWindowIndex(windowId: string): number {
+  const value = Number(windowId.replace(/^@/, ""));
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function comparePanes(left: PaneSummary, right: PaneSummary): number {
+  return (
+    compareOptionalNumbers(left.paneIndex, right.paneIndex) ||
+    compareOptionalNumbers(left.top, right.top) ||
+    compareOptionalNumbers(left.left, right.left) ||
+    left.hostPaneId.localeCompare(right.hostPaneId)
+  );
+}
+
+function compareWindows(left: PaneLayoutWindow, right: PaneLayoutWindow): number {
+  return (
+    left.sessionName.localeCompare(right.sessionName) ||
+    left.index - right.index ||
+    left.windowId.localeCompare(right.windowId)
+  );
+}
+
+function compareOptionalNumbers(left: number | undefined, right: number | undefined): number {
+  if (left === undefined && right === undefined) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  return left - right;
+}
+
+function sharedWindowDimensions(panes: readonly PaneSummary[]): { width: number; height: number } | undefined {
+  const first = panes[0];
+  if (!first || !isPositiveInteger(first.windowWidth) || !isPositiveInteger(first.windowHeight)) return undefined;
+  if (panes.some((pane) => pane.windowWidth !== first.windowWidth || pane.windowHeight !== first.windowHeight)) {
+    return undefined;
+  }
+  return { width: first.windowWidth, height: first.windowHeight };
+}
+
+function firstPositiveDimension(
+  panes: readonly PaneSummary[],
+  field: "windowWidth" | "windowHeight",
+): number | undefined {
+  return panes.find((pane) => isPositiveInteger(pane[field]))?.[field];
+}
+
+function isPositiveInteger(value: number | undefined): value is number {
+  return value !== undefined && Number.isInteger(value) && value > 0;
+}
+
+function hasPaneGeometryInWindow(pane: PaneSummary, windowWidth: number, windowHeight: number): boolean {
+  return (
+    hasPaneGeometry(pane) &&
+    pane.windowWidth === windowWidth &&
+    pane.windowHeight === windowHeight &&
+    pane.left + pane.width <= windowWidth &&
+    pane.top + pane.height <= windowHeight
+  );
+}
+
+function hasOverlappingPanes(panes: readonly PaneSummary[]): boolean {
+  for (let index = 0; index < panes.length; index += 1) {
+    const left = panes[index];
+    if (!left || !hasPaneGeometry(left)) continue;
+    for (let otherIndex = index + 1; otherIndex < panes.length; otherIndex += 1) {
+      const right = panes[otherIndex];
+      if (!right || !hasPaneGeometry(right)) continue;
+      const overlapsHorizontally = left.left < right.left + right.width && right.left < left.left + left.width;
+      const overlapsVertically = left.top < right.top + right.height && right.top < left.top + left.height;
+      if (overlapsHorizontally && overlapsVertically) return true;
     }
   }
-  // Require at least half the panes to agree; otherwise the window was
-  // resized between pane listings and no dimension is trustworthy.
-  if (best !== undefined && bestCount * 2 < values.length) return undefined;
-  return best;
-}
-
-function windowIdNumber(id: string): string {
-  return id.replace(/^@/, "");
+  return false;
 }
 
 export function hasPaneGeometry(
@@ -357,40 +417,16 @@ export function hasPaneGeometry(
   windowHeight: number;
 } {
   const { left, top, width, height, windowWidth, windowHeight } = pane;
-  if (typeof left !== "number" || typeof top !== "number") return false;
-  if (!(left >= 0) || !(top >= 0)) return false;
-  if (
-    typeof width !== "number" ||
-    typeof height !== "number" ||
-    typeof windowWidth !== "number" ||
-    typeof windowHeight !== "number"
-  )
-    return false;
-  if (!(width > 0) || !(height > 0) || !(windowWidth > 0) || !(windowHeight > 0)) return false;
-  // Pane must fit inside the window; a wider pane indicates a stale window
-  // size (mobile/desktop viewport race) and should fall back to grid layout.
-  if (width > windowWidth) return false;
-  if (height > windowHeight) return false;
-  if (windowWidth < 20 || windowWidth > 500) return false;
-  if (windowHeight < 5 || windowHeight > 300) return false;
-  return true;
-}
-
-export const MIN_TOUCH_PANE_WIDTH_RATIO = 0.16;
-export const MIN_TOUCH_PANE_HEIGHT_RATIO = 0.25;
-
-export function paneLayoutNeedsCompactTargets(
-  panes: Array<Pick<PaneSummary, "left" | "top" | "width" | "height" | "windowWidth" | "windowHeight">>,
-  windowWidth?: number,
-  windowHeight?: number,
-): boolean {
-  if (!windowWidth || !windowHeight || windowWidth <= 0 || windowHeight <= 0) return false;
-  return panes.some((pane) => {
-    if (!hasPaneGeometry(pane)) return false;
-    return (
-      pane.width / windowWidth < MIN_TOUCH_PANE_WIDTH_RATIO || pane.height / windowHeight < MIN_TOUCH_PANE_HEIGHT_RATIO
-    );
-  });
+  return (
+    isNonNegativeInteger(left) &&
+    isNonNegativeInteger(top) &&
+    isPositiveInteger(width) &&
+    isPositiveInteger(height) &&
+    isPositiveInteger(windowWidth) &&
+    isPositiveInteger(windowHeight) &&
+    left + width <= windowWidth &&
+    top + height <= windowHeight
+  );
 }
 
 function paneGeometryStyle(
@@ -398,17 +434,29 @@ function paneGeometryStyle(
   window: { windowWidth?: number; windowHeight?: number },
 ): CSSProperties | undefined {
   const { windowWidth, windowHeight } = window;
-  if (!hasPaneGeometry(pane) || !windowWidth || !windowHeight) return undefined;
+  if (!isPositiveInteger(windowWidth) || !isPositiveInteger(windowHeight)) return undefined;
+  if (
+    !hasPaneGeometry(pane) ||
+    pane.windowWidth !== windowWidth ||
+    pane.windowHeight !== windowHeight ||
+    pane.left + pane.width > windowWidth ||
+    pane.top + pane.height > windowHeight
+  ) {
+    return undefined;
+  }
   const clamp = (value: number) => Math.max(0, Math.min(100, value));
   const left = clamp((pane.left / windowWidth) * 100);
   const top = clamp((pane.top / windowHeight) * 100);
   const width = clamp((pane.width / windowWidth) * 100);
   const height = clamp((pane.height / windowHeight) * 100);
-  // Prevent panes from overflowing the window due to rounding errors.
   return {
     left: `${left}%`,
     top: `${top}%`,
     width: `${Math.min(width, 100 - left)}%`,
     height: `${Math.min(height, 100 - top)}%`,
   };
+}
+
+function isNonNegativeInteger(value: number | undefined): value is number {
+  return value !== undefined && Number.isInteger(value) && value >= 0;
 }

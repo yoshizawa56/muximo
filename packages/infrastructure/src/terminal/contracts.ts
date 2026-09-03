@@ -37,6 +37,7 @@ export type ViewportReason =
   | "desktop_activity"
   | "desktop_resize"
   | "desktop_focus"
+  | "transport_lost"
   | "detached";
 
 export type ViewportEvent = {
@@ -52,6 +53,8 @@ export type ViewportLease = {
   readonly sessionName: string;
   readonly owner: ViewportOwner;
   claimMobile(cols?: number, rows?: number): Promise<void>;
+  /** Returns the shared tmux viewport to desktop while keeping this lease resumable. */
+  returnToDesktop(): Promise<void>;
   /** Updates the mobile geometry without transferring viewport ownership. */
   resize(cols?: number, rows?: number): Promise<void>;
   /** Requests an authoritative redraw for the mobile tmux client. */

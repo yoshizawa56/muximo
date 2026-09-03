@@ -127,8 +127,8 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       showStack: options.logLevel === "debug",
     });
   const tmux = new TmuxAdapter(environment.MUXIMOD_TMUX_SOCKET, undefined, environment);
-  const host = new TmuxMuximodHostAdapter(tmux, environment);
   const viewportManager = new TmuxViewportManager(tmux);
+  const host = new TmuxMuximodHostAdapter(tmux, environment, () => viewportManager.paneLayoutOverrides());
   const applicationViewportManager = {
     handleTerminalHostHook: (event: Parameters<typeof viewportManager.handleTmuxHook>[0], client: string) =>
       viewportManager.handleTmuxHook(event, client),

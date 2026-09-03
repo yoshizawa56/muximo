@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { storyPanes } from "../../../../../../-story-fixtures";
+import { storyPanes, storyPanesWithGeometry } from "../../../../../../-story-fixtures";
 import { keysFromIds, resolveCustomKeyboardLayout } from "../-custom-keyboard/policy";
 import {
   type CustomKeyboardSettingsViewModel,
@@ -146,6 +146,10 @@ const controlRoomScenarios = {
       }),
     }),
   waitingPanes: () => buildViewModel(),
+  geometryPanes: () =>
+    buildViewModel({
+      paneBoard: createPaneBoard({ panes: storyPanesWithGeometry }),
+    }),
   connectingTerminal: () =>
     buildViewModel({ terminal: createTerminal({ status: "connecting", viewportReason: null }) }),
   closedTerminal: () => buildViewModel({ terminal: createTerminal({ status: "closed", viewportReason: null }) }),
@@ -223,12 +227,16 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const ConnectedWithWindowMap: Story = {
-  args: { viewModel: controlRoomScenarios.waitingPanes() },
+  args: { viewModel: controlRoomScenarios.geometryPanes() },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: /open tmux window map/i }));
-    await userEvent.click(canvas.getByRole("tab", { name: /muximo 1/ }));
-    await expect(canvas.getByRole("tab", { name: /muximo 1/ })).toHaveAttribute("aria-selected", "true");
+    const windowMap = canvas.getByRole("dialog", { name: "tmux window layout" });
+    await expect(windowMap).toHaveClass("z-[60]");
+    await expect(windowMap.closest("aside")).toHaveClass("max-[920px]:z-[60]");
+    const secondWindowTab = canvas.getByRole("tab", { name: /muximo 1/ });
+    await userEvent.click(secondWindowTab);
+    await expect(secondWindowTab).toHaveAttribute("aria-selected", "true");
   },
 };
 

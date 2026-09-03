@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { storyPanes, storySession, storyTerminal } from "../../../-story-fixtures";
+import { storyPanes, storyPanesWithGeometry, storySession, storyTerminal } from "../../../-story-fixtures";
 import { SessionView } from "./-session-view";
 import type { SessionOverviewViewModel } from "./-session-viewmodel";
 
@@ -37,7 +37,13 @@ export const PanesReady: Story = {
     await expect(args.viewModel.onSelectPane).toHaveBeenCalledWith(storyPanes[0]);
     await userEvent.click(canvas.getByRole("button", { name: /\+ pane/i }));
     await expect(args.viewModel.onCreatePane).toHaveBeenCalledOnce();
+    await userEvent.click(canvas.getByRole("tab", { name: /muximo 1/i }));
+    await expect(canvas.getByRole("tab", { name: /muximo 1/i })).toHaveAttribute("aria-selected", "true");
   },
+};
+
+export const GeometryReady: Story = {
+  args: { viewModel: buildViewModel({ panes: storyPanesWithGeometry }) },
 };
 
 export const EmptySession: Story = {

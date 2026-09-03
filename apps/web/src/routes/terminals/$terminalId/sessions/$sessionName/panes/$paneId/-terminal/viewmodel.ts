@@ -129,6 +129,7 @@ export function usePaneViewModel({
   const currentTargetRef = useRef(target);
   const pendingDetachRef = useRef<Promise<void> | null>(null);
   const appStateRef = useRef<MuximoAppState>(muximoBridge.getAppState());
+  const pauseTransportRef = useRef<(() => void) | null>(null);
   const sendResizeRef = useRef<(() => void) | null>(null);
   const [pasteState, setPasteState] = useState<PanePasteState>("idle");
   const [nativeKeyboardVisible, setNativeKeyboardVisible] = useState(false);
@@ -359,6 +360,10 @@ export function usePaneViewModel({
     () =>
       muximoBridge.onAppStateChange((state) => {
         appStateRef.current = state;
+        if (state === "background") {
+          pauseTransportRef.current?.();
+          return;
+        }
         if (state === "active") {
           if (!terminalClosedRef.current) reconnect();
           // A geometry callback can be deferred while a native WebView is
@@ -497,6 +502,21 @@ export function usePaneViewModel({
     let connectInFlight = false;
     let connectAttemptGeneration = 0;
     let activeAbortController: AbortController | null = null;
+    const pauseTransport = () => {
+      if (disposed || terminalClosedRef.current) return;
+      connectAttemptGeneration += 1;
+      activeAbortController?.abort();
+      activeAbortController = null;
+      clearRetryTimer();
+      terminalReadyRef.current = false;
+      socketInputQueueRef.current.detach();
+      resetNativeKeyboard();
+      const socket = socketRef.current;
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        closeNetworkSocket(socket, "app-background");
+      }
+    };
+    pauseTransportRef.current = pauseTransport;
 
     void waitForTerminalFont(fontSize).then(() => {
       if (disposed) return;
@@ -505,7 +525,8 @@ export function usePaneViewModel({
     });
 
     const scheduleReconnect = () => {
-      if (disposed || terminalClosedRef.current || retryScheduledRef.current) return;
+      if (disposed || terminalClosedRef.current || retryScheduledRef.current || appStateRef.current !== "active")
+        return;
       retryScheduledRef.current = true;
       const attempt = Math.min(retryCountRef.current, 6);
       retryCountRef.current = Math.min(retryCountRef.current + 1, 7);
@@ -558,7 +579,7 @@ export function usePaneViewModel({
     };
 
     const connect = async () => {
-      if (disposed || terminalClosedRef.current || connectInFlight) return;
+      if (disposed || terminalClosedRef.current || connectInFlight || appStateRef.current !== "active") return;
       connectInFlight = true;
       const attemptGeneration = ++connectAttemptGeneration;
       const abortController = new AbortController();
@@ -611,7 +632,12 @@ export function usePaneViewModel({
         } finally {
           if (ticketTimer !== null) window.clearTimeout(ticketTimer);
         }
-        if (disposed || terminalClosedRef.current || attemptGeneration !== connectAttemptGeneration) {
+        if (
+          disposed ||
+          terminalClosedRef.current ||
+          appStateRef.current !== "active" ||
+          attemptGeneration !== connectAttemptGeneration
+        ) {
           closeNetworkSocket(socket);
           return;
         }
@@ -677,6 +703,10 @@ export function usePaneViewModel({
 
         const handleOpen = () => {
           if (!isCurrentSocket() || opened) return;
+          if (appStateRef.current !== "active") {
+            closeNetworkSocket(socket, "app-background");
+            return;
+          }
           opened = true;
           clearHandshakeTimer();
           fitAddon.fit();
@@ -708,6 +738,10 @@ export function usePaneViewModel({
           if (typeof event.data === "string") {
             handleControlMessage(event.data, {
               onReady: (message) => {
+                if (appStateRef.current !== "active") {
+                  closeNetworkSocket(socket, "app-background");
+                  return;
+                }
                 clearHandshakeTimer();
                 terminalReadyRef.current = true;
                 if (message.sync === "redraw") {
@@ -848,7 +882,7 @@ export function usePaneViewModel({
       activeAbortController = null;
     };
     const handleOnline = () => {
-      if (disposed || terminalClosedRef.current) return;
+      if (disposed || terminalClosedRef.current || appStateRef.current !== "active") return;
       retryCountRef.current = 0;
       clearRetryTimer();
       setStatus("connecting");
@@ -929,6 +963,7 @@ export function usePaneViewModel({
 
       return () => {
         disposed = true;
+        if (pauseTransportRef.current === pauseTransport) pauseTransportRef.current = null;
         connectRef.current = null;
         detachRef.current = null;
         cancelConnectAttempt();
@@ -985,6 +1020,7 @@ export function usePaneViewModel({
 
     return () => {
       disposed = true;
+      if (pauseTransportRef.current === pauseTransport) pauseTransportRef.current = null;
       connectRef.current = null;
       detachRef.current = null;
       cancelConnectAttempt();

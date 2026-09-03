@@ -90,8 +90,9 @@ export function usePaneBoardViewModel({
   return {
     selectedTarget,
     panes,
-    status: query.isPending ? "loading" : query.isError ? "error" : "ready",
-    errorMessage: query.isError ? muximodErrorMessage(query.error, "Unable to load panes") : null,
+    status: query.isPending ? "loading" : query.isError && query.data === undefined ? "error" : "ready",
+    errorMessage:
+      query.isError && query.data === undefined ? muximodErrorMessage(query.error, "Unable to load panes") : null,
     select,
     refresh,
   };
