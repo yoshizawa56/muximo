@@ -5,10 +5,11 @@ import type {
   AgentSessionListResponse,
   AuthSessionResponse,
   CleanupAgentSessionRequest,
-  CleanupAgentSessionResponse,
   ListAgentSessionsRequest,
   ManageSessionRequest,
   muximodContract,
+  OperationAcceptedResponse,
+  OperationStatus,
   RegisterWorkspaceRequest,
   UpdateWorkspaceRequest,
   WorkspaceDirectory,
@@ -26,8 +27,12 @@ export type MuximodApiClient = {
     manage(input: ManageSessionRequest): Promise<ManageSessionResult>;
   };
   agentSessions: {
-    cleanup(input: CleanupAgentSessionRequest): Promise<CleanupAgentSessionResponse>;
+    cleanup(input: CleanupAgentSessionRequest): Promise<OperationAcceptedResponse>;
     list(input: ListAgentSessionsRequest): Promise<AgentSessionListResponse>;
+  };
+  operations: {
+    get(operationId: string): Promise<OperationStatus>;
+    cancel(operationId: string): Promise<OperationStatus>;
   };
   daemon: {
     readLog(lines: number): Promise<MuximodControlLogResult>;
@@ -102,6 +107,10 @@ export async function connectMuximodApi(options: MuximodApiConnectionOptions): P
     agentSessions: {
       cleanup: (input) => request(() => rpc.agentSessions.cleanup(input)),
       list: (input) => request(() => rpc.agentSessions.list(input), true),
+    },
+    operations: {
+      get: (operationId) => request(() => rpc.operations.get({ operationId }), true),
+      cancel: (operationId) => request(() => rpc.operations.cancel({ operationId }), true),
     },
     workspaces: {
       list: async () => (await listWorkspaces()).workspaces,

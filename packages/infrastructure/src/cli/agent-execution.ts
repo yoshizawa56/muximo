@@ -7,6 +7,7 @@ export type AttachedAgentExecutionLogger = {
 
 export type AttachedAgentExecutionOptions = {
   onStarted?: (pid: number, startedAt: string) => void | Promise<void>;
+  signal?: AbortSignal;
 };
 
 /** Runs one prepared agent command with the CLI process's inherited stdio. */
@@ -48,6 +49,7 @@ export class AttachedAgentExecutionAdapter {
         }
       },
       onError: (error) => this.logger?.debug("agent.process_spawn_failed", { backend: input.backend, error }),
+      signal: options.signal,
     });
   }
 }

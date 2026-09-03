@@ -104,6 +104,8 @@ export const muximodConfigSchema = z
     tmuxPollIntervalMs: z.number().int().min(1).optional(),
     paneCleanupIntervalMs: z.number().int().min(1).optional(),
     paneRetentionMs: z.number().int().min(0).optional(),
+    operationRetentionMs: z.number().int().min(0).optional(),
+    operationCleanupIntervalMs: z.number().int().min(1).optional(),
   })
   .strict();
 
@@ -147,6 +149,8 @@ export function muximodConfigurationFingerprint(options: MuximodLaunchOptions): 
       tmuxPollIntervalMs: config.tmuxPollIntervalMs ?? null,
       paneCleanupIntervalMs: config.paneCleanupIntervalMs ?? null,
       paneRetentionMs: config.paneRetentionMs ?? null,
+      operationRetentionMs: config.operationRetentionMs ?? null,
+      operationCleanupIntervalMs: config.operationCleanupIntervalMs ?? null,
     },
   };
   return createHash("sha256").update(JSON.stringify(fingerprintInput), "utf8").digest("hex");

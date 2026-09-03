@@ -135,6 +135,24 @@ export type {
   MuximodWorkspaceCatalogPort,
   TerminalHostSnapshot,
 } from "./ports/host.js";
+export type {
+  OperationAllocation,
+  OperationApplication,
+  OperationClock,
+  OperationFailure,
+  OperationRepository,
+  OperationResourceSubject,
+  OperationResultState,
+  OperationStartInput,
+  OperationStatus,
+} from "./ports/operations.js";
+export {
+  OperationAlreadyStartedError,
+  OperationCancelledError,
+  OperationExecutionMismatchError,
+  OperationIdempotencyConflictError,
+  OperationNotFoundError,
+} from "./ports/operations.js";
 export type { PairingControlPort, PairingPresenterPort } from "./ports/pairing.js";
 export type {
   ApprovedDevice,
@@ -181,6 +199,10 @@ export {
 export { LocateAgentSession } from "./usecases/agent-sessions/locate-session.js";
 export { ResumeAgentSession } from "./usecases/agent-sessions/resume-session.js";
 export { RunAgentSession } from "./usecases/agent-sessions/run-session.js";
+export {
+  StartCleanupAgentSession,
+  type StartCleanupAgentSessionDependencies,
+} from "./usecases/agent-sessions/start-cleanup-session.js";
 export { AttachAgentSession, type AttachAgentSessionDependencies } from "./usecases/agents/attach-agent-session.js";
 export { AuthStoreError } from "./usecases/auth/auth-errors.js";
 export type { AuthServiceOptions } from "./usecases/auth/auth-service.js";
@@ -196,6 +218,15 @@ export {
   type MuximodApplicationResources,
   type MuximodApplicationRuntime,
 } from "./usecases/muximod/muximod-service.js";
+export { OperationService, type OperationServiceDependencies } from "./usecases/operations/operation-service.js";
+export {
+  ReconcileAgentOperations,
+  type ReconcileAgentOperationsDependencies,
+} from "./usecases/operations/reconcile-agent-operations.js";
+export {
+  type AgentExecutionOperationOutcome,
+  settleAgentExecutionOperation,
+} from "./usecases/operations/settle-agent-execution-operation.js";
 export type { PairDeviceResult } from "./usecases/pairing/pair-device.js";
 export { PairDevice } from "./usecases/pairing/pair-device.js";
 export { ListPanes } from "./usecases/panes/list-panes.js";

@@ -13,10 +13,15 @@ import {
   ListAgentSessions,
   ListWorkspaces,
   LocateAgentSession,
+  OperationAlreadyStartedError,
+  OperationService,
   type PanePublicationPort,
+  ReconcileAgentOperations,
   RegisterWorkspace,
   ResumeAgentSession,
   RunAgentSession,
+  StartCleanupAgentSession,
+  settleAgentExecutionOperation,
   UpdateWorkspace,
   type WorkspaceAuditPort,
   WorkspaceRecordFactory,
@@ -35,6 +40,7 @@ import {
   type DatabaseSchemaSynchronizer,
   DrizzleAgentSessionRepository,
   DrizzleCodexSessionStateRepository,
+  DrizzleOperationRepository,
   DrizzlePaneRepository,
   DrizzleWorkspaceRepository,
   defaultLogFile,
@@ -68,7 +74,7 @@ import {
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
 } from "@muximo/infrastructure/runtime";
-import { MuximodControlServer } from "./control.js";
+import { MuximodControlServer, type PreparedAgentExecution } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
 import { createOriginPolicy } from "./http/middleware.js";
@@ -96,6 +102,8 @@ export type MuximodOptions = {
   tmuxPollIntervalMs?: number;
   paneCleanupIntervalMs?: number;
   paneRetentionMs?: number;
+  operationRetentionMs?: number;
+  operationCleanupIntervalMs?: number;
   logger?: Logger;
   logLevel?: LogLevel;
   logFile?: string;
@@ -143,6 +151,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
+  const operationRepository = new DrizzleOperationRepository(database.db);
   const paneRepository = new DrizzlePaneRepository(database.db);
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots, options.workingDirectory);
@@ -196,6 +205,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     debug: (event: string, fields?: Record<string, unknown>) => logger.debug(event, fields),
   };
   const sessionClock = { now: () => new Date().toISOString(), id: () => randomBytes(16).toString("hex") };
+  const operationService = new OperationService({ repository: operationRepository, clock: sessionClock });
   const sessionAudit = {
     record: (eventType: string, entityId: string, payload: unknown) =>
       recordAuditEvent(database.db, { eventType, entityId, payload }),
@@ -274,6 +284,15 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     confirmCleanup: { confirm: async () => false },
     clock: sessionClock,
   });
+  const startCleanupAgentSession = new StartCleanupAgentSession({
+    operations: operationService,
+    cleanup: cleanupAgentSession,
+  });
+  const reconcileAgentOperations = new ReconcileAgentOperations({
+    operations: operationService,
+    sessions: agentSessionRepository,
+    process: processObservation,
+  });
   application = createMuximodApplication({
     agentSessions: {
       prepareRun: (input, signal) =>
@@ -284,8 +303,13 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       completeRun: (input) => executeAgentSession("complete_run", input, () => runAgentSession.complete(input), logger),
       completeResume: (input) =>
         executeAgentSession("complete_resume", input, () => resumeAgentSession.complete(input), logger),
-      cleanup: (input) => executeAgentSession("cleanup", input, () => cleanupAgentSession.execute(input), logger),
+      startCleanup: (input) =>
+        executeAgentSession("start_cleanup", input, () => startCleanupAgentSession.execute(input), logger),
       list: (input) => listAgentSessions.execute(input),
+    },
+    operations: {
+      get: (operationId) => operationService.get(operationId),
+      cancel: (operationId) => operationService.cancel(operationId),
     },
     getTerminal: () => getLocalTerminal(environment),
     host,
@@ -317,6 +341,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     intervalMs: options.authSweepIntervalMs,
   });
   let controlServer!: MuximodControlServer;
+  const preparedAgentExecutions = new Map<string, PreparedAgentExecution>();
   const auth = new AuthService({
     store: authStore,
     serverId: authStore.serverId,
@@ -340,37 +365,79 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     releaseAgentSession: (request) => applicationForAgentPane().releaseAgentSession(request),
     prepareAgentExecution: async (request, signal) => {
       signal.throwIfAborted();
-      const prepared =
-        request.operation === "run"
-          ? await application.agentSessions.prepareRun(
-              {
-                ...(request.input as Parameters<typeof application.agentSessions.prepareRun>[0]),
-                backendArgs: [...request.input.backendArgs],
-              },
-              signal,
-            )
-          : await application.agentSessions.prepareResume(
-              {
-                ...(request.input as Parameters<typeof application.agentSessions.prepareResume>[0]),
-                backendArgs: [...request.input.backendArgs],
-              },
-              signal,
-            );
-      signal.throwIfAborted();
-      const executionId = prepared.session.executionId;
-      if (executionId === undefined || executionId !== prepared.execution.executionId) {
-        throw new Error("prepared agent session execution identity is incomplete");
+      const operationKind = request.operation === "run" ? "agent_session.run" : "agent_session.resume";
+      const allocation = await operationService.create({
+        kind: operationKind,
+        executor: "client",
+        requestFingerprint: operationFingerprint(request.input),
+        ...(request.input.idempotencyKey === undefined ? {} : { idempotencyKey: request.input.idempotencyKey }),
+      });
+      if (!allocation.created) {
+        const prepared = preparedAgentExecutions.get(allocation.operation.id);
+        if (prepared) return prepared;
+        throw new OperationAlreadyStartedError(allocation.operation.id, allocation.operation.state);
       }
-      return {
-        operation: request.operation,
-        agentSessionId: prepared.session.id,
-        executionId,
-        ...(request.input.hostPaneId === undefined ? {} : { hostPaneId: request.input.hostPaneId }),
-        session: prepared.session,
-        execution: prepared.execution,
-      };
+      try {
+        await operationService.start(allocation.operation.id);
+        const prepared =
+          request.operation === "run"
+            ? await application.agentSessions.prepareRun(
+                {
+                  ...(request.input as Parameters<typeof application.agentSessions.prepareRun>[0]),
+                  backendArgs: [...request.input.backendArgs],
+                },
+                signal,
+              )
+            : await application.agentSessions.prepareResume(
+                {
+                  ...(request.input as Parameters<typeof application.agentSessions.prepareResume>[0]),
+                  backendArgs: [...request.input.backendArgs],
+                },
+                signal,
+              );
+        const executionId = prepared.session.executionId;
+        if (executionId === undefined || executionId !== prepared.execution.executionId) {
+          throw new Error("prepared agent session execution identity is incomplete");
+        }
+        await operationService.setSubject(allocation.operation.id, {
+          type: "agent_session",
+          id: prepared.session.id,
+          executionId,
+        });
+        const result = {
+          operation: request.operation,
+          operationId: allocation.operation.id,
+          agentSessionId: prepared.session.id,
+          executionId,
+          ...(request.input.hostPaneId === undefined ? {} : { hostPaneId: request.input.hostPaneId }),
+          session: prepared.session,
+          execution: prepared.execution,
+        };
+        preparedAgentExecutions.set(allocation.operation.id, result);
+        return result;
+      } catch (error) {
+        await operationService
+          .fail(
+            allocation.operation.id,
+            signal.aborted
+              ? {
+                  code: "client_disconnected",
+                  message: "the client disconnected before agent execution preparation completed",
+                }
+              : error,
+            signal.aborted ? "The client control connection closed during agent execution preparation" : undefined,
+          )
+          .catch(() => undefined);
+        throw error;
+      }
     },
     attachAgentExecution: async (request) => {
+      await operationService.validateAgentExecution(
+        request.operationId,
+        request.operation,
+        request.agentSessionId,
+        request.executionId,
+      );
       await application.agentSessions.attach({
         agentSessionId: request.agentSessionId,
         executionId: request.executionId,
@@ -384,37 +451,84 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       });
     },
     completeAgentExecution: async (request) => {
+      await operationService.validateAgentExecution(
+        request.operationId,
+        request.operation,
+        request.agentSessionId,
+        request.executionId,
+      );
       const input = {
         agentSessionId: request.agentSessionId,
         executionId: request.executionId,
         process: request.result,
         ...(request.hostPaneId === undefined ? {} : { hostPaneId: request.hostPaneId }),
       };
-      if (request.operation === "run") {
-        const completed = await application.agentSessions.completeRun(input);
+      try {
+        if (request.operation === "run") {
+          const completed = await application.agentSessions.completeRun(input);
+          await settleAgentExecutionOperation(operationService, request.operationId, {
+            process: completed.process,
+            session: completed.session,
+            cleanup: completed.cleanup,
+          });
+          preparedAgentExecutions.delete(request.operationId);
+          return {
+            operation: request.operation,
+            operationId: request.operationId,
+            agentSessionId: request.agentSessionId,
+            executionId: request.executionId,
+            process: completed.process,
+            session: completed.session,
+            cleanup: completed.cleanup,
+          };
+        }
+        const completed = await application.agentSessions.completeResume(input);
+        await settleAgentExecutionOperation(operationService, request.operationId, {
+          process: completed.process,
+          session: completed.session,
+        });
+        preparedAgentExecutions.delete(request.operationId);
         return {
           operation: request.operation,
+          operationId: request.operationId,
           agentSessionId: request.agentSessionId,
           executionId: request.executionId,
           process: completed.process,
           session: completed.session,
-          cleanup: completed.cleanup,
         };
+      } catch (error) {
+        await operationService
+          .fail(request.operationId, error, "The host-owned agent execution could not be finalized")
+          .catch(() => undefined);
+        preparedAgentExecutions.delete(request.operationId);
+        throw error;
       }
-      const completed = await application.agentSessions.completeResume(input);
-      return {
-        operation: request.operation,
-        agentSessionId: request.agentSessionId,
-        executionId: request.executionId,
-        process: completed.process,
-        session: completed.session,
-      };
     },
   });
   let controlReady = false;
   const tmuxPollIntervalMs = durationOption(options.tmuxPollIntervalMs, defaultTmuxPollIntervalMs, 1);
   const paneCleanupIntervalMs = durationOption(options.paneCleanupIntervalMs, defaultPaneCleanupIntervalMs, 1);
   const paneRetentionMs = durationOption(options.paneRetentionMs, defaultPaneRetentionMs, 0);
+  const operationRetentionMs = durationOption(options.operationRetentionMs, defaultOperationRetentionMs, 0);
+  const operationCleanupIntervalMs = durationOption(
+    options.operationCleanupIntervalMs,
+    defaultOperationCleanupIntervalMs,
+    1,
+  );
+  let operationCleanupTimer: ReturnType<typeof setInterval> | undefined;
+  const reconcileAndCleanupOperations = async (): Promise<void> => {
+    await reconcileAgentOperations.execute();
+    for (const operationId of preparedAgentExecutions.keys()) {
+      const operation = await operationService.find(operationId);
+      if (!operation || isTerminalOperation(operation.state)) preparedAgentExecutions.delete(operationId);
+    }
+    const before = new Date(Date.now() - operationRetentionMs).toISOString();
+    const removed = await operationService.deleteExpired(before);
+    const removedReceipts = (await agentSessionRepository.deleteExecutionReceiptsBefore?.(before)) ?? 0;
+    if (removed > 0 || removedReceipts > 0) {
+      logger.debug("operation.retention_cleanup", { removed, removedReceipts, before });
+    }
+  };
   let eventRevision = 0;
   const tmuxStateMonitor = new TmuxStateMonitor({
     readPanes: () => tmux.listPanesSnapshot(),
@@ -501,11 +615,20 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         viewportManager.configureHooks(`http://127.0.0.1:${httpServer.port}/internal/tmux-hook`, hookToken);
         await controlServer.start();
         await backend.restoreActiveLaunches();
+        await operationService.recoverDaemonOperations();
+        await reconcileAndCleanupOperations();
         controlReady = true;
         authFlowLifecycle.start();
+        operationCleanupTimer = setInterval(() => {
+          void reconcileAndCleanupOperations().catch((error) => {
+            logger.warn("operation.maintenance_failed", errorFields(error));
+          });
+        }, operationCleanupIntervalMs);
         logger.info("daemon.listening", { host: options.host, port: httpServer.port });
       } catch (error) {
         controlReady = false;
+        if (operationCleanupTimer) clearInterval(operationCleanupTimer);
+        operationCleanupTimer = undefined;
         try {
           authFlowLifecycle.stop();
         } catch {
@@ -546,6 +669,8 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       logger.info("daemon.stopping");
       const cleanup = async (): Promise<void> => {
         const cleanupErrors: unknown[] = [];
+        if (operationCleanupTimer) clearInterval(operationCleanupTimer);
+        operationCleanupTimer = undefined;
         try {
           authFlowLifecycle.stop();
         } catch (error) {
@@ -649,6 +774,18 @@ function setEnvironmentValue(environment: NodeJS.ProcessEnv, key: string, value:
   else environment[key] = value;
 }
 
+function operationFingerprint(input: Record<string, unknown>): string {
+  const { idempotencyKey: _idempotencyKey, executionOwnerPid: _executionOwnerPid, ...stableInput } = input;
+  return JSON.stringify(stableInput);
+}
+
+function isTerminalOperation(state: "queued" | "running" | "succeeded" | "failed" | "cancelled"): boolean {
+  return state === "succeeded" || state === "failed" || state === "cancelled";
+}
+
+const defaultOperationRetentionMs = 7 * 24 * 60 * 60 * 1_000;
+const defaultOperationCleanupIntervalMs = 60 * 60 * 1_000;
+
 type AgentPaneApplication = Pick<
   ReturnType<typeof createMuximodApplication>,
   "adoptAgentSession" | "observeAgentSession" | "releaseAgentSession"
@@ -743,7 +880,7 @@ function observe(
 }
 
 async function executeAgentSession<Result>(
-  operation: "prepare_run" | "prepare_resume" | "attach" | "complete_run" | "complete_resume" | "cleanup",
+  operation: "prepare_run" | "prepare_resume" | "attach" | "complete_run" | "complete_resume" | "start_cleanup",
   input: Record<string, unknown>,
   execute: () => Promise<Result>,
   logger: Logger,

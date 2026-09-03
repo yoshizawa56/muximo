@@ -56,6 +56,7 @@ type ControlContext = {
 };
 
 const request: ControlRequest = { agentSessionId: "session-id", hostPaneId: "%1", executionId: "execution-id-123456" };
+const operationId = "operation-id-123456";
 const executionSession = AgentSession.create({
   id: AgentSessionId.create(request.agentSessionId),
   name: "review",
@@ -181,6 +182,7 @@ const fixture = (
       }
       return {
         operation: input.operation,
+        operationId,
         agentSessionId: executionSession.id,
         executionId: request.executionId,
         hostPaneId: input.input.hostPaneId,
@@ -195,6 +197,7 @@ const fixture = (
       calls.push(`complete:${input.operation}:${input.agentSessionId}:${input.result.code}`);
       return {
         operation: input.operation,
+        operationId: input.operationId,
         agentSessionId: input.agentSessionId,
         executionId: input.executionId,
         process: input.result,
@@ -306,6 +309,7 @@ const cases = [
         {
           type: "agent_execution_prepared",
           operation: "run",
+          operationId,
           agentSessionId: request.agentSessionId,
           executionId: request.executionId,
           hostPaneId: request.hostPaneId,
@@ -314,6 +318,7 @@ const cases = [
         },
         {
           type: "agent_execution_attached",
+          operationId,
           agentSessionId: request.agentSessionId,
           executionId: request.executionId,
           executionPid: 456,
@@ -322,6 +327,7 @@ const cases = [
         {
           type: "agent_execution_completed",
           operation: "run",
+          operationId,
           agentSessionId: request.agentSessionId,
           executionId: request.executionId,
           process: executionProcess,
@@ -409,9 +415,9 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
                   },
                 }
               : step.type === "attach-execution"
-                ? { ...testFixture.request, executionPid: 456, executionStartedAt }
+                ? { ...testFixture.request, operation: "run", operationId, executionPid: 456, executionStartedAt }
                 : step.type === "complete-execution"
-                  ? { ...testFixture.request, operation: "run", result: executionProcess }
+                  ? { ...testFixture.request, operation: "run", operationId, result: executionProcess }
                   : {
                       ...testFixture.request,
                       ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),

@@ -374,8 +374,16 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
       },
       agentSessions: {
         cleanup: os.agentSessions.cleanup.handler(() => ({
-          session: agentSession,
-          cleanup: { disposition: "removed" },
+          operation: {
+            operationId: "operation-test-000000",
+            kind: "agent_session.cleanup",
+            state: "succeeded",
+            createdAt: "2026-08-15T00:00:00.000Z",
+            startedAt: "2026-08-15T00:00:00.000Z",
+            completedAt: "2026-08-15T00:00:00.000Z",
+            updatedAt: "2026-08-15T00:00:00.000Z",
+            result: { session: agentSession, cleanup: { disposition: "removed" } },
+          },
         })),
         list: os.agentSessions.list.handler(() => ({
           allViews: [
@@ -389,6 +397,27 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
             },
           ],
           views: [],
+        })),
+      },
+      operations: {
+        get: os.operations.get.handler(() => ({
+          operationId: "operation-test-000000",
+          kind: "agent_session.cleanup",
+          state: "succeeded",
+          createdAt: "2026-08-15T00:00:00.000Z",
+          startedAt: "2026-08-15T00:00:00.000Z",
+          completedAt: "2026-08-15T00:00:00.000Z",
+          updatedAt: "2026-08-15T00:00:00.000Z",
+          result: { session: agentSession, cleanup: { disposition: "removed" } },
+        })),
+        cancel: os.operations.cancel.handler(() => ({
+          operationId: "operation-test-000000",
+          kind: "agent_session.cleanup",
+          state: "running",
+          createdAt: "2026-08-15T00:00:00.000Z",
+          startedAt: "2026-08-15T00:00:00.000Z",
+          updatedAt: "2026-08-15T00:00:00.000Z",
+          cancelRequestedAt: "2026-08-15T00:00:00.000Z",
         })),
       },
       events: {

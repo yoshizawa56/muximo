@@ -10,7 +10,14 @@ import {
   RunShell,
   type StartAgentSessionInput,
 } from "@muximo/application";
-import type { ResumeAgentSessionResponse, RunAgentSessionResponse } from "@muximo/contract/api";
+import {
+  type CleanupAgentSessionResponse,
+  cleanupAgentSessionResponseSchema,
+  type OperationAcceptedResponse,
+  type OperationStatus,
+  type ResumeAgentSessionResponse,
+  type RunAgentSessionResponse,
+} from "@muximo/contract/api";
 import { AgentSession } from "@muximo/domain";
 import {
   AttachedAgentExecutionAdapter,
@@ -226,27 +233,31 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     if (!hasInteractiveTerminal()) {
       throw new Error("agent execution requires an interactive terminal (stdin, stdout, and stderr must be TTYs)");
     }
-    const daemon = await ensureLocalDaemon();
-    const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
-      requestTimeoutMs: agentExecutionPrepareTimeoutMs,
-    });
-    try {
-      if (request.operation === "run") {
+    return withControlRecovery(async () => {
+      const daemon = await ensureLocalDaemon();
+      const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+        requestTimeoutMs: agentExecutionPrepareTimeoutMs,
+      });
+      try {
+        if (request.operation === "run") {
+          return await control.prepareAgentExecution({
+            operation: "run",
+            input: { ...request.input, executionOwnerPid: process.pid, backendArgs: [...request.input.backendArgs] },
+          });
+        }
         return await control.prepareAgentExecution({
-          operation: "run",
+          operation: "resume",
           input: { ...request.input, executionOwnerPid: process.pid, backendArgs: [...request.input.backendArgs] },
         });
+      } finally {
+        control.close();
       }
-      return await control.prepareAgentExecution({
-        operation: "resume",
-        input: { ...request.input, executionOwnerPid: process.pid, backendArgs: [...request.input.backendArgs] },
-      });
-    } finally {
-      control.close();
-    }
+    }, ensureLocalDaemon);
   };
 
   const attachAgentExecution = async (input: {
+    operation: "run" | "resume";
+    operationId: string;
     agentSessionId: string;
     executionId: string;
     executionPid: number;
@@ -289,28 +300,46 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     operation: "run" | "resume",
     hostPaneId?: string,
   ) => {
+    const processAbort = new AbortController();
+    const pollingStop = new AbortController();
+    const cancellationPoll = watchOperationCancellation(
+      prepared.operationId,
+      processAbort,
+      pollingStop.signal,
+      ensureApi,
+      logger,
+    );
     let attachError: unknown;
     let attachmentPromise: Promise<void> | undefined;
-    const process = await attachedAgentExecution.execute(prepared.execution, {
-      onStarted: (executionPid, executionStartedAt) => {
-        attachmentPromise = attachAgentExecution({
-          agentSessionId: prepared.agentSessionId,
-          executionId: prepared.executionId,
-          executionPid,
-          executionStartedAt,
-          executionOwnerPid: prepared.session.executionOwnerPid,
-          executionOwnerStartedAt: prepared.session.executionOwnerStartedAt,
-          ...(hostPaneId === undefined ? {} : { hostPaneId }),
-        }).catch((error) => {
-          attachError = error;
-          logger.warn("agent.execution_attach_failed", {
-            sessionId: prepared.agentSessionId,
+    let processResult: Awaited<ReturnType<typeof attachedAgentExecution.execute>>;
+    try {
+      processResult = await attachedAgentExecution.execute(prepared.execution, {
+        signal: processAbort.signal,
+        onStarted: (executionPid, executionStartedAt) => {
+          attachmentPromise = attachAgentExecution({
+            operation,
+            operationId: prepared.operationId,
+            agentSessionId: prepared.agentSessionId,
             executionId: prepared.executionId,
-            error,
+            executionPid,
+            executionStartedAt,
+            executionOwnerPid: prepared.session.executionOwnerPid,
+            executionOwnerStartedAt: prepared.session.executionOwnerStartedAt,
+            ...(hostPaneId === undefined ? {} : { hostPaneId }),
+          }).catch((error) => {
+            attachError = error;
+            logger.warn("agent.execution_attach_failed", {
+              sessionId: prepared.agentSessionId,
+              executionId: prepared.executionId,
+              error,
+            });
           });
-        });
-      },
-    });
+        },
+      });
+    } finally {
+      pollingStop.abort();
+      await cancellationPoll;
+    }
     if (attachmentPromise) {
       const attachmentSettled = await Promise.race([
         attachmentPromise.then(() => true),
@@ -333,10 +362,11 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     }
     return completeAgentExecution({
       operation,
+      operationId: prepared.operationId,
       agentSessionId: prepared.agentSessionId,
       executionId: prepared.executionId,
       ...(hostPaneId === undefined ? {} : { hostPaneId }),
-      result: process,
+      result: processResult,
     });
   };
 
@@ -349,6 +379,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         ...(effectiveHostPaneId === undefined ? {} : { hostPaneId: effectiveHostPaneId }),
         cwd,
         backendArgs: [...input.backendArgs],
+        idempotencyKey: randomUUID(),
       },
     });
     const completed = await executePreparedAgent(prepared, "run", effectiveHostPaneId);
@@ -372,21 +403,27 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     }
     if (!(await confirmCleanup(environment, result.session))) return result;
     const api = await ensureApi();
-    const cleanup = await api.agentSessions.cleanup({
+    const accepted = await api.agentSessions.cleanup({
       workspaceScope: "current",
       force: true,
       reference: result.session.name,
+      idempotencyKey: randomUUID(),
     });
+    const cleanup = await waitForCleanupOperation(api, accepted);
     return { ...result, session: cleanup.session, cleanup: cleanup.cleanup };
   };
-  const cleanupAgentSession = async (input: Parameters<MuximodApiClient["agentSessions"]["cleanup"]>[0]) => {
+  const cleanupAgentSession = async (
+    input: Parameters<MuximodApiClient["agentSessions"]["cleanup"]>[0],
+  ): Promise<CleanupAgentSessionResponse> => {
     const api = await ensureApi();
-    if (input.force) return api.agentSessions.cleanup(input);
+    const start = (value: Parameters<MuximodApiClient["agentSessions"]["cleanup"]>[0]) =>
+      api.agentSessions.cleanup({ ...value, idempotencyKey: value.idempotencyKey ?? randomUUID() });
+    if (input.force) return waitForCleanupOperation(api, await start(input));
 
     const session = await findAgentSession(api, input.workspaceScope, input.reference);
-    if (!session?.useWorktree) return api.agentSessions.cleanup(input);
-    if (!(await confirmCleanup(environment, session))) return api.agentSessions.cleanup(input);
-    return api.agentSessions.cleanup({ ...input, force: true });
+    if (!session?.useWorktree) return waitForCleanupOperation(api, await start(input));
+    if (!(await confirmCleanup(environment, session))) return waitForCleanupOperation(api, await start(input));
+    return waitForCleanupOperation(api, await start({ ...input, force: true }));
   };
   const input = options.input ?? process.stdin;
   const pairCommand = new PairCommand({
@@ -499,6 +536,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
               ...input,
               ...(effectiveHostPaneId === undefined ? {} : { hostPaneId: effectiveHostPaneId }),
               backendArgs: [...input.backendArgs],
+              idempotencyKey: randomUUID(),
             },
           });
           const completed = await executePreparedAgent(prepared, "resume", effectiveHostPaneId);
@@ -603,6 +641,69 @@ function stripExecutionPid(processResult: {
     ...(processResult.signal === undefined ? {} : { signal: processResult.signal }),
     ...(processResult.failureDiagnostic === undefined ? {} : { failureDiagnostic: processResult.failureDiagnostic }),
   };
+}
+
+async function waitForCleanupOperation(
+  api: MuximodApiClient,
+  accepted: OperationAcceptedResponse,
+): Promise<CleanupAgentSessionResponse> {
+  const status = await waitForOperation(api, accepted.operation.operationId);
+  if (status.state !== "succeeded") throw operationFailure(status);
+  return cleanupAgentSessionResponseSchema.parse(status.result);
+}
+
+async function waitForOperation(api: MuximodApiClient, operationId: string): Promise<OperationStatus> {
+  while (true) {
+    const status = await api.operations.get(operationId);
+    if (status.state === "succeeded" || status.state === "failed" || status.state === "cancelled") return status;
+    await delay(200);
+  }
+}
+
+async function watchOperationCancellation(
+  operationId: string,
+  processAbort: AbortController,
+  stopSignal: AbortSignal,
+  ensureApi: () => Promise<MuximodApiClient>,
+  logger: Logger,
+): Promise<void> {
+  while (!stopSignal.aborted) {
+    try {
+      const status = await (await ensureApi()).operations.get(operationId);
+      if (status.state === "cancelled" || status.cancelRequestedAt !== undefined) {
+        processAbort.abort(new Error("operation cancellation requested"));
+        return;
+      }
+    } catch (error) {
+      logger.debug("agent.execution_operation_poll_failed", { operationId, error });
+    }
+    if (!(await delay(250, stopSignal))) return;
+  }
+}
+
+function operationFailure(status: OperationStatus): Error & { code: string; details?: Record<string, unknown> } {
+  const code = status.error?.code ?? `operation_${status.state}`;
+  const message = status.error?.message ?? `operation ${status.operationId} ended in ${status.state}`;
+  const error = new Error(message) as Error & { code: string; details?: Record<string, unknown> };
+  error.code = code;
+  if (status.error?.details !== undefined) error.details = status.error.details;
+  return error;
+}
+
+function delay(milliseconds: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function withControlRecovery<Result>(

@@ -9,7 +9,6 @@ import {
   authSessionRequestSchema,
   authSessionResponseSchema,
   cleanupAgentSessionRequestSchema,
-  cleanupAgentSessionResponseSchema,
   createPaneRequestSchema,
   createSessionRequestSchema,
   listAgentSessionsRequestSchema,
@@ -18,6 +17,8 @@ import {
   muximodCapabilitiesSchema,
   muximodEventSchema,
   muximodHealthSchema,
+  operationAcceptedResponseSchema,
+  operationStatusSchema,
   pairingClaimRequestSchema,
   pairingClaimResponseSchema,
   pairingStatusSchema,
@@ -84,8 +85,12 @@ export const muximodContract = {
     create: oc.input(createPaneRequestSchema).output(paneResponseSchema),
   },
   agentSessions: {
-    cleanup: oc.input(cleanupAgentSessionRequestSchema).output(cleanupAgentSessionResponseSchema),
+    cleanup: oc.input(cleanupAgentSessionRequestSchema).output(operationAcceptedResponseSchema),
     list: oc.input(listAgentSessionsRequestSchema).output(agentSessionListResponseSchema),
+  },
+  operations: {
+    get: oc.input(z.object({ operationId: z.string().min(16).max(128) }).strict()).output(operationStatusSchema),
+    cancel: oc.input(z.object({ operationId: z.string().min(16).max(128) }).strict()).output(operationStatusSchema),
   },
   events: {
     subscribe: oc.input(emptyInput).output(eventIterator(muximodEventSchema)),

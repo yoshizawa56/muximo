@@ -22,6 +22,7 @@ const resourceGroups = [
   "sessions",
   "panes",
   "agentSessions",
+  "operations",
 ] as const satisfies readonly ResourceGroup[];
 
 type UnhandledResourceGroup = Exclude<ResourceGroup, (typeof resourceGroups)[number]>;

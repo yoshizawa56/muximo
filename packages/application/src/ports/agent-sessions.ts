@@ -22,6 +22,7 @@ export type StartAgentSessionInput = {
   setupHookExplicit: boolean;
   cleanupHookExplicit: boolean;
   backendArgs: readonly string[];
+  idempotencyKey?: string;
   executionOwnerPid?: number;
 };
 
@@ -31,6 +32,7 @@ export type ResumeAgentSessionInput = {
   reference: string;
   hostPaneId?: string;
   backendArgs: readonly string[];
+  idempotencyKey?: string;
   executionOwnerPid?: number;
 };
 
@@ -39,6 +41,7 @@ export type CleanupAgentSessionInput = {
   workspaceScope: WorkspaceScope;
   force: boolean;
   reference: string;
+  idempotencyKey?: string;
 };
 
 export type WorkspaceScope = "current" | "all";
@@ -331,6 +334,7 @@ export type ManagedAgentSessionRepository = {
   delete(id: AgentSessionRecord["id"]): Promise<void>;
   findExecutionReceipt(executionId: string): Promise<AgentExecutionReceipt | undefined>;
   saveExecutionReceipt(receipt: AgentExecutionReceipt): Promise<void>;
+  deleteExecutionReceiptsBefore?(before: string): Promise<number>;
 };
 
 export type SessionLogger = {

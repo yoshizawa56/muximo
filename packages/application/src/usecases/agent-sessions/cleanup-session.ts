@@ -12,6 +12,7 @@ import type {
   SessionResourcePort,
   WorktreePort,
 } from "../../ports/agent-sessions.js";
+import { OperationCancelledError } from "../../ports/operations.js";
 import type { LocateAgentSession } from "./locate-session.js";
 import { updateAgentSession } from "./session-updates.js";
 
@@ -28,15 +29,33 @@ export type CleanupAgentSessionDependencies = {
   clock: SessionClock;
 };
 
+export type CleanupAgentSessionExecutionOptions = {
+  signal?: AbortSignal;
+  onMutationStarted?: () => void;
+};
+
+export type CleanupAgentSessionPort = {
+  execute(
+    input: CleanupAgentSessionInput,
+    options?: CleanupAgentSessionExecutionOptions,
+  ): Promise<CleanupAgentSessionResult>;
+};
+
 /** Application policy for cleanup with explicit removed, retained, and failed outcomes. */
 export class CleanupAgentSession {
   public constructor(private readonly deps: CleanupAgentSessionDependencies) {}
 
-  public async execute(input: CleanupAgentSessionInput): Promise<CleanupAgentSessionResult> {
+  public async execute(
+    input: CleanupAgentSessionInput,
+    options: CleanupAgentSessionExecutionOptions = {},
+  ): Promise<CleanupAgentSessionResult> {
+    const { signal } = options;
+    throwIfAborted(signal);
     const session = await this.deps.locator.execute({
       reference: input.reference,
       workspaceScope: input.workspaceScope,
     });
+    throwIfAborted(signal);
     if (session.status === "recovering") {
       throw new Error(`session '${session.name}' is being recovered`);
     }
@@ -44,6 +63,7 @@ export class CleanupAgentSession {
       session.executionPid === undefined
         ? undefined
         : await this.deps.process.observe(session.executionPid, session.executionStartedAt);
+    throwIfAborted(signal);
     if (providerLiveness === "alive") {
       throw new Error(`session '${session.name}' is still running (pid ${session.executionPid})`);
     }
@@ -54,6 +74,7 @@ export class CleanupAgentSession {
       session.executionOwnerPid === undefined
         ? undefined
         : await this.deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
+    throwIfAborted(signal);
     if (session.executionOwnerPid !== undefined && isLiveExecutionState(session.status) && ownerLiveness === "alive") {
       throw new Error(`session '${session.name}' is still owned by its CLI process (pid ${session.executionOwnerPid})`);
     }
@@ -77,6 +98,7 @@ export class CleanupAgentSession {
       );
     }
 
+    throwIfAborted(signal);
     const dirty = session.useWorktree ? await this.deps.worktrees.hasChanges(session) : false;
     let force = input.force;
     if (session.useWorktree && !force && !(await this.deps.confirmCleanup.confirm(session, dirty))) {
@@ -84,6 +106,8 @@ export class CleanupAgentSession {
     }
     if (dirty) force = true;
 
+    throwIfAborted(signal);
+    options.onMutationStarted?.();
     const result = await this.removeResources(session, force);
     return { session, cleanup: result };
   }
@@ -118,6 +142,11 @@ export class CleanupAgentSession {
     await this.deps.resources.releaseIfUnused(updated, remaining);
     return result;
   }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw new OperationCancelledError();
 }
 
 function isActiveState(status: AgentSessionRecord["status"]): boolean {

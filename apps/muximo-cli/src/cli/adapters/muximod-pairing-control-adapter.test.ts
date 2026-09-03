@@ -40,6 +40,7 @@ type AdapterContext = {
 };
 
 const executionId = "execution-id-123456";
+const operationId = "operation-id-123456";
 const session = AgentSession.create({
   id: AgentSessionId.create("agent-session-id"),
   name: "review",
@@ -124,6 +125,7 @@ const table: ScenarioTable<AdapterFixture, AdapterKey, AdapterStep, undefined, A
           type: "agent_execution_prepared",
           requestId: request.requestId,
           operation: "run",
+          operationId,
           agentSessionId: session.id,
           executionId,
           hostPaneId: "%1",
@@ -143,6 +145,8 @@ const table: ScenarioTable<AdapterFixture, AdapterKey, AdapterStep, undefined, A
       }
       if (step.type === "attach") {
         const attached = fixture.adapter.attachAgentExecution({
+          operation: "run",
+          operationId,
           agentSessionId: session.id,
           executionId,
           hostPaneId: "%1",
@@ -153,6 +157,7 @@ const table: ScenarioTable<AdapterFixture, AdapterKey, AdapterStep, undefined, A
         fixture.push({
           type: "agent_execution_attached",
           requestId: request.requestId,
+          operationId,
           agentSessionId: session.id,
           executionId,
           executionPid: 456,
@@ -164,6 +169,7 @@ const table: ScenarioTable<AdapterFixture, AdapterKey, AdapterStep, undefined, A
       if (step.type === "complete") {
         const completed = fixture.adapter.completeAgentExecution({
           operation: "run",
+          operationId,
           agentSessionId: session.id,
           executionId,
           hostPaneId: "%1",
@@ -174,6 +180,7 @@ const table: ScenarioTable<AdapterFixture, AdapterKey, AdapterStep, undefined, A
           type: "agent_execution_completed",
           requestId: request.requestId,
           operation: "run",
+          operationId,
           agentSessionId: session.id,
           executionId,
           process: { started: true, code: 0, interrupted: false, signal: null, pid: 456 },

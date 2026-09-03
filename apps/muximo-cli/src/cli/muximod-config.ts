@@ -49,6 +49,8 @@ export function createMuximodConfigResolver(
       tmuxPollIntervalMs: readDuration(options.environment.MUXIMOD_TMUX_POLL_INTERVAL_MS, 1),
       paneCleanupIntervalMs: readDuration(options.environment.MUXIMOD_PANE_CLEANUP_INTERVAL_MS, 1),
       paneRetentionMs: readDuration(options.environment.MUXIMOD_PANE_RETENTION_MS, 0),
+      operationRetentionMs: readDuration(options.environment.MUXIMOD_OPERATION_RETENTION_MS, 0),
+      operationCleanupIntervalMs: readDuration(options.environment.MUXIMOD_OPERATION_CLEANUP_INTERVAL_MS, 1),
     };
   };
 }

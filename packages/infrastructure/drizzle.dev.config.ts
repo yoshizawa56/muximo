@@ -15,6 +15,7 @@ const developmentTables = [
   "agent_sessions",
   "audit_events",
   "codex_session_states",
+  "operations",
   "panes",
   "workspaces",
 ];
