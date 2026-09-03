@@ -127,6 +127,7 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     if (
       response.type !== "agent_execution_prepared" ||
       response.operation !== input.operation ||
+      !response.operationId ||
       response.agentSessionId !== response.session.id ||
       response.executionId !== response.session.executionId
     ) {
@@ -139,6 +140,7 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     const response = await this.request({ type: "attach_agent_execution", ...input });
     if (
       response.type !== "agent_execution_attached" ||
+      response.operationId !== input.operationId ||
       response.agentSessionId !== input.agentSessionId ||
       response.executionId !== input.executionId ||
       response.executionPid !== input.executionPid ||
@@ -155,6 +157,7 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     if (
       response.type !== "agent_execution_completed" ||
       response.operation !== input.operation ||
+      response.operationId !== input.operationId ||
       response.agentSessionId !== input.agentSessionId ||
       response.executionId !== input.executionId
     ) {

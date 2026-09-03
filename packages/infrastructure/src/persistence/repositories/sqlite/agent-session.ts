@@ -186,6 +186,18 @@ export class DrizzleAgentSessionRepository
     this.db().delete(agentExecutionReceipts).where(lt(agentExecutionReceipts.updatedAt, cutoff)).run();
   }
 
+  public async deleteExecutionReceiptsBefore(before: string): Promise<number> {
+    const expired = this.db()
+      .select({ executionId: agentExecutionReceipts.executionId })
+      .from(agentExecutionReceipts)
+      .where(lt(agentExecutionReceipts.updatedAt, before))
+      .all();
+    for (const receipt of expired) {
+      this.db().delete(agentExecutionReceipts).where(eq(agentExecutionReceipts.executionId, receipt.executionId)).run();
+    }
+    return expired.length;
+  }
+
   public async setBackendSessionIdIfMissing(id: AgentSessionId, backendSessionId: string): Promise<boolean> {
     const result = this.db()
       .update(agentSessions)

@@ -67,6 +67,7 @@ type AppFixture = {
   sessionInputs: CreateSessionInput[];
   managedSessionInputs: ManageSessionInput[];
   paneInputs: CreatePaneInput[];
+  operationCalls: Array<{ operation: "get" | "cancel"; operationId: string }>;
   originalFetch: typeof globalThis.fetch;
 };
 type HttpResult = { status: number; body: unknown; allowOrigin: string | null; vary: string | null };
@@ -76,6 +77,10 @@ type HttpInput =
   | { operation: "preflight"; origin: "allowed" | "capacitor" | "denied" };
 type RpcInput =
   | { operation: "info" | "authorized-sessions" | "unauthorized-sessions" }
+  | {
+      operation: "get-operation" | "cancel-operation";
+      input: { operationId: string };
+    }
   | { operation: "list-panes" }
   | {
       operation: "create-session";
@@ -102,6 +107,7 @@ type RpcContext = {
   sessionInputs: readonly CreateSessionInput[];
   managedSessionInputs: readonly ManageSessionInput[];
   paneInputs: readonly CreatePaneInput[];
+  operationCalls: readonly { operation: "get" | "cancel"; operationId: string }[];
 };
 
 const responseMatches = (
@@ -125,6 +131,7 @@ const appFixture =
     const sessionInputs: CreateSessionInput[] = [];
     const managedSessionInputs: ManageSessionInput[] = [];
     const paneInputs: CreatePaneInput[] = [];
+    const operationCalls: Array<{ operation: "get" | "cancel"; operationId: string }> = [];
     const originalFetch = globalThis.fetch;
     const app = createMuximodApp({
       auth: testAuth,
@@ -132,6 +139,7 @@ const appFixture =
         sessionInputs,
         managedSessionInputs,
         paneInputs,
+        operationCalls,
       }),
       configurationFingerprint: "0".repeat(64),
       isReady: () => ready,
@@ -144,7 +152,7 @@ const appFixture =
       return response ?? new Response(null, { status: 101 });
     }) as typeof globalThis.fetch;
     return {
-      fixture: { app, events, sessionInputs, managedSessionInputs, paneInputs, originalFetch },
+      fixture: { app, events, sessionInputs, managedSessionInputs, paneInputs, operationCalls, originalFetch },
       cleanup: () => {
         globalThis.fetch = originalFetch;
       },
@@ -291,6 +299,46 @@ const rpcCases = [
     ],
   },
   {
+    name: "returns a terminal operation status through oRPC",
+    input: { operation: "get-operation", input: { operationId: "operation-test-000000" } },
+    assert: [
+      {
+        name: "returns the requested operation status",
+        check: (context, result) => {
+          if (!result.ok) throw result.error;
+          expect(result.value).toEqual(
+            expect.objectContaining({
+              operationId: "operation-test-000000",
+              kind: "agent_session.cleanup",
+              state: "succeeded",
+            }),
+          );
+          expect(context.operationCalls).toEqual([{ operation: "get", operationId: "operation-test-000000" }]);
+        },
+      },
+    ],
+  },
+  {
+    name: "requests operation cancellation through oRPC",
+    input: { operation: "cancel-operation", input: { operationId: "operation-test-000000" } },
+    assert: [
+      {
+        name: "returns the cancellation request status",
+        check: (context, result) => {
+          if (!result.ok) throw result.error;
+          expect(result.value).toEqual(
+            expect.objectContaining({
+              operationId: "operation-test-000000",
+              state: "running",
+              cancelRequestedAt: "2026-08-15T00:00:00.000Z",
+            }),
+          );
+          expect(context.operationCalls).toEqual([{ operation: "cancel", operationId: "operation-test-000000" }]);
+        },
+      },
+    ],
+  },
+  {
     name: "allows an authenticated session query through oRPC",
     input: { operation: "authorized-sessions" },
     assert: [returns<RpcContext, unknown>([session])],
@@ -388,6 +436,8 @@ const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcCont
       origin: "http://web.example",
       ...(input.operation === "authorized-sessions" ||
       input.operation === "list-panes" ||
+      input.operation === "get-operation" ||
+      input.operation === "cancel-operation" ||
       input.operation === "create-session" ||
       input.operation === "manage-session" ||
       input.operation === "create-pane"
@@ -396,6 +446,8 @@ const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcCont
     };
     const client = createHttpTestClient(connection);
     if (input.operation === "info") return client.authInfo();
+    if (input.operation === "get-operation") return client.getOperation(input.input.operationId);
+    if (input.operation === "cancel-operation") return client.cancelOperation(input.input.operationId);
     if (input.operation === "authorized-sessions" || input.operation === "unauthorized-sessions")
       return client.sessions();
     if (input.operation === "list-panes") return client.panes();
@@ -408,6 +460,7 @@ const rpcTable: OperationTable<AppFixture, "default", RpcInput, unknown, RpcCont
     sessionInputs: [...fixture.sessionInputs],
     managedSessionInputs: [...fixture.managedSessionInputs],
     paneInputs: [...fixture.paneInputs],
+    operationCalls: [...fixture.operationCalls],
   }),
 };
 
@@ -438,12 +491,31 @@ const testAuth: MuximodAuthPort = {
   consumeWebSocketTicket: async () => undefined,
 };
 
+function operationStatus(state: "running" | "succeeded") {
+  return {
+    operationId: "operation-test-000000",
+    kind: "agent_session.cleanup",
+    state,
+    createdAt: "2026-08-15T00:00:00.000Z",
+    ...(state === "running"
+      ? {}
+      : {
+          startedAt: "2026-08-15T00:00:00.000Z",
+          completedAt: "2026-08-15T00:00:00.000Z",
+          result: { session, cleanup: { disposition: "removed" } },
+        }),
+    updatedAt: "2026-08-15T00:00:00.000Z",
+    ...(state === "running" ? { cancelRequestedAt: "2026-08-15T00:00:00.000Z" } : {}),
+  };
+}
+
 function createTestApplication(
   events: Array<{ event: string; client: string }>,
   calls: {
     sessionInputs: CreateSessionInput[];
     managedSessionInputs: ManageSessionInput[];
     paneInputs: CreatePaneInput[];
+    operationCalls: Array<{ operation: "get" | "cancel"; operationId: string }>;
   },
 ): MuximodApplication {
   return {
@@ -463,10 +535,20 @@ function createTestApplication(
       completeResume: async () => {
         throw new Error("not used");
       },
-      cleanup: async () => {
+      startCleanup: async () => {
         throw new Error("not used");
       },
       list: async () => ({ allViews: [], views: [] }),
+    },
+    operations: {
+      get: async (operationId) => {
+        calls.operationCalls.push({ operation: "get", operationId });
+        return operationStatus("succeeded");
+      },
+      cancel: async (operationId) => {
+        calls.operationCalls.push({ operation: "cancel", operationId });
+        return operationStatus("running");
+      },
     },
     terminal: {
       get: async () => ({

@@ -176,6 +176,10 @@ allocation is created.
 
 The Web UI can also create shell or agent panes, choose a new tmux window or split, and select a workspace or managed worktree. Use `muximo --help` for commands and options not shown here.
 
+Long-running operation states, polling, cancellation, restart reconciliation,
+and retention rules are documented in
+[docs/long-running-operations.md](docs/long-running-operations.md).
+
 ## Development
 
 The repository uses `mise` for Bun, Node.js, and tmux versions:
@@ -236,4 +240,5 @@ For the vulnerability reporting path and the current deployment boundary, see [S
 - [LICENSE](LICENSE): MIT License
 - [SECURITY.md](SECURITY.md): vulnerability reporting and deployment warnings
 - [docs/mobile-capacitor.md](docs/mobile-capacitor.md): iOS development and release workflow
+- [docs/long-running-operations.md](docs/long-running-operations.md): long-running operation lifecycle and recovery rules
 - [examples/hooks](examples/hooks/README.md): reusable worktree hook examples

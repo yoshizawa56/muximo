@@ -23,6 +23,38 @@ export const muximodControlMaxResponseBytes = 4 * 1024 * 1024;
 export const muximodControlMaxBufferedResponseBytes = 8 * 1024 * 1024;
 export const muximodControlMaxPendingRequests = 128;
 
+const operationIdWireSchema = z.string().min(16).max(128);
+const operationIdempotencyKeySchema = z.string().trim().min(1).max(256);
+const operationStateSchema = z.enum(["queued", "running", "succeeded", "failed", "cancelled"]);
+const operationErrorSchema = z
+  .object({
+    code: z.string().min(1).max(120),
+    message: z.string().min(1).max(4_096),
+    details: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const operationStatusSchema = z
+  .object({
+    operationId: operationIdWireSchema,
+    kind: z.string().min(1).max(120),
+    state: operationStateSchema,
+    createdAt: z.string().datetime(),
+    startedAt: z.string().datetime().optional(),
+    completedAt: z.string().datetime().optional(),
+    updatedAt: z.string().datetime(),
+    result: z.unknown().optional(),
+    error: operationErrorSchema.optional(),
+    diagnostic: z.string().trim().min(1).max(4_096).optional(),
+    logReference: z.string().trim().min(1).max(4_096).optional(),
+    cancelRequestedAt: z.string().datetime().optional(),
+  })
+  .strict();
+export type OperationStatus = z.infer<typeof operationStatusSchema>;
+
+export const operationAcceptedResponseSchema = z.object({ operation: operationStatusSchema }).strict();
+export type OperationAcceptedResponse = z.infer<typeof operationAcceptedResponseSchema>;
+
 /** Largest image (in bytes) the mobile client may paste into a pane. */
 export const maxPasteImageBytes = 10 * 1024 * 1024;
 /** Base64 encoding of `maxPasteImageBytes`, used to bound the wire message. */
@@ -119,6 +151,7 @@ const agentSessionStartInputSchema = z
     setupHookExplicit: z.boolean(),
     cleanupHookExplicit: z.boolean(),
     backendArgs: z.array(agentSessionArgumentSchema).max(256),
+    idempotencyKey: operationIdempotencyKeySchema.optional(),
     executionOwnerPid: z.number().int().positive().optional(),
   })
   .strict();
@@ -128,6 +161,7 @@ const agentSessionResumeInputSchema = z
     reference: z.string().trim().min(1).max(256),
     hostPaneId: hostPaneIdWireSchema.optional(),
     backendArgs: z.array(agentSessionArgumentSchema).max(256),
+    idempotencyKey: operationIdempotencyKeySchema.optional(),
     executionOwnerPid: z.number().int().positive().optional(),
   })
   .strict();
@@ -295,6 +329,8 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("attach_agent_execution"),
       requestId: controlRequestIdSchema,
+      operation: z.enum(["run", "resume"]),
+      operationId: operationIdWireSchema,
       agentSessionId: z.string().min(1).max(128),
       executionId: z.string().min(16).max(128),
       hostPaneId: hostPaneIdWireSchema.optional(),
@@ -309,6 +345,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
       type: z.literal("complete_agent_execution"),
       requestId: controlRequestIdSchema,
       operation: z.enum(["run", "resume"]),
+      operationId: operationIdWireSchema,
       agentSessionId: z.string().min(1).max(128),
       executionId: z.string().min(16).max(128),
       hostPaneId: hostPaneIdWireSchema.optional(),
@@ -404,6 +441,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
       type: z.literal("agent_execution_prepared"),
       requestId: controlRequestIdSchema,
       operation: z.enum(["run", "resume"]),
+      operationId: operationIdWireSchema,
       agentSessionId: z.string().min(1).max(128),
       executionId: z.string().min(16).max(128),
       hostPaneId: hostPaneIdWireSchema.optional(),
@@ -415,6 +453,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("agent_execution_attached"),
       requestId: controlRequestIdSchema,
+      operationId: operationIdWireSchema,
       agentSessionId: z.string().min(1).max(128),
       executionId: z.string().min(16).max(128),
       executionPid: z.number().int().positive(),
@@ -426,6 +465,7 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
       type: z.literal("agent_execution_completed"),
       requestId: controlRequestIdSchema,
       operation: z.enum(["run", "resume"]),
+      operationId: operationIdWireSchema,
       agentSessionId: z.string().min(1).max(128),
       executionId: z.string().min(16).max(128),
       process: agentExecutionProcessResultSchema,
@@ -652,6 +692,7 @@ export const cleanupAgentSessionRequestSchema = z
     workspaceScope: agentSessionWorkspaceScopeSchema,
     force: z.boolean(),
     reference: z.string().trim().min(1).max(256),
+    idempotencyKey: operationIdempotencyKeySchema.optional(),
   })
   .strict();
 export type CleanupAgentSessionRequest = z.infer<typeof cleanupAgentSessionRequestSchema>;

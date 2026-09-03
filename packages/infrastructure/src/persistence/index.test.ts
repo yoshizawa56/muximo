@@ -344,7 +344,7 @@ const cases = [
       hasObserved<DatabaseContext, DatabaseResult>("workspace", workspace),
       hasObserved<DatabaseContext, DatabaseResult>("session", session),
       hasObserved<DatabaseContext, DatabaseResult>("auditCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 10),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 11),
     ],
   },
   {
@@ -369,7 +369,7 @@ const cases = [
     steps: [{ type: "verify-pending" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("probeCount", 1),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 11),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 12),
     ],
   },
   {
@@ -378,7 +378,7 @@ const cases = [
     steps: [{ type: "verify-restart" }],
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("pane", pane),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 10),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 11),
       hasObserved<DatabaseContext, DatabaseResult>("tmuxServerDefault", null),
     ],
   },
@@ -389,7 +389,7 @@ const cases = [
     assert: [
       hasObserved<DatabaseContext, DatabaseResult>("legacyPaneAfterMigration", undefined),
       matchesObserved<DatabaseResult>("currentPaneAfterMigration", { id: "pane-current-migrated" }),
-      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 10),
+      hasObserved<DatabaseContext, DatabaseResult>("migrationCount", 11),
     ],
   },
   {

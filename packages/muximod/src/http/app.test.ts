@@ -118,10 +118,18 @@ const fixture = (): FixtureHandle<SocketFixture> => {
       completeResume: async () => {
         throw new Error("not used");
       },
-      cleanup: async () => {
+      startCleanup: async () => {
         throw new Error("not used");
       },
       list: async () => ({ allViews: [], views: [] }),
+    },
+    operations: {
+      get: async () => {
+        throw new Error("not used");
+      },
+      cancel: async () => {
+        throw new Error("not used");
+      },
     },
     terminal: {
       get: async () => ({

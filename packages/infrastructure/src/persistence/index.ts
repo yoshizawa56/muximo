@@ -32,12 +32,21 @@ export { resolveMuximodPaths } from "./paths.js";
 export { AuthStore } from "./repositories/sqlite/auth.js";
 export {
   DrizzleAgentSessionRepository,
+  DrizzleOperationRepository,
   DrizzlePaneRepository,
   DrizzleRepositoryBase,
   DrizzleWorkspaceRepository,
   recordAuditEvent,
 } from "./repositories/sqlite/index.js";
-export { agentExecutionReceipts, agentSessions, auditEvents, codexSessionStates, panes, workspaces } from "./schema.js";
+export {
+  agentExecutionReceipts,
+  agentSessions,
+  auditEvents,
+  codexSessionStates,
+  operations,
+  panes,
+  workspaces,
+} from "./schema.js";
 export {
   createMigrationSchemaSynchronizer,
   createPushSchemaSynchronizer,

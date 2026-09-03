@@ -4,7 +4,6 @@ import type {
   AgentSessionListResult,
   AttachAgentSessionInput,
   CleanupAgentSessionInput,
-  CleanupAgentSessionResult,
   CompleteAgentSessionInput,
   PreparedAgentSession,
   ResumeAgentSessionInput,
@@ -12,6 +11,7 @@ import type {
   RunAgentSessionResult,
   StartAgentSessionInput,
 } from "./agent-sessions.js";
+import type { OperationApplication, OperationStatus } from "./operations.js";
 
 export type ApplicationClock = {
   now(): string;
@@ -113,7 +113,7 @@ export type MuximodAgentSessionApplication = {
   attach(input: AttachAgentSessionInput): Promise<void>;
   completeRun(input: CompleteAgentSessionInput): Promise<RunAgentSessionResult>;
   completeResume(input: CompleteAgentSessionInput): Promise<ResumeAgentSessionResult>;
-  cleanup(input: CleanupAgentSessionInput): Promise<CleanupAgentSessionResult>;
+  startCleanup(input: CleanupAgentSessionInput): Promise<OperationStatus>;
   list(input: AgentSessionListInput): Promise<AgentSessionListResult>;
 };
 
@@ -123,6 +123,7 @@ export type MuximodAgentSessionApplication = {
  */
 export type MuximodApplication = {
   agentSessions: MuximodAgentSessionApplication;
+  operations: OperationApplication;
   terminal: {
     get(): Promise<MuximodTerminalEndpoint>;
   };

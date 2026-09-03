@@ -2,7 +2,6 @@ import type {
   AgentSessionListResult,
   AuthPairingClaimRequest as ApplicationAuthPairingClaimRequest,
   CleanupAgentSessionInput,
-  CleanupAgentSessionResult,
   CreatePaneInput,
   CreateSessionInput,
   ManageSessionInput,
@@ -10,6 +9,7 @@ import type {
   MuximodSessionSummary,
   MuximodTerminalEndpoint,
   MuximodWorkspaceDirectory,
+  OperationStatus,
   RegisterWorkspaceCommand,
   UpdateWorkspaceCommand,
 } from "@muximo/application";
@@ -19,10 +19,11 @@ import {
   authInfoSchema,
   type CreatePaneRequest,
   type CreateSessionRequest,
-  cleanupAgentSessionResponseSchema,
   type ManageSessionRequest,
   muximodCapabilitiesSchema,
   muximodContract,
+  operationAcceptedResponseSchema,
+  operationStatusSchema,
   type pairingClaimRequestSchema,
   pairingStatusSchema,
   paneSummarySchema,
@@ -209,8 +210,8 @@ function toProtocolPane(value: MuximodPaneSummary) {
   });
 }
 
-function toProtocolCleanupAgentSession(value: CleanupAgentSessionResult) {
-  return cleanupAgentSessionResponseSchema.parse(value);
+function toProtocolOperationStatus(value: OperationStatus) {
+  return operationStatusSchema.parse(value);
 }
 
 function toProtocolAgentSessionList(value: AgentSessionListResult) {
@@ -364,9 +365,11 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
       cleanup: os.agentSessions.cleanup.handler(({ input, context }) =>
         safeAsyncCall(
           async () =>
-            toProtocolCleanupAgentSession(
-              await deps.application.agentSessions.cleanup(toApplicationCleanupAgentSession(input)),
-            ),
+            operationAcceptedResponseSchema.parse({
+              operation: toProtocolOperationStatus(
+                await deps.application.agentSessions.startCleanup(toApplicationCleanupAgentSession(input)),
+              ),
+            }),
           context,
         ),
       ),
@@ -378,6 +381,14 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
             ),
           context,
         ),
+      ),
+    },
+    operations: {
+      get: os.operations.get.handler(({ input, context }) =>
+        safeAsyncCall(() => deps.application.operations.get(input.operationId), context),
+      ),
+      cancel: os.operations.cancel.handler(({ input, context }) =>
+        safeAsyncCall(() => deps.application.operations.cancel(input.operationId), context),
       ),
     },
     panes: {

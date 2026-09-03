@@ -111,6 +111,31 @@ export const agentExecutionReceipts = sqliteTable("agent_execution_receipts", {
   ...timestamps,
 });
 
+export const operations = sqliteTable(
+  "operations",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    executor: text("executor", { enum: ["client", "daemon"] }).notNull(),
+    state: text("state", { enum: ["queued", "running", "succeeded", "failed", "cancelled"] }).notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    idempotencyKey: text("idempotency_key"),
+    subject: text("subject"),
+    result: text("result"),
+    error: text("error"),
+    diagnostic: text("diagnostic"),
+    logReference: text("log_reference"),
+    cancelRequestedAt: text("cancel_requested_at"),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    ...timestamps,
+  },
+  (table) => ({
+    idempotencyIndex: uniqueIndex("operations_kind_idempotency_key_index").on(table.kind, table.idempotencyKey),
+    stateIndex: index("operations_state_index").on(table.state),
+  }),
+);
+
 /** Provider-owned Codex implementation state; it is intentionally outside the domain aggregate. */
 export const codexSessionStates = sqliteTable("codex_session_states", {
   agentSessionId: text("agent_session_id")
@@ -127,3 +152,4 @@ export type PaneRow = typeof panes.$inferSelect;
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type AgentSessionRow = typeof agentSessions.$inferSelect;
 export type CodexSessionStateRow = typeof codexSessionStates.$inferSelect;
+export type OperationRow = typeof operations.$inferSelect;

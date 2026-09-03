@@ -42,6 +42,7 @@ type AgentExecutionCompleteRequest = Extract<MuximodControlRequest, { type: "com
 
 export type PreparedAgentExecution = {
   operation: AgentExecutionPrepareRequest["operation"];
+  operationId: string;
   agentSessionId: string;
   executionId: string;
   hostPaneId?: string;
@@ -51,6 +52,7 @@ export type PreparedAgentExecution = {
 
 export type CompletedAgentExecution = {
   operation: AgentExecutionCompleteRequest["operation"];
+  operationId: string;
   agentSessionId: string;
   executionId: string;
   process: AgentExecutionResult;
@@ -289,6 +291,7 @@ export class MuximodControlServer {
           type: "agent_execution_prepared",
           requestId: request.requestId,
           operation: prepared.operation,
+          operationId: prepared.operationId,
           agentSessionId: prepared.agentSessionId,
           executionId: prepared.executionId,
           ...(prepared.hostPaneId === undefined ? {} : { hostPaneId: prepared.hostPaneId }),
@@ -308,6 +311,7 @@ export class MuximodControlServer {
         this.send(socket, {
           type: "agent_execution_attached",
           requestId: request.requestId,
+          operationId: request.operationId,
           agentSessionId: request.agentSessionId,
           executionId: request.executionId,
           executionPid: request.executionPid,
@@ -323,6 +327,7 @@ export class MuximodControlServer {
           type: "agent_execution_completed",
           requestId: request.requestId,
           operation: completed.operation,
+          operationId: completed.operationId,
           agentSessionId: completed.agentSessionId,
           executionId: completed.executionId,
           process: completed.process,

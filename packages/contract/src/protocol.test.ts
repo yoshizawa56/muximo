@@ -24,6 +24,8 @@ import {
   muximodControlResponseSchema,
   muximodEventSchema,
   muximodHealthSchema,
+  operationAcceptedResponseSchema,
+  operationStatusSchema,
   paneListResponseSchema,
   serverControlMessageSchema,
   terminalProtocolVersion,
@@ -272,6 +274,56 @@ const serverCases = [
     assert: [isInvalid()],
   },
 ] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+
+const operationStatus = {
+  operationId: "operation-id-123456",
+  kind: "agent_session.cleanup",
+  state: "failed",
+  createdAt: "2026-08-30T00:00:00.000Z",
+  startedAt: "2026-08-30T00:00:01.000Z",
+  completedAt: "2026-08-30T00:00:02.000Z",
+  updatedAt: "2026-08-30T00:00:02.000Z",
+  result: { cleanup: { disposition: "failed", reason: "cleanup_hook_failed" } },
+  error: {
+    code: "agent_cleanup_failed",
+    message: "agent session cleanup failed",
+    details: { retryable: false },
+  },
+  diagnostic: "cleanup hook output is available",
+  logReference: "/tmp/muximo-cleanup.log",
+  cancelRequestedAt: "2026-08-30T00:00:01.500Z",
+} as const;
+
+const operationStatusCases = [
+  {
+    name: "accepts a terminal operation status with result and structured failure",
+    input: operationStatus,
+    assert: [isValid(operationStatus)],
+  },
+  {
+    name: "rejects an operation status with an unsupported state",
+    input: { ...operationStatus, state: "pending" },
+    assert: [isInvalid(["state"])],
+  },
+  {
+    name: "rejects an operation error with an unknown field",
+    input: { ...operationStatus, error: { ...operationStatus.error, retryable: false } },
+    assert: [isInvalid(["error"])],
+  },
+] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+
+const operationAcceptedCases = [
+  {
+    name: "accepts an operation accepted response",
+    input: { operation: operationStatus },
+    assert: [isValid({ operation: operationStatus })],
+  },
+] satisfies readonly OperationCase<"default", unknown, ValidationResult, EmptyContext>[];
+
+const operationStatusTable: OperationTable<undefined, "default", unknown, ValidationResult, EmptyContext> =
+  createValidationTable(operationStatusCases, operationStatusSchema);
+const operationAcceptedTable: OperationTable<undefined, "default", unknown, ValidationResult, EmptyContext> =
+  createValidationTable(operationAcceptedCases, operationAcceptedResponseSchema);
 
 const eventCases = [
   {
@@ -607,6 +659,8 @@ const pairingCases = [
       value: {
         type: "attach_agent_execution",
         requestId: controlRequestId,
+        operation: "run",
+        operationId: "operation-id-123456",
         agentSessionId: "session-id",
         executionId: "execution-id-123456",
         hostPaneId: "%1",
@@ -641,6 +695,7 @@ const pairingCases = [
         type: "complete_agent_execution",
         requestId: controlRequestId,
         operation: "run",
+        operationId: "operation-id-123456",
         agentSessionId: "session-id",
         executionId: "execution-id-123456",
         hostPaneId: "%1",
@@ -657,6 +712,7 @@ const pairingCases = [
         type: "agent_execution_prepared",
         requestId: controlRequestId,
         operation: "run",
+        operationId: "operation-id-123456",
         agentSessionId: "session-id",
         executionId: "execution-id-123456",
         hostPaneId: "%1",
@@ -696,6 +752,7 @@ const pairingCases = [
         type: "agent_execution_prepared",
         requestId: controlRequestId,
         operation: "run",
+        operationId: "operation-id-123456",
         agentSessionId: "session-id",
         executionId: "execution-id-123456",
         session: {
@@ -733,6 +790,7 @@ const pairingCases = [
       value: {
         type: "agent_execution_attached",
         requestId: controlRequestId,
+        operationId: "operation-id-123456",
         agentSessionId: "session-id",
         executionId: "execution-id-123456",
         executionPid: 4321,
@@ -749,6 +807,7 @@ const pairingCases = [
         type: "agent_execution_completed",
         requestId: controlRequestId,
         operation: "run",
+        operationId: "operation-id-123456",
         agentSessionId: "session-id",
         executionId: "execution-id-123456",
         process: { started: true, code: 0, interrupted: false, signal: null, pid: 4321 },
@@ -1134,6 +1193,8 @@ describe("protocol schemas", () => {
   runOperationTable(register, createValidationTable(eventCases, muximodEventSchema));
   runOperationTable(register, createValidationTable(healthCases, muximodHealthSchema));
   runOperationTable(register, createValidationTable(capabilitiesCases, muximodCapabilitiesSchema));
+  runOperationTable(register, operationStatusTable);
+  runOperationTable(register, operationAcceptedTable);
   runOperationTable(register, pairingTable);
   runOperationTable(register, createValidationTable(paneListCases, paneListResponseSchema));
   runOperationTable(register, paneCreateTable);

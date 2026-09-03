@@ -3,13 +3,16 @@ import { z } from "zod";
 const paneIdSchema = z.string().min(1).brand<"PaneId">();
 const workspaceIdSchema = z.string().min(1).brand<"WorkspaceId">();
 const agentSessionIdSchema = z.string().min(1).brand<"AgentSessionId">();
+const operationIdSchema = z.string().min(1).brand<"OperationId">();
 const paneIdValueSchema = z.string().min(1);
 const workspaceIdValueSchema = z.string().min(1);
 const agentSessionIdValueSchema = z.string().min(1);
+const operationIdValueSchema = z.string().min(1);
 
 export type PaneId = z.infer<typeof paneIdSchema>;
 export type WorkspaceId = z.infer<typeof workspaceIdSchema>;
 export type AgentSessionId = z.infer<typeof agentSessionIdSchema>;
+export type OperationId = z.infer<typeof operationIdSchema>;
 
 export const PaneId = {
   schema: paneIdSchema,
@@ -32,5 +35,13 @@ export const AgentSessionId = {
   valueSchema: agentSessionIdValueSchema,
   create(value: string): AgentSessionId {
     return agentSessionIdSchema.parse(value);
+  },
+} as const;
+
+export const OperationId = {
+  schema: operationIdSchema,
+  valueSchema: operationIdValueSchema,
+  create(value: string): OperationId {
+    return operationIdSchema.parse(value);
   },
 } as const;

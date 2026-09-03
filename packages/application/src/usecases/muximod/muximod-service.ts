@@ -12,6 +12,7 @@ import type {
   MuximodWorkspaceCatalogPort,
   TerminalHostSnapshot,
 } from "../../ports/host.js";
+import type { OperationApplication } from "../../ports/operations.js";
 import type { AgentSessionRepository, PaneRepository, WorkspaceRepository } from "../../ports/repositories.js";
 import { adoptAgentSession } from "../agents/adopt-agent-session.js";
 import { observeAgentSession } from "../agents/observe-agent-session.js";
@@ -30,6 +31,7 @@ import type { UpdateWorkspace } from "../workspaces/update-workspace.js";
 
 export type MuximodApplicationResources = {
   agentSessions: MuximodAgentSessionApplication;
+  operations: OperationApplication;
   getTerminal: () => Promise<MuximodTerminalEndpoint>;
   host: MuximodHostPort;
   sessionManagement: MuximodSessionManagementPort;
@@ -82,6 +84,7 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
   } = resources;
   return {
     agentSessions: resources.agentSessions,
+    operations: resources.operations,
     terminal: { get: resources.getTerminal },
     workspaces: {
       list: async () =>

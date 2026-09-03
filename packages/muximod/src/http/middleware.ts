@@ -49,6 +49,7 @@ function mapExternalError(code: string, message: string): { code: string; messag
 export function errorStatus(code: string, status: unknown): MuximodHttpStatus {
   if (isMuximodHttpStatus(status)) return status;
   if (code === "pairing_not_found" || code === "workspace_not_found") return 404;
+  if (code === "operation_not_found") return 404;
   if (code === "pairing_expired" || code === "claim_token_expired") return 410;
   if (
     code === "pairing_unavailable" ||
@@ -56,7 +57,9 @@ export function errorStatus(code: string, status: unknown): MuximodHttpStatus {
     code === "pairing_not_rejectable" ||
     code === "session_exists" ||
     code === "workspace_already_registered" ||
-    code === "workspace_name_ambiguous"
+    code === "workspace_name_ambiguous" ||
+    code === "operation_idempotency_conflict" ||
+    code === "operation_already_started"
   )
     return 409;
   if (
