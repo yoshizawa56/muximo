@@ -1,5 +1,6 @@
 // Polling and stale-pane observation are terminal infrastructure concerns.
 import type { PaneId } from "@muximo/domain";
+import { classifyTerminalCommand } from "./observation.js";
 import type { TmuxLiveSnapshot, TmuxPane } from "./tmux.js";
 
 export type TmuxPaneChangeReason = "pane_created" | "pane_deleted" | "pane_changed";
@@ -31,6 +32,9 @@ export type TmuxStateMonitorOptions = {
 export const defaultTmuxPollIntervalMs = 1_000;
 export const defaultPaneCleanupIntervalMs = 60_000;
 export const defaultPaneRetentionMs = 10 * 60_000;
+export const minimumTmuxPollIntervalMs = 1_000;
+export const minimumPaneCleanupIntervalMs = 1_000;
+export const minimumPaneRetentionMs = 1_000;
 
 /**
  * Polls tmux as the live source of truth and reports coalesced changes.
@@ -42,6 +46,8 @@ export const defaultPaneRetentionMs = 10 * 60_000;
 export class TmuxStateMonitor {
   private readonly intervalMs: number;
   private previous = new Map<string, PaneSnapshot>();
+  private lastSuccessfulLiveFingerprint: string | undefined;
+  private activePaneIds: readonly PaneId[] = [];
   private timer: NodeJS.Timeout | undefined;
   private busy = false;
   private initialized = false;
@@ -51,9 +57,25 @@ export class TmuxStateMonitor {
   private lastCleanupAttemptAt = Number.NEGATIVE_INFINITY;
 
   public constructor(private readonly options: TmuxStateMonitorOptions) {
-    this.intervalMs = Math.max(1, options.intervalMs ?? defaultTmuxPollIntervalMs);
-    this.cleanupIntervalMs = Math.max(1, options.cleanupIntervalMs ?? defaultPaneCleanupIntervalMs);
-    this.paneRetentionMs = Math.max(0, options.paneRetentionMs ?? defaultPaneRetentionMs);
+    this.intervalMs = requireDuration(
+      options.intervalMs,
+      defaultTmuxPollIntervalMs,
+      minimumTmuxPollIntervalMs,
+      "tmux poll interval",
+    );
+    this.cleanupIntervalMs = requireDuration(
+      options.cleanupIntervalMs,
+      defaultPaneCleanupIntervalMs,
+      minimumPaneCleanupIntervalMs,
+      "pane cleanup interval",
+    );
+    this.paneRetentionMs = requireDuration(
+      options.paneRetentionMs,
+      defaultPaneRetentionMs,
+      minimumPaneRetentionMs,
+      "pane retention",
+      true,
+    );
     this.now = options.now ?? Date.now;
   }
 
@@ -76,23 +98,35 @@ export class TmuxStateMonitor {
     this.busy = true;
     try {
       const live = this.options.readPanes();
-      if (!live.available) return;
-      const synchronization = await this.options.synchronize(live);
-      const synchronized = "activePaneIds" in synchronization ? synchronization : { activePaneIds: synchronization };
-      const activePaneIds = synchronized.activePaneIds;
-      const paneStates = "paneStates" in synchronized ? synchronized.paneStates : undefined;
-      const paneRecentOutputs = "paneRecentOutputs" in synchronized ? synchronized.paneRecentOutputs : undefined;
-      const current = snapshot(live.panes, paneStates, paneRecentOutputs);
-      if (!this.initialized) {
-        this.previous = current;
-        this.initialized = true;
-      } else {
-        const changes = diff(this.previous, current, live.panes);
-        this.previous = current;
-        if (changes.length) this.options.onChange(changes);
+      if (!live.available) {
+        this.lastSuccessfulLiveFingerprint = undefined;
+        return;
       }
 
-      await this.cleanupIfDue(live, activePaneIds);
+      const currentLiveFingerprint = liveSnapshotFingerprint(live);
+      const shouldSynchronize =
+        !this.initialized ||
+        this.lastSuccessfulLiveFingerprint !== currentLiveFingerprint ||
+        requiresDynamicSynchronization(live.panes);
+      if (shouldSynchronize) {
+        const synchronization = await this.options.synchronize(live);
+        const synchronized = "activePaneIds" in synchronization ? synchronization : { activePaneIds: synchronization };
+        const paneStates = "paneStates" in synchronized ? synchronized.paneStates : undefined;
+        const paneRecentOutputs = "paneRecentOutputs" in synchronized ? synchronized.paneRecentOutputs : undefined;
+        const current = snapshot(live.panes, paneStates, paneRecentOutputs);
+        if (!this.initialized) {
+          this.previous = current;
+          this.initialized = true;
+        } else {
+          const changes = diff(this.previous, current, live.panes);
+          this.previous = current;
+          if (changes.length) this.options.onChange(changes);
+        }
+        this.activePaneIds = synchronized.activePaneIds;
+        this.lastSuccessfulLiveFingerprint = currentLiveFingerprint;
+      }
+
+      await this.cleanupIfDue(live, this.activePaneIds);
     } catch {
       // A tmux server can disappear between reads. Keep the previous snapshot
       // so a later successful read can still produce the appropriate change.
@@ -124,6 +158,21 @@ export class TmuxStateMonitor {
       // must not stop live tmux reconciliation or event delivery.
     }
   }
+}
+
+function requireDuration(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  name: string,
+  allowZero = false,
+): number {
+  const configured = value ?? fallback;
+  const valid = (allowZero && configured === 0) || configured >= minimum;
+  if (!Number.isInteger(configured) || !valid) {
+    throw new Error(`${name} must be ${allowZero ? `0 or an integer >= ${minimum}` : `an integer >= ${minimum}`}`);
+  }
+  return configured;
 }
 
 type PaneSnapshot = {
@@ -172,9 +221,30 @@ function paneFingerprint(pane: TmuxPane, state?: string, recentOutput?: string):
     pane.muximodKind,
     pane.muximodAgentId,
     pane.muximodManagedSessionId,
+    pane.isMuximoMobileViewport,
     state,
     recentOutput,
   ]);
+}
+
+function liveSnapshotFingerprint(live: TmuxLiveSnapshot): string {
+  return JSON.stringify([
+    live.available,
+    live.tmuxServerId,
+    live.tmuxServerScope,
+    [...live.panes].sort((left, right) => left.paneId.localeCompare(right.paneId)).map((pane) => paneFingerprint(pane)),
+  ]);
+}
+
+function requiresDynamicSynchronization(panes: readonly TmuxPane[]): boolean {
+  // Managed executions report state through the control channel, but they
+  // still need reconciliation for process liveness and stale metadata.
+  return panes.some(
+    (pane) =>
+      pane.muximodSessionId !== undefined ||
+      pane.muximodKind === "agent" ||
+      classifyTerminalCommand(pane.command).kind === "agent",
+  );
 }
 
 function diff(

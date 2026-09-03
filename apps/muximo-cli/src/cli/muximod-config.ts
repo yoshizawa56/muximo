@@ -4,6 +4,7 @@ import type { DaemonOptions } from "@muximo/application";
 import { allowedRootsFromEnvironment, normalizeAllowedOrigins } from "@muximo/infrastructure/cli-client";
 import {
   type MuximodConfig,
+  minimumMuximodIntervalMs,
   resolveMuximodClientPaths,
   validateMuximodControlSocketPath,
 } from "@muximo/muximod/client";
@@ -45,10 +46,13 @@ export function createMuximodConfigResolver(
       logFile,
       workingDirectory,
       runtimeEnvironment: resolveRuntimeEnvironment(options.environment, workingDirectory, options.runtime),
-      authSweepIntervalMs: readDuration(options.environment.MUXIMOD_AUTH_SWEEP_INTERVAL_MS, 1),
-      tmuxPollIntervalMs: readDuration(options.environment.MUXIMOD_TMUX_POLL_INTERVAL_MS, 1),
-      paneCleanupIntervalMs: readDuration(options.environment.MUXIMOD_PANE_CLEANUP_INTERVAL_MS, 1),
-      paneRetentionMs: readDuration(options.environment.MUXIMOD_PANE_RETENTION_MS, 0),
+      authSweepIntervalMs: readDuration(options.environment.MUXIMOD_AUTH_SWEEP_INTERVAL_MS, minimumMuximodIntervalMs),
+      tmuxPollIntervalMs: readDuration(options.environment.MUXIMOD_TMUX_POLL_INTERVAL_MS, minimumMuximodIntervalMs),
+      paneCleanupIntervalMs: readDuration(
+        options.environment.MUXIMOD_PANE_CLEANUP_INTERVAL_MS,
+        minimumMuximodIntervalMs,
+      ),
+      paneRetentionMs: readDuration(options.environment.MUXIMOD_PANE_RETENTION_MS, minimumMuximodIntervalMs, true),
     };
   };
 }
@@ -89,11 +93,12 @@ function resolveConfiguredPath(value: string, baseDirectory: string): string {
   return resolve(isAbsolute(expanded) ? expanded : resolve(baseDirectory, expanded));
 }
 
-function readDuration(value: string | undefined, minimum: number): number | undefined {
+function readDuration(value: string | undefined, minimum: number, allowZero = false): number | undefined {
   if (value === undefined) return undefined;
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < minimum) {
-    throw new Error(`duration must be an integer >= ${minimum}`);
+  const valid = (allowZero && parsed === 0) || parsed >= minimum;
+  if (!Number.isInteger(parsed) || !valid) {
+    throw new Error(`duration must be ${allowZero ? `0 or an integer >= ${minimum}` : `an integer >= ${minimum}`}`);
   }
   return parsed;
 }

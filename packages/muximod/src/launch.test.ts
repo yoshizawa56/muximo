@@ -90,10 +90,35 @@ const bootstrapSizeTable: OperationTable<undefined, "default", "oversized", Muxi
   observe: () => ({}),
 };
 
+type IntervalInput = { milliseconds: number };
+type IntervalContext = { value?: number };
+
+const intervalCases = [
+  {
+    name: "accepts a one-second resident daemon interval",
+    input: { milliseconds: 1_000 },
+    assert: [hasObserved<IntervalContext, MuximodConfig>("value", 1_000)],
+  },
+  {
+    name: "rejects a sub-second resident daemon interval",
+    input: { milliseconds: 999 },
+    assert: [hasError<IntervalContext, MuximodConfig>({ message: /1000/ })],
+  },
+] satisfies readonly OperationCase<"default", IntervalInput, MuximodConfig, IntervalContext>[];
+
+const intervalTable: OperationTable<undefined, "default", IntervalInput, MuximodConfig, IntervalContext> = {
+  defaultFixture: noFixture(),
+  cases: intervalCases,
+  execute: (_fixture, input) =>
+    muximodConfigSchema.parse({ ...bootstrapOptions.config, tmuxPollIntervalMs: input.milliseconds }),
+  observe: (_fixture, result) => ({ value: result.ok ? result.value.tmuxPollIntervalMs : undefined }),
+};
+
 describe("muximod process bootstrap", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, bootstrapReadTable);
   runOperationTable(register, bootstrapSizeTable);
+  runOperationTable(register, intervalTable);
 });
 
 type FingerprintInput =

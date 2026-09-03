@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
-import { runMuximod } from "./entrypoint.js";
-import { readMuximodBootstrap } from "./launch.js";
+// Keep the private daemon identifiable when Bun runs the source entrypoint.
+process.title = "muximod";
+
+const { runMuximod } = await import("./entrypoint.js");
+const { readMuximodBootstrap } = await import("./launch.js");
 
 try {
   await runMuximod(readMuximodBootstrap());

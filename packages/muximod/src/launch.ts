@@ -56,6 +56,9 @@ const bootstrapPollIntervalMs = 25;
 const healthProbeTimeoutMs = 500;
 const lifecycleTimeoutMs = 5_000;
 
+/** Resident daemon timers use whole-second resolution to keep the idle agent thin. */
+export const minimumMuximodIntervalMs = 1_000;
+
 const httpUrlSchema = z
   .string()
   .url()
@@ -100,10 +103,17 @@ export const muximodConfigSchema = z
     logFile: z.string().min(1).optional(),
     workingDirectory: z.string().min(1),
     runtimeEnvironment: muximodRuntimeEnvironmentSchema,
-    authSweepIntervalMs: z.number().int().min(1).optional(),
-    tmuxPollIntervalMs: z.number().int().min(1).optional(),
-    paneCleanupIntervalMs: z.number().int().min(1).optional(),
-    paneRetentionMs: z.number().int().min(0).optional(),
+    authSweepIntervalMs: z.number().int().min(minimumMuximodIntervalMs).optional(),
+    tmuxPollIntervalMs: z.number().int().min(minimumMuximodIntervalMs).optional(),
+    paneCleanupIntervalMs: z.number().int().min(minimumMuximodIntervalMs).optional(),
+    paneRetentionMs: z
+      .number()
+      .int()
+      .refine(
+        (value) => value === 0 || value >= minimumMuximodIntervalMs,
+        `duration must be 0 or an integer >= ${minimumMuximodIntervalMs}`,
+      )
+      .optional(),
   })
   .strict();
 
@@ -196,6 +206,7 @@ export async function spawnMuximod(
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(processCommand.executable, processCommand.args, {
+      argv0: "muximod",
       cwd: options.config.workingDirectory,
       detached: processOptions.detached ?? false,
       env: childEnvironment,

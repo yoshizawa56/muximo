@@ -3,7 +3,13 @@
 import { PaneId } from "@muximo/domain";
 import {
   type FixtureHandle,
+  hasError,
+  hasNoError,
   hasObserved,
+  noFixture,
+  type OperationCase,
+  type OperationTable,
+  runOperationTable,
   runScenarioTable,
   type ScenarioCase,
   type ScenarioTable,
@@ -13,7 +19,60 @@ import { describe, it } from "vitest";
 import type { TmuxPane } from "./tmux.js";
 import { TmuxStateMonitor } from "./tmux-state.js";
 
-type StateKey = "default" | "cleanup-cadence" | "unavailable" | "cleanup-error";
+type TimerInput = { kind: "tmux-poll" | "pane-cleanup" | "pane-retention"; milliseconds: number };
+type TimerContext = {};
+
+const timerCases = [
+  {
+    name: "accepts a one-second tmux poll interval",
+    input: { kind: "tmux-poll", milliseconds: 1_000 },
+    assert: [hasNoError<TimerContext, TmuxStateMonitor>()],
+  },
+  {
+    name: "rejects a sub-second tmux poll interval",
+    input: { kind: "tmux-poll", milliseconds: 999 },
+    assert: [hasError<TimerContext, TmuxStateMonitor>({ message: "tmux poll interval must be an integer >= 1000" })],
+  },
+  {
+    name: "accepts a one-second pane cleanup interval",
+    input: { kind: "pane-cleanup", milliseconds: 1_000 },
+    assert: [hasNoError<TimerContext, TmuxStateMonitor>()],
+  },
+  {
+    name: "rejects a sub-second pane cleanup interval",
+    input: { kind: "pane-cleanup", milliseconds: 999 },
+    assert: [hasError<TimerContext, TmuxStateMonitor>({ message: "pane cleanup interval must be an integer >= 1000" })],
+  },
+  {
+    name: "accepts zero as the explicit pane retention sentinel",
+    input: { kind: "pane-retention", milliseconds: 0 },
+    assert: [hasNoError<TimerContext, TmuxStateMonitor>()],
+  },
+  {
+    name: "rejects a sub-second pane retention duration",
+    input: { kind: "pane-retention", milliseconds: 999 },
+    assert: [hasError<TimerContext, TmuxStateMonitor>({ message: "pane retention must be 0 or an integer >= 1000" })],
+  },
+] satisfies readonly OperationCase<"default", TimerInput, TmuxStateMonitor, TimerContext>[];
+
+const timerTable: OperationTable<undefined, "default", TimerInput, TmuxStateMonitor, TimerContext> = {
+  defaultFixture: noFixture(),
+  cases: timerCases,
+  execute: (_fixture, input) =>
+    new TmuxStateMonitor({
+      readPanes: () => ({ panes: [], available: false, tmuxServerId: null, tmuxServerScope: null }),
+      synchronize: async () => [],
+      onChange: () => undefined,
+      ...(input.kind === "tmux-poll"
+        ? { intervalMs: input.milliseconds }
+        : input.kind === "pane-cleanup"
+          ? { cleanupIntervalMs: input.milliseconds }
+          : { paneRetentionMs: input.milliseconds }),
+    }),
+  observe: () => ({}),
+};
+
+type StateKey = "default" | "cleanup-cadence" | "unavailable" | "cleanup-error" | "agent-observation" | "managed-agent";
 type StateStep =
   | { type: "reconcile" }
   | { type: "add"; paneIds: string[] }
@@ -36,14 +95,25 @@ type StateFixture = {
   paneRetentionMs?: number;
   cleanupEnabled: boolean;
   cleanupThrows: boolean;
+  synchronizeCalls: number;
 };
-type StateContext = { changes: readonly { sessionName: string; reason: string }[]; cleanups: readonly CleanupRecord[] };
+type StateContext = {
+  changes: readonly { sessionName: string; reason: string }[];
+  cleanups: readonly CleanupRecord[];
+  synchronizeCalls: number;
+};
 
 const stateFixture =
   (kind: StateKey): (() => FixtureHandle<StateFixture>) =>
   () => ({
     fixture: {
-      panes: [createPane("%1", "work")],
+      panes: [
+        createPane("%1", "work", kind === "agent-observation" ? "codex" : "zsh", {
+          ...(kind === "managed-agent"
+            ? { muximodKind: "agent", muximodSessionId: "session-1", muximodExecutionId: "execution-1" }
+            : {}),
+        }),
+      ],
       paneStates: new Map(),
       paneRecentOutputs: new Map(),
       changes: [],
@@ -54,10 +124,28 @@ const stateFixture =
       paneRetentionMs: kind === "cleanup-cadence" ? 10_000 : undefined,
       cleanupEnabled: true,
       cleanupThrows: kind === "cleanup-error",
+      synchronizeCalls: 0,
     },
   });
 
 const cases = [
+  {
+    name: "does not re-reconcile an unchanged shell snapshot",
+    steps: [{ type: "reconcile" }, { type: "reconcile" }],
+    assert: [hasObserved<StateContext, undefined>("synchronizeCalls", 1)],
+  },
+  {
+    name: "continues observing an agent on an unchanged tmux snapshot",
+    fixture: "agent-observation",
+    steps: [{ type: "reconcile" }, { type: "reconcile" }],
+    assert: [hasObserved<StateContext, undefined>("synchronizeCalls", 2)],
+  },
+  {
+    name: "reconciles a managed agent without tmux changes for liveness",
+    fixture: "managed-agent",
+    steps: [{ type: "reconcile" }, { type: "reconcile" }],
+    assert: [hasObserved<StateContext, undefined>("synchronizeCalls", 2)],
+  },
   {
     name: "reports a pane created after the initial snapshot",
     steps: [{ type: "reconcile" }, { type: "add", paneIds: ["%2"] }, { type: "reconcile" }],
@@ -75,11 +163,13 @@ const cases = [
   },
   {
     name: "reports a pane state change",
+    fixture: "agent-observation",
     steps: [{ type: "reconcile" }, { type: "change-state", state: "waiting_input" }, { type: "reconcile" }],
     assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_changed" }])],
   },
   {
     name: "reports a provider output change",
+    fixture: "agent-observation",
     steps: [{ type: "reconcile" }, { type: "change-output", output: "new output" }, { type: "reconcile" }],
     assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_changed" }])],
   },
@@ -129,6 +219,8 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
     "cleanup-cadence": stateFixture("cleanup-cadence"),
     unavailable: stateFixture("unavailable"),
     "cleanup-error": stateFixture("cleanup-error"),
+    "agent-observation": stateFixture("agent-observation"),
+    "managed-agent": stateFixture("managed-agent"),
   },
   cases,
   execute: async (fixture, steps) => {
@@ -137,15 +229,18 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
         fixture.available
           ? liveSnapshot(fixture.panes)
           : { panes: [], available: false, tmuxServerId: null, tmuxServerScope: null },
-      synchronize: async (snapshot) => ({
-        activePaneIds: snapshot.panes.map((pane) => PaneId.create(pane.paneId)),
-        paneStates: new Map(
-          snapshot.panes.map((pane) => [pane.paneId, fixture.paneStates.get(pane.paneId) ?? "running"]),
-        ),
-        paneRecentOutputs: new Map(
-          snapshot.panes.map((pane) => [pane.paneId, fixture.paneRecentOutputs.get(pane.paneId)]),
-        ),
-      }),
+      synchronize: async (snapshot) => {
+        fixture.synchronizeCalls += 1;
+        return {
+          activePaneIds: snapshot.panes.map((pane) => PaneId.create(pane.paneId)),
+          paneStates: new Map(
+            snapshot.panes.map((pane) => [pane.paneId, fixture.paneStates.get(pane.paneId) ?? "running"]),
+          ),
+          paneRecentOutputs: new Map(
+            snapshot.panes.map((pane) => [pane.paneId, fixture.paneRecentOutputs.get(pane.paneId)]),
+          ),
+        };
+      },
       cleanup: fixture.cleanupEnabled
         ? async (ids, olderThan) => {
             fixture.cleanups.push({ ids: [...ids], olderThan });
@@ -188,18 +283,24 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
       }
     }
   },
-  observe: (fixture) => ({ changes: [...fixture.changes], cleanups: [...fixture.cleanups] }),
+  observe: (fixture) => ({
+    changes: [...fixture.changes],
+    cleanups: [...fixture.cleanups],
+    synchronizeCalls: fixture.synchronizeCalls,
+  }),
 };
 
 describe("tmux state monitor", () => {
-  runScenarioTable(it as unknown as TestRegistrar, table);
+  const register = it as unknown as TestRegistrar;
+  runOperationTable(register, timerTable);
+  runScenarioTable(register, table);
 });
 
 function assertNever(value: never): never {
   throw new Error(`unhandled tmux state step: ${String(value)}`);
 }
 
-function createPane(paneId: string, sessionName: string): TmuxPane {
+function createPane(paneId: string, sessionName: string, command = "zsh", overrides: Partial<TmuxPane> = {}): TmuxPane {
   return {
     paneId,
     windowId: "@0",
@@ -209,8 +310,8 @@ function createPane(paneId: string, sessionName: string): TmuxPane {
     windowIndex: 0,
     paneIndex: 0,
     cwd: "/tmp",
-    command: "zsh",
-    title: "zsh",
+    command,
+    title: command,
     active: true,
     left: 0,
     top: 0,
@@ -218,6 +319,7 @@ function createPane(paneId: string, sessionName: string): TmuxPane {
     height: 24,
     windowWidth: 80,
     windowHeight: 24,
+    ...overrides,
   };
 }
 
