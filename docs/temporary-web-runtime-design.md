@@ -106,6 +106,7 @@ replace that root as one deliberate global override. The derived layout is:
   muximod.pid
   muximod.sock
   muximod.log
+  config.json
   serve.json
 
 <state-root>/<profile>/muximod/
@@ -113,6 +114,7 @@ replace that root as one deliberate global override. The derived layout is:
   muximod.pid
   muximod.sock
   muximod.log
+  config.json
   serve.json
 
 <state-root>/web/
@@ -286,10 +288,10 @@ of silently selecting a different URL. HMR remains a property of the Web
 runtime started by `web daemon start`; it does not require a repository-wide
 supervisor.
 
-An optional shell or `mise` task may start the independent muximod and Web
-commands for convenience, but no application package owns a combined
-supervisor. Failure of Web therefore does not stop muximod, and failure of
-muximod does not stop Web; that independence is intentional.
+Only the local `muximo` command starts, stops, and restarts muximod. Web
+process lifecycle remains independent, so failure of Web does not stop
+muximod and failure of muximod does not stop Web; no external muximod launcher
+is a supported runtime path.
 
 ## Implementation checklist
 

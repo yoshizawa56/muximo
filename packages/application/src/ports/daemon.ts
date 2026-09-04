@@ -64,21 +64,16 @@ export type DaemonStatusResult =
 
 export type DaemonStopResult = { state: "already-stopped"; reason: "missing-pid" | "stale-pid" } | { state: "stopped" };
 
-export type DaemonRestartResult =
-  | { state: "restarted-by-service-manager"; host: string; port: number }
-  | { state: "restarted"; host: string; port: number };
+export type DaemonRestartResult = { state: "restarted"; host: string; port: number };
 
 export type DaemonEnsureResult =
   | { state: "already-running"; host: string; port: number }
   | { state: "started"; host: string; port: number };
 
-export type DaemonStartResult =
-  | { kind: "foreground"; process: ProcessResult }
-  | { kind: "background"; result: DaemonEnsureResult };
+export type DaemonStartResult = { kind: "background"; result: DaemonEnsureResult };
 
 /** OS process/filesystem/health capabilities supplied by infrastructure. */
 export interface DaemonRuntimePort {
-  runForeground(options: DaemonOptions): Promise<ProcessResult>;
   spawn(options: DaemonOptions): Promise<DaemonProcessHandle>;
   isHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean>;
   /** Checks ownership without requiring the process to match a new config. */

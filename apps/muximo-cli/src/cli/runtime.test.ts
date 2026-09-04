@@ -25,8 +25,13 @@ type RuntimeContext = {
   host: string | null;
   port: number | null;
   instanceDirectory: string | null;
+  configFile: string | null;
   opencodeRegistryFile: string | null;
   webPort: string | null;
+  enabledAgents: string | null;
+  defaultAgent: string | null;
+  workspaceRoots: string | null;
+  claudeBinary: string | null;
 };
 
 const cases = [
@@ -112,6 +117,17 @@ const cases = [
     input: { environment: { MUXIMO_MUXIMOD_HOST: "0.0.0.0" } },
     assert: [hasError<RuntimeContext, RuntimeResult>({ message: /MUXIMO_MUXIMOD_HOST must be localhost/ })],
   },
+  {
+    name: "leaves instance configuration for the daemon to load",
+    input: { environment: { HOME: "/home/test" } },
+    assert: [
+      hasObserved<RuntimeContext, RuntimeResult>("configFile", "<home>/.local/state/muximo/muximod/config.json"),
+      hasObserved<RuntimeContext, RuntimeResult>("enabledAgents", null),
+      hasObserved<RuntimeContext, RuntimeResult>("defaultAgent", null),
+      hasObserved<RuntimeContext, RuntimeResult>("workspaceRoots", null),
+      hasObserved<RuntimeContext, RuntimeResult>("claudeBinary", null),
+    ],
+  },
 ] satisfies readonly OperationCase<"default", RuntimeInput, RuntimeResult, RuntimeContext>[];
 
 const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, RuntimeContext> = {
@@ -134,9 +150,14 @@ const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, R
           host: result.value.runtime.muximodHost,
           port: result.value.runtime.muximodPort,
           instanceDirectory: result.value.runtime.muximodInstanceDirectory.replace("/home/test", "<home>"),
+          configFile: result.value.runtime.configFile.replace("/home/test", "<home>"),
           opencodeRegistryFile:
             result.value.environment.MUXIMO_OPENCODE_REGISTRY_FILE?.replace("/home/test", "<home>") ?? null,
           webPort: result.value.environment.MUXIMO_WEB_PORT ?? null,
+          enabledAgents: null,
+          defaultAgent: null,
+          workspaceRoots: result.value.environment.MUXIMOD_WORKSPACE_ROOTS ?? null,
+          claudeBinary: result.value.environment.MUXIMO_CLAUDE_BIN ?? null,
         }
       : {
           environmentName: null,
@@ -145,8 +166,13 @@ const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, R
           host: null,
           port: null,
           instanceDirectory: null,
+          configFile: null,
           opencodeRegistryFile: null,
           webPort: null,
+          enabledAgents: null,
+          defaultAgent: null,
+          workspaceRoots: null,
+          claudeBinary: null,
         },
 };
 

@@ -9,7 +9,6 @@ import type { MuximodControlLogResult } from "@muximo/contract/control";
 import type { CliIo } from "../commands/types.js";
 
 export function presentDaemonStart(result: DaemonStartResult, io: CliIo): number {
-  if (result.kind === "foreground") return result.process.code;
   const prefix = result.result.state === "already-running" ? "muximod already running" : "muximod started";
   io.out.write(`[muximo-cli] ${prefix} at http://${displayDaemonHost(result.result.host)}:${result.result.port}\n`);
   return 0;
@@ -49,9 +48,7 @@ export function presentDaemonStop(result: DaemonStopResult, io: CliIo): number {
 }
 
 export function presentDaemonRestart(result: DaemonRestartResult, io: CliIo): number {
-  const prefix =
-    result.state === "restarted-by-service-manager" ? "muximod restarted by its service manager" : "muximod restarted";
-  io.out.write(`[muximo-cli] ${prefix} at http://${displayDaemonHost(result.host)}:${result.port}\n`);
+  io.out.write(`[muximo-cli] muximod restarted at http://${displayDaemonHost(result.host)}:${result.port}\n`);
   return 0;
 }
 
@@ -80,9 +77,7 @@ function presentHealthFailure(message: string, logFile: string | undefined): str
 
 function healthErrorMessage(error: DaemonHealthError): string {
   const { reason, context } = error.details;
-  if (reason === "healthy_without_pid") {
-    return "muximod is healthy but its pid file is missing; stop it through its service manager";
-  }
+  if (reason === "healthy_without_pid") return "muximod is healthy but its pid file is missing";
   if (reason === "pid_unhealthy") {
     return context.pid === undefined
       ? "muximod process state is inconsistent with its pid file"

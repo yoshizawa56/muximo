@@ -280,11 +280,16 @@ transactions and private control contract provide the cross-process boundary.
 ## Muximod lifecycle and environment topology
 
 `packages/muximod` owns the typed lifecycle API exposed to the CLI:
-`ensure`, `start`, `startForeground`, `status`, `stop`, and `restart`. It also
+`ensure`, `start`, `status`, `stop`, and `restart`. It also
 owns the child-process bootstrap, PID and restart markers, schema synchronization,
 and cleanup of muximod resources. A private process bootstrap is used for the
 separate runtime process; it is an internal package implementation detail, not
 a hidden or public CLI command.
+
+The production release is a single `muximo` executable. The CLI lifecycle
+adapter starts the same executable as the private daemon process through the
+bootstrap descriptor; a separate `muximod` executable is not a supported
+artifact.
 
 The CLI resolves all Muximo configuration before calling that lifecycle API. The
 source/development CLI's selected `--env <name>` profile determines the shared
@@ -295,6 +300,18 @@ repository profiles. Every selected profile defaults to `migrate`; `push` is
 selected only by an explicit `MUXIMO_SCHEMA_MODE=push` value.
 Worktrees do not derive state directories and no snapshot, seeding, or
 base-instance copy is performed.
+
+The selected muximod instance also owns a user-editable `config.json`. The
+profile package validates and atomically writes this file, while muximod reads
+and validates it during startup. The bootstrap carries only the resolved file
+path; normal CLI commands do not read instance configuration directly. If a
+CLI command needs a daemon-owned value, it uses the API or private control
+contract. Workspace roots, enabled/default agent backends, executable paths,
+Tailscale executable/argv prefixes, and the update policy belong there. The
+default enables only Codex. Optional agent providers are filtered before their
+daemon-side providers are registered, and their executables are resolved only
+when a session is launched. Executable configuration is argv-based and never
+evaluated by a shell.
 
 `apps/web/cli.ts` independently manages one Web process per environment and its
 provider route. It does not import or invoke muximod. Muximod Serve only manages the

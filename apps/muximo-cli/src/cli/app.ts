@@ -20,6 +20,7 @@ export function createCliApp(deps: CliAppDeps): CliApp {
         buildMode: deps.buildMode ?? "development",
         runtime: deps.runtime,
         rootCommand,
+        resolveAgentCapabilities: deps.resolveAgentCapabilities,
         report: (value) => {
           status = value;
         },

@@ -9,9 +9,9 @@ export {
 } from "./client-paths.js";
 export type {
   MuximodConfig,
-  MuximodForegroundConflictPolicy,
   MuximodLifecycle,
   MuximodLifecycleOptions,
+  MuximodProcessCommand,
   MuximodRuntimeEnvironment,
 } from "./launch.js";
 export { createMuximodLifecycle } from "./launch.js";

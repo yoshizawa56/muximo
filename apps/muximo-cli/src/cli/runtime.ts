@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { normalizeAllowedOrigins } from "@muximo/infrastructure/cli-client";
-import { isLoopbackOrPrivateBindHost } from "@muximo/profile";
+import { isLoopbackOrPrivateBindHost, muximoConfigPath } from "@muximo/profile";
 import { z } from "zod";
 import type { CliBuildMode } from "./build-mode.js";
 import { globalOptionSpecs } from "./commands/global.js";
@@ -39,52 +39,55 @@ export type MuximoCliRuntimeResolution = {
 export function resolveMuximoCliRuntimeOptions(input: ResolveMuximoCliRuntimeOptions): MuximoCliRuntimeResolution {
   const buildMode = input.buildMode ?? "development";
   const optionSpecs = getAvailableOptionSpecs(globalOptionSpecs, buildMode);
+  const homeDirectory = input.environment.HOME ?? homedir();
   const resolution = resolveOptionValues(input.raw, optionSpecs, {
     args: input.args,
     environment: input.environment,
     buildMode,
   });
-  const runtimeValues = {
-    ...resolution.values,
-  };
-  const parsed = cliRuntimeSchema.safeParse(runtimeValues);
-  if (!parsed.success) {
-    throw new Error(`Invalid CLI runtime options:\n${z.prettifyError(parsed.error)}`);
-  }
+  const runtimeValues = { ...resolution.values };
+  const parsed = parseRuntimeValues(runtimeValues);
 
-  const homeDirectory = input.environment.HOME ?? homedir();
-  const stateRoot = resolveConfiguredPath(parsed.data.stateRoot, input.cwd, homeDirectory);
+  const stateRoot = resolveConfiguredPath(parsed.stateRoot, input.cwd, homeDirectory);
   const muximodInstanceDirectory = join(
     stateRoot,
-    ...(parsed.data.environment === undefined ? [] : [parsed.data.environment]),
+    ...(parsed.environment === undefined ? [] : [parsed.environment]),
     "muximod",
   );
-  const muximodHost = readBindHost(parsed.data.muximodHost);
+  const resolvedConfigFile = muximoConfigPath(muximodInstanceDirectory);
+  const muximodHost = readBindHost(parsed.muximodHost);
   const logFile = resolveConfiguredPath(
-    parsed.data.logFile ?? join(muximodInstanceDirectory, "muximod.log"),
+    parsed.logFile ?? join(muximodInstanceDirectory, "muximod.log"),
     input.cwd,
     homeDirectory,
   );
-  const allowedOrigins = normalizeAllowedOrigins(parsed.data.allowedOrigins);
+  const allowedOrigins = normalizeAllowedOrigins(parsed.allowedOrigins);
   const runtime: MuximoCliRuntimeOptions = {
-    environmentName: parsed.data.environment,
+    environmentName: parsed.environment,
     stateRoot,
     muximodInstanceDirectory,
     muximodHost,
-    muximodPort: parsed.data.muximodPort,
-    muximodServePort: parsed.data.muximodServePort,
-    schemaMode: parsed.data.schemaMode,
-    logLevel: parsed.data.logLevel,
+    muximodPort: parsed.muximodPort,
+    muximodServePort: parsed.muximodServePort,
+    schemaMode: parsed.schemaMode,
+    logLevel: parsed.logLevel,
     logFile,
     allowedOrigins,
-    codexRemote: parsed.data.codexRemote,
-    verbose: parsed.data.verbose,
+    codexRemote: parsed.codexRemote,
+    verbose: parsed.verbose,
+    configFile: resolvedConfigFile,
   };
   return {
     values: runtimeValues,
     environment: applyRuntimeEnvironment(input.environment, runtime),
     runtime,
   };
+}
+
+function parseRuntimeValues(values: CliOptionResolution["values"]): z.infer<typeof cliRuntimeSchema> {
+  const parsed = cliRuntimeSchema.safeParse(values);
+  if (!parsed.success) throw new Error(`Invalid CLI runtime options:\n${z.prettifyError(parsed.error)}`);
+  return parsed.data;
 }
 
 function applyRuntimeEnvironment(environment: NodeJS.ProcessEnv, runtime: MuximoCliRuntimeOptions): NodeJS.ProcessEnv {

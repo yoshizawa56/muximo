@@ -3,6 +3,7 @@ import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { DaemonHealthError } from "@muximo/application";
 import { defaultLogFile } from "@muximo/infrastructure/cli-client";
+import type { MuximodProcessCommand } from "@muximo/muximod/client";
 import { getProfile, resolveProfileName } from "@muximo/profile";
 import { createCliApp } from "./cli/app.js";
 import type { CliBuildMode } from "./cli/build-mode.js";
@@ -21,6 +22,7 @@ export type CliEntrypointOptions = {
   input?: Readable;
   out?: Writable;
   err?: Writable;
+  muximodProcess?: MuximodProcessCommand;
 };
 
 /** Process boundary: argv/env/I/O invocation and exit status only. */
@@ -70,6 +72,7 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
       input: options.input,
       io,
       runtime: runtimeResolution.runtime,
+      muximodProcess: options.muximodProcess,
     });
     return await composition.execute(args);
   } catch (error) {
@@ -129,5 +132,6 @@ function createNoopHandlers(): CliHandlers {
     workspaceAdd: async () => 0,
     workspaceUpdate: async () => 0,
     workspaceDelete: async () => 0,
+    config: async () => 0,
   };
 }

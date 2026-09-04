@@ -293,6 +293,7 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
       })),
       capabilities: os.capabilities.handler(() => ({
         protocolVersion,
+        agents: { enabled: ["codex"], default: "codex" },
         features: { tmuxSessions: true, terminalWebSocket: true, paneState: true, resourceInvalidationEvents: true },
       })),
       auth: {

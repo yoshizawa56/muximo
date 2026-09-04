@@ -35,7 +35,6 @@ type LifecycleInput =
   | { operation: "ensure-dynamic-port" }
   | { operation: "restart"; refreshServers: boolean }
   | { operation: "start-background" }
-  | { operation: "start-foreground" }
   | { operation: "status" }
   | { operation: "stop" };
 
@@ -47,16 +46,13 @@ type LifecycleFixtureKey =
   | "startup-wait-error"
   | "timeout"
   | "stale"
-  | "foreground"
   | "restartable"
   | "restart-startup-failed"
-  | "service-manager"
   | "stop-timeout";
 
 type LifecycleFixture = {
   healthy: boolean;
   healthyAfterSpawn: boolean;
-  healthyAfterStop: boolean;
   alive: boolean;
   record?: { pid: number; host: string; port: number; startedAt: string };
   now: number;
@@ -190,15 +186,6 @@ const cases = [
     ],
   },
   {
-    name: "start foreground returns the process result without lifecycle presentation",
-    fixture: "foreground",
-    input: { operation: "start-foreground" },
-    assert: [
-      hasObserved<LifecycleContext, LifecycleResult>("outcomeKind", "foreground"),
-      hasObserved<LifecycleContext, LifecycleResult>("spawnCount", 0),
-    ],
-  },
-  {
     name: "start background delegates to ensure",
     fixture: "startable",
     input: { operation: "start-background" },
@@ -243,30 +230,17 @@ const cases = [
         signal: null,
       }),
       hasObserved<LifecycleContext, LifecycleResult>("terminateCount", 0),
-      hasObserved<LifecycleContext, LifecycleResult>(
-        "sleeps",
-        [50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50],
-      ),
+      hasObserved<LifecycleContext, LifecycleResult>("sleeps", []),
     ],
   },
   {
-    name: "restart records intent and starts a replacement when the service manager does not recover it",
+    name: "restart records intent and starts a replacement after stopping the daemon",
     fixture: "restartable",
     input: { operation: "restart", refreshServers: true },
     assert: [
       hasObserved<LifecycleContext, LifecycleResult>("outcomeState", "restarted"),
       hasObserved<LifecycleContext, LifecycleResult>("markerWrites", [true]),
       hasObserved<LifecycleContext, LifecycleResult>("spawnCount", 1),
-    ],
-  },
-  {
-    name: "restart recognizes a service-manager replacement without spawning twice",
-    fixture: "service-manager",
-    input: { operation: "restart", refreshServers: false },
-    assert: [
-      hasObserved<LifecycleContext, LifecycleResult>("outcomeState", "restarted-by-service-manager"),
-      hasObserved<LifecycleContext, LifecycleResult>("markerWrites", [false]),
-      hasObserved<LifecycleContext, LifecycleResult>("spawnCount", 0),
     ],
   },
 ] satisfies readonly OperationCase<LifecycleFixtureKey, LifecycleInput, LifecycleResult, LifecycleContext>[];
@@ -282,10 +256,8 @@ const table: OperationTable<LifecycleFixture, LifecycleFixtureKey, LifecycleInpu
       "startup-wait-error": () => ({ fixture: createFixture("startup-wait-error") }),
       timeout: () => ({ fixture: createFixture("timeout") }),
       stale: () => ({ fixture: createFixture("stale") }),
-      foreground: () => ({ fixture: createFixture("foreground") }),
       restartable: () => ({ fixture: createFixture("restartable") }),
       "restart-startup-failed": () => ({ fixture: createFixture("restart-startup-failed") }),
-      "service-manager": () => ({ fixture: createFixture("service-manager") }),
       "stop-timeout": () => ({ fixture: createFixture("stop-timeout") }),
     },
     cases,
@@ -297,9 +269,7 @@ const table: OperationTable<LifecycleFixture, LifecycleFixtureKey, LifecycleInpu
         case "restart":
           return fixture.service.restart.execute({ ...options, refreshServers: input.refreshServers });
         case "start-background":
-          return fixture.service.start.execute({ options, foreground: false });
-        case "start-foreground":
-          return fixture.service.start.execute({ options, foreground: true });
+          return fixture.service.start.execute({ options });
         case "status":
           return fixture.service.status.execute(options);
         case "stop":
@@ -349,18 +319,15 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
       key === "dynamic-port" ||
       key === "restartable" ||
       key === "restart-startup-failed" ||
-      key === "service-manager" ||
       key === "stop-timeout",
-    healthyAfterSpawn: key === "startable" || key === "foreground" || key === "restartable",
-    healthyAfterStop: key === "service-manager",
-    alive: key !== "stale" && key !== "foreground",
+    healthyAfterSpawn: key === "startable" || key === "restartable",
+    alive: key !== "stale",
     record:
       key === "stale" ||
       key === "running" ||
       key === "dynamic-port" ||
       key === "restartable" ||
       key === "restart-startup-failed" ||
-      key === "service-manager" ||
       key === "stop-timeout"
         ? {
             pid: 401,
@@ -380,7 +347,6 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
   };
 
   const runtime: DaemonRuntimePort = {
-    runForeground: async () => ({ started: true, code: 0, interrupted: false }),
     spawn: async () => {
       fixture.spawnCount += 1;
       fixture.alive = true;
@@ -405,8 +371,7 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
     signal: () => {
       fixture.signalCount += 1;
       if (key !== "stop-timeout") fixture.alive = false;
-      if (fixture.healthyAfterStop) fixture.healthy = true;
-      else fixture.healthy = false;
+      fixture.healthy = false;
     },
     readPidRecord: () => fixture.record,
     writePidRecord: () => undefined,

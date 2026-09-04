@@ -10,7 +10,7 @@ import { describe, it } from "vitest";
 import { createTailscaleServeClient, fingerprintRoute, type TailscaleServeRoute } from "./serve-client.js";
 
 type CleanupInput = {
-  kind: "exact" | "invalid-fingerprint" | "changed-route";
+  kind: "exact" | "invalid-fingerprint" | "changed-route" | "configured-prefix";
 };
 
 type CleanupFixture = {
@@ -72,6 +72,16 @@ const cases = [
       hasObserved<CleanupContext, string>("commands", [["serve", "status", "--json"]]),
     ],
   },
+  {
+    name: "prepends configured argv values without invoking a shell",
+    input: { kind: "configured-prefix" },
+    assert: [
+      hasObserved<CleanupContext, string>("commands", [
+        ["--socket", "/run/tailscaled.sock", "serve", "status", "--json"],
+        ["--socket", "/run/tailscaled.sock", "serve", "--https=8444", "--yes", "http://127.0.0.1:4317", "off"],
+      ]),
+    ],
+  },
 ] satisfies readonly OperationCase<"default", CleanupInput, string, CleanupContext>[];
 
 const table: OperationTable<CleanupFixture, "default", CleanupInput, string, CleanupContext> = {
@@ -79,11 +89,13 @@ const table: OperationTable<CleanupFixture, "default", CleanupInput, string, Cle
   cases,
   execute: async (fixture, input) => {
     const client = createTailscaleServeClient({
-      environment: {},
+      environment:
+        input.kind === "configured-prefix" ? { MUXIMO_TAILSCALE_ARGS: '["--socket", "/run/tailscaled.sock"]' } : {},
       binary: "tailscale",
       run: async (_command, args) => {
         fixture.commands.push([...args]);
-        if (args[0] === "serve" && args[1] === "status") return { stdout: liveStatus, stderr: "" };
+        const commandArgs = input.kind === "configured-prefix" ? args.slice(2) : args;
+        if (commandArgs[0] === "serve" && commandArgs[1] === "status") return { stdout: liveStatus, stderr: "" };
         return { stdout: "removed\n", stderr: "" };
       },
     });
@@ -93,6 +105,10 @@ const table: OperationTable<CleanupFixture, "default", CleanupInput, string, Cle
     }
     if (input.kind === "invalid-fingerprint") {
       await client.removeRoute({ ...route, routeFingerprint: "invalid" });
+      return "removed";
+    }
+    if (input.kind === "configured-prefix") {
+      await client.removeRoute(route);
       return "removed";
     }
     const changedTarget = "http://127.0.0.1:9999";

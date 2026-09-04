@@ -49,6 +49,7 @@ const defaultRuntime: MuximoCliRuntimeOptions = {
   schemaMode: "migrate",
   logLevel: "info",
   logFile: "/workspace/.state/muximod/muximod.log",
+  configFile: "/workspace/.state/muximod/config.json",
   allowedOrigins: [],
   codexRemote: "unix://",
   verbose: false,
@@ -75,6 +76,7 @@ function createFixture(environment: NodeJS.ProcessEnv = {}, runtime: MuximoCliRu
     "workspaceAdd",
     "workspaceUpdate",
     "workspaceDelete",
+    "config",
   ] as const) {
     handlers[key] = async (input: never) => {
       calls.push({ command: key, input });
@@ -104,6 +106,19 @@ const cases = [
     assert: [
       returns<Context, number>(0),
       contains<Context>("output", "Commands:"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
+    name: "documents config setting values in set help",
+    input: { args: ["config", "set", "--help"] },
+    assert: [
+      returns<Context, number>(0),
+      contains<Context>("output", "Configuration keys and value formats:"),
+      contains<Context>("output", "agents.default"),
+      contains<Context>("output", "Value: one enabled backend name or none"),
+      contains<Context>("output", "Choices: codex, claude, opencode"),
+      contains<Context>("output", "Example: muximo config set updates.policy notify"),
       hasObserved<Context, number>("calls", []),
     ],
   },
@@ -343,7 +358,6 @@ const cases = [
           command: "daemon",
           input: {
             command: "log",
-            foreground: false,
             refreshServers: false,
             lines: 100,
           },
@@ -354,6 +368,15 @@ const cases = [
   {
     name: "rejects direct daemon log file selection",
     input: { args: ["daemon", "log", "--log-file", "/tmp/cli.log"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "unknown option"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
+    name: "rejects foreground daemon ownership by an external service manager",
+    input: { args: ["daemon", "start", "--foreground"] },
     assert: [
       returns<Context, number>(2),
       contains<Context>("error", "unknown option"),
@@ -380,7 +403,6 @@ const cases = [
           command: "daemon",
           input: {
             command: "start",
-            foreground: false,
             refreshServers: false,
           },
         },

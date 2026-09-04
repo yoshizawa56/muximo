@@ -42,12 +42,12 @@ function includesCall(name: string, expected: string) {
 }
 
 const daemonInputs: readonly CliDaemonInput[] = [
-  { command: "start", foreground: false, refreshServers: false },
-  { command: "status", foreground: false, refreshServers: false },
-  { command: "stop", foreground: false, refreshServers: false },
-  { command: "restart", foreground: false, refreshServers: true },
-  { command: "ensure", foreground: false, refreshServers: false },
-  { command: "log", foreground: false, refreshServers: false, lines: 20 },
+  { command: "start", refreshServers: false },
+  { command: "status", refreshServers: false },
+  { command: "stop", refreshServers: false },
+  { command: "restart", refreshServers: true },
+  { command: "ensure", refreshServers: false },
+  { command: "log", refreshServers: false, lines: 20 },
 ];
 
 const routeState: ServeRouteState = {
@@ -130,7 +130,7 @@ const cases = [
 const startupFailureCase = {
   name: "presents a daemon startup exit with its log path",
   fixture: "startup-failed" as const,
-  input: { kind: "daemon", input: { command: "start", foreground: false, refreshServers: false } },
+  input: { kind: "daemon", input: { command: "start", refreshServers: false } },
   assert: [
     hasValue("returns a failure status", "status", 1),
     containsText("presents the startup exit", "err", "muximod exited during startup with exit code 1"),
@@ -142,7 +142,7 @@ const startupFailureCase = {
 const pidUnhealthyCase = {
   name: "recommends restarting a daemon that does not match the selected environment",
   fixture: "pid-unhealthy" as const,
-  input: { kind: "daemon", input: { command: "ensure", foreground: false, refreshServers: false } },
+  input: { kind: "daemon", input: { command: "ensure", refreshServers: false } },
   assert: [
     hasValue("returns a failure status", "status", 1),
     containsText("presents the process ownership failure", "err", "is not owned by the selected environment"),

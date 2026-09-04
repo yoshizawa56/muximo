@@ -5,6 +5,7 @@ export type {
   MuximodControlLogResult,
   MuximodControlRequest,
   MuximodControlResponse,
+  MuximodHostSettings,
 } from "./protocol.js";
 export {
   decodeMuximodControlRequest,

@@ -241,6 +241,10 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
       requireAuth(context);
       return muximodCapabilitiesSchema.parse({
         protocolVersion,
+        agents: deps.agentBackends ?? {
+          enabled: ["codex", "claude", "opencode"],
+          default: "codex",
+        },
         features: {
           tmuxSessions: true,
           terminalWebSocket: true,

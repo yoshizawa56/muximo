@@ -24,6 +24,9 @@ export function registerServeCommand(parent: Command, handlers: CliHandlers, con
             command,
             localPort: requireRuntime(context).muximodPort,
             externalPort: requireRuntime(context).muximodServePort,
+            ...(context.environment.MUXIMO_TAILSCALE_PATH === undefined
+              ? {}
+              : { path: context.environment.MUXIMO_TAILSCALE_PATH }),
           },
           commandPath: ["serve", command],
           context,

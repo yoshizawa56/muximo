@@ -1,5 +1,5 @@
 import { DaemonHealthError, type DaemonOptions, type DaemonRestartResult } from "../../ports/daemon.js";
-import { type DaemonLifecycleDependencies, terminateQuietly, waitFor, waitForHealthyOrExit } from "./policy.js";
+import { type DaemonLifecycleDependencies, terminateQuietly, waitForHealthyOrExit } from "./policy.js";
 import type { StopDaemon } from "./stop-daemon.js";
 
 export type RestartDaemonDependencies = DaemonLifecycleDependencies & {
@@ -16,10 +16,6 @@ export class RestartDaemon {
     } catch (error) {
       this.dependencies.runtime.removeRestartMarker(options.pidFile);
       throw error;
-    }
-
-    if (await waitFor(() => this.dependencies.runtime.isHealthy(options), 1_000, this.dependencies)) {
-      return { state: "restarted-by-service-manager", host: options.host, port: options.port };
     }
 
     const startupStartedAt = this.dependencies.clock.now();

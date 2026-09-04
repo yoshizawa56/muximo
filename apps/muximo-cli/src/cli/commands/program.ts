@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { allCliBuildModes, type CliCommandRegistration, isAvailableIn } from "../build-mode.js";
 import { registerOptions } from "../options/index.js";
 import { registerCompletionCommand } from "./completion.js";
+import { registerConfigCommand } from "./config.js";
 import { registerDaemonCommands } from "./daemon.js";
 import { registerDoctorCommand } from "./doctor.js";
 import { globalOptionSpecs } from "./global.js";
@@ -42,6 +43,7 @@ export function buildCliProgram(handlers: CliHandlers, context: CliCommandContex
     { availableIn: allCliBuildModes, register: () => registerPairCommand(program, handlers, context) },
     { availableIn: allCliBuildModes, register: () => registerServeCommand(program, handlers, context) },
     { availableIn: allCliBuildModes, register: () => registerCompletionCommand(program, context) },
+    { availableIn: allCliBuildModes, register: () => registerConfigCommand(program, handlers, context) },
   ] satisfies readonly CliCommandRegistration[];
   for (const command of commands) {
     if (isAvailableIn(command.availableIn, context.buildMode)) command.register();

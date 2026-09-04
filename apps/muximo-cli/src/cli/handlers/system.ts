@@ -62,10 +62,7 @@ export function createSystemHandlers(
         const options = toDaemonOptions(input, dependencies.daemon.defaults);
         switch (input.command) {
           case "start":
-            return presentDaemonStart(
-              await dependencies.daemon.start.execute({ options, foreground: input.foreground }),
-              dependencies.io,
-            );
+            return presentDaemonStart(await dependencies.daemon.start.execute({ options }), dependencies.io);
           case "status":
             return presentDaemonStatus(await dependencies.daemon.status.execute(options), dependencies.io);
           case "stop":

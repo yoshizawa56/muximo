@@ -14,6 +14,7 @@ import {
   type MuximodControlLogResult,
   type MuximodControlRequest,
   type MuximodControlResponse,
+  type MuximodHostSettings,
   muximodControlMaxBufferedResponseBytes,
   muximodControlMaxPendingRequests,
   muximodControlMaxRequestBytes,
@@ -62,6 +63,7 @@ export type MuximodControlServerOptions = {
   socketPath: string;
   auth: MuximodAuthControlPort;
   readLog?: (lines: number) => Promise<MuximodControlLogResult>;
+  readHostSettings?: () => MuximodHostSettings | Promise<MuximodHostSettings>;
   adoptAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
   observeAgentSession?: (request: AgentSessionObservationRequest) => Promise<void>;
   releaseAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
@@ -279,6 +281,13 @@ export class MuximodControlServer {
         if (!this.options.readLog) throw controlError("log_read_unavailable", "daemon log reading is unavailable");
         const result = await this.options.readLog(request.lines);
         this.send(socket, { type: "daemon_log", requestId: request.requestId, ...result, lines: [...result.lines] });
+        return;
+      }
+      if (request.type === "read_host_settings") {
+        if (!this.options.readHostSettings)
+          throw controlError("host_settings_unavailable", "host settings are unavailable");
+        const settings = await this.options.readHostSettings();
+        this.send(socket, { type: "host_settings", requestId: request.requestId, ...settings });
         return;
       }
       if (request.type === "prepare_agent_execution") {

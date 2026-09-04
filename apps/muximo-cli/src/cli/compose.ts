@@ -11,6 +11,7 @@ import {
   type StartAgentSessionInput,
 } from "@muximo/application";
 import type { ResumeAgentSessionResponse, RunAgentSessionResponse } from "@muximo/contract/api";
+import type { MuximodHostSettings } from "@muximo/contract/control";
 import { AgentSession } from "@muximo/domain";
 import {
   AttachedAgentExecutionAdapter,
@@ -35,8 +36,8 @@ import {
 } from "@muximo/infrastructure/cli-client";
 import {
   createMuximodLifecycle,
-  type MuximodForegroundConflictPolicy,
   type MuximodLifecycle,
+  type MuximodProcessCommand,
   resolveMuximodClientPaths,
   validateMuximodControlSocketPath,
 } from "@muximo/muximod/client";
@@ -52,6 +53,7 @@ import { MuximodShellSessionWorktreeLookup, MuximodShellWorkspaceResolver } from
 import { resolvePairMuximodBaseUrl } from "./adapters/pair-route.js";
 import { type CliApp, createCliApp } from "./app.js";
 import type { CliHandlers, CliIo, CliRunInput } from "./commands/types.js";
+import { createConfigHandler } from "./handlers/config.js";
 import { createInteractiveHandlers } from "./handlers/interactive.js";
 import { createPairHandler } from "./handlers/pair.js";
 import { createSessionHandlers } from "./handlers/session.js";
@@ -70,7 +72,7 @@ export type CliCompositionOptions = {
   logLevel?: LogLevel;
   tmux?: TmuxAdapter;
   muximod?: MuximodLifecycle;
-  muximodForegroundConflictPolicy?: MuximodForegroundConflictPolicy;
+  muximodProcess?: MuximodProcessCommand;
 };
 
 export type CliComposition = {
@@ -103,8 +105,8 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     options.muximod ??
     createMuximodLifecycle({
       schemaMode: runtime.schemaMode,
-      foregroundConflictPolicy: options.muximodForegroundConflictPolicy,
       environment,
+      processCommand: options.muximodProcess,
       resolveConfig: createMuximodConfigResolver({
         environment,
         workingDirectory: cwd,
@@ -219,6 +221,18 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const attachedAgentExecution = new AttachedAgentExecutionAdapter(logger);
   const agentExecutionPrepareTimeoutMs = muximodControlRequestTimeoutMs * 2;
   const agentExecutionAttachTimeoutMs = 5_000;
+  const readHostSettings = (): Promise<MuximodHostSettings> =>
+    withControlRecovery(async () => {
+      const daemon = await ensureLocalDaemon();
+      const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+        requestTimeoutMs: agentExecutionPrepareTimeoutMs,
+      });
+      try {
+        return await control.readHostSettings();
+      } finally {
+        control.close();
+      }
+    }, ensureLocalDaemon);
   type AgentExecutionPreparation =
     | { operation: "run"; input: StartAgentSessionInput }
     | { operation: "resume"; input: ResumeAgentSessionInput };
@@ -432,8 +446,19 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     },
     serve: {
       execute: async (value): Promise<ServeResult> => {
+        const hostSettings = await readHostSettings();
+        const tailscaleEnvironment = createTailscaleEnvironment(environment, hostSettings);
         if (value.command === "tailscale") {
-          const result = await ensureTailscaleServe(value, { logger }, environment);
+          if (!hostSettings.tailscale.enabled) {
+            throw new Error(
+              'Tailscale Serve is disabled; enable it with "muximo config set serve.tailscale.enabled true"',
+            );
+          }
+          const result = await ensureTailscaleServe(
+            { ...value, externalPort: hostSettings.tailscale.externalPort, path: hostSettings.tailscale.path },
+            { logger },
+            tailscaleEnvironment,
+          );
           writeServeRouteState(serveStatePath, {
             schemaVersion: 1,
             ...(runtime.environmentName === undefined ? {} : { environment: runtime.environmentName }),
@@ -455,7 +480,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         if (state && (state.environment !== runtime.environmentName || state.component !== "muximod")) {
           throw new Error(`muximod Serve state belongs to a different environment: ${serveStatePath}`);
         }
-        const tailscale = createTailscaleServeClient({ environment });
+        const tailscale = createTailscaleServeClient({ environment: tailscaleEnvironment });
         if (value.command === "status") {
           const provider = state ? await tailscale.status() : undefined;
           return {
@@ -524,12 +549,18 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       delete: { execute: (selector) => ensureApi().then((api) => api.workspaces.delete(selector)) },
       io,
     }),
+    config: createConfigHandler({
+      filePath: runtime.configFile,
+      input: options.input ?? process.stdin,
+      output: io.out,
+    }),
   };
   const app = createCliApp({
     io,
     cwd,
     environment,
     runtime,
+    resolveAgentCapabilities: async () => (await ensureApi()).capabilities().then((value) => value.agents),
     handlers,
     lifecycle: {
       started: (commandPath) => logger.debug("command.started", { command: commandPath.join(" ") }),
@@ -577,6 +608,18 @@ function normalizeSessionName(value: string): string {
 function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
   const pane = environment.TMUX && environment.TMUX_PANE ? environment.TMUX_PANE.trim() : "";
   return /^%[0-9]+$/u.test(pane) ? pane : undefined;
+}
+
+function createTailscaleEnvironment(environment: NodeJS.ProcessEnv, settings: MuximodHostSettings): NodeJS.ProcessEnv {
+  const resolved: NodeJS.ProcessEnv = {
+    ...environment,
+    TAILSCALE_BIN: settings.tailscale.executable,
+    MUXIMO_TAILSCALE_ARGS: JSON.stringify(settings.tailscale.args),
+    MUXIMO_TAILSCALE_PATH: settings.tailscale.path,
+  };
+  if (settings.tailscale.hostname === null) delete resolved.MUXIMO_TAILSCALE_HOSTNAME;
+  else resolved.MUXIMO_TAILSCALE_HOSTNAME = settings.tailscale.hostname;
+  return resolved;
 }
 
 /**
