@@ -14,4 +14,4 @@ export type {
   MuximodLifecycleOptions,
   MuximodRuntimeEnvironment,
 } from "./launch.js";
-export { createMuximodLifecycle } from "./launch.js";
+export { createMuximodLifecycle, minimumMuximodIntervalMs } from "./launch.js";

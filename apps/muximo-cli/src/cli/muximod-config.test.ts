@@ -2,6 +2,8 @@ import type { DaemonOptions } from "@muximo/application";
 import type { MuximodConfig } from "@muximo/muximod/client";
 import {
   hasError,
+  hasNoError,
+  hasObserved,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -19,7 +21,7 @@ type ConfigInput = {
   daemon: DaemonOptions;
   runtime: MuximoCliRuntimeOptions;
 };
-type ConfigContext = {};
+type ConfigContext = { tmuxPollIntervalMs?: number };
 
 const runtimeEnvironment = {
   homeDirectory: "/home/test",
@@ -145,13 +147,46 @@ const cases = [
     },
     assert: [hasError<ConfigContext, MuximodConfig>({ message: "wildcard browser origins are not allowed" })],
   },
+  {
+    name: "accepts a one-second tmux poll interval",
+    input: {
+      environment: { HOME: "/home/test", MUXIMOD_TMUX_POLL_INTERVAL_MS: "1000" },
+      workingDirectory: "/workspace/project",
+      daemon: { host: "127.0.0.1", port: 4317, pidFile: "/ignored/pid" },
+      runtime: createRuntime(),
+    },
+    assert: [
+      hasNoError<ConfigContext, MuximodConfig>(),
+      hasObserved<ConfigContext, MuximodConfig>("tmuxPollIntervalMs", 1000),
+    ],
+  },
+  {
+    name: "rejects a sub-second tmux poll interval before bootstrap",
+    input: {
+      environment: { HOME: "/home/test", MUXIMOD_TMUX_POLL_INTERVAL_MS: "999" },
+      workingDirectory: "/workspace/project",
+      daemon: { host: "127.0.0.1", port: 4317, pidFile: "/ignored/pid" },
+      runtime: createRuntime(),
+    },
+    assert: [hasError<ConfigContext, MuximodConfig>({ message: "duration must be an integer >= 1000" })],
+  },
+  {
+    name: "rejects a sub-second pane retention duration before bootstrap",
+    input: {
+      environment: { HOME: "/home/test", MUXIMOD_PANE_RETENTION_MS: "999" },
+      workingDirectory: "/workspace/project",
+      daemon: { host: "127.0.0.1", port: 4317, pidFile: "/ignored/pid" },
+      runtime: createRuntime(),
+    },
+    assert: [hasError<ConfigContext, MuximodConfig>({ message: "duration must be 0 or an integer >= 1000" })],
+  },
 ] satisfies readonly OperationCase<"default", ConfigInput, MuximodConfig, ConfigContext>[];
 
 const table: OperationTable<undefined, "default", ConfigInput, MuximodConfig, ConfigContext> = {
   defaultFixture: noFixture(),
   cases,
   execute: (_fixture, input) => createMuximodConfigResolver(input)(input.daemon),
-  observe: () => ({}),
+  observe: (_fixture, result) => ({ tmuxPollIntervalMs: result.ok ? result.value.tmuxPollIntervalMs : undefined }),
 };
 
 describe("muximod CLI configuration boundary", () => {

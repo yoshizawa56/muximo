@@ -99,6 +99,7 @@ type DatabaseFixture = {
   prePruneCurrent?: PaneRecord;
   legacyPaneAfterMigration?: PaneRecord;
   currentPaneAfterMigration?: PaneRecord;
+  touchedPane?: PaneRecord;
   claimResults: boolean[];
   backendResults: boolean[];
   ownerAttachResult?: boolean;
@@ -112,6 +113,7 @@ type DatabaseStep =
   | { type: "verify-pending" }
   | { type: "verify-restart" }
   | { type: "verify-legacy-pane-migration" }
+  | { type: "verify-last-seen-heartbeat" }
   | { type: "verify-generations" }
   | { type: "verify-upsert-identity" }
   | { type: "verify-agent-association" }
@@ -137,6 +139,7 @@ type DatabaseContext = {
   currentAfterPrune: PaneRecord | undefined;
   legacyPaneAfterMigration: PaneRecord | undefined;
   currentPaneAfterMigration: PaneRecord | undefined;
+  touchedPane: PaneRecord | undefined;
   identityPane: PaneRecord | undefined;
   adoptedPane: PaneRecord | undefined;
   pruneCount: number | undefined;
@@ -393,6 +396,16 @@ const cases = [
     ],
   },
   {
+    name: "touches a live pane timestamp without rewriting its projection",
+    steps: [{ type: "verify-last-seen-heartbeat" }],
+    assert: [
+      hasObserved<DatabaseContext, DatabaseResult>("touchedPane", {
+        ...pane,
+        lastSeenAt: "2026-08-24T00:00:00.000Z",
+      }),
+    ],
+  },
+  {
     name: "keeps host server generations distinct and prunes only stale rows",
     steps: [{ type: "verify-generations" }],
     assert: [
@@ -593,6 +606,13 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
           break;
         case "verify-legacy-pane-migration":
           break;
+        case "verify-last-seen-heartbeat": {
+          const panes = new DrizzlePaneRepository(databases.db);
+          await panes.upsert(pane);
+          await panes.touchLastSeen(pane.hostServerId, [pane.hostPaneId], "2026-08-24T00:00:00.000Z");
+          fixture.touchedPane = await panes.findById(pane.id);
+          break;
+        }
         case "verify-generations": {
           const panes = new DrizzlePaneRepository(databases.db);
           const oldPane = {
@@ -818,6 +838,7 @@ const table: ScenarioTable<DatabaseFixture, DatabaseKey, DatabaseStep, DatabaseR
       currentAfterPrune: await panes.findById(PaneId.create("pane-current")),
       legacyPaneAfterMigration: await panes.findById(PaneId.create("pane-legacy-migrated")),
       currentPaneAfterMigration: await panes.findById(PaneId.create("pane-current-migrated")),
+      touchedPane: fixture.touchedPane,
       identityPane: await panes.findByHostPaneIdentity("server-1", pane.hostPaneId),
       adoptedPane: await panes.findById(PaneId.create("pane-adopted")),
       pruneCount: fixture.pruneCount,

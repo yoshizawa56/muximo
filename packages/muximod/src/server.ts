@@ -74,7 +74,7 @@ import { createMuximodApp, type MuximodApp } from "./http/app.js";
 import { createOriginPolicy } from "./http/middleware.js";
 import { TerminalSession, TerminalSessionRegistry } from "./http/terminal-session.js";
 import type { MuximodOriginPolicy } from "./http/types.js";
-import type { MuximodRuntimeEnvironment } from "./launch.js";
+import { type MuximodRuntimeEnvironment, minimumMuximodIntervalMs } from "./launch.js";
 
 export type MuximodOptions = {
   host: string;
@@ -412,9 +412,22 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     },
   });
   let controlReady = false;
-  const tmuxPollIntervalMs = durationOption(options.tmuxPollIntervalMs, defaultTmuxPollIntervalMs, 1);
-  const paneCleanupIntervalMs = durationOption(options.paneCleanupIntervalMs, defaultPaneCleanupIntervalMs, 1);
-  const paneRetentionMs = durationOption(options.paneRetentionMs, defaultPaneRetentionMs, 0);
+  const tmuxPollIntervalMs = durationOption(
+    options.tmuxPollIntervalMs,
+    defaultTmuxPollIntervalMs,
+    minimumMuximodIntervalMs,
+  );
+  const paneCleanupIntervalMs = durationOption(
+    options.paneCleanupIntervalMs,
+    defaultPaneCleanupIntervalMs,
+    minimumMuximodIntervalMs,
+  );
+  const paneRetentionMs = durationOption(
+    options.paneRetentionMs,
+    defaultPaneRetentionMs,
+    minimumMuximodIntervalMs,
+    true,
+  );
   let eventRevision = 0;
   const tmuxStateMonitor = new TmuxStateMonitor({
     readPanes: () => tmux.listPanesSnapshot(),
@@ -426,6 +439,14 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       })),
     cleanup: (activePaneIds, olderThan, hostServerScope) =>
       paneRepository.pruneStalePanes(activePaneIds, olderThan, hostServerScope).then(() => undefined),
+    heartbeat: async (snapshot) => {
+      if (!snapshot.tmuxServerId || snapshot.panes.length === 0) return;
+      await paneRepository.touchLastSeen(
+        snapshot.tmuxServerId,
+        snapshot.panes.map((pane) => pane.paneId),
+        clock.now(),
+      );
+    },
     onChange: (changes) => {
       const revision = ++eventRevision;
       for (const change of changes) {
@@ -613,10 +634,11 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   };
 }
 
-function durationOption(value: number | undefined, fallback: number, minimum: number): number {
+function durationOption(value: number | undefined, fallback: number, minimum: number, allowZero = false): number {
   const configured = value ?? fallback;
-  if (!Number.isFinite(configured) || !Number.isInteger(configured) || configured < minimum) {
-    throw new Error(`duration must be an integer >= ${minimum}`);
+  const valid = (allowZero && configured === 0) || configured >= minimum;
+  if (!Number.isFinite(configured) || !Number.isInteger(configured) || !valid) {
+    throw new Error(`duration must be ${allowZero ? `0 or an integer >= ${minimum}` : `an integer >= ${minimum}`}`);
   }
   return configured;
 }

@@ -18,6 +18,7 @@ export type {
 export {
   createMuximodLifecycle,
   MuximodStartupError,
+  minimumMuximodIntervalMs,
   muximodConfigSchema,
   muximodRestartMarkerPath,
   parseMuximodBootstrap,

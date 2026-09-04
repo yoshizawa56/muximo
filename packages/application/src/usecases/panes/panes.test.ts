@@ -48,6 +48,7 @@ class FakePanes implements PaneRepository {
   public async upsert(record: PaneRecord) {
     this.records = [record];
   }
+  public async touchLastSeen() {}
   public async pruneStalePanes(
     _activePaneIds: readonly PaneRecord["id"][],
     _olderThan: string,
