@@ -52,6 +52,8 @@ export type TailscaleServeClient = {
 export type TailscaleServeClientOptions = {
   environment?: NodeJS.ProcessEnv;
   binary?: string;
+  /** Optional executable argv prefix; shell aliases are intentionally unsupported. */
+  commandArgs?: readonly string[];
   run?: TailscaleCommandRunner;
 };
 
@@ -60,10 +62,12 @@ export function createTailscaleServeClient(options: TailscaleServeClientOptions 
   const environment = options.environment ?? process.env;
   const binary = options.binary ?? environment.TAILSCALE_BIN ?? "tailscale";
   const run = options.run ?? runTailscaleCommand;
+  const commandArgs = options.commandArgs ?? readCommandArgs(environment.MUXIMO_TAILSCALE_ARGS);
+  const execute = (args: readonly string[]) => run(binary, [...commandArgs, ...args], { environment });
 
   return {
     async resolveHostname() {
-      const result = await run(binary, ["status", "--json"], { environment });
+      const result = await execute(["status", "--json"]);
       const hostname = parseTailscaleHostname(result.stdout);
       if (!hostname) throw new Error("Tailscale hostname could not be determined from status");
       return hostname;
@@ -79,8 +83,8 @@ export function createTailscaleServeClient(options: TailscaleServeClientOptions 
         externalPort: input.externalPort,
         path: input.path,
       };
-      const command = await run(binary, buildServeArgs(config), { environment });
-      const status = await run(binary, ["serve", "status", "--json"], { environment });
+      const command = await execute(buildServeArgs(config));
+      const status = await execute(["serve", "status", "--json"]);
       const route: TailscaleServeRoute = {
         ...config,
         hostname,
@@ -99,7 +103,7 @@ export function createTailscaleServeClient(options: TailscaleServeClientOptions 
       return { route, command, statusJson: status.stdout };
     },
     status() {
-      return run(binary, ["serve", "status", "--json"], { environment });
+      return execute(["serve", "status", "--json"]);
     },
     async removeRoute(input) {
       if (
@@ -113,13 +117,27 @@ export function createTailscaleServeClient(options: TailscaleServeClientOptions 
       ) {
         throw new Error("refusing to remove a Tailscale Serve route with an invalid identity");
       }
-      const status = await run(binary, ["serve", "status", "--json"], { environment });
+      const status = await execute(["serve", "status", "--json"]);
       if (!hasTailscaleServeRoute(status.stdout, input)) {
         throw new Error(`refusing to remove a changed or missing Tailscale Serve route for ${input.localTarget}`);
       }
-      return run(binary, buildServeStopArgs(input), { environment });
+      return execute(buildServeStopArgs(input));
     },
   };
+}
+
+function readCommandArgs(value: string | undefined): string[] {
+  if (value === undefined || value.trim() === "") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error("MUXIMO_TAILSCALE_ARGS must be a JSON array of strings", { cause: error });
+  }
+  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+    throw new Error("MUXIMO_TAILSCALE_ARGS must be a JSON array of strings");
+  }
+  return parsed;
 }
 
 /** Checks the provider's live JSON before a route is removed or recorded. */

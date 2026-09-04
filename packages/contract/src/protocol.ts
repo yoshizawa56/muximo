@@ -42,6 +42,12 @@ export type MuximodHealth = z.infer<typeof muximodHealthSchema>;
 export const muximodCapabilitiesSchema = z
   .object({
     protocolVersion: z.literal(protocolVersion),
+    agents: z
+      .object({
+        enabled: z.array(agentBackendSchema),
+        default: agentBackendSchema.nullable(),
+      })
+      .strict(),
     features: z
       .object({
         tmuxSessions: z.boolean(),
@@ -214,6 +220,23 @@ const pairingClaimNotificationSchema = z
   .strict();
 export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
 
+const muximodTailscaleSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    executable: z.string().min(1).max(4_096),
+    args: z.array(z.string().max(16_384)).max(256),
+    hostname: z.string().min(1).max(256).nullable(),
+    externalPort: z.number().int().min(1).max(65_535),
+    path: z.string().min(1).max(4_096),
+  })
+  .strict();
+export const muximodHostSettingsSchema = z
+  .object({
+    tailscale: muximodTailscaleSettingsSchema,
+  })
+  .strict();
+export type MuximodHostSettings = z.infer<typeof muximodHostSettingsSchema>;
+
 export const muximodControlRequestSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("create_local_session"), requestId: controlRequestIdSchema }).strict(),
   z
@@ -273,6 +296,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
       lines: z.number().int().min(1).max(10_000),
     })
     .strict(),
+  z.object({ type: z.literal("read_host_settings"), requestId: controlRequestIdSchema }).strict(),
   z.discriminatedUnion("operation", [
     z
       .object({
@@ -397,6 +421,13 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
       state: z.enum(["available", "empty", "missing"]),
       logFile: z.string().min(1),
       lines: z.array(z.string()).max(10_000),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("host_settings"),
+      requestId: controlRequestIdSchema,
+      ...muximodHostSettingsSchema.shape,
     })
     .strict(),
   z

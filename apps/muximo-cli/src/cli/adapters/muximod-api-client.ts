@@ -8,6 +8,7 @@ import type {
   CleanupAgentSessionResponse,
   ListAgentSessionsRequest,
   ManageSessionRequest,
+  MuximodCapabilities,
   muximodContract,
   RegisterWorkspaceRequest,
   UpdateWorkspaceRequest,
@@ -22,6 +23,7 @@ import { MuximodPairingControlAdapter } from "./muximod-pairing-control-adapter.
 type RpcClient = ContractRouterClient<typeof muximodContract>;
 
 export type MuximodApiClient = {
+  capabilities(): Promise<MuximodCapabilities>;
   sessions: {
     manage(input: ManageSessionRequest): Promise<ManageSessionResult>;
   };
@@ -96,6 +98,7 @@ export async function connectMuximodApi(options: MuximodApiConnectionOptions): P
   };
   const listWorkspaces = () => request(() => rpc.workspaces.list({}), true);
   return {
+    capabilities: () => request(() => rpc.capabilities({}), true),
     sessions: {
       manage: async (input) => (await request(() => rpc.sessions.manage(input))).session,
     },

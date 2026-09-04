@@ -328,6 +328,7 @@ const capabilitiesCases = [
     name: "accepts the current capabilities contract",
     input: {
       protocolVersion: terminalProtocolVersion,
+      agents: { enabled: ["codex"], default: "codex" },
       features: {
         tmuxSessions: true,
         terminalWebSocket: true,
@@ -341,6 +342,7 @@ const capabilitiesCases = [
     name: "rejects capabilities for an unsupported protocol version",
     input: {
       protocolVersion: 99,
+      agents: { enabled: ["codex"], default: "codex" },
       features: {
         tmuxSessions: true,
         terminalWebSocket: true,
@@ -354,6 +356,7 @@ const capabilitiesCases = [
     name: "rejects an unknown capability",
     input: {
       protocolVersion: terminalProtocolVersion,
+      agents: { enabled: ["codex"], default: "codex" },
       features: {
         tmuxSessions: true,
         terminalWebSocket: true,
@@ -506,6 +509,17 @@ const pairingCases = [
     assert: [isValid()],
   },
   {
+    name: "accepts a private host settings request",
+    input: {
+      kind: "request",
+      value: {
+        type: "read_host_settings",
+        requestId: controlRequestId,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
     name: "rejects an unbounded daemon log request",
     input: {
       kind: "request",
@@ -570,6 +584,25 @@ const pairingCases = [
         state: "available",
         logFile: "/var/tmp/muximod.log",
         lines: ["muximod started"],
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a private host settings response",
+    input: {
+      kind: "response",
+      value: {
+        type: "host_settings",
+        requestId: controlRequestId,
+        tailscale: {
+          enabled: true,
+          executable: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+          args: ["--socket", "/tmp/tailscaled.sock"],
+          hostname: "machine.example",
+          externalPort: 8444,
+          path: "/muximo",
+        },
       },
     },
     assert: [isValid()],

@@ -2,6 +2,13 @@ import type { CreatePaneRequest } from "@muximo/contract/api";
 
 export type NewPaneAgent = Exclude<CreatePaneRequest["agentId"], null>;
 
+export type NewPaneAgentOption = {
+  value: NewPaneAgent;
+  label: string;
+  monogram: string;
+  badgeClass: string;
+};
+
 /** Provider values are derived from the contract; labels and presentation stay Web-owned. */
 export const agentOptions = [
   {
@@ -28,3 +35,7 @@ export const agentOptions = [
   monogram: string;
   badgeClass: string;
 }[];
+
+export function agentOptionsForEnabled(enabled: readonly NewPaneAgent[]): readonly NewPaneAgentOption[] {
+  return agentOptions.filter((option) => enabled.includes(option.value));
+}

@@ -1,3 +1,4 @@
+import type { AgentBackend } from "@muximo/domain";
 import { createOpenCodePlugin, type OpenCodePluginOptions } from "./opencode/plugin.js";
 import { createClaudeMonitor, createCodexMonitor } from "./provider-monitors.js";
 
@@ -206,13 +207,19 @@ export const defaultAgentPlugins: readonly AgentPluginV1[] = [shellPlugin, codex
 
 export type DefaultAgentPluginRegistryOptions = {
   opencode?: OpenCodePluginOptions;
+  enabled?: readonly AgentBackend[];
 };
 
 /** Creates the default provider registry for a composition root. */
 export function createDefaultAgentPluginRegistry(options: DefaultAgentPluginRegistryOptions = {}): AgentPluginRegistry {
   const registry = new AgentPluginRegistry();
-  for (const plugin of [shellPlugin, codexPlugin, claudePlugin]) registry.register(plugin);
-  registry.register(options.opencode ? createOpenCodePlugin(options.opencode) : opencodePlugin);
+  const enabled = new Set(options.enabled ?? ["codex", "claude", "opencode"]);
+  registry.register(shellPlugin);
+  if (enabled.has("codex")) registry.register(codexPlugin);
+  if (enabled.has("claude")) registry.register(claudePlugin);
+  if (enabled.has("opencode")) {
+    registry.register(options.opencode ? createOpenCodePlugin(options.opencode) : opencodePlugin);
+  }
   return registry;
 }
 

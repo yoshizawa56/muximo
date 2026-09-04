@@ -5,19 +5,19 @@ export {
   resolveMuximodClientPaths,
   validateMuximodControlSocketPath,
 } from "./client-paths.js";
-export type { MuximodEntrypointOptions } from "./entrypoint.js";
-export { runMuximod } from "./entrypoint.js";
+export type { MuximodEntrypointOptions, MuximodStartupConfiguration } from "./entrypoint.js";
+export { resolveMuximodStartupConfiguration, runMuximod } from "./entrypoint.js";
 export type {
   MuximodConfig,
   MuximodLaunchOptions,
   MuximodLifecycle,
   MuximodLifecycleOptions,
+  MuximodProcessCommand,
   MuximodProcessHandle,
   MuximodProcessResult,
 } from "./launch.js";
 export {
   createMuximodLifecycle,
-  MuximodStartupError,
   muximodConfigSchema,
   muximodRestartMarkerPath,
   parseMuximodBootstrap,

@@ -4,7 +4,6 @@ import type { DaemonLifecycleDependencies } from "./policy.js";
 
 export type StartDaemonInput = {
   options: DaemonOptions;
-  foreground: boolean;
 };
 
 export type StartDaemonDependencies = DaemonLifecycleDependencies & {
@@ -15,12 +14,6 @@ export class StartDaemon {
   public constructor(private readonly dependencies: StartDaemonDependencies) {}
 
   public async execute(input: StartDaemonInput): Promise<DaemonStartResult> {
-    if (input.foreground) {
-      return {
-        kind: "foreground",
-        process: await this.dependencies.runtime.runForeground(input.options),
-      };
-    }
     return { kind: "background", result: await this.dependencies.ensure.execute(input.options) };
   }
 }

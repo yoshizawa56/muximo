@@ -5,6 +5,7 @@ import type {
   MuximodAuthPort,
 } from "@muximo/application";
 import type { MuximodEvent } from "@muximo/contract/api";
+import type { AgentBackend } from "@muximo/domain";
 import type { MuximodSocket, MuximodSocketFactory } from "@muximo/infrastructure/runtime";
 
 export type { MuximodAuthContext, MuximodAuthDevice, MuximodAuthPort } from "@muximo/application";
@@ -35,4 +36,8 @@ export type MuximodHttpDependencies = {
   onTerminalConnection?: (socket: MuximodSocket, context: MuximodAuthContext) => void;
   subscribeEvents?: (signal: AbortSignal) => AsyncIteratorObject<MuximodEvent>;
   logger?: MuximodHttpLogger;
+  agentBackends?: {
+    enabled: readonly AgentBackend[];
+    default: AgentBackend | null;
+  };
 };

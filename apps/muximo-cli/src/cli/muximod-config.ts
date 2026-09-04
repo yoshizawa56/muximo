@@ -7,6 +7,7 @@ import {
   resolveMuximodClientPaths,
   validateMuximodControlSocketPath,
 } from "@muximo/muximod/client";
+import { muximoConfigPath } from "@muximo/profile";
 import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 export type MuximodConfigResolverOptions = {
@@ -15,12 +16,13 @@ export type MuximodConfigResolverOptions = {
   runtime: MuximoCliRuntimeOptions;
 };
 
-/** Resolves process configuration at the CLI boundary before DI enters muximod. */
+/** Resolves static process-boundary configuration; muximod loads instance config at startup. */
 export function createMuximodConfigResolver(
   options: MuximodConfigResolverOptions,
 ): (daemon: DaemonOptions) => MuximodConfig {
   return (daemon) => {
     const workingDirectory = resolve(options.workingDirectory);
+    const homeDirectory = options.environment.HOME ?? homedir();
     const paths = resolveMuximodClientPaths(
       { ...options.environment, MUXIMOD_INSTANCE_DIR: options.runtime.muximodInstanceDirectory },
       { baseDirectory: workingDirectory },
@@ -28,7 +30,7 @@ export function createMuximodConfigResolver(
     validateMuximodControlSocketPath(paths.controlSocket);
 
     const logLevel = daemon.logLevel ?? options.runtime.logLevel;
-    const logFile = resolveConfiguredPath(options.runtime.logFile, options.workingDirectory);
+    const logFile = resolveConfiguredPath(options.runtime.logFile, options.workingDirectory, homeDirectory);
     const allowedOrigins = normalizeAllowedOrigins(daemon.allowedOrigins ?? options.runtime.allowedOrigins);
     return {
       host: daemon.host,
@@ -37,9 +39,10 @@ export function createMuximodConfigResolver(
       hookOutputDirectory: paths.hookOutputDirectory,
       pidFile: paths.pidFile,
       controlSocket: paths.controlSocket,
+      configFile: muximoConfigPath(paths.instanceDirectory),
       allowedOrigins: [...allowedOrigins],
       allowedRoots: allowedRootsFromEnvironment(options.environment).map((root) =>
-        resolveConfiguredPath(root, workingDirectory),
+        resolveConfiguredPath(root, workingDirectory, homeDirectory),
       ),
       logLevel,
       logFile,
@@ -84,8 +87,9 @@ function readEnvironmentValue(value: string | undefined): string | null {
   return normalized || null;
 }
 
-function resolveConfiguredPath(value: string, baseDirectory: string): string {
-  const expanded = value === "~" ? homedir() : value.startsWith("~/") ? resolve(homedir(), value.slice(2)) : value;
+function resolveConfiguredPath(value: string, baseDirectory: string, homeDirectory = homedir()): string {
+  const expanded =
+    value === "~" ? homeDirectory : value.startsWith("~/") ? resolve(homeDirectory, value.slice(2)) : value;
   return resolve(isAbsolute(expanded) ? expanded : resolve(baseDirectory, expanded));
 }
 

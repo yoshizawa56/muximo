@@ -73,6 +73,8 @@ export function parseDotEnv(contents: string, source = ".env"): Record<string, s
   return values;
 }
 
+export * from "./config.js";
+
 export function profileFilePath(name: ProfileName, repositoryRoot: string): string {
   return join(repositoryRoot, `.env.${name}`);
 }

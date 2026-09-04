@@ -83,6 +83,10 @@ muximo daemon restart
 muximo daemon stop
 ```
 
+Production releases contain one `muximo` binary. The daemon is an internal
+process mode started and managed by that binary; `muximod` is not a separate
+user-facing executable.
+
 `muximo daemon log` prints the most recent 100 lines from the daemon's derived
 state log. Use `--lines N` to change the limit. The standalone production command
 uses the unnamed default profile and does not load source repository profiles.
@@ -90,13 +94,72 @@ Use the checkout-based `mise muximo --env <name>` command for a named profile;
 each named profile has its own derived state directory, ports, database, PID
 file, socket, and log.
 
-Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
+The daemon is started and managed by the local `muximo` command. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
+
+## Instance configuration
+
+Host-wide settings are stored in `config.json` inside the selected muximod
+instance directory (`<state-root>/<profile>/muximod/config.json`, or the
+unscoped instance directory when no profile is selected). `muximo config` is the
+intentional local file-management exception; the daemon reads and validates the
+file during startup, and normal CLI commands obtain daemon-owned values through
+the daemon API or private control socket.
+
+Create or inspect it with:
+
+```sh
+muximo config init
+muximo config path
+muximo config show
+```
+
+The interactive editor uses the standard terminal line editor and completes
+filesystem paths. Workspace roots and the enabled agent backends are entered
+directly; at least one agent backend is required. Agent backends are entered
+as comma-separated names, followed by one prompt asking whether to configure
+agent details. Tailscale has one enable prompt and asks its details only when
+enabled; update settings have one group-level configuration prompt. Every
+value is validated as soon as it is entered; invalid values show an error and
+repeat the same question. The non-interactive form is useful for scripts:
+
+```sh
+muximo config set workspace.roots ~/work/project,~/work/other
+muximo config set agents.enabled codex,claude
+muximo config set agents.default claude
+muximo config set agents.executables.claude ~/.local/bin/claude
+muximo config set serve.tailscale.enabled true
+muximo config set serve.tailscale.executable /usr/local/bin/tailscale
+muximo config set serve.tailscale.args '["--socket", "/run/user/1000/tailscaled.sock"]'
+```
+
+Run `muximo config set --help` for the complete key catalog, accepted value
+formats, choices, and examples. The generated zsh completion uses the same
+catalog for configuration keys and key-specific values. On macOS, the default
+Tailscale executable is `/Applications/Tailscale.app/Contents/MacOS/Tailscale`,
+which is the bundled CLI path for the App Store application. If the standalone
+CLI integration is installed instead, configure `/usr/local/bin/tailscale` or
+the appropriate executable path explicitly. Successful `config init` and
+`config set` commands report changed values as `before -> after`; use `config
+path` or `config show` when the file itself is needed. Configuration changes are
+applied after `muximo daemon restart`.
+
+The default configuration enables only `codex`. Disabled providers are not
+registered by the daemon, so an uninstalled optional tool such as OpenCode
+cannot prevent daemon startup. A provider executable is resolved only when a
+session using that provider is launched. After changing agent settings, run
+`muximo daemon restart` before starting new sessions.
+
+Executable settings accept a program name or path plus an argv prefix. They do
+not evaluate shell aliases or shell command strings; use a wrapper executable
+when a per-user command needs custom setup. Configuration files are written
+atomically with user-only permissions.
 
 Starting `muximod` does not create a tmux session. Create a new managed session with `muximo tmux new-session`, adopt an existing session with `muximo tmux manage-session --name <name>`, or let the Web connection flow adopt an unmanaged session automatically.
 
 To configure a muximod-only Tailscale Serve route:
 
 ```sh
+muximo config set serve.tailscale.enabled true
 muximo serve tailscale
 ```
 
@@ -126,6 +189,7 @@ Start and manage agent sessions on the host:
 ```sh
 muximo run codex --worktree review
 muximo run claude --no-worktree -n quick-fix
+muximo config set agents.enabled codex,claude,opencode
 muximo run opencode --worktree experiment
 muximo session resume review
 muximo session list --json

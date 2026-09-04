@@ -99,6 +99,12 @@ private process bootstrap receives a validated typed launch payload through an
 internal process-boundary serialization; it is not a public CLI command and is
 not present in help or completion.
 
+The production build uses `scripts/muximo-production-entrypoint.ts` and emits
+one `muximo` executable per supported platform and architecture. The private
+daemon process is another invocation of that executable, selected by the
+inherited bootstrap descriptor; no separate `muximod` release artifact is
+supported.
+
 The API and private control-socket surfaces have separate contract exports:
 `@muximo/contract/api`, `@muximo/contract/control`, and
 `@muximo/contract/shared`. HTTP exposes browser operations; pairing and host
@@ -152,6 +158,17 @@ source repository profiles. No profile name has special behavior: the CLI schema
 mode defaults to `migrate`, and a profile must explicitly set
 `MUXIMO_SCHEMA_MODE=push` to select push.
 No worktree-specific database, snapshot, seeding, or Portless URL is used.
+The selected muximod instance stores a validated `config.json` for shared workspace,
+agent, Tailscale, and update settings. The bootstrap passes only its path;
+muximod reads and validates the file during startup, and normal CLI commands
+obtain daemon-owned values through API or private control contracts. `muximo
+config init` uses the standard readline editor with filesystem completion,
+required agent selection, group-level detail prompts, conditional Tailscale
+questions, and immediate validation with retry;
+`config get`, `config set`, `config show`, and `config path` provide scriptable
+access. Configuration changes are summarized as before-and-after values. The
+default agent set is Codex only, and the daemon does not register disabled
+providers.
 `apps/web/cli.ts` independently manages one Vite process
 and its Web Serve route; it does not import or invoke muximod. Muximod Serve is a separate
 route-only command, and no combined development supervisor is part of the runtime.

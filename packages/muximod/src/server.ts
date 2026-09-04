@@ -21,7 +21,8 @@ import {
   type WorkspaceAuditPort,
   WorkspaceRecordFactory,
 } from "@muximo/application";
-import type { AgentSessionRecord } from "@muximo/domain";
+import type { MuximodHostSettings } from "@muximo/contract/control";
+import type { AgentBackend, AgentSessionRecord } from "@muximo/domain";
 import {
   AgentBackendAdapter,
   AgentSessionObservationAdapter,
@@ -68,6 +69,7 @@ import {
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
 } from "@muximo/infrastructure/runtime";
+import { defaultTailscaleExecutable } from "@muximo/profile";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
@@ -102,6 +104,9 @@ export type MuximodOptions = {
   workingDirectory: string;
   runtimeEnvironment: MuximodRuntimeEnvironment;
   environment: NodeJS.ProcessEnv;
+  enabledAgentBackends?: readonly AgentBackend[];
+  defaultAgentBackend?: AgentBackend | null;
+  hostSettings?: MuximodHostSettings;
 };
 
 export type { MuximodApp } from "./http/app.js";
@@ -115,6 +120,12 @@ export type MuximodServer = {
 
 export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const environment = resolveMuximodEnvironment(options.environment, options.runtimeEnvironment);
+  const enabledAgentBackends = options.enabledAgentBackends ?? ["codex", "claude", "opencode"];
+  const defaultAgentBackend =
+    options.defaultAgentBackend === undefined ? (enabledAgentBackends[0] ?? null) : options.defaultAgentBackend;
+  if (defaultAgentBackend !== null && !enabledAgentBackends.includes(defaultAgentBackend)) {
+    throw new Error("default agent backend must be enabled");
+  }
   const ownsLogger = !options.logger;
   const logger =
     options.logger ??
@@ -207,7 +218,9 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const agentPane = createAgentPanePublication(applicationForAgentPane, logger, environment);
   const backendOptions = {
     environment,
+    enabled: enabledAgentBackends,
     plugins: createDefaultAgentPluginRegistry({
+      enabled: enabledAgentBackends,
       opencode: {
         environment,
       },
@@ -335,6 +348,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       const result = await readDaemonLog(options.logFile ?? defaultLogFile(environment), lines);
       return { ...result, lines: [...result.lines] };
     },
+    readHostSettings: () => options.hostSettings ?? { tailscale: defaultTailscaleSettings() },
     adoptAgentSession: (request) => applicationForAgentPane().adoptAgentSession(request),
     observeAgentSession: (request) => applicationForAgentPane().observeAgentSession(request),
     releaseAgentSession: (request) => applicationForAgentPane().releaseAgentSession(request),
@@ -477,6 +491,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       });
     },
     subscribeEvents: (signal) => eventHub.subscribe(signal),
+    agentBackends: {
+      enabled: enabledAgentBackends,
+      default: defaultAgentBackend,
+    },
     logger,
   });
   let httpServer: ReturnType<typeof Bun.serve> | undefined;
@@ -647,6 +665,17 @@ export function resolveMuximodEnvironment(
 function setEnvironmentValue(environment: NodeJS.ProcessEnv, key: string, value: string | null): void {
   if (value === null) delete environment[key];
   else environment[key] = value;
+}
+
+function defaultTailscaleSettings(): MuximodHostSettings["tailscale"] {
+  return {
+    enabled: false,
+    executable: defaultTailscaleExecutable(),
+    args: [],
+    hostname: null,
+    externalPort: 8444,
+    path: "/",
+  };
 }
 
 type AgentPaneApplication = Pick<

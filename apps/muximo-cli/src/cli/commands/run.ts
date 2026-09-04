@@ -87,16 +87,23 @@ export const runSchema = z
   });
 
 export function registerRunCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
-  const command = parent.command("run <backend> [backendArgs...]").description("Run an agent backend");
+  const command = parent.command("run [backend] [backendArgs...]").description("Run an agent backend");
   registerOptions(command, runOptionSpecs, context.buildMode);
   command.allowUnknownOption(true);
 
   command.action(async (backend, backendArgs, options) => {
     const resolved = resolveCommandOptions(options, runOptionSpecs, context);
+    const capabilities = context.resolveAgentCapabilities ? await context.resolveAgentCapabilities() : undefined;
+    const selectedBackend = backend ?? capabilities?.default;
+    if (selectedBackend !== undefined && capabilities && !capabilities.enabled.includes(selectedBackend)) {
+      throw new Error(
+        `agent backend is disabled: ${selectedBackend}; enable it with "muximo config set agents.enabled"`,
+      );
+    }
     context.report(
       await invokeCliHandler({
         schema: runSchema,
-        rawInput: { ...resolved, backend, backendArgs },
+        rawInput: { ...resolved, backend: selectedBackend, backendArgs },
         commandPath: ["run"],
         context,
         handler: handlers.run,

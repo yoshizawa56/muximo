@@ -27,6 +27,7 @@ const bootstrapOptions: MuximodLaunchOptions = {
     host: "127.0.0.1",
     port: 4317,
     instanceDirectory: "/tmp/muximod-instance",
+    configFile: "/tmp/muximod-instance/config.json",
     hookOutputDirectory: "/tmp/muximod-instance/hooks",
     pidFile: "/tmp/muximod-instance/muximod.pid",
     controlSocket: "/tmp/muximod-instance/muximod.sock",

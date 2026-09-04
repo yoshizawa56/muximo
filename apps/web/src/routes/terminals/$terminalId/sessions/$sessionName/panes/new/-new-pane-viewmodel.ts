@@ -1,7 +1,7 @@
 import type { PanePlacement, PaneSummary, TerminalEndpoint, TmuxSession } from "@muximo/contract/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invalidateSessionData } from "../../../../../../../app/api/invalidation";
 import { muximodErrorMessage } from "../../../../../../../app/api/muximod-error.js";
 import { useMuximodConnection } from "../../../../../../../app/api/use-muximod-connection";
@@ -11,7 +11,7 @@ import {
   type WorkspacePickerViewModel,
   workspacePickerState,
 } from "../../../-workspace-picker-viewmodel";
-import type { NewPaneAgent } from "./-agent-options";
+import { agentOptionsForEnabled, type NewPaneAgent, type NewPaneAgentOption } from "./-agent-options";
 
 export type NewPaneKind = "agent" | "shell";
 export type { NewPaneAgent } from "./-agent-options";
@@ -23,6 +23,7 @@ export type NewPaneViewModel = {
   workspacePicker: WorkspacePickerViewModel;
   kind: NewPaneKind;
   agentId: NewPaneAgent;
+  agentOptions: readonly NewPaneAgentOption[];
   existingPanes: PaneSummary[];
   placement: PanePlacement;
   targetPaneId: string | null;
@@ -52,10 +53,22 @@ export function useNewPaneViewModel(): NewPaneViewModel {
       staleTime: 1_000,
     }),
   );
+  const capabilitiesQuery = useQuery(
+    resources.utils.capabilities.queryOptions({
+      input: {},
+      enabled: Boolean(connection),
+      staleTime: 30_000,
+    }),
+  );
+  const availableAgentOptions = useMemo(
+    () => agentOptionsForEnabled(connection ? (capabilitiesQuery.data?.agents.enabled ?? []) : ["codex"]),
+    [capabilitiesQuery.data?.agents.enabled, connection],
+  );
   const existingPanes = panesQuery.data?.panes ?? [];
   const [name, setName] = useState("");
   const [kind, setKind] = useState<NewPaneKind>("agent");
   const [agentId, setAgentId] = useState<NewPaneAgent>("codex");
+  const [agentSelectionTouched, setAgentSelectionTouched] = useState(false);
   const [placement, setPlacement] = useState<PanePlacement>("window");
   const [targetPaneId, setTargetPaneId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -74,6 +87,17 @@ export function useNewPaneViewModel(): NewPaneViewModel {
     }
   }, [kind, workspacePicker]);
 
+  useEffect(() => {
+    const configuredDefault = capabilitiesQuery.data?.agents.default;
+    const fallback =
+      configuredDefault && availableAgentOptions.some((option) => option.value === configuredDefault)
+        ? configuredDefault
+        : availableAgentOptions[0]?.value;
+    if (fallback && (!agentSelectionTouched || !availableAgentOptions.some((option) => option.value === agentId))) {
+      setAgentId(fallback);
+    }
+  }, [agentId, agentSelectionTouched, availableAgentOptions, capabilitiesQuery.data?.agents.default]);
+
   return {
     terminal: resources.selectedTerminal ?? fallbackTerminal,
     session: resources.selectedSession ?? fallbackSession,
@@ -81,6 +105,7 @@ export function useNewPaneViewModel(): NewPaneViewModel {
     workspacePicker,
     kind,
     agentId,
+    agentOptions: availableAgentOptions,
     existingPanes,
     placement,
     targetPaneId,
@@ -98,7 +123,10 @@ export function useNewPaneViewModel(): NewPaneViewModel {
         workspacePicker.workspaces[0];
       if (selected?.isGit) workspacePicker.onModeChange("worktree");
     },
-    onAgentChange: setAgentId,
+    onAgentChange: (nextAgent) => {
+      setAgentSelectionTouched(true);
+      setAgentId(nextAgent);
+    },
     onPlacementChange: (nextPlacement) => {
       setPlacement(nextPlacement);
       if (nextPlacement !== "window" && !targetPaneId) setTargetPaneId(existingPanes[0]?.hostPaneId ?? null);

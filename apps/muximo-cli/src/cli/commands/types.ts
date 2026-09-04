@@ -64,7 +64,6 @@ export type CliDoctorInput = {
 
 export type CliDaemonInput = {
   command: "start" | "status" | "stop" | "restart" | "ensure" | "log";
-  foreground: boolean;
   refreshServers: boolean;
   lines?: number;
 };
@@ -108,6 +107,12 @@ export type CliWorkspaceDeleteInput = {
   selector: string;
 };
 
+export type CliConfigInput = {
+  command: "init" | "path" | "show" | "get" | "set";
+  key?: string;
+  values: readonly string[];
+};
+
 export type CliHandlers = {
   run(input: CliRunInput): Promise<number>;
   shell(input: CliShellInput): Promise<number>;
@@ -124,6 +129,7 @@ export type CliHandlers = {
   workspaceAdd(input: CliWorkspaceAddInput): Promise<number>;
   workspaceUpdate(input: CliWorkspaceUpdateInput): Promise<number>;
   workspaceDelete(input: CliWorkspaceDeleteInput): Promise<number>;
+  config(input: CliConfigInput): Promise<number>;
 };
 
 export type CliAppDeps = {
@@ -133,6 +139,7 @@ export type CliAppDeps = {
   environment: NodeJS.ProcessEnv;
   buildMode?: CliBuildMode;
   runtime?: MuximoCliRuntimeOptions;
+  resolveAgentCapabilities?: CliCommandContext["resolveAgentCapabilities"];
   rootCommand?: string;
   lifecycle?: CliCommandLifecycle;
 };
@@ -150,6 +157,10 @@ export type CliCommandContext = {
   buildMode: CliBuildMode;
   runtime?: MuximoCliRuntimeOptions;
   rootCommand: string;
+  resolveAgentCapabilities?: () => Promise<{
+    enabled: readonly AgentBackend[];
+    default: AgentBackend | null;
+  }>;
   report(status: number): void;
   lifecycle?: CliCommandLifecycle;
 };

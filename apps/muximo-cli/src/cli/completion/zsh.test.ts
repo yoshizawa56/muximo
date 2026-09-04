@@ -1,7 +1,7 @@
 import { type OperationCase, type OperationTable, runOperationTable, type TestRegistrar } from "@muximo/test-support";
 import { Command } from "commander";
 import { describe, expect, it } from "vitest";
-import { defineOptions, registerOptions } from "../options/index.js";
+import { defineOptions, registerArguments, registerOptions } from "../options/index.js";
 import { generateZshCompletion } from "./zsh.js";
 
 const rootOptions = defineOptions({
@@ -29,7 +29,7 @@ const serveOptions = defineOptions(
 );
 
 type Fixture = { completion: string };
-type Input = { command: "root" | "serve" | "workspace" };
+type Input = { command: "root" | "serve" | "workspace" | "config-set" };
 type Context = Fixture;
 
 const createFixture = () => {
@@ -39,6 +39,29 @@ const createFixture = () => {
   registerOptions(serve, serveOptions);
   const workspace = program.command("workspace");
   workspace.command("list").alias("ls");
+  const config = program.command("config");
+  const configSet = config.command("set <key> [values...]");
+  registerArguments(configSet, [
+    {
+      key: "key",
+      description: "Configuration key",
+      completion: { kind: "choices", values: ["agents.enabled", "updates.policy"] },
+    },
+    {
+      key: "value",
+      description: "Value for the selected configuration key",
+      repeatable: true,
+      completion: {
+        kind: "dependent",
+        dependsOn: "key",
+        values: {
+          "agents.enabled": { kind: "choices", values: ["codex", "claude"] },
+          "updates.policy": { kind: "choices", values: ["manual", "notify", "auto"] },
+        },
+        fallback: { kind: "none" },
+      },
+    },
+  ]);
   return { fixture: { completion: generateZshCompletion(program) } };
 };
 
@@ -77,6 +100,17 @@ const cases = [
       containsText("'1:command:(list ls)'"),
       containsText("'list') _muximo_workspace_list ;;"),
       containsText("'ls') _muximo_workspace_list ;;"),
+    ],
+  },
+  {
+    name: "generates config key and dependent value completions",
+    input: { command: "config-set" },
+    assert: [
+      containsText("_muximo_config_set()"),
+      containsText("'1:key\\ —\\ Configuration\\ key:(agents.enabled updates.policy)'"),
+      containsText("'*:value\\ —\\ Value\\ for\\ the\\ selected\\ configuration\\ key:_muximo_config_set_key_values'"),
+      containsText('case "$' + '{words[4]:-}" in'),
+      containsText("'updates.policy') compadd -- 'manual' 'notify' 'auto' ;;"),
     ],
   },
 ] satisfies readonly OperationCase<"default", Input, string, Context>[];

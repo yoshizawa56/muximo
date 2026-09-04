@@ -11,4 +11,5 @@ export type MuximoCliRuntimeOptions = {
   allowedOrigins: readonly string[];
   codexRemote: string;
   verbose: boolean;
+  configFile: string;
 };

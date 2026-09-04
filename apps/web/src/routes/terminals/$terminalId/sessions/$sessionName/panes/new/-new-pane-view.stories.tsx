@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { storyPanes, storySession, storyTerminal, storyWorkspaces } from "../../../../../-story-fixtures";
 import type { WorkspacePickerViewModel, WorkspaceSelectionMode } from "../../../-workspace-picker-viewmodel";
-import type { NewPaneAgent } from "./-agent-options";
+import { agentOptions, type NewPaneAgent } from "./-agent-options";
 import { NewPaneView } from "./-new-pane-view";
 import type { NewPaneKind, NewPaneViewModel } from "./-new-pane-viewmodel";
 
@@ -48,6 +48,7 @@ function buildViewModel(overrides: Partial<NewPaneViewModel> = {}): NewPaneViewM
     workspacePicker: buildWorkspacePicker("worktree", fn()),
     kind: "agent",
     agentId: "codex",
+    agentOptions,
     existingPanes: storyPanes,
     placement: "window",
     targetPaneId: storyPanes[0].hostPaneId,
@@ -89,6 +90,7 @@ function NewPaneStory({
       workspacePicker: buildWorkspacePicker(mode, setMode),
       kind,
       agentId,
+      agentOptions,
       existingPanes: initialPanes,
       placement,
       targetPaneId,

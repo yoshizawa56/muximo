@@ -29,6 +29,7 @@ type ControlRequest = { agentSessionId: string; hostPaneId: string; executionId:
 type ControlStep =
   | { type: "adopt" | "observe" | "release" }
   | { type: "read-log"; lines: number }
+  | { type: "read-host-settings" }
   | { type: "prepare-execution" | "attach-execution" | "complete-execution" }
   | { type: "cancel-prepare" };
 type ControlFixture = {
@@ -145,6 +146,16 @@ const fixture = (
       logReads.push(lines);
       return { state: "available", logFile: "/tmp/muximod.log", lines: ["first", "second"].slice(-lines) };
     },
+    readHostSettings: () => ({
+      tailscale: {
+        enabled: true,
+        executable: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+        args: ["--socket", "/tmp/tailscaled.sock"],
+        hostname: "machine.example",
+        externalPort: 8444,
+        path: "/muximo",
+      },
+    }),
     adoptAgentSession: async (input) => {
       applicationRequests.push({ operation: "adopt", ...input });
       calls.push(`adopt:${input.agentSessionId}:${input.hostPaneId}:${input.executionId}`);
@@ -299,6 +310,26 @@ const cases = [
     ],
   },
   {
+    name: "returns daemon-owned host settings through the private control contract",
+    steps: [{ type: "read-host-settings" }],
+    assert: [
+      hasObserved<ControlContext, undefined>("responses", [
+        {
+          type: "host_settings",
+          tailscale: {
+            enabled: true,
+            executable: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+            args: ["--socket", "/tmp/tailscaled.sock"],
+            hostname: "machine.example",
+            externalPort: 8444,
+            path: "/muximo",
+          },
+        },
+      ]),
+      hasObserved<ControlContext, undefined>("requestIds", ["control-request-1"]),
+    ],
+  },
+  {
     name: "dispatches host-owned execution lifecycle operations without a socket ownership lease",
     steps: [{ type: "prepare-execution" }, { type: "attach-execution" }, { type: "complete-execution" }],
     assert: [
@@ -383,11 +414,13 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
               ? "release_agent_session"
               : step.type === "read-log"
                 ? "read_log"
-                : step.type === "prepare-execution"
-                  ? "prepare_agent_execution"
-                  : step.type === "attach-execution"
-                    ? "attach_agent_execution"
-                    : "complete_agent_execution";
+                : step.type === "read-host-settings"
+                  ? "read_host_settings"
+                  : step.type === "prepare-execution"
+                    ? "prepare_agent_execution"
+                    : step.type === "attach-execution"
+                      ? "attach_agent_execution"
+                      : "complete_agent_execution";
       const expectedCount = testFixture.responses.length + 1;
       testFixture.handleRequest(
         JSON.stringify({
@@ -395,27 +428,29 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
           requestId: `control-request-${expectedCount}`,
           ...(step.type === "read-log"
             ? { lines: step.lines }
-            : step.type === "prepare-execution"
-              ? {
-                  operation: "run",
-                  input: {
-                    backend: "codex",
-                    hostPaneId: request.hostPaneId,
-                    cwd: execution.cwd,
-                    useWorktree: false,
-                    setupHookExplicit: false,
-                    cleanupHookExplicit: false,
-                    backendArgs: [],
-                  },
-                }
-              : step.type === "attach-execution"
-                ? { ...testFixture.request, executionPid: 456, executionStartedAt }
-                : step.type === "complete-execution"
-                  ? { ...testFixture.request, operation: "run", result: executionProcess }
-                  : {
-                      ...testFixture.request,
-                      ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
-                    }),
+            : step.type === "read-host-settings"
+              ? {}
+              : step.type === "prepare-execution"
+                ? {
+                    operation: "run",
+                    input: {
+                      backend: "codex",
+                      hostPaneId: request.hostPaneId,
+                      cwd: execution.cwd,
+                      useWorktree: false,
+                      setupHookExplicit: false,
+                      cleanupHookExplicit: false,
+                      backendArgs: [],
+                    },
+                  }
+                : step.type === "attach-execution"
+                  ? { ...testFixture.request, executionPid: 456, executionStartedAt }
+                  : step.type === "complete-execution"
+                    ? { ...testFixture.request, operation: "run", result: executionProcess }
+                    : {
+                        ...testFixture.request,
+                        ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
+                      }),
         }),
       );
       await waitFor(() => testFixture.responses.length === expectedCount);
