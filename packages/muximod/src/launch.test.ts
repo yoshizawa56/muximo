@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,7 @@ import {
   type MuximodLaunchOptions,
   muximodConfigSchema,
   muximodConfigurationFingerprint,
+  muximodProcessSpawnOptions,
   parseMuximodBootstrap,
   readMuximodBootstrap,
 } from "./launch.js";
@@ -74,6 +76,51 @@ const bootstrapReadTable: OperationTable<BootstrapReadFixture, "default", undefi
   execute: (fixture) => readMuximodBootstrap(openSync(fixture.path, "r")),
   observe: () => ({}),
 };
+
+type ProcessIdentity = { argv0: string; title: string };
+type ProcessIdentityContext = { identity?: ProcessIdentity };
+
+const processIdentityCases = [
+  {
+    name: "launches the entrypoint with the muximod process identity",
+    input: undefined,
+    assert: [hasObserved<ProcessIdentityContext, ProcessIdentity>("identity", { argv0: "muximod", title: "muximod" })],
+  },
+] satisfies readonly OperationCase<"default", undefined, ProcessIdentity, ProcessIdentityContext>[];
+
+const processIdentityTable: OperationTable<undefined, "default", undefined, ProcessIdentity, ProcessIdentityContext> = {
+  defaultFixture: noFixture(),
+  cases: processIdentityCases,
+  execute: () => {
+    const entrypointUrl = new URL("./process-entrypoint.ts", import.meta.url).href;
+    const childSource = [
+      `const { runMuximodProcess } = await import(${JSON.stringify(entrypointUrl)});`,
+      "await runMuximodProcess(",
+      "  () => ({}),",
+      "  async () => {",
+      "    process.stdout.write(JSON.stringify({ argv0: process.argv0, title: process.title }));",
+      "  },",
+      ");",
+    ].join("\n");
+    const child = spawnSync(process.execPath, ["-e", childSource], {
+      ...muximodProcessSpawnOptions(),
+      cwd: process.cwd(),
+      env: process.env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (child.error) throw child.error;
+    if (child.status !== 0) {
+      throw new Error(`muximod process identity probe failed: ${child.stderr}`);
+    }
+    return JSON.parse(child.stdout) as ProcessIdentity;
+  },
+  observe: (_fixture, result) => ({ identity: result.ok ? result.value : undefined }),
+};
+
+describe("muximod process identity", () => {
+  runOperationTable(it as unknown as TestRegistrar, processIdentityTable);
+});
 
 const bootstrapSizeCases = [
   {

@@ -224,6 +224,7 @@ function paneFingerprint(pane: TmuxPane, state?: string, recentOutput?: string):
     pane.muximodName,
     pane.muximodKind,
     pane.muximodAgentId,
+    pane.muximodWorkspaceId,
     pane.muximodManagedSessionId,
     pane.isMuximoMobileViewport,
     state,

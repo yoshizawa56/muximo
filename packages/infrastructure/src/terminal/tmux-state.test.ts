@@ -81,6 +81,7 @@ type StateStep =
   | { type: "change" }
   | { type: "change-state"; state: string }
   | { type: "change-output"; output: string }
+  | { type: "change-workspace"; workspaceId: string }
   | { type: "advance"; milliseconds: number }
   | { type: "set-available"; available: boolean };
 type CleanupRecord = { ids: string[]; olderThan: string };
@@ -183,6 +184,11 @@ const cases = [
     name: "reports a provider output change",
     fixture: "agent-observation",
     steps: [{ type: "reconcile" }, { type: "change-output", output: "new output" }, { type: "reconcile" }],
+    assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_changed" }])],
+  },
+  {
+    name: "reports a workspace metadata change",
+    steps: [{ type: "reconcile" }, { type: "change-workspace", workspaceId: "workspace-2" }, { type: "reconcile" }],
     assert: [hasObserved<StateContext, undefined>("changes", [{ sessionName: "work", reason: "pane_changed" }])],
   },
   {
@@ -292,6 +298,9 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
           break;
         case "change-output":
           fixture.paneRecentOutputs.set(fixture.panes[0]!.paneId, step.output);
+          break;
+        case "change-workspace":
+          fixture.panes[0] = { ...fixture.panes[0]!, muximodWorkspaceId: step.workspaceId };
           break;
         case "advance":
           fixture.now += step.milliseconds;

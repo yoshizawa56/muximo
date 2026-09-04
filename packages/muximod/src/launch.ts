@@ -170,6 +170,10 @@ export type MuximodProcessHandle = {
   terminate(signal?: "SIGINT" | "SIGTERM"): void;
 };
 
+export function muximodProcessSpawnOptions(): { argv0: "muximod" } {
+  return { argv0: "muximod" };
+}
+
 export type MuximodLifecycle = {
   ensure(input: DaemonOptions): Promise<DaemonEnsureResult>;
   startForeground(input: DaemonOptions): Promise<MuximodProcessHandle>;
@@ -206,7 +210,7 @@ export async function spawnMuximod(
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(processCommand.executable, processCommand.args, {
-      argv0: "muximod",
+      ...muximodProcessSpawnOptions(),
       cwd: options.config.workingDirectory,
       detached: processOptions.detached ?? false,
       env: childEnvironment,

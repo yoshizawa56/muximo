@@ -399,9 +399,8 @@ const cases = [
     name: "touches a live pane timestamp without rewriting its projection",
     steps: [{ type: "verify-last-seen-heartbeat" }],
     assert: [
-      matchesObserved<DatabaseResult>("touchedPane", {
-        id: pane.id,
-        hostPaneId: pane.hostPaneId,
+      hasObserved<DatabaseContext, DatabaseResult>("touchedPane", {
+        ...pane,
         lastSeenAt: "2026-08-24T00:00:00.000Z",
       }),
     ],
