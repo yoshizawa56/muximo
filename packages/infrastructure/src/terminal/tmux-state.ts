@@ -22,6 +22,7 @@ export type TmuxStateMonitorOptions = {
   readPanes: () => TmuxLiveSnapshot;
   synchronize: (snapshot: TmuxLiveSnapshot) => Promise<readonly PaneId[] | TmuxSynchronization>;
   cleanup?: (activePaneIds: readonly PaneId[], olderThan: string, tmuxServerScope: string) => Promise<void>;
+  heartbeat?: (snapshot: TmuxLiveSnapshot) => Promise<void>;
   onChange: (changes: TmuxPaneChange[]) => void;
   intervalMs?: number;
   cleanupIntervalMs?: number;
@@ -124,6 +125,8 @@ export class TmuxStateMonitor {
         }
         this.activePaneIds = synchronized.activePaneIds;
         this.lastSuccessfulLiveFingerprint = currentLiveFingerprint;
+      } else {
+        await this.options.heartbeat?.(live);
       }
 
       await this.cleanupIfDue(live, this.activePaneIds);
@@ -198,6 +201,7 @@ function snapshot(
 
 function paneFingerprint(pane: TmuxPane, state?: string, recentOutput?: string): string {
   return JSON.stringify([
+    pane.paneId,
     pane.sessionName,
     pane.tmuxServerId,
     pane.muximodSessionId,

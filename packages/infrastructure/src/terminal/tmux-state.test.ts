@@ -76,6 +76,7 @@ type StateKey = "default" | "cleanup-cadence" | "unavailable" | "cleanup-error" 
 type StateStep =
   | { type: "reconcile" }
   | { type: "add"; paneIds: string[] }
+  | { type: "replace"; paneId: string; replacementPaneId: string }
   | { type: "delete" }
   | { type: "change" }
   | { type: "change-state"; state: string }
@@ -96,11 +97,13 @@ type StateFixture = {
   cleanupEnabled: boolean;
   cleanupThrows: boolean;
   synchronizeCalls: number;
+  heartbeatCalls: string[][];
 };
 type StateContext = {
   changes: readonly { sessionName: string; reason: string }[];
   cleanups: readonly CleanupRecord[];
   synchronizeCalls: number;
+  heartbeatCalls: readonly string[][];
 };
 
 const stateFixture =
@@ -125,6 +128,7 @@ const stateFixture =
       cleanupEnabled: true,
       cleanupThrows: kind === "cleanup-error",
       synchronizeCalls: 0,
+      heartbeatCalls: [],
     },
   });
 
@@ -132,7 +136,15 @@ const cases = [
   {
     name: "does not re-reconcile an unchanged shell snapshot",
     steps: [{ type: "reconcile" }, { type: "reconcile" }],
-    assert: [hasObserved<StateContext, undefined>("synchronizeCalls", 1)],
+    assert: [
+      hasObserved<StateContext, undefined>("synchronizeCalls", 1),
+      hasObserved<StateContext, undefined>("heartbeatCalls", [["%1"]]),
+    ],
+  },
+  {
+    name: "reconciles an equivalent pane replacement",
+    steps: [{ type: "reconcile" }, { type: "replace", paneId: "%1", replacementPaneId: "%2" }, { type: "reconcile" }],
+    assert: [hasObserved<StateContext, undefined>("synchronizeCalls", 2)],
   },
   {
     name: "continues observing an agent on an unchanged tmux snapshot",
@@ -241,6 +253,9 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
           ),
         };
       },
+      heartbeat: async (snapshot) => {
+        fixture.heartbeatCalls.push(snapshot.panes.map((pane) => pane.paneId));
+      },
       cleanup: fixture.cleanupEnabled
         ? async (ids, olderThan) => {
             fixture.cleanups.push({ ids: [...ids], olderThan });
@@ -259,6 +274,12 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
           break;
         case "add":
           fixture.panes.push(...step.paneIds.map((paneId) => createPane(paneId, "work")));
+          break;
+        case "replace":
+          fixture.panes = [
+            ...fixture.panes.filter((pane) => pane.paneId !== step.paneId),
+            createPane(step.replacementPaneId, "work"),
+          ];
           break;
         case "delete":
           fixture.panes = [];
@@ -287,6 +308,7 @@ const table: ScenarioTable<StateFixture, StateKey, StateStep, undefined, StateCo
     changes: [...fixture.changes],
     cleanups: [...fixture.cleanups],
     synchronizeCalls: fixture.synchronizeCalls,
+    heartbeatCalls: fixture.heartbeatCalls.map((paneIds) => [...paneIds]),
   }),
 };
 

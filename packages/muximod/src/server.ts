@@ -439,6 +439,14 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       })),
     cleanup: (activePaneIds, olderThan, hostServerScope) =>
       paneRepository.pruneStalePanes(activePaneIds, olderThan, hostServerScope).then(() => undefined),
+    heartbeat: async (snapshot) => {
+      if (!snapshot.tmuxServerId || snapshot.panes.length === 0) return;
+      await paneRepository.touchLastSeen(
+        snapshot.tmuxServerId,
+        snapshot.panes.map((pane) => pane.paneId),
+        clock.now(),
+      );
+    },
     onChange: (changes) => {
       const revision = ++eventRevision;
       for (const change of changes) {

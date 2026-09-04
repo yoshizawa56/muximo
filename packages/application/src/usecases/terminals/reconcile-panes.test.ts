@@ -229,6 +229,7 @@ function createFixture(): { fixture: ReconcileFixture } {
         record,
       ];
     },
+    touchLastSeen: async () => undefined,
     pruneStalePanes: async () => 0,
   };
   const sessionRepository: AgentSessionRepository = {
