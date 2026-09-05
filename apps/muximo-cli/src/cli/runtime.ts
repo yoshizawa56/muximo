@@ -1,7 +1,6 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { normalizeAllowedOrigins } from "@muximo/infrastructure/cli-client";
-import { isLoopbackOrPrivateBindHost, muximoConfigPath } from "@muximo/profile";
+import { resolveInstancePaths } from "@muximo/instance-contract";
 import { z } from "zod";
 import type { CliBuildMode } from "./build-mode.js";
 import { globalOptionSpecs } from "./commands/global.js";
@@ -9,16 +8,7 @@ import { type CliOptionResolution, getAvailableOptionSpecs, resolveOptionValues 
 import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 const cliRuntimeSchema = z.object({
-  environment: z.string().min(1).optional(),
-  stateRoot: z.string().min(1),
-  muximodHost: z.string().min(1),
-  muximodPort: z.coerce.number().int().min(1).max(65_535),
-  muximodServePort: z.coerce.number().int().min(1).max(65_535),
-  schemaMode: z.enum(["migrate", "push"]),
-  logLevel: z.enum(["error", "warn", "info", "debug"]),
-  logFile: z.string().min(1).optional(),
-  allowedOrigins: z.array(z.string()).default([]),
-  codexRemote: z.string().min(1),
+  instanceDirectory: z.string().min(1),
   verbose: z.boolean().default(false),
 });
 
@@ -48,34 +38,11 @@ export function resolveMuximoCliRuntimeOptions(input: ResolveMuximoCliRuntimeOpt
   const runtimeValues = { ...resolution.values };
   const parsed = parseRuntimeValues(runtimeValues);
 
-  const stateRoot = resolveConfiguredPath(parsed.stateRoot, input.cwd, homeDirectory);
-  const muximodInstanceDirectory = join(
-    stateRoot,
-    ...(parsed.environment === undefined ? [] : [parsed.environment]),
-    "muximod",
-  );
-  const resolvedConfigFile = muximoConfigPath(muximodInstanceDirectory);
-  const muximodHost = readBindHost(parsed.muximodHost);
-  const logFile = resolveConfiguredPath(
-    parsed.logFile ?? join(muximodInstanceDirectory, "muximod.log"),
-    input.cwd,
-    homeDirectory,
-  );
-  const allowedOrigins = normalizeAllowedOrigins(parsed.allowedOrigins);
+  const instanceDirectory = resolveConfiguredPath(parsed.instanceDirectory, input.cwd, homeDirectory);
+  const paths = resolveInstancePaths(instanceDirectory);
   const runtime: MuximoCliRuntimeOptions = {
-    environmentName: parsed.environment,
-    stateRoot,
-    muximodInstanceDirectory,
-    muximodHost,
-    muximodPort: parsed.muximodPort,
-    muximodServePort: parsed.muximodServePort,
-    schemaMode: parsed.schemaMode,
-    logLevel: parsed.logLevel,
-    logFile,
-    allowedOrigins,
-    codexRemote: parsed.codexRemote,
+    ...paths,
     verbose: parsed.verbose,
-    configFile: resolvedConfigFile,
   };
   return {
     values: runtimeValues,
@@ -93,34 +60,33 @@ function parseRuntimeValues(values: CliOptionResolution["values"]): z.infer<type
 function applyRuntimeEnvironment(environment: NodeJS.ProcessEnv, runtime: MuximoCliRuntimeOptions): NodeJS.ProcessEnv {
   const resolved: NodeJS.ProcessEnv = {
     ...environment,
-    MUXIMOD_INSTANCE_DIR: runtime.muximodInstanceDirectory,
-    MUXIMO_OPENCODE_REGISTRY_FILE: join(runtime.stateRoot, "opencode-servers.json"),
-    MUXIMOD_HOST: runtime.muximodHost,
-    MUXIMOD_PORT: String(runtime.muximodPort),
-    MUXIMO_MUXIMOD_SERVE_PORT: String(runtime.muximodServePort),
-    MUXIMO_SCHEMA_MODE: runtime.schemaMode,
-    MUXIMO_LOG_LEVEL: runtime.logLevel,
-    MUXIMO_LOG_FILE: runtime.logFile,
-    MUXIMOD_ALLOWED_ORIGINS: runtime.allowedOrigins.join(","),
-    MUXIMO_CODEX_REMOTE: runtime.codexRemote,
+    MUXIMOD_INSTANCE_DIR: runtime.instanceDirectory,
   };
-
-  if (runtime.environmentName === undefined) delete resolved.MUXIMO_ENV;
-  else resolved.MUXIMO_ENV = runtime.environmentName;
-
-  delete resolved.MUXIMO_DEV_STATE_ROOT;
-  delete resolved.BASE_MUXIMOD_INSTANCE_DIR;
-  delete resolved.MUXIMOD_PID_FILE;
-  delete resolved.MUXIMOD_CONTROL_SOCKET;
-  delete resolved.MUXIMO_HOOK_OUTPUT_DIR;
-  delete resolved.MUXIMO_SERVE_PORT;
+  for (const key of [
+    "MUXIMO_ENV",
+    "MUXIMO_STATE_ROOT",
+    "MUXIMO_MUXIMOD_HOST",
+    "MUXIMO_MUXIMOD_PORT",
+    "MUXIMO_MUXIMOD_SERVE_PORT",
+    "MUXIMO_SCHEMA_MODE",
+    "MUXIMO_LOG_LEVEL",
+    "MUXIMO_LOG_FILE",
+    "MUXIMOD_ALLOWED_ORIGINS",
+    "MUXIMOD_WORKSPACE_ROOTS",
+    "MUXIMO_CODEX_REMOTE",
+    "MUXIMO_TAILSCALE_ARGS",
+    "MUXIMO_TAILSCALE_HOSTNAME",
+    "MUXIMO_TAILSCALE_PATH",
+    "TAILSCALE_BIN",
+    "MUXIMO_CODEX_BIN",
+    "MUXIMO_CLAUDE_BIN",
+    "MUXIMO_OPENCODE_BIN",
+    "MUXIMO_OPENCODE_SERVER_URL",
+    "MUXIMO_OPENCODE_REGISTRY_FILE",
+  ]) {
+    delete resolved[key];
+  }
   return resolved;
-}
-
-function readBindHost(value: string): string {
-  const normalized = value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
-  if (isLoopbackOrPrivateBindHost(normalized)) return normalized;
-  throw new Error(`MUXIMO_MUXIMOD_HOST must be localhost, a loopback address, or a private IP address: ${value}`);
 }
 
 function resolveConfiguredPath(value: string, cwd: string, homeDirectory: string): string {

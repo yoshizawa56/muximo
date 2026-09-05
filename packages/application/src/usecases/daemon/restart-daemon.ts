@@ -40,6 +40,10 @@ export class RestartDaemon {
         pid: child.pid,
       });
     }
-    return { state: "restarted", host: options.host, port: options.port };
+    const restartedRecord = this.dependencies.runtime.readPidRecord(options.pidFile);
+    return {
+      state: "restarted",
+      ...(restartedRecord === undefined ? {} : { host: restartedRecord.host, port: restartedRecord.port }),
+    };
   }
 }

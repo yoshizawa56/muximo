@@ -1,5 +1,5 @@
-// `mise profile` generates the ignored local.xcconfig when iOS Local is
-// enabled. This file is a provider-neutral example for manual setup.
+// Copy this file to the ignored local.xcconfig and replace the placeholder
+// connection values for the Web runtime.
 MUXIMO_WEB_SCHEME = https
 MUXIMO_WEB_HOST = your-machine.tailnet.ts.net
 MUXIMO_WEB_PORT = 8449

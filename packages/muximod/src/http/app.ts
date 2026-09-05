@@ -84,7 +84,7 @@ async function handleRequest(
 
   if (url.pathname === "/health") {
     if (request.method === "OPTIONS") return corsResponse(undefined, request, deps.originPolicy, 204);
-    const health = presentMuximodHealth(deps.configurationFingerprint, deps.isReady?.() ?? true);
+    const health = presentMuximodHealth(deps.isReady?.() ?? true);
     return jsonResponse(health.body, health.status);
   }
 

@@ -1,4 +1,5 @@
 import { Writable } from "node:stream";
+import { resolveInstancePaths } from "@muximo/instance-contract";
 import {
   hasObserved,
   type OperationCase,
@@ -28,7 +29,7 @@ type Fixture = {
 
 type Input = { args: readonly string[] };
 type Context = Fixture & { output: string; error: string };
-type FixtureKey = "environment";
+type FixtureKey = "instance-directory";
 
 function contains<ContextType>(key: keyof ContextType, value: string) {
   return {
@@ -40,18 +41,7 @@ function contains<ContextType>(key: keyof ContextType, value: string) {
 }
 
 const defaultRuntime: MuximoCliRuntimeOptions = {
-  environmentName: undefined,
-  stateRoot: "/workspace/.state",
-  muximodInstanceDirectory: "/workspace/.state/muximod",
-  muximodHost: "127.0.0.1",
-  muximodPort: 4317,
-  muximodServePort: 8444,
-  schemaMode: "migrate",
-  logLevel: "info",
-  logFile: "/workspace/.state/muximod/muximod.log",
-  configFile: "/workspace/.state/muximod/config.json",
-  allowedOrigins: [],
-  codexRemote: "unix://",
+  ...resolveInstancePaths("/workspace/.state"),
   verbose: false,
 };
 
@@ -96,7 +86,7 @@ const cases = [
     assert: [
       returns<Context, number>(2),
       contains<Context>("output", "Usage: muximo"),
-      contains<Context>("output", "--env <profile>"),
+      contains<Context>("output", "--instance-dir <path>"),
       hasObserved<Context, number>("calls", []),
     ],
   },
@@ -341,8 +331,6 @@ const cases = [
           input: {
             provider: "tailscale",
             command: "tailscale",
-            localPort: 4317,
-            externalPort: 8444,
           },
         },
       ]),
@@ -393,8 +381,8 @@ const cases = [
     ],
   },
   {
-    name: "resolves daemon values from the command environment",
-    fixture: "environment",
+    name: "keeps daemon settings in the instance configuration",
+    fixture: "instance-directory",
     input: { args: ["daemon", "start"] },
     assert: [
       returns<Context, number>(7),
@@ -410,8 +398,8 @@ const cases = [
     ],
   },
   {
-    name: "resolves serve values from the command environment",
-    fixture: "environment",
+    name: "keeps Serve settings in the instance configuration",
+    fixture: "instance-directory",
     input: { args: ["serve", "tailscale"] },
     assert: [
       returns<Context, number>(7),
@@ -421,8 +409,6 @@ const cases = [
           input: {
             provider: "tailscale",
             command: "tailscale",
-            localPort: 5001,
-            externalPort: 9443,
           },
         },
       ]),
@@ -433,18 +419,7 @@ const cases = [
 const table: OperationTable<AppFixture, FixtureKey, Input, number, Context> = {
   defaultFixture: () => createFixture(),
   fixtures: {
-    environment: () =>
-      createFixture(
-        {
-          MUXIMOD_HOST: "0.0.0.0",
-          MUXIMOD_PORT: "5001",
-          MUXIMO_MUXIMOD_SERVE_PORT: "9443",
-          MUXIMO_LOG_LEVEL: "debug",
-          MUXIMO_LOG_FILE: "/tmp/muximod.log",
-          MUXIMOD_ALLOWED_ORIGINS: "https://configured.example,http://127.0.0.1:5227",
-        },
-        { ...defaultRuntime, muximodPort: 5001, muximodServePort: 9443 },
-      ),
+    "instance-directory": () => createFixture({ MUXIMOD_INSTANCE_DIR: "/workspace/.state" }, defaultRuntime),
   },
   cases,
   execute: (fixture, input) => fixture.app.execute(input.args),

@@ -1,15 +1,18 @@
+import { muximodHealthProbeSchema, muximodHealthSchema } from "@muximo/contract/api";
+import { protocolVersion } from "@muximo/contract/shared";
 import {
   createTailscaleServeClient,
   hasTailscaleServeRoute,
-  localMuximodUrl,
   readServeRouteState,
   type ServeRouteState,
 } from "@muximo/infrastructure/cli-client";
+import { MuximodProtocolCompatibilityError } from "@muximo/muximod/client";
 
 export type PairRouteInput = {
   withoutServe: boolean;
-  environment: NodeJS.ProcessEnv;
+  localMuximodBaseUrl: string;
   routeStateFile: string;
+  tailscaleEnvironment: NodeJS.ProcessEnv;
 };
 
 export type PairRouteDependencies = {
@@ -22,23 +25,21 @@ export async function resolvePairMuximodBaseUrl(
   dependencies: PairRouteDependencies = {},
 ): Promise<string> {
   if (input.withoutServe) {
-    const localUrl = localMuximodUrl(
-      readRequired(input.environment.MUXIMOD_HOST, "MUXIMOD_HOST"),
-      readPort(input.environment.MUXIMOD_PORT),
-    );
-    await verifyMuximodRoute(localUrl);
-    return localUrl;
+    await verifyMuximodRoute(input.localMuximodBaseUrl);
+    return input.localMuximodBaseUrl;
   }
 
   const state = readServeRouteState(input.routeStateFile);
   if (!state) {
     throw new Error(`muximod Serve route is unavailable; run "muximo serve tailscale" first`);
   }
-  const expectedEnvironment = input.environment.MUXIMO_ENV?.trim() || undefined;
-  if (state.environment !== expectedEnvironment || state.component !== "muximod") {
-    throw new Error(`muximod Serve route belongs to a different environment: ${input.routeStateFile}`);
+  if (state.component !== "muximod") {
+    throw new Error(`muximod Serve route belongs to a different component: ${input.routeStateFile}`);
   }
-  const routeMatchesLiveProvider = await (dependencies.verifyLiveRoute ?? verifyLiveRoute)(state, input.environment);
+  const routeMatchesLiveProvider = await (dependencies.verifyLiveRoute ?? verifyLiveRoute)(
+    state,
+    input.tailscaleEnvironment,
+  );
   if (!routeMatchesLiveProvider) {
     throw new Error(`muximod Serve route state does not match the live provider configuration`);
   }
@@ -46,22 +47,9 @@ export async function resolvePairMuximodBaseUrl(
   return state.publicUrl;
 }
 
-function readRequired(value: string | undefined, name: string): string {
-  if (value === undefined || value.trim() === "") throw new Error(`${name} is missing from resolved CLI options`);
-  return value;
-}
-
 async function verifyLiveRoute(state: ServeRouteState, environment: NodeJS.ProcessEnv): Promise<boolean> {
   const result = await createTailscaleServeClient({ environment }).status();
   return hasTailscaleServeRoute(result.stdout, state);
-}
-
-function readPort(value: string | undefined): number {
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`muximod port must be between 1 and 65535: ${value ?? "<missing>"}`);
-  }
-  return port;
 }
 
 async function verifyMuximodRoute(baseUrl: string): Promise<void> {
@@ -74,11 +62,19 @@ async function verifyMuximodRoute(baseUrl: string): Promise<void> {
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) throw new Error(`muximod Serve health check returned HTTP ${response.status}`);
-    const payload = (await response.json()) as { ok?: unknown; service?: unknown };
-    if (payload.ok !== true || payload.service !== "muximod") {
+    const payload = await response.json();
+    const probe = muximodHealthProbeSchema.safeParse(payload);
+    if (!probe.success) {
       throw new Error("muximod Serve health check returned an unexpected service");
     }
+    if (probe.data.protocolVersion !== protocolVersion) {
+      throw new MuximodProtocolCompatibilityError(protocolVersion, probe.data.protocolVersion);
+    }
+    if (!muximodHealthSchema.safeParse(payload).success) {
+      throw new Error("muximod Serve health check returned an invalid health response");
+    }
   } catch (error) {
+    if (error instanceof MuximodProtocolCompatibilityError) throw error;
     if (error instanceof Error && error.message.startsWith("muximod Serve health check")) throw error;
     throw new Error(`muximod Serve route is not reachable: ${baseUrl}`, { cause: error });
   } finally {

@@ -1,12 +1,12 @@
-import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { resolve } from "node:path";
+import { defaultMuximodInstanceDirectory, type InstancePaths, resolveInstancePaths } from "@muximo/instance-contract";
 
-export type MuximodClientPaths = {
-  instanceDirectory: string;
-  hookOutputDirectory: string;
-  pidFile: string;
-  controlSocket: string;
-};
+export { defaultMuximodInstanceDirectory } from "@muximo/instance-contract";
+
+export type MuximodClientPaths = Pick<
+  InstancePaths,
+  "instanceDirectory" | "hookOutputDirectory" | "pidFile" | "controlSocket"
+>;
 
 export type MuximodClientPathOverrides = {
   baseDirectory?: string;
@@ -20,20 +20,14 @@ export function resolveMuximodClientPaths(
   overrides: MuximodClientPathOverrides = {},
 ): MuximodClientPaths {
   const baseDirectory = resolve(overrides.baseDirectory ?? process.cwd());
-  const configuredInstanceDirectory = nonEmptyPath(env.MUXIMOD_INSTANCE_DIR);
-  const instanceDirectory = resolvePath(
-    configuredInstanceDirectory ?? defaultMuximodInstanceDirectory(env),
-    baseDirectory,
-  );
-  const hookOutputDirectory = join(instanceDirectory, "hooks");
-  const pidFile = join(instanceDirectory, "muximod.pid");
-  const controlSocket = join(instanceDirectory, "muximod.sock");
-
-  return { instanceDirectory, hookOutputDirectory, pidFile, controlSocket };
-}
-
-export function defaultMuximodInstanceDirectory(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.HOME ?? homedir(), ".local", "state", "muximo");
+  const configuredInstanceDirectory = nonEmptyPath(env.MUXIMOD_INSTANCE_DIR) ?? defaultMuximodInstanceDirectory(env);
+  const paths = resolveInstancePaths(resolve(baseDirectory, configuredInstanceDirectory));
+  return {
+    instanceDirectory: paths.instanceDirectory,
+    hookOutputDirectory: paths.hookOutputDirectory,
+    pidFile: paths.pidFile,
+    controlSocket: paths.controlSocket,
+  };
 }
 
 export function validateMuximodControlSocketPath(path: string): void {
@@ -43,10 +37,6 @@ export function validateMuximodControlSocketPath(path: string): void {
       `muximod control socket path is too long (${bytes} bytes; maximum ${muximodControlSocketMaxBytes}): ${path}`,
     );
   }
-}
-
-function resolvePath(value: string, baseDirectory: string): string {
-  return resolve(isAbsolute(value) ? value : join(baseDirectory, value));
 }
 
 function nonEmptyPath(value: string | undefined): string | undefined {

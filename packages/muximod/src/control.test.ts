@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuthService } from "@muximo/application";
+import { protocolVersion } from "@muximo/contract/shared";
 import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
 import {
   AuthStore,
@@ -30,6 +31,7 @@ type ControlStep =
   | { type: "adopt" | "observe" | "release" }
   | { type: "read-log"; lines: number }
   | { type: "read-host-settings" }
+  | { type: "read-daemon-status" }
   | { type: "prepare-execution" | "attach-execution" | "complete-execution" }
   | { type: "cancel-prepare" };
 type ControlFixture = {
@@ -118,7 +120,6 @@ const fixture = (
 ): FixtureHandle<ControlFixture> => {
   const instanceDirectory = mkdtempSync(join(tmpdir(), "muximod-control-test-"));
   const database = createAgentDatabase(join(instanceDirectory, "muximod.sqlite"), {
-    instanceDirectory,
     schemaSynchronizer: createMigrationSchemaSynchronizer(),
   });
   const store = new AuthStore(database.db, database.sqlite);
@@ -142,6 +143,14 @@ const fixture = (
   const server = new MuximodControlServer({
     socketPath: "/tmp/muximod-control-test.sock",
     auth,
+    readDaemonStatus: () => {
+      calls.push("status");
+      return {
+        protocolVersion,
+        daemonVersion: "0.1.0",
+        configuration: { state: "restart_recommended", changedKeys: ["daemon.port"] },
+      };
+    },
     readLog: async (lines) => {
       logReads.push(lines);
       return { state: "available", logFile: "/tmp/muximod.log", lines: ["first", "second"].slice(-lines) };
@@ -330,6 +339,22 @@ const cases = [
     ],
   },
   {
+    name: "returns configuration status and daemon version through the private control contract",
+    steps: [{ type: "read-daemon-status" }],
+    assert: [
+      hasObserved<ControlContext, undefined>("responses", [
+        {
+          type: "daemon_status",
+          protocolVersion,
+          daemonVersion: "0.1.0",
+          configuration: { state: "restart_recommended", changedKeys: ["daemon.port"] },
+        },
+      ]),
+      hasObserved<ControlContext, undefined>("requestIds", ["control-request-1"]),
+      hasObserved<ControlContext, undefined>("calls", ["status"]),
+    ],
+  },
+  {
     name: "dispatches host-owned execution lifecycle operations without a socket ownership lease",
     steps: [{ type: "prepare-execution" }, { type: "attach-execution" }, { type: "complete-execution" }],
     assert: [
@@ -416,11 +441,13 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
                 ? "read_log"
                 : step.type === "read-host-settings"
                   ? "read_host_settings"
-                  : step.type === "prepare-execution"
-                    ? "prepare_agent_execution"
-                    : step.type === "attach-execution"
-                      ? "attach_agent_execution"
-                      : "complete_agent_execution";
+                  : step.type === "read-daemon-status"
+                    ? "read_daemon_status"
+                    : step.type === "prepare-execution"
+                      ? "prepare_agent_execution"
+                      : step.type === "attach-execution"
+                        ? "attach_agent_execution"
+                        : "complete_agent_execution";
       const expectedCount = testFixture.responses.length + 1;
       testFixture.handleRequest(
         JSON.stringify({
@@ -430,27 +457,29 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
             ? { lines: step.lines }
             : step.type === "read-host-settings"
               ? {}
-              : step.type === "prepare-execution"
-                ? {
-                    operation: "run",
-                    input: {
-                      backend: "codex",
-                      hostPaneId: request.hostPaneId,
-                      cwd: execution.cwd,
-                      useWorktree: false,
-                      setupHookExplicit: false,
-                      cleanupHookExplicit: false,
-                      backendArgs: [],
-                    },
-                  }
-                : step.type === "attach-execution"
-                  ? { ...testFixture.request, executionPid: 456, executionStartedAt }
-                  : step.type === "complete-execution"
-                    ? { ...testFixture.request, operation: "run", result: executionProcess }
-                    : {
-                        ...testFixture.request,
-                        ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
-                      }),
+              : step.type === "read-daemon-status"
+                ? {}
+                : step.type === "prepare-execution"
+                  ? {
+                      operation: "run",
+                      input: {
+                        backend: "codex",
+                        hostPaneId: request.hostPaneId,
+                        cwd: execution.cwd,
+                        useWorktree: false,
+                        setupHookExplicit: false,
+                        cleanupHookExplicit: false,
+                        backendArgs: [],
+                      },
+                    }
+                  : step.type === "attach-execution"
+                    ? { ...testFixture.request, executionPid: 456, executionStartedAt }
+                    : step.type === "complete-execution"
+                      ? { ...testFixture.request, operation: "run", result: executionProcess }
+                      : {
+                          ...testFixture.request,
+                          ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
+                        }),
         }),
       );
       await waitFor(() => testFixture.responses.length === expectedCount);

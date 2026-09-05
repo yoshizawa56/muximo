@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -35,9 +34,10 @@ import {
   StatusDaemon,
   StopDaemon,
 } from "@muximo/application";
-import { muximodHealthSchema } from "@muximo/contract/api";
+import { muximodHealthProbeSchema, muximodHealthSchema } from "@muximo/contract/api";
+import { protocolVersion } from "@muximo/contract/shared";
 import { sanitizeProcessDiagnostic } from "@muximo/infrastructure/runtime";
-import { isLoopbackOrPrivateBindHost } from "@muximo/profile";
+import { isLoopbackOrPrivateBindHost } from "@muximo/instance-contract";
 import { z } from "zod";
 import {
   consumeMuximodRestartMarker,
@@ -55,6 +55,16 @@ const bootstrapFileDescriptor = 3;
 const maxBootstrapBytes = 1024 * 1024;
 const healthProbeTimeoutMs = 500;
 const lifecycleTimeoutMs = 5_000;
+
+export class MuximodProtocolCompatibilityError extends Error {
+  public constructor(
+    public readonly expectedVersion: number,
+    public readonly actualVersion: number,
+  ) {
+    super(`muximod protocol version ${actualVersion} is incompatible; this client requires ${expectedVersion}`);
+    this.name = "MuximodProtocolCompatibilityError";
+  }
+}
 
 const httpUrlSchema = z
   .string()
@@ -83,6 +93,12 @@ const muximodRuntimeEnvironmentSchema = z
   })
   .strict();
 
+/**
+ * Effective daemon runtime wiring. Durable instance settings are projected
+ * from the normalized config.json by the daemon entrypoint; process context
+ * and injected dependencies remain launch metadata rather than configuration
+ * identity.
+ */
 export const muximodConfigSchema = z
   .object({
     host: z
@@ -93,6 +109,7 @@ export const muximodConfigSchema = z
     instanceDirectory: z.string().min(1),
     configFile: z.string().min(1),
     hookOutputDirectory: z.string().min(1),
+    opencodeRegistryFile: z.string().min(1),
     pidFile: z.string().min(1),
     controlSocket: z.string().min(1),
     allowedOrigins: z.array(httpUrlSchema),
@@ -101,12 +118,9 @@ export const muximodConfigSchema = z
     logFile: z.string().min(1).optional(),
     workingDirectory: z.string().min(1),
     runtimeEnvironment: muximodRuntimeEnvironmentSchema,
-    authSweepIntervalMs: z.number().int().min(1).optional(),
-    tmuxPollIntervalMs: z.number().int().min(1).optional(),
-    paneCleanupIntervalMs: z.number().int().min(1).optional(),
-    paneRetentionMs: z.number().int().min(0).optional(),
-    enabledAgentBackends: z.array(z.enum(["codex", "claude", "opencode"])).optional(),
-    defaultAgentBackend: z.enum(["codex", "claude", "opencode"]).nullable().optional(),
+    enabledAgentBackends: z.array(z.enum(["codex", "claude", "opencode"])),
+    defaultAgentBackend: z.enum(["codex", "claude", "opencode"]).nullable(),
+    opencodeServerUrl: httpUrlSchema.nullable(),
   })
   .strict();
 
@@ -114,49 +128,13 @@ export type MuximodConfig = z.infer<typeof muximodConfigSchema>;
 export type MuximodRuntimeEnvironment = z.infer<typeof muximodRuntimeEnvironmentSchema>;
 
 export type MuximodLaunchOptions = {
-  schemaMode: "migrate" | "push";
-  config: MuximodConfig;
+  /** The only instance-owned value required to bootstrap the daemon. */
+  instanceDirectory: string;
+  /** The daemon's initial working directory, supplied by the CLI composition root. */
+  workingDirectory: string;
+  /** Host runtime context; durable daemon settings are loaded from config.json. */
+  runtimeEnvironment: MuximodRuntimeEnvironment;
 };
-
-/**
- * Derives the identity of a daemon process from every effective launch
- * setting. The value is public health metadata, so it deliberately excludes
- * credentials and is limited to configuration that clients must agree on.
- */
-export function muximodConfigurationFingerprint(options: MuximodLaunchOptions): string {
-  const config = normalizeMuximodConfig(options.config);
-  const fingerprintInput = {
-    schemaMode: options.schemaMode,
-    config: {
-      host: config.host,
-      port: config.port,
-      instanceDirectory: resolve(config.instanceDirectory),
-      configFile: resolve(config.configFile),
-      hookOutputDirectory: resolve(config.hookOutputDirectory),
-      pidFile: resolve(config.pidFile),
-      controlSocket: resolve(config.controlSocket),
-      allowedOrigins: [...config.allowedOrigins],
-      allowedRoots: config.allowedRoots.map((root) => resolve(root)),
-      logLevel: config.logLevel,
-      logFile: config.logFile === undefined ? null : resolve(config.logFile),
-      workingDirectory: resolve(config.workingDirectory),
-      runtimeEnvironment: {
-        ...config.runtimeEnvironment,
-        // TMUX_PANE identifies the CLI that selected this launch, not the
-        // daemon environment. A daemon started from one pane must be reusable
-        // by a run invoked from another pane.
-        tmuxPane: null,
-      },
-      enabledAgentBackends: config.enabledAgentBackends ?? null,
-      defaultAgentBackend: config.defaultAgentBackend ?? null,
-      authSweepIntervalMs: config.authSweepIntervalMs ?? null,
-      tmuxPollIntervalMs: config.tmuxPollIntervalMs ?? null,
-      paneCleanupIntervalMs: config.paneCleanupIntervalMs ?? null,
-      paneRetentionMs: config.paneRetentionMs ?? null,
-    },
-  };
-  return createHash("sha256").update(JSON.stringify(fingerprintInput), "utf8").digest("hex");
-}
 
 export type MuximodProcessResult = ProcessResult & { pid?: number };
 
@@ -181,10 +159,11 @@ export type MuximodLifecycle = {
 };
 
 export type MuximodLifecycleOptions = {
-  schemaMode?: "migrate" | "push";
+  instanceDirectory: string;
+  workingDirectory: string;
+  runtimeEnvironment: MuximodRuntimeEnvironment;
   environment?: NodeJS.ProcessEnv;
   processCommand?: MuximodProcessCommand;
-  resolveConfig: (options: DaemonOptions) => MuximodConfig;
 };
 
 /**
@@ -210,7 +189,7 @@ export async function spawnMuximod(
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(processCommand.executable, processCommand.args, {
-      cwd: options.config.workingDirectory,
+      cwd: options.workingDirectory,
       detached: processOptions.detached ?? false,
       env: childEnvironment,
       stdio: [stdio, stdio, stdio, bootstrap.fd],
@@ -284,13 +263,12 @@ export async function spawnMuximod(
 
 /** Creates the CLI-facing daemon lifecycle bound to one schema mode. */
 export function createMuximodLifecycle(options: MuximodLifecycleOptions): MuximodLifecycle {
-  const schemaMode = options.schemaMode ?? "migrate";
-
   const runtime = new MuximodRuntime({
-    schemaMode,
+    instanceDirectory: resolve(options.instanceDirectory),
+    workingDirectory: resolve(options.workingDirectory),
+    runtimeEnvironment: options.runtimeEnvironment,
     environment: options.environment ?? process.env,
     processCommand: options.processCommand,
-    resolveConfig: options.resolveConfig,
   });
   const timing = { runtime, clock: systemClock, scheduler: systemScheduler, lifecycleTimeoutMs };
   const ensure = new EnsureDaemon(timing);
@@ -318,7 +296,13 @@ export function parseMuximodBootstrap(value: string | undefined): MuximodLaunchO
   } catch (error) {
     throw new Error(`invalid ${bootstrapPayloadName} payload`, { cause: error });
   }
-  const schema = z.object({ schemaMode: z.enum(["migrate", "push"]), config: muximodConfigSchema }).strict();
+  const schema = z
+    .object({
+      instanceDirectory: z.string().min(1),
+      workingDirectory: z.string().min(1),
+      runtimeEnvironment: muximodRuntimeEnvironmentSchema,
+    })
+    .strict();
   return schema.parse(parsed);
 }
 
@@ -450,15 +434,16 @@ function resolveMuximodProcess(explicitCommand?: MuximodProcessCommand): Muximod
 class MuximodRuntime implements DaemonRuntimePort {
   public constructor(
     private readonly options: {
-      schemaMode: "migrate" | "push";
+      instanceDirectory: string;
+      workingDirectory: string;
+      runtimeEnvironment: MuximodRuntimeEnvironment;
       environment: NodeJS.ProcessEnv;
       processCommand?: MuximodProcessCommand;
-      resolveConfig: (options: DaemonOptions) => MuximodConfig;
     },
   ) {}
 
-  public isProcessHealthy(options: Pick<DaemonOptions, "host" | "port">, expectedPid: number): Promise<boolean> {
-    return this.probeProcessHealth(options.host, options.port, expectedPid);
+  public isProcessHealthy(record: Pick<DaemonPidRecord, "host" | "port">, expectedPid: number): Promise<boolean> {
+    return this.probeProcessHealth(record.host, record.port, expectedPid);
   }
 
   private async probeProcessHealth(host: string, port: number, expectedPid: number): Promise<boolean> {
@@ -469,17 +454,20 @@ class MuximodRuntime implements DaemonRuntimePort {
         signal: controller.signal,
       });
       if (!response.ok) return false;
-      const parsed = muximodHealthSchema.safeParse(await response.json());
+      const payload = await response.json();
+      assertCompatibleHealthProtocol(payload);
+      const parsed = muximodHealthSchema.safeParse(payload);
       return parsed.success && parsed.data.pid === expectedPid;
-    } catch {
+    } catch (error) {
+      if (error instanceof MuximodProtocolCompatibilityError) throw error;
       return false;
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  public async spawn(options: DaemonOptions): Promise<DaemonProcessHandle> {
-    const handle = await spawnMuximod(this.launchOptions(options), {
+  public async spawn(_options: DaemonOptions): Promise<DaemonProcessHandle> {
+    const handle = await spawnMuximod(this.launchOptions(), {
       detached: true,
       stdio: "ignore",
       environment: this.options.environment,
@@ -498,30 +486,15 @@ class MuximodRuntime implements DaemonRuntimePort {
   }
 
   public async isHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean> {
-    const requestedLaunchOptions = this.launchOptions(options);
-    const record = readMuximodPidRecord(requestedLaunchOptions.config.pidFile);
-    if (record && expectedPid !== undefined && record.pid !== expectedPid) {
-      const configurationFingerprint = muximodConfigurationFingerprint(requestedLaunchOptions);
-      return this.probeHealthy(options.host, options.port, expectedPid, configurationFingerprint, healthProbeTimeoutMs);
-    }
-
-    const effectiveOptions = record ? { ...options, host: record.host, port: record.port } : options;
-    const launchOptions = record ? this.launchOptions(effectiveOptions) : requestedLaunchOptions;
-    const configurationFingerprint = muximodConfigurationFingerprint(launchOptions);
-    return this.probeHealthy(
-      effectiveOptions.host,
-      effectiveOptions.port,
-      record?.pid ?? expectedPid,
-      configurationFingerprint,
-      healthProbeTimeoutMs,
-    );
+    const record = readMuximodPidRecord(options.pidFile);
+    if (record === undefined || (expectedPid !== undefined && record.pid !== expectedPid)) return false;
+    return this.probeHealthy(record.host, record.port, record.pid, healthProbeTimeoutMs);
   }
 
   private async probeHealthy(
     host: string,
     port: number,
     expectedPid: number | undefined,
-    configurationFingerprint: string,
     timeoutMs: number,
   ): Promise<boolean> {
     const controller = new AbortController();
@@ -529,13 +502,12 @@ class MuximodRuntime implements DaemonRuntimePort {
     try {
       const response = await fetch(`http://${displayHost(host)}:${port}/health`, { signal: controller.signal });
       if (!response.ok) return false;
-      const parsed = muximodHealthSchema.safeParse(await response.json());
-      return (
-        parsed.success &&
-        parsed.data.configurationFingerprint === configurationFingerprint &&
-        (expectedPid === undefined || parsed.data.pid === expectedPid)
-      );
-    } catch {
+      const payload = await response.json();
+      assertCompatibleHealthProtocol(payload);
+      const parsed = muximodHealthSchema.safeParse(payload);
+      return parsed.success && (expectedPid === undefined || parsed.data.pid === expectedPid);
+    } catch (error) {
+      if (error instanceof MuximodProtocolCompatibilityError) throw error;
       return false;
     } finally {
       clearTimeout(timeout);
@@ -578,32 +550,13 @@ class MuximodRuntime implements DaemonRuntimePort {
     removeMuximodRestartMarker(pidFile);
   }
 
-  private launchOptions(options: DaemonOptions): MuximodLaunchOptions {
-    const config = normalizeMuximodConfig(muximodConfigSchema.parse(this.options.resolveConfig(options)));
-    return { schemaMode: this.options.schemaMode, config };
+  private launchOptions(): MuximodLaunchOptions {
+    return {
+      instanceDirectory: this.options.instanceDirectory,
+      workingDirectory: this.options.workingDirectory,
+      runtimeEnvironment: this.options.runtimeEnvironment,
+    };
   }
-}
-
-function normalizeMuximodConfig(config: MuximodConfig): MuximodConfig {
-  const workingDirectory = resolve(config.workingDirectory);
-  const resolvePath = (value: string) => resolve(workingDirectory, value);
-  return {
-    ...config,
-    instanceDirectory: resolvePath(config.instanceDirectory),
-    configFile: resolvePath(config.configFile),
-    hookOutputDirectory: resolvePath(config.hookOutputDirectory),
-    pidFile: resolvePath(config.pidFile),
-    controlSocket: resolvePath(config.controlSocket),
-    allowedRoots: config.allowedRoots.map(resolvePath),
-    ...(config.logFile === undefined ? {} : { logFile: resolvePath(config.logFile) }),
-    workingDirectory,
-    runtimeEnvironment: {
-      ...config.runtimeEnvironment,
-      ...(config.runtimeEnvironment.migrationsDirectory === null
-        ? {}
-        : { migrationsDirectory: resolvePath(config.runtimeEnvironment.migrationsDirectory) }),
-    },
-  };
 }
 
 /** Monotonic lifecycle time; persisted/user-facing timestamps use Date separately. */
@@ -636,6 +589,13 @@ function displayHost(host: string): string {
   if (host === "0.0.0.0") return "127.0.0.1";
   if (host === "::") return "[::1]";
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function assertCompatibleHealthProtocol(value: unknown): void {
+  const probe = muximodHealthProbeSchema.safeParse(value);
+  if (probe.success && probe.data.protocolVersion !== protocolVersion) {
+    throw new MuximodProtocolCompatibilityError(protocolVersion, probe.data.protocolVersion);
+  }
 }
 
 function signalExitCode(signal: NodeJS.Signals | null): number {

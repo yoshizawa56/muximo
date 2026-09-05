@@ -1,4 +1,4 @@
-import { defaultMuximoConfig, type MuximoConfig, setMuximoConfigValue } from "@muximo/profile";
+import { defaultMuximoConfig, type MuximoConfig, setMuximoConfigValue } from "@muximo/instance-contract";
 import {
   hasObserved,
   noFixture,
@@ -22,41 +22,30 @@ type StartupResult = {
   tailscaleHostname: string | null;
   tailscalePort: number;
   tailscalePath: string;
+  codexRemote: string;
+  opencodeServerUrl: string | null;
 };
 type StartupContext = StartupResult;
 
 const baseOptions: MuximodLaunchOptions = {
-  schemaMode: "migrate",
-  config: {
-    host: "127.0.0.1",
-    port: 4317,
-    instanceDirectory: "/home/test/.local/state/muximo/muximod",
-    configFile: "/home/test/.local/state/muximo/muximod/config.json",
-    hookOutputDirectory: "/home/test/.local/state/muximo/muximod/hooks",
-    pidFile: "/home/test/.local/state/muximo/muximod/muximod.pid",
-    controlSocket: "/home/test/.local/state/muximo/muximod/muximod.sock",
-    allowedOrigins: [],
-    allowedRoots: ["/home/test"],
-    logLevel: "info",
-    logFile: "/home/test/.local/state/muximo/muximod/muximod.log",
-    workingDirectory: "/workspace/project",
-    runtimeEnvironment: {
-      homeDirectory: "/home/test",
-      path: "/usr/bin",
-      codexHome: null,
-      claudeConfigDirectory: null,
-      tailscaleBinary: null,
-      tmuxPane: null,
-      tmuxSocket: null,
-      worktreeId: null,
-      worktreeRoot: null,
-      muximoCommand: null,
-      codexRemote: "unix://",
-      codexBinary: null,
-      claudeBinary: null,
-      opencodeBinary: null,
-      migrationsDirectory: null,
-    },
+  instanceDirectory: "/home/test/.local/state/muximo",
+  workingDirectory: "/workspace/project",
+  runtimeEnvironment: {
+    homeDirectory: "/home/test",
+    path: "/usr/bin",
+    codexHome: null,
+    claudeConfigDirectory: null,
+    tailscaleBinary: null,
+    tmuxPane: null,
+    tmuxSocket: null,
+    worktreeId: null,
+    worktreeRoot: null,
+    muximoCommand: null,
+    codexRemote: "unix://",
+    codexBinary: null,
+    claudeBinary: null,
+    opencodeBinary: null,
+    migrationsDirectory: null,
   },
 };
 
@@ -75,28 +64,30 @@ const cases = [
       hasObserved<StartupContext, StartupResult>("tailscaleHostname", "machine.example"),
       hasObserved<StartupContext, StartupResult>("tailscalePort", 9443),
       hasObserved<StartupContext, StartupResult>("tailscalePath", "/muximo"),
+      hasObserved<StartupContext, StartupResult>("codexRemote", "unix:///custom"),
+      hasObserved<StartupContext, StartupResult>("opencodeServerUrl", "http://127.0.0.1:4096"),
     ],
   },
   {
-    name: "keeps explicit environment values above instance settings",
+    name: "ignores ambient values that duplicate instance configuration",
     input: "ambient-overrides" as const,
     assert: [
       hasObserved<StartupContext, StartupResult>("enabled", "codex,claude"),
-      hasObserved<StartupContext, StartupResult>("allowedRoots", ["/environment/root"]),
-      hasObserved<StartupContext, StartupResult>("claudeBinary", "/environment/claude"),
-      hasObserved<StartupContext, StartupResult>("tailscaleBinary", "/environment/tailscale"),
-      hasObserved<StartupContext, StartupResult>("tailscaleArgs", ["--socket", "/environment/socket"]),
-      hasObserved<StartupContext, StartupResult>("tailscaleHostname", "environment.example"),
+      hasObserved<StartupContext, StartupResult>("allowedRoots", ["/workspace/project/work"]),
+      hasObserved<StartupContext, StartupResult>("claudeBinary", "/home/test/bin/claude"),
+      hasObserved<StartupContext, StartupResult>("tailscaleBinary", "/home/test/bin/tailscale"),
+      hasObserved<StartupContext, StartupResult>("tailscaleArgs", ["--socket", "/tmp/tailscaled.sock"]),
+      hasObserved<StartupContext, StartupResult>("tailscaleHostname", "machine.example"),
       hasObserved<StartupContext, StartupResult>("tailscalePort", 9443),
-      hasObserved<StartupContext, StartupResult>("tailscalePath", "/environment"),
+      hasObserved<StartupContext, StartupResult>("tailscalePath", "/muximo"),
     ],
   },
   {
-    name: "preserves the static workspace policy when the instance has no roots",
+    name: "uses the home directory as the workspace boundary when no roots are configured",
     input: "empty-instance" as const,
     assert: [
-      hasObserved<StartupContext, StartupResult>("enabled", "codex"),
-      hasObserved<StartupContext, StartupResult>("defaultBackend", "codex"),
+      hasObserved<StartupContext, StartupResult>("enabled", ""),
+      hasObserved<StartupContext, StartupResult>("defaultBackend", null),
       hasObserved<StartupContext, StartupResult>("allowedRoots", ["/home/test"]),
       hasObserved<StartupContext, StartupResult>("tailscaleBinary", "tailscale"),
       hasObserved<StartupContext, StartupResult>("tailscaleArgs", []),
@@ -111,22 +102,7 @@ const table: OperationTable<undefined, "default", StartupInput, StartupResult, S
   defaultFixture: noFixture(),
   cases,
   execute: (_fixture, input) => {
-    const instanceConfig = input === "empty-instance" ? defaultMuximoConfig("linux") : configuredConfig;
-    const options =
-      input === "ambient-overrides"
-        ? {
-            ...baseOptions,
-            config: {
-              ...baseOptions.config,
-              allowedRoots: ["/environment/root"],
-              runtimeEnvironment: {
-                ...baseOptions.config.runtimeEnvironment,
-                tailscaleBinary: "/environment/tailscale",
-                claudeBinary: "/environment/claude",
-              },
-            },
-          }
-        : baseOptions;
+    const instanceConfig = input === "empty-instance" ? defaultMuximoConfig() : configuredConfig;
     const environment =
       input === "ambient-overrides"
         ? {
@@ -135,12 +111,16 @@ const table: OperationTable<undefined, "default", StartupInput, StartupResult, S
             MUXIMO_TAILSCALE_ARGS: '["--socket", "/environment/socket"]',
             MUXIMO_TAILSCALE_HOSTNAME: "environment.example",
             MUXIMO_TAILSCALE_PATH: "/environment",
+            MUXIMO_CLAUDE_BIN: "/environment/claude",
+            TAILSCALE_BIN: "/environment/tailscale",
+            MUXIMO_CODEX_REMOTE: "https://environment-codex",
+            MUXIMO_OPENCODE_SERVER_URL: "http://127.0.0.1:4999",
           }
         : { HOME: "/home/test" };
-    const result = resolveMuximodStartupConfiguration(options, instanceConfig, environment);
+    const result = resolveMuximodStartupConfiguration(baseOptions, instanceConfig, environment);
     return {
-      enabled: result.config.enabledAgentBackends?.join(",") ?? "",
-      defaultBackend: result.config.defaultAgentBackend ?? null,
+      enabled: result.config.enabledAgentBackends.join(","),
+      defaultBackend: result.config.defaultAgentBackend,
       allowedRoots: result.config.allowedRoots,
       claudeBinary: result.environment.MUXIMO_CLAUDE_BIN ?? null,
       tailscaleBinary: result.hostSettings.tailscale.executable,
@@ -148,6 +128,8 @@ const table: OperationTable<undefined, "default", StartupInput, StartupResult, S
       tailscaleHostname: result.hostSettings.tailscale.hostname,
       tailscalePort: result.hostSettings.tailscale.externalPort,
       tailscalePath: result.hostSettings.tailscale.path,
+      codexRemote: result.config.runtimeEnvironment.codexRemote,
+      opencodeServerUrl: result.config.opencodeServerUrl ?? null,
     };
   },
   observe: (_fixture, result) => (result.ok ? result.value : emptyResult()),
@@ -158,9 +140,11 @@ describe("muximod startup configuration", () => {
 });
 
 function createConfiguredConfig(): MuximoConfig {
-  let config = defaultMuximoConfig("linux");
+  let config = defaultMuximoConfig();
   config = setMuximoConfigValue(config, "agents.enabled", ["codex", "claude"]);
   config = setMuximoConfigValue(config, "agents.default", "claude");
+  config = setMuximoConfigValue(config, "agents.codexRemote", "unix:///custom");
+  config = setMuximoConfigValue(config, "agents.opencode.serverUrl", "http://127.0.0.1:4096");
   config = setMuximoConfigValue(config, "agents.executables.claude", "~/bin/claude");
   config = setMuximoConfigValue(config, "workspace.roots", ["work"]);
   config = setMuximoConfigValue(config, "serve.tailscale.enabled", true);
@@ -182,5 +166,7 @@ function emptyResult(): StartupResult {
     tailscaleHostname: null,
     tailscalePort: 0,
     tailscalePath: "",
+    codexRemote: "",
+    opencodeServerUrl: null,
   };
 }

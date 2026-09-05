@@ -34,7 +34,7 @@ export {
 export * from "./cli/shell.js";
 export * from "./cli/tmux-session.js";
 export { GitShellWorktreeAdapter, GitWorktreeAdapter, type WorktreeAdapterOptions } from "./cli/worktree.js";
-export { createLogger, defaultLogFile, type Logger, type LogLevel, parseLogLevel } from "./logging/index.js";
+export { createLogger, type Logger, type LogLevel, parseLogLevel } from "./logging/index.js";
 export { sanitizeProcessDiagnostic } from "./process/process.js";
 export {
   buildServeArgs,
@@ -62,4 +62,4 @@ export {
   resolveMuximoCommand,
   TmuxAdapter,
 } from "./terminal/tmux.js";
-export { allowedRootsFromEnvironment, workspaceIdForPath } from "./workspace/selection.js";
+export { workspaceIdForPath } from "./workspace/selection.js";

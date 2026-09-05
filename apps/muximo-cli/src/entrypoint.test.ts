@@ -53,7 +53,8 @@ const cases = [
     assert: [
       returns<Context, number>(2),
       containsOutput("output", "Usage: muximo"),
-      containsOutput("output", "MUXIMO_ENV"),
+      containsOutput("output", "MUXIMOD_INSTANCE_DIR"),
+      excludesOutput("output", "MUXIMO_ENV"),
       excludesOutput("output", "  dev "),
     ],
   },
@@ -63,18 +64,19 @@ const cases = [
     assert: [returns<Context, number>(2), excludesOutput("output", "  dev ")],
   },
   {
-    name: "omits development-only profile options from production help",
+    name: "keeps the same instance options in production help",
     input: { args: [], buildMode: "production" },
     assert: [
       returns<Context, number>(2),
+      containsOutput("output", "--instance-dir <path>"),
       excludesOutput("output", "--env <profile>"),
       excludesOutput("output", "MUXIMO_ENV"),
     ],
   },
   {
-    name: "rejects development-only profile options in production",
-    input: { args: ["--env", "local", "daemon", "status"], buildMode: "production" },
-    assert: [returns<Context, number>(1), containsOutput("error", "--env is not available in production builds")],
+    name: "rejects the removed profile selector",
+    input: { args: ["--env", "local", "daemon", "status"] },
+    assert: [returns<Context, number>(2), containsOutput("error", "unknown option '--env'")],
   },
   {
     name: "generates zsh completion at the process boundary",
@@ -86,7 +88,7 @@ const cases = [
     ],
   },
   {
-    name: "omits development-only profile options from production completion",
+    name: "does not expose the removed profile selector in production completion",
     input: { args: ["completion", "zsh"], buildMode: "production" },
     assert: [returns<Context, number>(0), excludesOutput("output", "--env"), excludesOutput("output", "MUXIMO_ENV")],
   },

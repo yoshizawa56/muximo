@@ -10,8 +10,7 @@ export class EnsureDaemon {
     if (await this.dependencies.runtime.isHealthy(options, record?.pid)) {
       return {
         state: "already-running",
-        host: record?.host ?? options.host,
-        port: record?.port ?? options.port,
+        ...(record === undefined ? {} : { host: record.host, port: record.port }),
       };
     }
 
@@ -41,6 +40,10 @@ export class EnsureDaemon {
         pid: child.pid,
       });
     }
-    return { state: "started", host: options.host, port: options.port };
+    const startedRecord = this.dependencies.runtime.readPidRecord(options.pidFile);
+    return {
+      state: "started",
+      ...(startedRecord === undefined ? {} : { host: startedRecord.host, port: startedRecord.port }),
+    };
   }
 }

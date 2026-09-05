@@ -38,13 +38,14 @@ CLI presenter owns the user-facing serve sentence. `apps/muximod` does not exist
 `packages/muximod` contains the private runtime bootstrap without a public CLI;
 daemon parsing remains in `apps/muximo-cli`.
 
-The source/development CLI resolves the selected `--env <name>` profile, then uses the
-muximod API over local HTTP for workspace and agent-session operations, minting a short-lived
-local API token through
-the private control socket. Pairing, pane control, and daemon diagnostics use the typed
-private control contract. The CLI never opens the daemon database or reads daemon-owned
-files. Every profile defaults to migrations; `MUXIMO_SCHEMA_MODE=push` explicitly
-selects push. There is no worktree snapshot or base-instance copy.
+The CLI resolves only the muximod instance directory, using
+`--instance-dir <path>` or `MUXIMOD_INSTANCE_DIR`, then uses the muximod API over
+local HTTP for workspace and agent-session operations, minting a short-lived
+local API token through the private control socket. Pairing, pane control, and
+daemon diagnostics use the typed private control contract. The CLI never opens
+the daemon database or reads daemon-owned files. Muximod reads the instance's
+validated `config.json` for daemon behavior, and there is no `.env` profile,
+worktree snapshot, or base-instance copy.
 
 `apps/web/cli.ts` independently manages the Web process and its Tailscale route. It does
 not import or invoke muximod. Muximod Serve is route-only, and there is no combined

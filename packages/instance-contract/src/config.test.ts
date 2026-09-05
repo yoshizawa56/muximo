@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   hasError,
   hasObserved,
+  noFixture,
   type OperationCase,
   type OperationTable,
   runOperationTable,
@@ -20,7 +21,7 @@ import {
   writeMuximoConfig,
 } from "./config.js";
 
-type ConfigOperation = "missing" | "write" | "set" | "invalid";
+type ConfigOperation = "missing" | "write" | "set" | "empty-agents" | "invalid";
 type ConfigFixture = { filePath: string };
 type ConfigResult = { config: MuximoConfig | null; value: unknown; mode: number | null };
 type ConfigContext = { enabled: string | null; defaultBackend: string | null; mode: number | null };
@@ -28,18 +29,18 @@ type ConfigContext = { enabled: string | null; defaultBackend: string | null; mo
 const cases = [
   {
     name: "returns the safe default without creating an instance file",
-    fixture: "missing",
-    input: "missing",
+    fixture: "missing" as const,
+    input: "missing" as const,
     assert: [
-      hasObserved<ConfigContext, ConfigResult>("enabled", "codex"),
-      hasObserved<ConfigContext, ConfigResult>("defaultBackend", "codex"),
+      hasObserved<ConfigContext, ConfigResult>("enabled", ""),
+      hasObserved<ConfigContext, ConfigResult>("defaultBackend", null),
       hasObserved<ConfigContext, ConfigResult>("mode", null),
     ],
   },
   {
     name: "writes a private atomic instance configuration",
-    fixture: "write",
-    input: "write",
+    fixture: "write" as const,
+    input: "write" as const,
     assert: [
       hasObserved<ConfigContext, ConfigResult>("enabled", "codex,claude"),
       hasObserved<ConfigContext, ConfigResult>("defaultBackend", "claude"),
@@ -48,17 +49,26 @@ const cases = [
   },
   {
     name: "updates a value while preserving the configuration invariant",
-    fixture: "set",
-    input: "set",
+    fixture: "set" as const,
+    input: "set" as const,
     assert: [
       hasObserved<ConfigContext, ConfigResult>("enabled", "claude"),
       hasObserved<ConfigContext, ConfigResult>("defaultBackend", null),
     ],
   },
   {
+    name: "allows an empty enabled agent list for tmux-only instances",
+    fixture: "empty-agents" as const,
+    input: "empty-agents" as const,
+    assert: [
+      hasObserved<ConfigContext, ConfigResult>("enabled", ""),
+      hasObserved<ConfigContext, ConfigResult>("defaultBackend", null),
+    ],
+  },
+  {
     name: "rejects unsupported configuration shapes",
-    fixture: "invalid",
-    input: "invalid",
+    fixture: "invalid" as const,
+    input: "invalid" as const,
     assert: [hasError<ConfigContext, ConfigResult>({ message: /invalid muximo config/ })],
   },
 ] satisfies readonly OperationCase<ConfigOperation, ConfigOperation, ConfigResult, ConfigContext>[];
@@ -69,6 +79,7 @@ const table: OperationTable<ConfigFixture, ConfigOperation, ConfigOperation, Con
     missing: () => createFixture(),
     write: () => createFixture(),
     set: () => createFixture(),
+    "empty-agents": () => createFixture(),
     invalid: () => createFixture("invalid"),
   },
   cases,
@@ -86,6 +97,12 @@ const table: OperationTable<ConfigFixture, ConfigOperation, ConfigOperation, Con
       const saved = readMuximoConfig(fixture.filePath);
       return { config: saved, value: null, mode: statSync(fixture.filePath).mode & 0o777 };
     }
+    if (operation === "empty-agents") {
+      config = setMuximoConfigValue(config, "agents.enabled", ["codex"]);
+      config = setMuximoConfigValue(config, "agents.default", "codex");
+      config = setMuximoConfigValue(config, "agents.enabled", []);
+      return { config, value: null, mode: null };
+    }
     config = setMuximoConfigValue(config, "agents.enabled", ["claude"]);
     return { config, value: getMuximoConfigValue(config, "agents.default"), mode: null };
   },
@@ -99,61 +116,39 @@ const table: OperationTable<ConfigFixture, ConfigOperation, ConfigOperation, Con
       : { enabled: null, defaultBackend: null, mode: null },
 };
 
-type DefaultsOperation = "darwin" | "linux";
-type DefaultsResult = { executable: string; changedKeys: readonly string[] };
-type DefaultsContext = { executable: string; changedKeys: readonly string[] };
+type DefaultResult = { executable: string; changedKeys: readonly string[]; agentDefault: string | null };
+type DefaultContext = { executable: string; changedKeys: readonly string[]; agentDefault: string | null };
 
-const defaultsCases = [
+const defaultCases = [
   {
-    name: "uses the macOS application bundle Tailscale executable by default",
-    fixture: "darwin" as const,
-    input: "darwin" as const,
+    name: "uses platform-neutral Tailscale and disabled agents by default",
+    input: "default" as const,
     assert: [
-      hasObserved<DefaultsContext, DefaultsResult>(
-        "executable",
-        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-      ),
-      hasObserved<DefaultsContext, DefaultsResult>("changedKeys", ["agents.enabled"]),
+      hasObserved<DefaultContext, DefaultResult>("executable", "tailscale"),
+      hasObserved<DefaultContext, DefaultResult>("agentDefault", null),
+      hasObserved<DefaultContext, DefaultResult>("changedKeys", ["agents.enabled"]),
     ],
   },
-  {
-    name: "uses PATH lookup for Tailscale on non-macOS platforms",
-    fixture: "linux" as const,
-    input: "linux" as const,
-    assert: [
-      hasObserved<DefaultsContext, DefaultsResult>("executable", "tailscale"),
-      hasObserved<DefaultsContext, DefaultsResult>("changedKeys", ["agents.enabled"]),
-    ],
-  },
-] satisfies readonly OperationCase<DefaultsOperation, DefaultsOperation, DefaultsResult, DefaultsContext>[];
+] satisfies readonly OperationCase<"default", "default", DefaultResult, DefaultContext>[];
 
-const defaultsTable: OperationTable<
-  ConfigFixture,
-  DefaultsOperation,
-  DefaultsOperation,
-  DefaultsResult,
-  DefaultsContext
-> = {
-  defaultFixture: () => createFixture(),
-  fixtures: {
-    darwin: () => createFixture(),
-    linux: () => createFixture(),
-  },
-  cases: defaultsCases,
-  execute: (_fixture, platform) => {
-    const before = defaultMuximoConfig(platform);
+const defaultTable: OperationTable<undefined, "default", "default", DefaultResult, DefaultContext> = {
+  defaultFixture: noFixture(),
+  cases: defaultCases,
+  execute: () => {
+    const before = defaultMuximoConfig();
     const after = setMuximoConfigValue(before, "agents.enabled", ["codex", "claude"]);
     return {
       executable: before.serve.tailscale.executable,
+      agentDefault: before.agents.default,
       changedKeys: diffMuximoConfig(before, after).map((change) => change.key),
     };
   },
-  observe: (_fixture, result) => (result.ok ? result.value : { executable: "", changedKeys: [] }),
+  observe: (_fixture, result) => (result.ok ? result.value : { executable: "", changedKeys: [], agentDefault: null }),
 };
 
 describe("muximo instance configuration", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
-  runOperationTable(it as unknown as TestRegistrar, defaultsTable);
+  runOperationTable(it as unknown as TestRegistrar, defaultTable);
 });
 
 function createFixture(kind?: "invalid") {

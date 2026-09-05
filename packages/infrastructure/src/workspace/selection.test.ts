@@ -10,10 +10,8 @@ import {
   type FixtureHandle,
   hasError,
   hasObserved,
-  noFixture,
   type OperationCase,
   type OperationTable,
-  returns,
   runOperationTable,
   runScenarioTable,
   type ScenarioCase,
@@ -21,34 +19,7 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
-import { AllowedRootPolicy, allowedRootsFromEnvironment, WorkspaceSelectionCatalog } from "./selection.js";
-
-type EmptyContext = {};
-type RootsInput = { env: NodeJS.ProcessEnv; fallback?: string };
-const rootsCases = [
-  {
-    name: "reads the documented workspace roots variable",
-    input: { env: { MUXIMOD_WORKSPACE_ROOTS: "/work:/projects" }, fallback: "/muximod" },
-    assert: [returns<EmptyContext, string[]>(["/work", "/projects"])],
-  },
-  {
-    name: "uses the supplied fallback root",
-    input: { env: {}, fallback: "/muximod" },
-    assert: [returns<EmptyContext, string[]>(["/muximod"])],
-  },
-  {
-    name: "falls back to the effective home directory",
-    input: { env: { HOME: "/home/test" } },
-    assert: [returns<EmptyContext, string[]>(["/home/test"])],
-  },
-] satisfies readonly OperationCase<"default", RootsInput, string[], EmptyContext>[];
-
-const rootsTable: OperationTable<undefined, "default", RootsInput, string[], EmptyContext> = {
-  defaultFixture: noFixture(),
-  cases: rootsCases,
-  execute: (_fixture, input) => allowedRootsFromEnvironment(input.env, input.fallback),
-  observe: () => ({}),
-};
+import { AllowedRootPolicy, WorkspaceSelectionCatalog } from "./selection.js";
 
 type PolicyFixture = {
   root: string;
@@ -241,7 +212,6 @@ function createRecord(fixture: CatalogFixture, overrides: Partial<WorkspaceRecor
 
 describe("workspace selection", () => {
   const register = it as unknown as TestRegistrar;
-  runOperationTable(register, rootsTable);
   runOperationTable(register, policyTable);
   runScenarioTable(register, catalogTable);
 });

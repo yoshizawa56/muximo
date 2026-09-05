@@ -6,8 +6,6 @@ import { invokeCliHandler } from "./validation.js";
 const serveSchema = z.object({
   provider: z.literal("tailscale"),
   command: z.enum(["tailscale", "status", "stop"]),
-  localPort: z.number().int().min(1).max(65_535),
-  externalPort: z.number().int().min(1).max(65_535),
 });
 
 export function registerServeCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
@@ -22,11 +20,6 @@ export function registerServeCommand(parent: Command, handlers: CliHandlers, con
           rawInput: {
             provider: "tailscale",
             command,
-            localPort: requireRuntime(context).muximodPort,
-            externalPort: requireRuntime(context).muximodServePort,
-            ...(context.environment.MUXIMO_TAILSCALE_PATH === undefined
-              ? {}
-              : { path: context.environment.MUXIMO_TAILSCALE_PATH }),
           },
           commandPath: ["serve", command],
           context,
@@ -36,9 +29,4 @@ export function registerServeCommand(parent: Command, handlers: CliHandlers, con
     });
   }
   return serve;
-}
-
-function requireRuntime(context: CliCommandContext) {
-  if (!context.runtime) throw new Error("CLI runtime options are unavailable");
-  return context.runtime;
 }

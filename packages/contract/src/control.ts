@@ -2,9 +2,11 @@
 
 export type {
   ControlFrameDecode,
+  MuximodConfigurationStatus,
   MuximodControlLogResult,
   MuximodControlRequest,
   MuximodControlResponse,
+  MuximodDaemonStatus,
   MuximodHostSettings,
 } from "./protocol.js";
 export {

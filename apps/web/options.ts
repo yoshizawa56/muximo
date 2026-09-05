@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { isLoopbackOrPrivateBindHost, type Profile } from "@muximo/profile";
+import { isLoopbackOrPrivateBindHost } from "@muximo/instance-contract";
 
 const defaultWebOptions = {
   host: "127.0.0.1",
@@ -9,8 +9,6 @@ const defaultWebOptions = {
 } as const;
 
 export type WebOptions = {
-  environmentName?: string;
-  stateRoot: string;
   webInstanceDirectory: string;
   host: string;
   port: number;
@@ -18,17 +16,14 @@ export type WebOptions = {
   environment: NodeJS.ProcessEnv;
 };
 
-/** Resolves only Web-owned settings from the raw profile environment. */
-export function resolveWebOptions(profile: Profile, cwd: string): WebOptions {
-  const environmentName = profile.name;
-  const environment = profile.environment;
+/** Resolves Web-owned development settings from the supplied environment. */
+export function resolveWebOptions(environment: NodeJS.ProcessEnv, cwd: string): WebOptions {
   const homeDirectory = environment.HOME ?? homedir();
-  const stateRoot = resolveConfiguredPath(
-    readValue(environment.MUXIMO_STATE_ROOT, join(homeDirectory, ".local", "state", "muximo")),
+  const webInstanceDirectory = resolveConfiguredPath(
+    readValue(environment.MUXIMO_WEB_INSTANCE_DIR, join(homeDirectory, ".local", "state", "muximo", "web")),
     cwd,
     homeDirectory,
   );
-  const webInstanceDirectory = join(stateRoot, ...(environmentName === undefined ? [] : [environmentName]), "web");
   const host = readBindHost(readValue(environment.MUXIMO_WEB_HOST, defaultWebOptions.host));
   const port = readPort(environment.MUXIMO_WEB_PORT, defaultWebOptions.port, "MUXIMO_WEB_PORT");
   const externalPort = readPort(
@@ -44,12 +39,8 @@ export function resolveWebOptions(profile: Profile, cwd: string): WebOptions {
     VITE_DEV_PORT: String(port),
     MUXIMO_WEB_SERVE_PORT: String(externalPort),
   };
-  if (environmentName === undefined) delete resolvedEnvironment.MUXIMO_ENV;
-  else resolvedEnvironment.MUXIMO_ENV = environmentName;
 
   return {
-    environmentName,
-    stateRoot,
     webInstanceDirectory,
     host,
     port,

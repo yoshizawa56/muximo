@@ -77,9 +77,6 @@ export type CliPairInput = {
 export type CliServeInput = {
   provider: "tailscale";
   command: "tailscale" | "status" | "stop";
-  localPort: number;
-  externalPort: number;
-  path?: string;
 };
 
 export type CliWorkspaceListInput = {
@@ -108,8 +105,9 @@ export type CliWorkspaceDeleteInput = {
 };
 
 export type CliConfigInput = {
-  command: "init" | "path" | "show" | "get" | "set";
+  command: "init" | "path" | "show" | "get" | "set" | "import";
   key?: string;
+  source?: string;
   values: readonly string[];
 };
 

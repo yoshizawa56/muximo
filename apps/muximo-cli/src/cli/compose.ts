@@ -11,7 +11,7 @@ import {
   type StartAgentSessionInput,
 } from "@muximo/application";
 import type { ResumeAgentSessionResponse, RunAgentSessionResponse } from "@muximo/contract/api";
-import type { MuximodHostSettings } from "@muximo/contract/control";
+import type { MuximodDaemonStatus, MuximodHostSettings } from "@muximo/contract/control";
 import { AgentSession } from "@muximo/domain";
 import {
   AttachedAgentExecutionAdapter,
@@ -38,9 +38,9 @@ import {
   createMuximodLifecycle,
   type MuximodLifecycle,
   type MuximodProcessCommand,
-  resolveMuximodClientPaths,
   validateMuximodControlSocketPath,
 } from "@muximo/muximod/client";
+import { muximoCliVersion } from "../version.js";
 import { confirmCleanup } from "./adapters/cleanup-prompt.js";
 import { BrowserPairingPresenter, PairCommand, TerminalPairingPresenter } from "./adapters/index.js";
 import { connectMuximodApi, type MuximodApiClient, readMuximodDaemonLog } from "./adapters/muximod-api-client.js";
@@ -59,7 +59,7 @@ import { createPairHandler } from "./handlers/pair.js";
 import { createSessionHandlers } from "./handlers/session.js";
 import { createSystemHandlers, type ServeResult } from "./handlers/system.js";
 import { createWorkspaceHandlers } from "./handlers/workspace.js";
-import { createMuximodConfigResolver } from "./muximod-config.js";
+import { createMuximodRuntimeEnvironment } from "./muximod-config.js";
 import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 export type CliCompositionOptions = {
@@ -93,50 +93,37 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     createLogger({
       service: "muximo-cli",
       mode: "attached",
-      level: options.logLevel ?? (runtime.verbose ? "debug" : runtime.logLevel),
+      level: options.logLevel ?? (runtime.verbose ? "debug" : "warn"),
       output: io.err,
       showStack: options.logLevel === "debug" || (options.logLevel === undefined && runtime.verbose),
     });
-  const paths = resolveMuximodClientPaths(
-    { ...environment, MUXIMOD_INSTANCE_DIR: runtime.muximodInstanceDirectory },
-    { baseDirectory: cwd },
-  );
+  validateMuximodControlSocketPath(runtime.controlSocket);
   const muximod =
     options.muximod ??
     createMuximodLifecycle({
-      schemaMode: runtime.schemaMode,
+      instanceDirectory: runtime.instanceDirectory,
+      workingDirectory: cwd,
+      runtimeEnvironment: createMuximodRuntimeEnvironment({ environment, workingDirectory: cwd, runtime }),
       environment,
       processCommand: options.muximodProcess,
-      resolveConfig: createMuximodConfigResolver({
-        environment,
-        workingDirectory: cwd,
-        runtime,
-      }),
     });
   const localDaemon = () => {
-    const host = runtime.muximodHost;
-    const port = runtime.muximodPort;
     return {
-      host,
-      port,
-      baseUrl: localMuximodUrl(host, port),
-      pidFile: paths.pidFile,
-      controlSocket: paths.controlSocket,
+      pidFile: runtime.pidFile,
+      controlSocket: runtime.controlSocket,
     };
   };
-  type LocalDaemon = ReturnType<typeof localDaemon>;
+  type LocalDaemon = ReturnType<typeof localDaemon> & { host: string; port: number; baseUrl: string };
   let ensurePromise: Promise<LocalDaemon> | undefined;
   const ensureLocalDaemon = async (): Promise<LocalDaemon> => {
     let currentPromise = ensurePromise;
     if (!currentPromise) {
       currentPromise = (async () => {
         const daemon = localDaemon();
-        const result = await muximod.ensure({
-          host: daemon.host,
-          port: daemon.port,
-          pidFile: daemon.pidFile,
-          controlSocket: daemon.controlSocket,
-        });
+        const result = await muximod.ensure(daemon);
+        if (result.host === undefined || result.port === undefined) {
+          throw new Error("muximod became healthy without publishing its endpoint");
+        }
         return {
           ...daemon,
           host: result.host,
@@ -192,7 +179,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const tmux = options.tmux ?? new TmuxAdapter(environment.MUXIMOD_TMUX_SOCKET, undefined, environment);
   const pane = new TmuxPanePublicationAdapter({
     environment,
-    controlSocket: paths.controlSocket,
+    controlSocket: runtime.controlSocket,
     tmux,
     connect: (socketPath) => MuximodPairingControlAdapter.connect(socketPath),
     logger,
@@ -210,14 +197,11 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   });
   const tmuxSession = new TmuxNewSessionService({ environment, tmux });
   const daemonDefaults: DaemonOptions = {
-    host: runtime.muximodHost,
-    port: runtime.muximodPort,
-    pidFile: paths.pidFile,
-    controlSocket: paths.controlSocket,
-    logLevel: runtime.logLevel,
+    pidFile: runtime.pidFile,
+    controlSocket: runtime.controlSocket,
     logFile: runtime.logFile,
   };
-  const serveStatePath = join(runtime.muximodInstanceDirectory, "serve.json");
+  const serveStatePath = runtime.serveStateFile;
   const attachedAgentExecution = new AttachedAgentExecutionAdapter(logger);
   const agentExecutionPrepareTimeoutMs = muximodControlRequestTimeoutMs * 2;
   const agentExecutionAttachTimeoutMs = 5_000;
@@ -233,6 +217,16 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         control.close();
       }
     }, ensureLocalDaemon);
+  const readDaemonStatus = async (): Promise<MuximodDaemonStatus> => {
+    const control = await MuximodPairingControlAdapter.connect(runtime.controlSocket, {
+      requestTimeoutMs: agentExecutionPrepareTimeoutMs,
+    });
+    try {
+      return await control.readDaemonStatus();
+    } finally {
+      control.close();
+    }
+  };
   type AgentExecutionPreparation =
     | { operation: "run"; input: StartAgentSessionInput }
     | { operation: "resume"; input: ResumeAgentSessionInput };
@@ -426,26 +420,29 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         runDoctor(value, {
           environment,
           logger,
-          defaultRemote: runtime.codexRemote,
+          defaultRemote: "unix://",
         }),
     },
     daemon: {
       defaults: daemonDefaults,
       start: { execute: async (input) => withApiInvalidation(() => muximod.start(input), invalidateApi) },
       status: { execute: muximod.status },
+      readStatus: { execute: readDaemonStatus },
       stop: { execute: async (input) => withApiInvalidation(() => muximod.stop(input), invalidateApi) },
       restart: { execute: async (input) => withApiInvalidation(() => muximod.restart(input), invalidateApi) },
       ensure: { execute: async (input) => withApiInvalidation(() => muximod.ensure(input), invalidateApi) },
       log: {
         execute: (value) =>
           readMuximodDaemonLog({
-            controlSocket: paths.controlSocket,
+            controlSocket: runtime.controlSocket,
             lines: value.lines,
           }),
       },
     },
+    clientVersion: muximoCliVersion,
     serve: {
       execute: async (value): Promise<ServeResult> => {
+        const daemon = await ensureLocalDaemon();
         const hostSettings = await readHostSettings();
         const tailscaleEnvironment = createTailscaleEnvironment(environment, hostSettings);
         if (value.command === "tailscale") {
@@ -455,13 +452,17 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
             );
           }
           const result = await ensureTailscaleServe(
-            { ...value, externalPort: hostSettings.tailscale.externalPort, path: hostSettings.tailscale.path },
+            {
+              ...value,
+              localPort: daemon.port,
+              externalPort: hostSettings.tailscale.externalPort,
+              path: hostSettings.tailscale.path,
+            },
             { logger },
             tailscaleEnvironment,
           );
           writeServeRouteState(serveStatePath, {
             schemaVersion: 1,
-            ...(runtime.environmentName === undefined ? {} : { environment: runtime.environmentName }),
             component: "muximod",
             provider: "tailscale",
             hostname: result.route.hostname,
@@ -477,8 +478,8 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
           return { command: "tailscale", result, state };
         }
         const state = readServeRouteState(serveStatePath);
-        if (state && (state.environment !== runtime.environmentName || state.component !== "muximod")) {
-          throw new Error(`muximod Serve state belongs to a different environment: ${serveStatePath}`);
+        if (state && state.component !== "muximod") {
+          throw new Error(`muximod Serve state belongs to a different component: ${serveStatePath}`);
         }
         const tailscale = createTailscaleServeClient({ environment: tailscaleEnvironment });
         if (value.command === "status") {
@@ -501,16 +502,22 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const pairHandler = createPairHandler({
     execute: (value) => pairCommand.execute(value),
     resolveControlSocket: () => {
-      const controlSocket = paths.controlSocket;
+      const controlSocket = runtime.controlSocket;
       validateMuximodControlSocketPath(controlSocket);
       return controlSocket;
     },
-    resolveMuximodBaseUrl: (value) =>
-      resolvePairMuximodBaseUrl({
+    resolveMuximodBaseUrl: async (value) => {
+      const daemon = await ensureLocalDaemon();
+      const tailscaleEnvironment = value.withoutServe
+        ? environment
+        : createTailscaleEnvironment(environment, await readHostSettings());
+      return resolvePairMuximodBaseUrl({
         withoutServe: value.withoutServe,
-        environment,
+        localMuximodBaseUrl: daemon.baseUrl,
         routeStateFile: serveStatePath,
-      }),
+        tailscaleEnvironment,
+      });
+    },
   });
   const handlers: CliHandlers = {
     ...createSessionHandlers({
@@ -553,6 +560,9 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
       filePath: runtime.configFile,
       input: options.input ?? process.stdin,
       output: io.out,
+      cwd,
+      environment,
+      platform: process.platform,
     }),
   };
   const app = createCliApp({

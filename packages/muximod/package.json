@@ -23,7 +23,7 @@
     "@muximo/application": "workspace:*",
     "@muximo/contract": "workspace:*",
     "@muximo/domain": "workspace:*",
-    "@muximo/profile": "workspace:*",
+    "@muximo/instance-contract": "workspace:*",
     "@muximo/infrastructure": "workspace:*",
     "@orpc/server": "^1.15.0",
     "zod": "^4.4.3"

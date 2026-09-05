@@ -1,5 +1,4 @@
 import {
-  hasError,
   hasObserved,
   noFixture,
   type OperationCase,
@@ -8,124 +7,58 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import type { CliBuildMode } from "./build-mode.js";
 import { resolveMuximoCliRuntimeOptions } from "./runtime.js";
 
 type RuntimeInput = {
   raw?: Record<string, unknown>;
   args?: readonly string[];
   environment?: NodeJS.ProcessEnv;
-  buildMode?: CliBuildMode;
 };
 type RuntimeResult = ReturnType<typeof resolveMuximoCliRuntimeOptions>;
 type RuntimeContext = {
-  environmentName: string | null;
-  muximoEnvironment: string | null;
-  schemaMode: string | null;
-  host: string | null;
-  port: number | null;
   instanceDirectory: string | null;
   configFile: string | null;
-  opencodeRegistryFile: string | null;
-  webPort: string | null;
-  enabledAgents: string | null;
-  defaultAgent: string | null;
-  workspaceRoots: string | null;
-  claudeBinary: string | null;
+  databaseFile: string | null;
+  controlSocket: string | null;
+  legacyPort: string | null;
+  muximoInstanceDirectory: string | null;
 };
 
 const cases = [
   {
-    name: "uses migrate as the schema default without a selected profile",
+    name: "uses the default instance directory under HOME",
     input: { environment: { HOME: "/home/test" } },
     assert: [
-      hasObserved<RuntimeContext, RuntimeResult>("environmentName", null),
-      hasObserved<RuntimeContext, RuntimeResult>("muximoEnvironment", null),
-      hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate"),
-      hasObserved<RuntimeContext, RuntimeResult>("host", "127.0.0.1"),
-      hasObserved<RuntimeContext, RuntimeResult>("port", 4317),
-      hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "<home>/.local/state/muximo/muximod"),
-      hasObserved<RuntimeContext, RuntimeResult>(
-        "opencodeRegistryFile",
-        "<home>/.local/state/muximo/opencode-servers.json",
-      ),
+      hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "/home/test/.local/state/muximo"),
+      hasObserved<RuntimeContext, RuntimeResult>("configFile", "/home/test/.local/state/muximo/config.json"),
+      hasObserved<RuntimeContext, RuntimeResult>("databaseFile", "/home/test/.local/state/muximo/muximod.sqlite"),
+      hasObserved<RuntimeContext, RuntimeResult>("controlSocket", "/home/test/.local/state/muximo/muximod.sock"),
     ],
   },
   {
-    name: "applies explicit profile values regardless of the profile name",
+    name: "resolves a relative CLI instance directory from the current working directory",
+    input: { raw: { instanceDirectory: "./state" }, args: ["--instance-dir", "./state"], environment: {} },
+    assert: [hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "/workspace/state")],
+  },
+  {
+    name: "uses the instance directory environment binding",
+    input: { environment: { MUXIMOD_INSTANCE_DIR: "/var/lib/muximo" } },
+    assert: [hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "/var/lib/muximo")],
+  },
+  {
+    name: "removes legacy daemon configuration environment variables from child context",
     input: {
       environment: {
-        MUXIMO_ENV: "dev",
         HOME: "/home/test",
-        MUXIMO_MUXIMOD_HOST: "192.168.50.10",
         MUXIMO_MUXIMOD_PORT: "4327",
-        MUXIMO_SCHEMA_MODE: "migrate",
-        MUXIMO_WEB_PORT: "5999",
+        MUXIMO_SCHEMA_MODE: "push",
+        MUXIMOD_WORKSPACE_ROOTS: "/workspace",
+        MUXIMO_TAILSCALE_HOSTNAME: "machine.example",
       },
     },
     assert: [
-      hasObserved<RuntimeContext, RuntimeResult>("environmentName", "dev"),
-      hasObserved<RuntimeContext, RuntimeResult>("muximoEnvironment", "dev"),
-      hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate"),
-      hasObserved<RuntimeContext, RuntimeResult>("host", "192.168.50.10"),
-      hasObserved<RuntimeContext, RuntimeResult>("port", 4327),
-      hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "<home>/.local/state/muximo/dev/muximod"),
-      hasObserved<RuntimeContext, RuntimeResult>(
-        "opencodeRegistryFile",
-        "<home>/.local/state/muximo/opencode-servers.json",
-      ),
-      hasObserved<RuntimeContext, RuntimeResult>("webPort", "5999"),
-    ],
-  },
-  {
-    name: "keeps migrate as the default for a local-named profile",
-    input: { environment: { MUXIMO_ENV: "local" } },
-    assert: [hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate")],
-  },
-  {
-    name: "keeps the production runtime unscoped without a selected profile",
-    input: {
-      buildMode: "production",
-      environment: { HOME: "/home/test", MUXIMO_ENV: "dev", MUXIMO_MUXIMOD_PORT: "4327" },
-    },
-    assert: [
-      hasObserved<RuntimeContext, RuntimeResult>("environmentName", null),
-      hasObserved<RuntimeContext, RuntimeResult>("muximoEnvironment", null),
-      hasObserved<RuntimeContext, RuntimeResult>("port", 4327),
-      hasObserved<RuntimeContext, RuntimeResult>("instanceDirectory", "<home>/.local/state/muximo/muximod"),
-    ],
-  },
-  {
-    name: "accepts push only when the profile explicitly requests it",
-    input: { environment: { MUXIMO_ENV: "any-name", MUXIMO_SCHEMA_MODE: "push" } },
-    assert: [hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "push")],
-  },
-  {
-    name: "lets a CLI option override a profile value",
-    input: {
-      raw: { schemaMode: "migrate", muximodPort: 4555 },
-      args: ["--schema-mode", "migrate", "--muximod-port", "4555"],
-      environment: { MUXIMO_ENV: "dev", MUXIMO_SCHEMA_MODE: "push", MUXIMO_MUXIMOD_PORT: "4327" },
-    },
-    assert: [
-      hasObserved<RuntimeContext, RuntimeResult>("schemaMode", "migrate"),
-      hasObserved<RuntimeContext, RuntimeResult>("port", 4555),
-    ],
-  },
-  {
-    name: "rejects a public muximod bind address",
-    input: { environment: { MUXIMO_MUXIMOD_HOST: "0.0.0.0" } },
-    assert: [hasError<RuntimeContext, RuntimeResult>({ message: /MUXIMO_MUXIMOD_HOST must be localhost/ })],
-  },
-  {
-    name: "leaves instance configuration for the daemon to load",
-    input: { environment: { HOME: "/home/test" } },
-    assert: [
-      hasObserved<RuntimeContext, RuntimeResult>("configFile", "<home>/.local/state/muximo/muximod/config.json"),
-      hasObserved<RuntimeContext, RuntimeResult>("enabledAgents", null),
-      hasObserved<RuntimeContext, RuntimeResult>("defaultAgent", null),
-      hasObserved<RuntimeContext, RuntimeResult>("workspaceRoots", null),
-      hasObserved<RuntimeContext, RuntimeResult>("claudeBinary", null),
+      hasObserved<RuntimeContext, RuntimeResult>("legacyPort", null),
+      hasObserved<RuntimeContext, RuntimeResult>("muximoInstanceDirectory", "/home/test/.local/state/muximo"),
     ],
   },
 ] satisfies readonly OperationCase<"default", RuntimeInput, RuntimeResult, RuntimeContext>[];
@@ -139,43 +72,27 @@ const table: OperationTable<undefined, "default", RuntimeInput, RuntimeResult, R
       args: input.args ?? [],
       environment: input.environment ?? {},
       cwd: "/workspace",
-      buildMode: input.buildMode,
     }),
   observe: (_fixture, result) =>
     result.ok
       ? {
-          environmentName: result.value.runtime.environmentName ?? null,
-          muximoEnvironment: result.value.environment.MUXIMO_ENV ?? null,
-          schemaMode: result.value.runtime.schemaMode,
-          host: result.value.runtime.muximodHost,
-          port: result.value.runtime.muximodPort,
-          instanceDirectory: result.value.runtime.muximodInstanceDirectory.replace("/home/test", "<home>"),
-          configFile: result.value.runtime.configFile.replace("/home/test", "<home>"),
-          opencodeRegistryFile:
-            result.value.environment.MUXIMO_OPENCODE_REGISTRY_FILE?.replace("/home/test", "<home>") ?? null,
-          webPort: result.value.environment.MUXIMO_WEB_PORT ?? null,
-          enabledAgents: null,
-          defaultAgent: null,
-          workspaceRoots: result.value.environment.MUXIMOD_WORKSPACE_ROOTS ?? null,
-          claudeBinary: result.value.environment.MUXIMO_CLAUDE_BIN ?? null,
+          instanceDirectory: result.value.runtime.instanceDirectory,
+          configFile: result.value.runtime.configFile,
+          databaseFile: result.value.runtime.databaseFile,
+          controlSocket: result.value.runtime.controlSocket,
+          legacyPort: result.value.environment.MUXIMO_MUXIMOD_PORT ?? null,
+          muximoInstanceDirectory: result.value.environment.MUXIMOD_INSTANCE_DIR ?? null,
         }
       : {
-          environmentName: null,
-          muximoEnvironment: null,
-          schemaMode: null,
-          host: null,
-          port: null,
           instanceDirectory: null,
           configFile: null,
-          opencodeRegistryFile: null,
-          webPort: null,
-          enabledAgents: null,
-          defaultAgent: null,
-          workspaceRoots: null,
-          claudeBinary: null,
+          databaseFile: null,
+          controlSocket: null,
+          legacyPort: null,
+          muximoInstanceDirectory: null,
         },
 };
 
-describe("muximo CLI runtime options", () => {
+describe("muximo CLI bootstrap runtime", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });

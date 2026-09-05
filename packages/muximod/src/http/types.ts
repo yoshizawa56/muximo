@@ -28,7 +28,6 @@ export type MuximodHttpDependencies = {
   auth: MuximodAuthPort;
   application: MuximodApplication;
   isReady?: () => boolean;
-  configurationFingerprint: string;
   originPolicy: MuximodOriginPolicy;
   hookToken: string;
   /** Host-specific adapter construction is supplied by the composition root. */

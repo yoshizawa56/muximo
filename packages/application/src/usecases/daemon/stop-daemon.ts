@@ -19,11 +19,10 @@ export class StopDaemon {
       return { state: "already-stopped", reason: "stale-pid" };
     }
 
-    const recordOptions = { ...options, host: record.host, port: record.port };
-    const isCurrentConfigurationHealthy = await this.dependencies.runtime.isHealthy(recordOptions, record.pid);
+    const isCurrentConfigurationHealthy = await this.dependencies.runtime.isHealthy(options, record.pid);
     const isOwnedProcessHealthy = isCurrentConfigurationHealthy
       ? true
-      : await this.dependencies.runtime.isProcessHealthy(recordOptions, record.pid);
+      : await this.dependencies.runtime.isProcessHealthy(record, record.pid);
     if (!isOwnedProcessHealthy) {
       throw new DaemonHealthError("pid_unhealthy", options, { startedAt: healthCheckStartedAt, pid: record.pid });
     }

@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import type { AgentDrizzleDatabase } from "./database-types.js";
 import { embeddedMigrationFiles } from "./embedded-migrations.generated.js";
-import { resolveMuximodPaths } from "./paths.js";
 import type { DatabaseSchemaSynchronizer } from "./schema-sync.js";
 import { configureSqliteConnection, defaultSqliteBusyTimeoutMs } from "./sqlite.js";
 
@@ -24,11 +23,6 @@ export type {
   CreatePairingResult,
 } from "@muximo/application";
 export { AuthStoreError } from "@muximo/application";
-export type {
-  MuximodInstancePaths,
-  MuximodPathOverrides,
-} from "./paths.js";
-export { resolveMuximodPaths } from "./paths.js";
 export { AuthStore } from "./repositories/sqlite/auth.js";
 export {
   DrizzleAgentSessionRepository,
@@ -64,28 +58,20 @@ export type AgentDatabaseOptions = {
   schemaSynchronizer: DatabaseSchemaSynchronizer;
   environment?: NodeJS.ProcessEnv;
   migrationsFolder?: string;
-  instanceDirectory?: string;
   busyTimeoutMs?: number;
 };
 
 export function defaultAgentDatabaseFile(env: NodeJS.ProcessEnv = process.env): string {
-  return resolveMuximodPaths(env).databaseFile;
+  return env.MUXIMOD_DATABASE_FILE?.trim() || ":memory:";
 }
 
 export function createAgentDatabase(file: string | undefined, options: AgentDatabaseOptions): AgentDatabase {
   const environment = options.environment ?? process.env;
-  const databaseFile = file ?? defaultCreateDatabaseFile(environment);
+  const databaseFile = file ?? defaultAgentDatabaseFile(environment);
   const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
-  const configuredInstanceDirectory =
-    file === undefined ? resolveMuximodPaths(environment).instanceDirectory : undefined;
-  const instanceDirectory = options.instanceDirectory ?? configuredInstanceDirectory;
   if (databasePath !== ":memory:") {
-    if (instanceDirectory) {
-      const resolvedInstanceDirectory = resolve(instanceDirectory);
-      mkdirSync(resolvedInstanceDirectory, { recursive: true, mode: 0o700 });
-      chmodSync(resolvedInstanceDirectory, 0o700);
-    }
     mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
+    chmodSync(dirname(databasePath), 0o700);
   }
   const busyTimeoutMs = options.busyTimeoutMs ?? defaultSqliteBusyTimeoutMs;
   const sqlite = openConfiguredConnection(databasePath, busyTimeoutMs);
@@ -130,12 +116,6 @@ function secureDatabaseFiles(databasePath: string): void {
   for (const path of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
     if (existsSync(path)) chmodSync(path, 0o600);
   }
-}
-
-function defaultCreateDatabaseFile(env: NodeJS.ProcessEnv): string {
-  const configured = Boolean(env.MUXIMOD_INSTANCE_DIR?.trim());
-  if (!configured) return ":memory:";
-  return resolveMuximodPaths(env).databaseFile;
 }
 
 export function defaultAgentMigrationsFolder(env: NodeJS.ProcessEnv = process.env): string {

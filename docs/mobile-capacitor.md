@@ -16,18 +16,18 @@ The same sync-and-open sequence is available as `mise ios`. `cap:sync` already p
 
 `cap:sync` builds `apps/web/dist` and copies it into the iOS project. Run the Debug app from Xcode or use `cap:run` after the native project has been prepared.
 
-The `Local` scheme loads a fixed Web URL from the ignored `apps/web/ios/local.xcconfig`. Generate it together with a runtime profile:
+The `Local` scheme loads a fixed Web URL from the ignored
+`apps/web/ios/local.xcconfig`. Create it from the committed example and edit the
+URL for the host running the Web process:
 
 ```sh
-mise profile
+cp apps/web/ios/local.xcconfig.example apps/web/ios/local.xcconfig
 ```
 
-When prompted, enable the iOS Local configuration. The command asks for the
-connection details and writes `MUXIMO_WEB_SCHEME`, `MUXIMO_WEB_HOST`, and
-`MUXIMO_WEB_PORT`. Rerunning it replaces the ignored file. Changing this
-machine-specific URL requires a native rebuild, but does not require a
-Capacitor sync. The committed `apps/web/ios/local.xcconfig.example` remains
-available for manual setup.
+Set `MUXIMO_WEB_SCHEME`, `MUXIMO_WEB_HOST`, and `MUXIMO_WEB_PORT` in the copied
+file. Changing this machine-specific URL requires a native rebuild, but does
+not require a Capacitor sync. Configure the corresponding Web origin in the
+muximo instance with `muximo config set daemon.allowedOrigins <origin>`.
 
 The project has three shared schemes:
 
@@ -42,9 +42,7 @@ time. The first-run flow pairs with `muximo pair`, then stores the connection
 profile and browser device key through the client authentication flow.
 
 The `Local` scheme loads the remote Web runtime from `local.xcconfig`, so its
-HTTP(S) origin must be included in the generated profile's
-`MUXIMOD_ALLOWED_ORIGINS`. `mise profile` derives both values together when
-the Capacitor client and iOS Local configuration are selected.
+HTTP(S) origin must be included in the instance's `daemon.allowedOrigins`.
 
 ## Release CI and App Store Connect
 

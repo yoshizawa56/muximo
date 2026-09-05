@@ -16,6 +16,7 @@ import {
   type MuximodControlLogResult,
   type MuximodControlRequest,
   type MuximodControlResponse,
+  type MuximodDaemonStatus,
   type MuximodHostSettings,
   muximodControlMaxResponseBytes,
 } from "@muximo/contract/control";
@@ -127,6 +128,19 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     const response = await this.request({ type: "read_host_settings" });
     if (response.type !== "host_settings") throw unexpectedResponse("host_settings", response.type);
     return { tailscale: { ...response.tailscale, args: [...response.tailscale.args] } };
+  }
+
+  public async readDaemonStatus(): Promise<MuximodDaemonStatus> {
+    const response = await this.request({ type: "read_daemon_status" });
+    if (response.type !== "daemon_status") throw unexpectedResponse("daemon_status", response.type);
+    return {
+      protocolVersion: response.protocolVersion,
+      daemonVersion: response.daemonVersion,
+      configuration: {
+        state: response.configuration.state,
+        changedKeys: [...response.configuration.changedKeys],
+      },
+    };
   }
 
   public async prepareAgentExecution(input: AgentExecutionPrepareCommand): Promise<AgentExecutionPreparedResponse> {

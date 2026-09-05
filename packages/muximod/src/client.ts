@@ -14,4 +14,4 @@ export type {
   MuximodProcessCommand,
   MuximodRuntimeEnvironment,
 } from "./launch.js";
-export { createMuximodLifecycle } from "./launch.js";
+export { createMuximodLifecycle, MuximodProtocolCompatibilityError } from "./launch.js";

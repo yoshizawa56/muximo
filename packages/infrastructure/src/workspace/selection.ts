@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import type { MuximodWorkspaceDirectory, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "@muximo/application";
 import {
   validateWorkspaceSelection,
@@ -184,19 +184,6 @@ export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort {
       cleanupScriptPath: null,
     };
   }
-}
-
-export function allowedRootsFromEnvironment(
-  env: NodeJS.ProcessEnv = process.env,
-  fallback = env.HOME?.trim() || homedir(),
-): string[] {
-  const configured = env.MUXIMOD_WORKSPACE_ROOTS?.trim();
-  return configured
-    ? configured
-        .split(delimiter)
-        .map((root) => root.trim())
-        .filter(Boolean)
-    : [fallback];
 }
 
 function validateHookPath(path: string, workspaceRoot: string): string {

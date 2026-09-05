@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
 import {
   type AgentObservationPort,
   type AgentStateObservation,
@@ -21,7 +20,8 @@ import {
   type WorkspaceAuditPort,
   WorkspaceRecordFactory,
 } from "@muximo/application";
-import type { MuximodHostSettings } from "@muximo/contract/control";
+import type { MuximodConfigurationStatus, MuximodHostSettings } from "@muximo/contract/control";
+import { protocolVersion } from "@muximo/contract/shared";
 import type { AgentBackend, AgentSessionRecord } from "@muximo/domain";
 import {
   AgentBackendAdapter,
@@ -38,7 +38,6 @@ import {
   DrizzleCodexSessionStateRepository,
   DrizzlePaneRepository,
   DrizzleWorkspaceRepository,
-  defaultLogFile,
   defaultPaneCleanupIntervalMs,
   defaultPaneRetentionMs,
   defaultTmuxPollIntervalMs,
@@ -69,7 +68,6 @@ import {
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
 } from "@muximo/infrastructure/runtime";
-import { defaultTailscaleExecutable } from "@muximo/profile";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
@@ -77,13 +75,27 @@ import { createOriginPolicy } from "./http/middleware.js";
 import { TerminalSession, TerminalSessionRegistry } from "./http/terminal-session.js";
 import type { MuximodOriginPolicy } from "./http/types.js";
 import type { MuximodRuntimeEnvironment } from "./launch.js";
+import { muximodVersion } from "./version.js";
 
+/** Process scheduling knobs supplied by the launcher, not instance config. */
+export type MuximodLaunchMetadata = {
+  authSweepIntervalMs?: number;
+  tmuxPollIntervalMs?: number;
+  paneCleanupIntervalMs?: number;
+  paneRetentionMs?: number;
+};
+
+/**
+ * Effective daemon wiring after config.json has been normalized. Instance
+ * paths and process context are launch metadata; configuration status only
+ * uses the instance-contract projection supplied by configurationStatus.
+ */
 export type MuximodOptions = {
   host: string;
   port: number;
-  configurationFingerprint: string;
   schemaSynchronizer: DatabaseSchemaSynchronizer;
-  instanceDirectory: string;
+  databaseFile: string;
+  opencodeRegistryFile: string;
   hookOutputDirectory: string;
   allowedRoots: readonly string[];
   controlSocket: string;
@@ -94,19 +106,23 @@ export type MuximodOptions = {
    */
   allowedOrigins: readonly string[];
   originPolicy?: MuximodOriginPolicy;
-  authSweepIntervalMs?: number;
-  tmuxPollIntervalMs?: number;
-  paneCleanupIntervalMs?: number;
-  paneRetentionMs?: number;
+  /** Launch metadata is intentionally excluded from instance config status. */
+  launchMetadata?: MuximodLaunchMetadata;
   logger?: Logger;
   logLevel?: LogLevel;
   logFile?: string;
+  /** Launch metadata: the process working directory is not config identity. */
   workingDirectory: string;
+  /** Launch metadata and config-derived provider environment. */
   runtimeEnvironment: MuximodRuntimeEnvironment;
+  /** Launch metadata inherited from the supported muximo process boundary. */
   environment: NodeJS.ProcessEnv;
-  enabledAgentBackends?: readonly AgentBackend[];
-  defaultAgentBackend?: AgentBackend | null;
+  enabledAgentBackends: readonly AgentBackend[];
+  defaultAgentBackend: AgentBackend | null;
+  opencodeServerUrl: string | null;
   hostSettings?: MuximodHostSettings;
+  daemonVersion?: string;
+  configurationStatus?: () => MuximodConfigurationStatus | Promise<MuximodConfigurationStatus>;
 };
 
 export type { MuximodApp } from "./http/app.js";
@@ -120,9 +136,8 @@ export type MuximodServer = {
 
 export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const environment = resolveMuximodEnvironment(options.environment, options.runtimeEnvironment);
-  const enabledAgentBackends = options.enabledAgentBackends ?? ["codex", "claude", "opencode"];
-  const defaultAgentBackend =
-    options.defaultAgentBackend === undefined ? (enabledAgentBackends[0] ?? null) : options.defaultAgentBackend;
+  const enabledAgentBackends = options.enabledAgentBackends;
+  const defaultAgentBackend = options.defaultAgentBackend;
   if (defaultAgentBackend !== null && !enabledAgentBackends.includes(defaultAgentBackend)) {
     throw new Error("default agent backend must be enabled");
   }
@@ -145,12 +160,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       viewportManager.handleTmuxHook(event, client),
     reassertMobileViewport: (target: string) => viewportManager.reassertMobileViewport(target),
   };
-  const databaseFile = join(options.instanceDirectory, "muximod.sqlite");
-  const database = createAgentDatabase(databaseFile, {
+  const database = createAgentDatabase(options.databaseFile, {
     schemaSynchronizer: options.schemaSynchronizer,
     environment,
     migrationsFolder: options.runtimeEnvironment.migrationsDirectory ?? undefined,
-    instanceDirectory: options.instanceDirectory,
   });
   const transactionManager = database.databaseFile === ":memory:" ? undefined : new SqliteTransactionManager(database);
   const agentSessionRepository = new DrizzleAgentSessionRepository(database.db);
@@ -223,6 +236,10 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       enabled: enabledAgentBackends,
       opencode: {
         environment,
+        registryFile: options.opencodeRegistryFile,
+        ...(options.opencodeServerUrl === null || options.opencodeServerUrl === undefined
+          ? {}
+          : { serverUrl: options.opencodeServerUrl }),
       },
     }),
     sessions: agentSessionRepository,
@@ -327,7 +344,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     rateLimits: authRateLimits,
     wsTickets: authWsTickets,
     clock: { now: () => new Date() },
-    intervalMs: options.authSweepIntervalMs,
+    intervalMs: options.launchMetadata?.authSweepIntervalMs,
   });
   let controlServer!: MuximodControlServer;
   const auth = new AuthService({
@@ -344,8 +361,16 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   controlServer = new MuximodControlServer({
     socketPath: options.controlSocket,
     auth,
+    readDaemonStatus: async () => ({
+      protocolVersion,
+      daemonVersion: options.daemonVersion ?? muximodVersion,
+      configuration: options.configurationStatus
+        ? await options.configurationStatus()
+        : { state: "unavailable", changedKeys: [] },
+    }),
     readLog: async (lines) => {
-      const result = await readDaemonLog(options.logFile ?? defaultLogFile(environment), lines);
+      if (options.logFile === undefined) throw new Error("muximod log file is not configured");
+      const result = await readDaemonLog(options.logFile, lines);
       return { ...result, lines: [...result.lines] };
     },
     readHostSettings: () => options.hostSettings ?? { tailscale: defaultTailscaleSettings() },
@@ -426,9 +451,13 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     },
   });
   let controlReady = false;
-  const tmuxPollIntervalMs = durationOption(options.tmuxPollIntervalMs, defaultTmuxPollIntervalMs, 1);
-  const paneCleanupIntervalMs = durationOption(options.paneCleanupIntervalMs, defaultPaneCleanupIntervalMs, 1);
-  const paneRetentionMs = durationOption(options.paneRetentionMs, defaultPaneRetentionMs, 0);
+  const tmuxPollIntervalMs = durationOption(options.launchMetadata?.tmuxPollIntervalMs, defaultTmuxPollIntervalMs, 1);
+  const paneCleanupIntervalMs = durationOption(
+    options.launchMetadata?.paneCleanupIntervalMs,
+    defaultPaneCleanupIntervalMs,
+    1,
+  );
+  const paneRetentionMs = durationOption(options.launchMetadata?.paneRetentionMs, defaultPaneRetentionMs, 0);
   let eventRevision = 0;
   const tmuxStateMonitor = new TmuxStateMonitor({
     readPanes: () => tmux.listPanesSnapshot(),
@@ -462,7 +491,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     auth,
     application,
     isReady: () => controlReady,
-    configurationFingerprint: options.configurationFingerprint,
     originPolicy:
       options.originPolicy ??
       createOriginPolicy({
@@ -670,7 +698,7 @@ function setEnvironmentValue(environment: NodeJS.ProcessEnv, key: string, value:
 function defaultTailscaleSettings(): MuximodHostSettings["tailscale"] {
   return {
     enabled: false,
-    executable: defaultTailscaleExecutable(),
+    executable: "tailscale",
     args: [],
     hostname: null,
     externalPort: 8444,

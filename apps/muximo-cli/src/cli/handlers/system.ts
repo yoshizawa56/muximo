@@ -8,7 +8,7 @@ import type {
   StartDaemonInput,
 } from "@muximo/application";
 import { DaemonHealthError } from "@muximo/application";
-import type { MuximodControlLogResult } from "@muximo/contract/control";
+import type { MuximodControlLogResult, MuximodDaemonStatus } from "@muximo/contract/control";
 import type { DoctorReport, ServeRouteState, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
 import type { CliDaemonInput, CliDoctorInput, CliHandlers, CliIo, CliServeInput } from "../commands/types.js";
 import {
@@ -43,11 +43,13 @@ export type SystemHandlerDependencies = {
     defaults: DaemonOptions;
     start: AsyncService<StartDaemonInput, DaemonStartResult>;
     status: AsyncService<DaemonOptions, DaemonStatusResult>;
+    readStatus: AsyncService<void, MuximodDaemonStatus>;
     stop: AsyncService<DaemonOptions, DaemonStopResult>;
     restart: AsyncService<DaemonOptions, DaemonRestartResult>;
     ensure: AsyncService<DaemonOptions, DaemonEnsureResult>;
     log: AsyncService<{ lines: number }, MuximodControlLogResult>;
   };
+  clientVersion: string;
   serve: { execute(input: CliServeInput): Promise<ServeResult> };
   io: CliIo;
 };
@@ -64,7 +66,12 @@ export function createSystemHandlers(
           case "start":
             return presentDaemonStart(await dependencies.daemon.start.execute({ options }), dependencies.io);
           case "status":
-            return presentDaemonStatus(await dependencies.daemon.status.execute(options), dependencies.io);
+            return presentDaemonStatus(
+              await dependencies.daemon.status.execute(options),
+              dependencies.io,
+              dependencies.clientVersion,
+              await readDaemonStatus(dependencies.daemon.readStatus),
+            );
           case "stop":
             return presentDaemonStop(await dependencies.daemon.stop.execute(options), dependencies.io);
           case "restart":
@@ -90,6 +97,18 @@ export function createSystemHandlers(
       return presentServeResult(result, dependencies.io);
     },
   };
+}
+
+async function readDaemonStatus(
+  service: AsyncService<void, MuximodDaemonStatus>,
+): Promise<MuximodDaemonStatus | undefined> {
+  try {
+    return await service.execute(undefined);
+  } catch {
+    // Daemon lifecycle state remains useful when the diagnostic control
+    // request is unavailable. Status diagnostics must never block the CLI.
+    return undefined;
+  }
 }
 
 function toDaemonOptions(input: CliDaemonInput, defaults: DaemonOptions): DaemonOptions {

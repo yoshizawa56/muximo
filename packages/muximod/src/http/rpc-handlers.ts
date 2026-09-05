@@ -232,7 +232,7 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
   return os.router({
     health: os.health.handler(() =>
       safeCall(() => {
-        const health = presentMuximodHealth(deps.configurationFingerprint, deps.isReady?.() ?? true);
+        const health = presentMuximodHealth(deps.isReady?.() ?? true);
         if (!health.ready) throw new MuximodHttpError(health.status, health.body.error, health.body.message);
         return health.body;
       }),
@@ -242,8 +242,8 @@ export function createMuximodRouter(deps: MuximodHttpDependencies) {
       return muximodCapabilitiesSchema.parse({
         protocolVersion,
         agents: deps.agentBackends ?? {
-          enabled: ["codex", "claude", "opencode"],
-          default: "codex",
+          enabled: [],
+          default: null,
         },
         features: {
           tmuxSessions: true,

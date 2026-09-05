@@ -294,7 +294,6 @@ const healthCases = [
       service: "muximod",
       protocolVersion: terminalProtocolVersion,
       pid: 1234,
-      configurationFingerprint: "0".repeat(64),
     },
     assert: [isValid()],
   },
@@ -305,7 +304,6 @@ const healthCases = [
       service: "muximod",
       protocolVersion: 99,
       pid: 1234,
-      configurationFingerprint: "0".repeat(64),
     },
     assert: [isInvalid(["protocolVersion"])],
   },
@@ -316,7 +314,6 @@ const healthCases = [
       service: "muximod",
       protocolVersion: terminalProtocolVersion,
       pid: 1234,
-      configurationFingerprint: "0".repeat(64),
       legacy: true,
     },
     assert: [isInvalid()],
@@ -520,6 +517,17 @@ const pairingCases = [
     assert: [isValid()],
   },
   {
+    name: "accepts a daemon status request",
+    input: {
+      kind: "request",
+      value: {
+        type: "read_daemon_status",
+        requestId: controlRequestId,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
     name: "rejects an unbounded daemon log request",
     input: {
       kind: "request",
@@ -602,6 +610,23 @@ const pairingCases = [
           hostname: "machine.example",
           externalPort: 8444,
           path: "/muximo",
+        },
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a daemon status response with configuration diagnostics",
+    input: {
+      kind: "response",
+      value: {
+        type: "daemon_status",
+        requestId: controlRequestId,
+        protocolVersion: terminalProtocolVersion,
+        daemonVersion: "0.1.0",
+        configuration: {
+          state: "restart_recommended",
+          changedKeys: ["daemon.port", "agents.enabled"],
         },
       },
     },

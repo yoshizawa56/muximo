@@ -2,14 +2,10 @@ import type { ProcessResult } from "./agent-sessions.js";
 
 /** Operational configuration for the managed muximod service. */
 export type DaemonOptions = {
-  host: string;
-  port: number;
   pidFile: string;
   controlSocket?: string;
-  logLevel?: "error" | "warn" | "info" | "debug";
   logFile?: string;
   refreshServers?: boolean;
-  allowedOrigins?: readonly string[];
 };
 
 export type DaemonPidRecord = {
@@ -51,7 +47,7 @@ export class DaemonHealthError extends Error {
 }
 
 export type DaemonStatusResult =
-  | { state: "running"; host: string; port: number; pid?: number }
+  | { state: "running"; host?: string; port?: number; pid?: number }
   | {
       state: "unhealthy";
       host: string;
@@ -60,15 +56,15 @@ export type DaemonStatusResult =
       logFile?: string;
       healthFailure: DaemonHealthFailureContext;
     }
-  | { state: "stopped"; host: string; port: number };
+  | { state: "stopped" };
 
 export type DaemonStopResult = { state: "already-stopped"; reason: "missing-pid" | "stale-pid" } | { state: "stopped" };
 
-export type DaemonRestartResult = { state: "restarted"; host: string; port: number };
+export type DaemonRestartResult = { state: "restarted"; host?: string; port?: number };
 
 export type DaemonEnsureResult =
-  | { state: "already-running"; host: string; port: number }
-  | { state: "started"; host: string; port: number };
+  | { state: "already-running"; host?: string; port?: number }
+  | { state: "started"; host?: string; port?: number };
 
 export type DaemonStartResult = { kind: "background"; result: DaemonEnsureResult };
 
@@ -76,8 +72,8 @@ export type DaemonStartResult = { kind: "background"; result: DaemonEnsureResult
 export interface DaemonRuntimePort {
   spawn(options: DaemonOptions): Promise<DaemonProcessHandle>;
   isHealthy(options: DaemonOptions, expectedPid?: number): Promise<boolean>;
-  /** Checks ownership without requiring the process to match a new config. */
-  isProcessHealthy(options: Pick<DaemonOptions, "host" | "port">, expectedPid: number): Promise<boolean>;
+  /** Checks ownership without requiring the process to match a new configuration. */
+  isProcessHealthy(record: Pick<DaemonPidRecord, "host" | "port">, expectedPid: number): Promise<boolean>;
   isAlive(pid: number): Promise<boolean>;
   signal(pid: number, signal: "SIGTERM"): void;
   readPidRecord(path: string): DaemonPidRecord | undefined;

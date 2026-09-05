@@ -1,83 +1,42 @@
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
-import type { DaemonOptions } from "@muximo/application";
-import { allowedRootsFromEnvironment, normalizeAllowedOrigins } from "@muximo/infrastructure/cli-client";
-import {
-  type MuximodConfig,
-  resolveMuximodClientPaths,
-  validateMuximodControlSocketPath,
-} from "@muximo/muximod/client";
-import { muximoConfigPath } from "@muximo/profile";
+import type { MuximodRuntimeEnvironment } from "@muximo/muximod/client";
 import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
-export type MuximodConfigResolverOptions = {
+export type MuximodRuntimeEnvironmentOptions = {
   environment: NodeJS.ProcessEnv;
   workingDirectory: string;
   runtime: MuximoCliRuntimeOptions;
 };
 
-/** Resolves static process-boundary configuration; muximod loads instance config at startup. */
-export function createMuximodConfigResolver(
-  options: MuximodConfigResolverOptions,
-): (daemon: DaemonOptions) => MuximodConfig {
-  return (daemon) => {
-    const workingDirectory = resolve(options.workingDirectory);
-    const homeDirectory = options.environment.HOME ?? homedir();
-    const paths = resolveMuximodClientPaths(
-      { ...options.environment, MUXIMOD_INSTANCE_DIR: options.runtime.muximodInstanceDirectory },
-      { baseDirectory: workingDirectory },
-    );
-    validateMuximodControlSocketPath(paths.controlSocket);
-
-    const logLevel = daemon.logLevel ?? options.runtime.logLevel;
-    const logFile = resolveConfiguredPath(options.runtime.logFile, options.workingDirectory, homeDirectory);
-    const allowedOrigins = normalizeAllowedOrigins(daemon.allowedOrigins ?? options.runtime.allowedOrigins);
-    return {
-      host: daemon.host,
-      port: daemon.port,
-      instanceDirectory: paths.instanceDirectory,
-      hookOutputDirectory: paths.hookOutputDirectory,
-      pidFile: paths.pidFile,
-      controlSocket: paths.controlSocket,
-      configFile: muximoConfigPath(paths.instanceDirectory),
-      allowedOrigins: [...allowedOrigins],
-      allowedRoots: allowedRootsFromEnvironment(options.environment).map((root) =>
-        resolveConfiguredPath(root, workingDirectory, homeDirectory),
-      ),
-      logLevel,
-      logFile,
-      workingDirectory,
-      runtimeEnvironment: resolveRuntimeEnvironment(options.environment, workingDirectory, options.runtime),
-      authSweepIntervalMs: readDuration(options.environment.MUXIMOD_AUTH_SWEEP_INTERVAL_MS, 1),
-      tmuxPollIntervalMs: readDuration(options.environment.MUXIMOD_TMUX_POLL_INTERVAL_MS, 1),
-      paneCleanupIntervalMs: readDuration(options.environment.MUXIMOD_PANE_CLEANUP_INTERVAL_MS, 1),
-      paneRetentionMs: readDuration(options.environment.MUXIMOD_PANE_RETENTION_MS, 0),
-    };
-  };
-}
-
-function resolveRuntimeEnvironment(
-  environment: NodeJS.ProcessEnv,
-  workingDirectory: string,
-  runtime: MuximoCliRuntimeOptions,
-) {
+/**
+ * Captures host context for the daemon process. Durable daemon settings are
+ * intentionally absent; muximod reads those from the instance contract after
+ * it starts.
+ */
+export function createMuximodRuntimeEnvironment(options: MuximodRuntimeEnvironmentOptions): MuximodRuntimeEnvironment {
+  const workingDirectory = resolve(options.workingDirectory);
   return {
-    homeDirectory: readEnvironmentValue(environment.HOME),
-    path: readEnvironmentValue(environment.PATH),
-    codexHome: readEnvironmentValue(environment.CODEX_HOME),
-    claudeConfigDirectory: readEnvironmentValue(environment.CLAUDE_CONFIG_DIR),
-    tailscaleBinary: readEnvironmentValue(environment.TAILSCALE_BIN),
-    tmuxPane: readEnvironmentValue(environment.TMUX_PANE),
-    tmuxSocket: readEnvironmentValue(environment.MUXIMOD_TMUX_SOCKET),
-    worktreeId: readEnvironmentValue(environment.MUXIMO_WORKTREE_ID),
-    worktreeRoot: readEnvironmentValue(environment.MUXIMO_WORKTREE_ROOT),
-    muximoCommand: readEnvironmentValue(environment.MUXIMOD_MUXIMO_COMMAND),
-    codexRemote: runtime.codexRemote,
-    codexBinary: readEnvironmentValue(environment.MUXIMO_CODEX_BIN),
-    claudeBinary: readEnvironmentValue(environment.MUXIMO_CLAUDE_BIN),
-    opencodeBinary: readEnvironmentValue(environment.MUXIMO_OPENCODE_BIN),
-    migrationsDirectory: environment.MUXIMOD_MIGRATIONS_DIR
-      ? resolveConfiguredPath(environment.MUXIMOD_MIGRATIONS_DIR, workingDirectory)
+    homeDirectory: readEnvironmentValue(options.environment.HOME),
+    path: readEnvironmentValue(options.environment.PATH),
+    codexHome: readEnvironmentValue(options.environment.CODEX_HOME),
+    claudeConfigDirectory: readEnvironmentValue(options.environment.CLAUDE_CONFIG_DIR),
+    // Executable selection is instance configuration. Clearing these values
+    // prevents inherited environment variables from competing with it.
+    tailscaleBinary: null,
+    tmuxPane: readEnvironmentValue(options.environment.TMUX_PANE),
+    tmuxSocket: readEnvironmentValue(options.environment.MUXIMOD_TMUX_SOCKET),
+    worktreeId: readEnvironmentValue(options.environment.MUXIMO_WORKTREE_ID),
+    worktreeRoot: readEnvironmentValue(options.environment.MUXIMO_WORKTREE_ROOT),
+    muximoCommand: readEnvironmentValue(options.environment.MUXIMOD_MUXIMO_COMMAND),
+    // The daemon replaces this bootstrap placeholder with agents.codexRemote
+    // after it reads the instance configuration.
+    codexRemote: "unix://",
+    codexBinary: null,
+    claudeBinary: null,
+    opencodeBinary: null,
+    migrationsDirectory: options.environment.MUXIMOD_MIGRATIONS_DIR
+      ? resolveConfiguredPath(options.environment.MUXIMOD_MIGRATIONS_DIR, workingDirectory)
       : null,
   };
 }
@@ -91,13 +50,4 @@ function resolveConfiguredPath(value: string, baseDirectory: string, homeDirecto
   const expanded =
     value === "~" ? homeDirectory : value.startsWith("~/") ? resolve(homeDirectory, value.slice(2)) : value;
   return resolve(isAbsolute(expanded) ? expanded : resolve(baseDirectory, expanded));
-}
-
-function readDuration(value: string | undefined, minimum: number): number | undefined {
-  if (value === undefined) return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < minimum) {
-    throw new Error(`duration must be an integer >= ${minimum}`);
-  }
-  return parsed;
 }

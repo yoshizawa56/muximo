@@ -76,6 +76,7 @@ export {
   maxPasteImageBytes,
   muximodCapabilitiesSchema,
   muximodEventSchema,
+  muximodHealthProbeSchema,
   muximodHealthSchema,
   pairingClaimRequestSchema,
   pairingClaimResponseSchema,

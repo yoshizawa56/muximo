@@ -129,9 +129,10 @@ receive an application-generated `ClaimExecutionInput.updatedAt`.
 
 Concrete CLI capabilities live under `packages/infrastructure/src/cli/`: backend
 launch/discovery, worktrees, hooks, panes, workspace, observations, shell, tmux sessions,
-serve, and diagnostics. The shared profile package loads the selected raw
-profile, while each application resolves its own environment semantics. The
-neutral Tailscale provider adapter remains in infrastructure.
+serve, and diagnostics. The instance-contract package owns the instance layout and
+validated daemon configuration contract; each application resolves only its own
+bootstrap/runtime options. The neutral Tailscale provider adapter remains in
+infrastructure.
 Muximod lifecycle, persistence, bootstrap, and timing adapters live under
 `packages/muximod`; the CLI composition root selects the configured `migrate` or
 explicit `push` schema mode. Pairing UI and control-socket clients remain CLI-local
@@ -150,24 +151,22 @@ mapping. If a client needs another daemon value or operation, the API or private
 contract is extended and the implementation remains in muximod; a local persistence
 shortcut is not permitted.
 
-The source/development CLI's selected `--env <name>` profile determines the shared
-profile state directory and its configured local/external ports. Without a selected
-profile, the CLI uses the state root directly and applies built-in defaults. The
-standalone production CLI uses the same unnamed default profile and does not load
-source repository profiles. No profile name has special behavior: the CLI schema
-mode defaults to `migrate`, and a profile must explicitly set
-`MUXIMO_SCHEMA_MODE=push` to select push.
-No worktree-specific database, snapshot, seeding, or Portless URL is used.
+The CLI selects one muximod instance directory with `--instance-dir <path>` or
+`MUXIMOD_INSTANCE_DIR`; the default is `~/.local/state/muximo`. No `.env` profile
+is loaded and no worktree-specific instance, database, snapshot, seeding, or
+Portless URL is used. Muximod reads the validated `config.json` in that instance
+directory and owns all daemon behavior after startup.
 The selected muximod instance stores a validated `config.json` for shared workspace,
-agent, Tailscale, and update settings. The bootstrap passes only its path;
-muximod reads and validates the file during startup, and normal CLI commands
+agent, Tailscale, and update settings. The bootstrap passes the selected
+instance directory and transient process context, but no durable daemon
+settings; muximod reads and validates the file during startup, and normal CLI commands
 obtain daemon-owned values through API or private control contracts. `muximo
-config init` uses the standard readline editor with filesystem completion,
-required agent selection, group-level detail prompts, conditional Tailscale
-questions, and immediate validation with retry;
+config init` uses the CLI's `@inquirer/prompts` adapter with agent selection,
+executable discovery, filesystem completion for path values, conditional
+settings, and immediate validation with in-place retry;
 `config get`, `config set`, `config show`, and `config path` provide scriptable
 access. Configuration changes are summarized as before-and-after values. The
-default agent set is Codex only, and the daemon does not register disabled
+default agent set is empty, and the daemon does not register disabled
 providers.
 `apps/web/cli.ts` independently manages one Vite process
 and its Web Serve route; it does not import or invoke muximod. Muximod Serve is a separate

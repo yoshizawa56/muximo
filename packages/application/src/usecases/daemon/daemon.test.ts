@@ -86,11 +86,11 @@ type LifecycleContext = {
 };
 
 const options: DaemonOptions = {
-  host: "127.0.0.1",
-  port: 4317,
   pidFile: "/tmp/muximod-daemon.test.pid",
   logFile: "/tmp/muximod-daemon.test.log",
 };
+const recordedHost = "127.0.0.1";
+const recordedPort = 4317;
 
 const cases = [
   {
@@ -331,8 +331,8 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
       key === "stop-timeout"
         ? {
             pid: 401,
-            host: options.host,
-            port: key === "dynamic-port" ? 4965 : options.port,
+            host: recordedHost,
+            port: key === "dynamic-port" ? 4965 : recordedPort,
             startedAt: "2026-08-23T00:00:00.000Z",
           }
         : undefined,

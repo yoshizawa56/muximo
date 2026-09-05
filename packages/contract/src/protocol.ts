@@ -16,7 +16,7 @@ import { z } from "zod";
  * compatibility version; changing its schemas is a breaking change that must
  * ship with both sides together.
  */
-export const protocolVersion = 2 as const;
+export const protocolVersion = 3 as const;
 export const terminalProtocolVersion = protocolVersion;
 export const muximodControlMaxRequestBytes = 64 * 1024;
 export const muximodControlMaxResponseBytes = 4 * 1024 * 1024;
@@ -34,10 +34,35 @@ export const muximodHealthSchema = z
     service: z.literal("muximod"),
     protocolVersion: z.literal(protocolVersion),
     pid: z.number().int().positive(),
-    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
 export type MuximodHealth = z.infer<typeof muximodHealthSchema>;
+
+/** Minimal health envelope used to distinguish protocol incompatibility. */
+export const muximodHealthProbeSchema = z
+  .object({
+    ok: z.literal(true),
+    service: z.literal("muximod"),
+    protocolVersion: z.number().int().positive(),
+  })
+  .passthrough();
+
+export const muximodConfigurationStatusSchema = z
+  .object({
+    state: z.enum(["current", "restart_recommended", "unavailable"]),
+    changedKeys: z.array(z.string().min(1).max(128)).max(64),
+  })
+  .strict();
+export type MuximodConfigurationStatus = z.infer<typeof muximodConfigurationStatusSchema>;
+
+export const muximodDaemonStatusSchema = z
+  .object({
+    protocolVersion: z.literal(protocolVersion),
+    daemonVersion: z.string().trim().min(1).max(128),
+    configuration: muximodConfigurationStatusSchema,
+  })
+  .strict();
+export type MuximodDaemonStatus = z.infer<typeof muximodDaemonStatusSchema>;
 
 export const muximodCapabilitiesSchema = z
   .object({
@@ -297,6 +322,7 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("read_host_settings"), requestId: controlRequestIdSchema }).strict(),
+  z.object({ type: z.literal("read_daemon_status"), requestId: controlRequestIdSchema }).strict(),
   z.discriminatedUnion("operation", [
     z
       .object({
@@ -428,6 +454,13 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
       type: z.literal("host_settings"),
       requestId: controlRequestIdSchema,
       ...muximodHostSettingsSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("daemon_status"),
+      requestId: controlRequestIdSchema,
+      ...muximodDaemonStatusSchema.shape,
     })
     .strict(),
   z

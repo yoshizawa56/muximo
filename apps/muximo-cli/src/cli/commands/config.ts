@@ -1,4 +1,4 @@
-import { type MuximoConfigSetting, muximoConfigKeys, muximoConfigSettings } from "@muximo/profile";
+import { type MuximoConfigSetting, muximoConfigKeys, muximoConfigSettings } from "@muximo/instance-contract";
 import type { Command } from "commander";
 import { z } from "zod";
 import { type CliArgumentSpec, type CliCompletionSpec, registerArguments } from "../options/index.js";
@@ -6,14 +6,29 @@ import type { CliCommandContext, CliHandlers } from "./types.js";
 import { invokeCliHandler } from "./validation.js";
 
 const configSchema = z.object({
-  command: z.enum(["init", "path", "show", "get", "set"]),
+  command: z.enum(["init", "path", "show", "get", "set", "import"]),
   key: z.string().trim().min(1).optional(),
+  source: z.string().trim().min(1).optional(),
   values: z.array(z.string()).default([]),
 });
 
 export function registerConfigCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
   const config = parent.command("config").description("Manage the instance configuration");
   config.action(() => context.report(2));
+  registerConfigAction(
+    registerArguments(config.command("import <file>").description("Import a complete configuration file"), [
+      {
+        key: "file",
+        description: "Configuration file to import",
+        completion: { kind: "file" },
+      },
+    ]),
+    {
+      command: "import",
+    },
+    handlers,
+    context,
+  );
   registerConfigAction(
     config.command("init").description("Create or edit the configuration interactively"),
     {
@@ -123,15 +138,24 @@ export function formatConfigSettingsHelp(command: "get" | "set"): string {
 
 function registerConfigAction(
   command: Command,
-  fixed: { command: "init" | "path" | "show" | "get" | "set" },
+  fixed: { command: "init" | "path" | "show" | "get" | "set" | "import" },
   handlers: CliHandlers,
   context: CliCommandContext,
 ): void {
-  const dispatch = async (key: string | undefined, values: string[] | undefined) => {
+  const dispatch = async (
+    key: string | undefined,
+    values: string[] | undefined,
+    source: string | undefined = undefined,
+  ) => {
     context.report(
       await invokeCliHandler({
         schema: configSchema,
-        rawInput: { ...fixed, ...(key === undefined ? {} : { key }), values: values ?? [] },
+        rawInput: {
+          ...fixed,
+          ...(key === undefined ? {} : { key }),
+          ...(source === undefined ? {} : { source }),
+          values: values ?? [],
+        },
         commandPath: ["config", fixed.command],
         context,
         handler: handlers.config,
@@ -140,6 +164,8 @@ function registerConfigAction(
   };
   if (fixed.command === "init" || fixed.command === "path" || fixed.command === "show") {
     command.action(() => dispatch(undefined, undefined));
+  } else if (fixed.command === "import") {
+    command.action((source: string) => dispatch(undefined, undefined, source));
   } else if (fixed.command === "get") {
     command.action((key: string) => dispatch(key, undefined));
   } else {

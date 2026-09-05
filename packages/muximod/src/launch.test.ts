@@ -16,49 +16,58 @@ import {
   type MuximodConfig,
   type MuximodLaunchOptions,
   muximodConfigSchema,
-  muximodConfigurationFingerprint,
   parseMuximodBootstrap,
   readMuximodBootstrap,
 } from "./launch.js";
 
+const runtimeEnvironment = {
+  homeDirectory: null,
+  path: null,
+  codexHome: null,
+  claudeConfigDirectory: null,
+  tailscaleBinary: null,
+  tmuxPane: null,
+  tmuxSocket: null,
+  worktreeId: null,
+  worktreeRoot: null,
+  muximoCommand: null,
+  codexRemote: "unix://",
+  codexBinary: null,
+  claudeBinary: null,
+  opencodeBinary: null,
+  migrationsDirectory: null,
+};
+
 const bootstrapOptions: MuximodLaunchOptions = {
-  schemaMode: "migrate",
-  config: {
-    host: "127.0.0.1",
-    port: 4317,
-    instanceDirectory: "/tmp/muximod-instance",
-    configFile: "/tmp/muximod-instance/config.json",
-    hookOutputDirectory: "/tmp/muximod-instance/hooks",
-    pidFile: "/tmp/muximod-instance/muximod.pid",
-    controlSocket: "/tmp/muximod-instance/muximod.sock",
-    allowedOrigins: [],
-    allowedRoots: ["/tmp"],
-    logLevel: "info",
-    workingDirectory: "/tmp",
-    runtimeEnvironment: {
-      homeDirectory: null,
-      path: null,
-      codexHome: null,
-      claudeConfigDirectory: null,
-      tailscaleBinary: null,
-      tmuxPane: null,
-      tmuxSocket: null,
-      worktreeId: null,
-      worktreeRoot: null,
-      muximoCommand: null,
-      codexRemote: "unix://",
-      codexBinary: null,
-      claudeBinary: null,
-      opencodeBinary: null,
-      migrationsDirectory: null,
-    },
-  },
+  instanceDirectory: "/tmp/muximod-instance",
+  workingDirectory: "/tmp",
+  runtimeEnvironment,
+};
+
+const serverConfig: MuximodConfig = {
+  host: "127.0.0.1",
+  port: 4317,
+  instanceDirectory: "/tmp/muximod-instance",
+  configFile: "/tmp/muximod-instance/config.json",
+  hookOutputDirectory: "/tmp/muximod-instance/hooks",
+  opencodeRegistryFile: "/tmp/muximod-instance/opencode-servers.json",
+  pidFile: "/tmp/muximod-instance/muximod.pid",
+  controlSocket: "/tmp/muximod-instance/muximod.sock",
+  allowedOrigins: [],
+  allowedRoots: ["/tmp"],
+  logLevel: "info",
+  logFile: "/tmp/muximod-instance/muximod.log",
+  workingDirectory: "/tmp",
+  runtimeEnvironment,
+  enabledAgentBackends: ["codex"],
+  defaultAgentBackend: "codex",
+  opencodeServerUrl: null,
 };
 
 type BootstrapReadFixture = { path: string };
 const bootstrapReadCases = [
   {
-    name: "reads a validated launch configuration from the private descriptor",
+    name: "reads a bootstrap context from the private descriptor",
     input: undefined,
     assert: [returns<{}, MuximodLaunchOptions>(bootstrapOptions)],
   },
@@ -97,84 +106,6 @@ describe("muximod process bootstrap", () => {
   runOperationTable(register, bootstrapSizeTable);
 });
 
-type FingerprintInput =
-  | "same"
-  | "different-origin"
-  | "different-runtime"
-  | "different-schema-mode"
-  | "different-tmux-pane";
-type FingerprintResult = { first: string; second: string };
-type FingerprintContext = { equal: boolean; length: number };
-
-const fingerprintCases = [
-  {
-    name: "keeps identical launch configurations reusable",
-    input: "same" as const,
-    assert: [hasObserved<FingerprintContext, FingerprintResult>("equal", true), hasObserved("length", 64)],
-  },
-  {
-    name: "changes when a browser origin changes",
-    input: "different-origin" as const,
-    assert: [hasObserved<FingerprintContext, FingerprintResult>("equal", false)],
-  },
-  {
-    name: "changes when schema mode changes",
-    input: "different-schema-mode" as const,
-    assert: [hasObserved<FingerprintContext, FingerprintResult>("equal", false)],
-  },
-  {
-    name: "changes when a daemon runtime environment value changes",
-    input: "different-runtime" as const,
-    assert: [hasObserved<FingerprintContext, FingerprintResult>("equal", false)],
-  },
-  {
-    name: "keeps the daemon reusable across tmux panes",
-    input: "different-tmux-pane" as const,
-    assert: [hasObserved<FingerprintContext, FingerprintResult>("equal", true)],
-  },
-] satisfies readonly OperationCase<"default", FingerprintInput, FingerprintResult, FingerprintContext>[];
-
-const fingerprintTable: OperationTable<undefined, "default", FingerprintInput, FingerprintResult, FingerprintContext> =
-  {
-    defaultFixture: noFixture(),
-    cases: fingerprintCases,
-    execute: (_fixture, input) => {
-      const first = muximodConfigurationFingerprint(bootstrapOptions);
-      const secondOptions =
-        input === "same"
-          ? bootstrapOptions
-          : input === "different-origin"
-            ? { ...bootstrapOptions, config: { ...bootstrapOptions.config, allowedOrigins: ["http://web.example"] } }
-            : input === "different-runtime"
-              ? {
-                  ...bootstrapOptions,
-                  config: {
-                    ...bootstrapOptions.config,
-                    runtimeEnvironment: { ...bootstrapOptions.config.runtimeEnvironment, codexRemote: "https://codex" },
-                  },
-                }
-              : input === "different-tmux-pane"
-                ? {
-                    ...bootstrapOptions,
-                    config: {
-                      ...bootstrapOptions.config,
-                      runtimeEnvironment: { ...bootstrapOptions.config.runtimeEnvironment, tmuxPane: "%42" },
-                    },
-                  }
-                : { schemaMode: "push" as const, config: bootstrapOptions.config };
-      const second = muximodConfigurationFingerprint(secondOptions);
-      return { first, second };
-    },
-    observe: (_fixture, result) => {
-      if (!result.ok) return { equal: false, length: 0 };
-      return { equal: result.value.first === result.value.second, length: result.value.first.length };
-    },
-  };
-
-describe("muximod configuration identity", () => {
-  runOperationTable(it as unknown as TestRegistrar, fingerprintTable);
-});
-
 type BindHostInput = "loopback" | "private" | "wildcard" | "public";
 type BindHostContext = { host: string | null };
 
@@ -206,7 +137,7 @@ const bindHostTable: OperationTable<undefined, "default", BindHostInput, Muximod
   cases: bindHostCases,
   execute: (_fixture, input) =>
     muximodConfigSchema.parse({
-      ...bootstrapOptions.config,
+      ...serverConfig,
       host:
         input === "loopback"
           ? "127.0.0.1"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createTailscaleServeClient,
@@ -12,7 +12,6 @@ import {
   type WebDaemonManager,
   writeServeRouteState,
 } from "@muximo/infrastructure/web-client";
-import { getProfile, resolveProfileName } from "@muximo/profile";
 import { resolveWebOptions, type WebOptions } from "./options.js";
 
 type WebCliContext = {
@@ -21,8 +20,6 @@ type WebCliContext = {
   routeStateFile: string;
   tailscale: ReturnType<typeof createTailscaleServeClient>;
 };
-
-const sourceRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 process.exitCode = await main();
 
@@ -34,14 +31,8 @@ async function main(): Promise<number> {
       return parsed.command.length === 0 ? 2 : 0;
     }
     const cwd = process.cwd();
-    const profile = getProfile({
-      name: parsed.profileName,
-      repositoryRoot: sourceRepositoryRoot,
-      baseEnvironment: process.env,
-    });
-    const webOptions = resolveWebOptions(profile, cwd);
-    const repositoryRoot = profile.repositoryRoot;
-    const webRoot = join(repositoryRoot, "apps", "web");
+    const webOptions = resolveWebOptions(process.env, cwd);
+    const webRoot = resolve(fileURLToPath(new URL(".", import.meta.url)));
     const context: WebCliContext = {
       options: webOptions,
       webManager: createWebDaemonManager({
@@ -104,10 +95,7 @@ function isHelpInvocation(command: readonly string[]): boolean {
 async function applyTailscaleRoute(context: WebCliContext): Promise<number> {
   const daemon = await context.webManager.status();
   if (daemon.state !== "running") {
-    const startCommand =
-      context.options.environmentName === undefined
-        ? "web daemon start"
-        : `web --env ${context.options.environmentName} daemon start`;
+    const startCommand = "web daemon start";
     throw new Error(`Web daemon is not running; run "${startCommand}" first`);
   }
   const result = await context.tailscale.applyRoute({
@@ -153,7 +141,6 @@ async function stopServeRoute(context: WebCliContext): Promise<number> {
 function writeRouteState(context: WebCliContext, route: TailscaleServeRoute): void {
   const state: ServeRouteState = {
     schemaVersion: 1,
-    ...(context.options.environmentName === undefined ? {} : { environment: context.options.environmentName }),
     component: "web",
     provider: "tailscale",
     hostname: route.hostname,
@@ -170,35 +157,20 @@ function writeRouteState(context: WebCliContext, route: TailscaleServeRoute): vo
 function readRouteState(context: WebCliContext): ServeRouteState | undefined {
   const state = readServeRouteState(context.routeStateFile);
   if (!state) return undefined;
-  if (state.environment !== context.options.environmentName || state.component !== "web") {
-    throw new Error(`Web Serve state belongs to a different environment: ${context.routeStateFile}`);
-  }
+  if (state.component !== "web")
+    throw new Error(`Web Serve state belongs to a different component: ${context.routeStateFile}`);
   return state;
 }
 
-function parseArguments(args: readonly string[]): { profileName?: string; command: string[] } {
-  let profileName = resolveProfileName(process.env.MUXIMO_ENV);
+function parseArguments(args: readonly string[]): { command: string[] } {
   const command: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const value = args[index];
-    if (value === "--env") {
-      const candidate = args[++index];
-      profileName = resolveProfileName(candidate);
-      continue;
-    }
-    if (value?.startsWith("--env=")) {
-      const candidate = value.slice("--env=".length);
-      profileName = resolveProfileName(candidate);
-      continue;
-    }
-    command.push(value);
-  }
-  return { profileName, command };
+  command.push(...args);
+  return { command };
 }
 
 function printHelp(): void {
   process.stdout.write(
-    `Usage: web [--env <profile>] <daemon|serve> <start|restart|stop|status|tailscale>\n\n` +
+    "Usage: web <daemon|serve> <start|restart|stop|status|tailscale>\n\n" +
       "Commands:\n" +
       "  daemon start|restart|stop|status  Manage the Web process\n" +
       "  serve tailscale                   Configure the persistent Tailscale route\n" +

@@ -87,23 +87,21 @@ Production releases contain one `muximo` binary. The daemon is an internal
 process mode started and managed by that binary; `muximod` is not a separate
 user-facing executable.
 
-`muximo daemon log` prints the most recent 100 lines from the daemon's derived
-state log. Use `--lines N` to change the limit. The standalone production command
-uses the unnamed default profile and does not load source repository profiles.
-Use the checkout-based `mise muximo --env <name>` command for a named profile;
-each named profile has its own derived state directory, ports, database, PID
-file, socket, and log.
+`muximo daemon log` prints the most recent 100 lines from the daemon's instance
+log. Use `--lines N` to change the limit. The default instance directory is
+`~/.local/state/muximo`; select another one with `--instance-dir <path>` or
+`MUXIMOD_INSTANCE_DIR`.
 
 The daemon is started and managed by the local `muximo` command. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
 
 ## Instance configuration
 
 Host-wide settings are stored in `config.json` inside the selected muximod
-instance directory (`<state-root>/<profile>/muximod/config.json`, or the
-unscoped instance directory when no profile is selected). `muximo config` is the
-intentional local file-management exception; the daemon reads and validates the
-file during startup, and normal CLI commands obtain daemon-owned values through
-the daemon API or private control socket.
+instance directory (`~/.local/state/muximo/config.json` by default). Select the
+directory with `--instance-dir <path>` or `MUXIMOD_INSTANCE_DIR`. `muximo config`
+is the intentional local file-management exception; the daemon reads and
+validates the file during startup, and normal CLI commands obtain daemon-owned
+values through the daemon API or private control socket.
 
 Create or inspect it with:
 
@@ -113,14 +111,14 @@ muximo config path
 muximo config show
 ```
 
-The interactive editor uses the standard terminal line editor and completes
-filesystem paths. Workspace roots and the enabled agent backends are entered
-directly; at least one agent backend is required. Agent backends are entered
-as comma-separated names, followed by one prompt asking whether to configure
-agent details. Tailscale has one enable prompt and asks its details only when
-enabled; update settings have one group-level configuration prompt. Every
-value is validated as soon as it is entered; invalid values show an error and
-repeat the same question. The non-interactive form is useful for scripts:
+The interactive editor uses the `@inquirer/prompts` keyboard interface. It
+first asks which agent backends to enable; selecting none keeps the instance in
+tmux-only mode. Detected executables are offered as choices, while executable
+and workspace paths can be entered with filesystem completion. Tailscale and
+other settings are presented as high-level recommended/custom choices, and
+individual fields are asked only when selected. Every value is validated as
+soon as it is entered, with the error shown before the same field is retried. The
+non-interactive form is useful for scripts:
 
 ```sh
 muximo config set workspace.roots ~/work/project,~/work/other
@@ -143,16 +141,17 @@ the appropriate executable path explicitly. Successful `config init` and
 path` or `config show` when the file itself is needed. Configuration changes are
 applied after `muximo daemon restart`.
 
-The default configuration enables only `codex`. Disabled providers are not
-registered by the daemon, so an uninstalled optional tool such as OpenCode
-cannot prevent daemon startup. A provider executable is resolved only when a
-session using that provider is launched. After changing agent settings, run
+The default configuration enables no agent backends. Disabled providers are
+not registered by the daemon, so an uninstalled tool such as OpenCode cannot
+prevent daemon startup. A provider executable is resolved only when a session
+using that provider is launched. After changing agent settings, run
 `muximo daemon restart` before starting new sessions.
 
-Executable settings accept a program name or path plus an argv prefix. They do
-not evaluate shell aliases or shell command strings; use a wrapper executable
-when a per-user command needs custom setup. Configuration files are written
-atomically with user-only permissions.
+Executable settings accept a program name or path. Tailscale arguments are
+stored separately as an argv prefix. Neither setting evaluates shell aliases or
+shell command strings; use a wrapper executable when a per-user command needs
+custom setup. Configuration files are written atomically with user-only
+permissions.
 
 Starting `muximod` does not create a tmux session. Create a new managed session with `muximo tmux new-session`, adopt an existing session with `muximo tmux manage-session --name <name>`, or let the Web connection flow adopt an unmanaged session automatically.
 
@@ -164,7 +163,7 @@ muximo serve tailscale
 ```
 
 The command discovers the current Tailscale hostname, configures the fixed
-environment route, and records its public URL in the environment state. It
+instance route, and records its public URL in the instance state. It
 does not start or supervise `muximod`.
 
 ## Pair a device
@@ -209,34 +208,16 @@ muximo tmux new-session -s project -c ~/work/project
 muximo doctor --verbose
 ```
 
-OpenCode server connections are shared across Muximo environments under the
-same state root. Muximo reuses a healthy server and starts one only when no
-connection is available; stopping or restarting `muximod` does not stop it.
-To use an OpenCode server started outside Muximo, set its local URL before
-running the session:
+OpenCode server connections are shared within one Muximo instance. Muximo
+reuses a healthy server and starts one only when no connection is available;
+stopping or restarting `muximod` does not stop it. To use an OpenCode server
+started outside Muximo, configure its local URL before running the session:
 
 ```sh
-MUXIMO_OPENCODE_SERVER_URL=http://127.0.0.1:4096 muximo run opencode
+muximo config set agents.opencode.serverUrl http://127.0.0.1:4096
+muximo daemon restart
+muximo run opencode
 ```
-
-The selected environment is shared by all worktrees on the host. Generate an
-ignored profile with the interactive setup command:
-
-```sh
-mise profile
-```
-
-The command asks for an arbitrary profile name, a tracked `.env.<name>.example`
-recipe, client runtime (`browser`, `capacitor`, or `none`), connection details,
-schema mode, and optional iOS Local configuration. A browser client requires a
-Web runtime in the recipe. A bundled Capacitor client can use a recipe without
-Web settings because muximod always allows its fixed `capacitor://localhost`
-origin; a Capacitor Local client uses the generated HTTP(S) Web origin instead.
-Each run regenerates the selected `.env.<name>` file from the recipe and
-overwrites the generated iOS configuration when requested. The tracked
-`.env.local.example` and `.env.stg.example` files are recommended recipes, not
-fixed environment names. No worktree-local database, snapshot, or port
-allocation is created.
 
 The Web UI can also create shell or agent panes, choose a new tmux window or split, and select a workspace or managed worktree. Use `muximo --help` for commands and options not shown here.
 
@@ -248,14 +229,14 @@ The repository uses `mise` for Bun, Node.js, and tmux versions:
 mise install
 bun install --frozen-lockfile
 
-# Generate or overwrite the ignored local profile and optional iOS settings.
-mise profile
+# Configure the local muximo instance and start its daemon.
+mise muximo config init
+mise muximo daemon restart
 
-# Start the local muximod and Web processes independently.
-mise muximo --env local daemon restart
-mise web --env local daemon restart
-mise muximo --env local serve tailscale
-mise web --env local serve tailscale
+# Start the independent Web development process when needed.
+mise web daemon restart
+mise muximo serve tailscale
+mise web serve tailscale
 ```
 
 The Web process uses one fixed local port and keeps HMR available after `web

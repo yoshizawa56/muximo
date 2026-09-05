@@ -27,7 +27,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@muximo/contract": "workspace:*",
     "@muximo/infrastructure": "workspace:*",
-    "@muximo/profile": "workspace:*",
+    "@muximo/instance-contract": "workspace:*",
     "@orpc/client": "^1.15.0",
     "@orpc/contract": "^1.15.0",
     "@orpc/tanstack-query": "^1.15.0",

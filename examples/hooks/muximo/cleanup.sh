@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 
-printf '%s\n' 'hook: no profile or process state requires cleanup'
+printf '%s\n' 'hook: no instance or process state requires cleanup'

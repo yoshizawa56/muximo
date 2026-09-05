@@ -5,20 +5,26 @@ import type {
   DaemonStatusResult,
   DaemonStopResult,
 } from "@muximo/application";
-import type { MuximodControlLogResult } from "@muximo/contract/control";
+import type { MuximodControlLogResult, MuximodDaemonStatus } from "@muximo/contract/control";
 import type { CliIo } from "../commands/types.js";
 
 export function presentDaemonStart(result: DaemonStartResult, io: CliIo): number {
   const prefix = result.result.state === "already-running" ? "muximod already running" : "muximod started";
-  io.out.write(`[muximo-cli] ${prefix} at http://${displayDaemonHost(result.result.host)}:${result.result.port}\n`);
+  io.out.write(`[muximo-cli] ${prefix}${formatEndpoint(result.result.host, result.result.port)}\n`);
   return 0;
 }
 
-export function presentDaemonStatus(result: DaemonStatusResult, io: CliIo): number {
+export function presentDaemonStatus(
+  result: DaemonStatusResult,
+  io: CliIo,
+  clientVersion?: string,
+  daemonStatus?: MuximodDaemonStatus,
+): number {
   if (result.state === "running") {
     io.out.write(
-      `[muximo-cli] muximod running${result.pid === undefined ? "" : ` (pid ${result.pid})`} at http://${displayDaemonHost(result.host)}:${result.port}\n`,
+      `[muximo-cli] muximod running${result.pid === undefined ? "" : ` (pid ${result.pid})`}${formatEndpoint(result.host, result.port)}\n`,
     );
+    presentDaemonDiagnostics(io, clientVersion, daemonStatus);
     return 0;
   }
   if (result.state === "unhealthy") {
@@ -30,8 +36,37 @@ export function presentDaemonStatus(result: DaemonStatusResult, io: CliIo): numb
     );
     return 1;
   }
-  io.out.write(`[muximo-cli] muximod stopped at http://${displayDaemonHost(result.host)}:${result.port}\n`);
+  io.out.write("[muximo-cli] muximod stopped\n");
   return 1;
+}
+
+function presentDaemonDiagnostics(
+  io: CliIo,
+  clientVersion: string | undefined,
+  daemonStatus: MuximodDaemonStatus | undefined,
+): void {
+  if (daemonStatus) io.out.write(`[muximo-cli] daemon version: ${daemonStatus.daemonVersion}\n`);
+  if (clientVersion) io.out.write(`[muximo-cli] client version: ${clientVersion}\n`);
+  if (!daemonStatus) {
+    io.out.write(
+      "[muximo-cli] configuration status is unavailable; muximod continues with its startup configuration\n",
+    );
+    return;
+  }
+  if (daemonStatus.configuration.state === "current") {
+    io.out.write("[muximo-cli] configuration is current\n");
+    return;
+  }
+  if (daemonStatus.configuration.state === "unavailable") {
+    io.out.write(
+      "[muximo-cli] configuration status is unavailable; muximod continues with its startup configuration\n",
+    );
+    return;
+  }
+  io.out.write(
+    `[muximo-cli] configuration changed; restart recommended for: ${daemonStatus.configuration.changedKeys.join(", ")}\n`,
+  );
+  io.out.write('[muximo-cli] run "muximo daemon restart" to apply the configuration\n');
 }
 
 export function presentDaemonStop(result: DaemonStopResult, io: CliIo): number {
@@ -48,7 +83,7 @@ export function presentDaemonStop(result: DaemonStopResult, io: CliIo): number {
 }
 
 export function presentDaemonRestart(result: DaemonRestartResult, io: CliIo): number {
-  io.out.write(`[muximo-cli] muximod restarted at http://${displayDaemonHost(result.host)}:${result.port}\n`);
+  io.out.write(`[muximo-cli] muximod restarted${formatEndpoint(result.host, result.port)}\n`);
   return 0;
 }
 
@@ -81,7 +116,7 @@ function healthErrorMessage(error: DaemonHealthError): string {
   if (reason === "pid_unhealthy") {
     return context.pid === undefined
       ? "muximod process state is inconsistent with its pid file"
-      : `muximod process ${context.pid} is not owned by the selected environment; inspect the pid file, then run "muximo daemon restart" to apply the selected configuration if this is the expected muximod`;
+      : `muximod process ${context.pid} is not owned by the selected instance; inspect the pid file, then run "muximo daemon restart" to apply the selected configuration if this is the expected muximod`;
   }
   if (reason === "startup_failed") {
     const diagnostic = context.process?.failureDiagnostic ? `: ${context.process.failureDiagnostic}` : "";
@@ -98,4 +133,8 @@ function displayDaemonHost(host: string): string {
   if (host === "0.0.0.0") return "127.0.0.1";
   if (host === "::") return "[::1]";
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+function formatEndpoint(host: string | undefined, port: number | undefined): string {
+  return host === undefined || port === undefined ? "" : ` at http://${displayDaemonHost(host)}:${port}`;
 }

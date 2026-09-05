@@ -170,7 +170,6 @@ const fixture = (): FixtureHandle<SocketFixture> => {
   const app = createMuximodApp({
     auth,
     application,
-    configurationFingerprint: "0".repeat(64),
     originPolicy: createOriginPolicy({ allowedOrigins: ["http://client.test"], allowNoOrigin: true }),
     hookToken: "hook",
     socketFactory: (transport) => {

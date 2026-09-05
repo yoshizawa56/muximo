@@ -289,7 +289,6 @@ function createRpcHandler(behavior: RpcBehavior): RPCHandler<Record<never, never
         service: "muximod",
         protocolVersion,
         pid: process.pid,
-        configurationFingerprint: "0".repeat(64),
       })),
       capabilities: os.capabilities.handler(() => ({
         protocolVersion,

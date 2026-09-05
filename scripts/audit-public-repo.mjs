@@ -12,7 +12,6 @@ const self = path
   .split(path.sep)
   .join("/");
 const maximumFileBytes = 10 * 1024 * 1024;
-const publicEnvironmentProfilePattern = /^\.env(?:\.[A-Za-z0-9][A-Za-z0-9._-]*)?\.example$/i;
 
 function gitFiles(args) {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean);
@@ -75,7 +74,7 @@ for (const relativeFile of files) {
   if (!stats.isFile()) continue;
 
   for (const { label, pattern } of forbiddenFilePatterns) {
-    if (pattern.test(normalizedFile) && !isPublicEnvironmentProfile(normalizedFile)) {
+    if (pattern.test(normalizedFile)) {
       failures.push(`${normalizedFile}: forbidden ${label}`);
     }
   }
@@ -122,10 +121,6 @@ for (const relativeFile of files) {
   if (homeDirectory.length > 4 && text.includes(homeDirectory)) {
     failures.push(`${normalizedFile}: contains the current machine's home directory`);
   }
-}
-
-function isPublicEnvironmentProfile(relativeFile) {
-  return relativeFile === ".env.example" || publicEnvironmentProfilePattern.test(relativeFile);
 }
 
 console.log(`Public repository audit scanned ${files.length} file(s).`);

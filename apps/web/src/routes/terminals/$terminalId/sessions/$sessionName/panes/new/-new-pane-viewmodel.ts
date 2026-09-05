@@ -61,7 +61,7 @@ export function useNewPaneViewModel(): NewPaneViewModel {
     }),
   );
   const availableAgentOptions = useMemo(
-    () => agentOptionsForEnabled(connection ? (capabilitiesQuery.data?.agents.enabled ?? []) : ["codex"]),
+    () => agentOptionsForEnabled(connection ? (capabilitiesQuery.data?.agents.enabled ?? []) : []),
     [capabilitiesQuery.data?.agents.enabled, connection],
   );
   const existingPanes = panesQuery.data?.panes ?? [];

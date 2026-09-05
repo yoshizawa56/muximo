@@ -1,14 +1,20 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
-import type { MuximodHostSettings } from "@muximo/contract/control";
+import { resolve } from "node:path";
+import type { MuximodConfigurationStatus, MuximodHostSettings } from "@muximo/contract/control";
 import {
   createLogger,
   createMigrationSchemaSynchronizer,
   createPushSchemaSynchronizer,
   errorFields,
 } from "@muximo/infrastructure/runtime";
-import { type MuximoConfig, readMuximoConfig } from "@muximo/profile";
-import { type MuximodConfig, type MuximodLaunchOptions, muximodConfigurationFingerprint } from "./launch.js";
+import { type MuximoConfig, readMuximoConfig, resolveInstancePaths } from "@muximo/instance-contract";
+import {
+  createMuximodConfigurationStatusReader,
+  type MuximodConfigResolutionContext,
+  resolveMuximodConfiguredExecutable,
+  resolveMuximodConfiguredPath,
+} from "./config-status.js";
+import type { MuximodConfig, MuximodLaunchOptions } from "./launch.js";
 import { consumeMuximodRestartMarker, removeMuximodPidRecord, writeMuximodPidRecord } from "./process-files.js";
 import { createMuximodServer, resolveMuximodEnvironment } from "./server.js";
 
@@ -18,6 +24,7 @@ export type MuximodStartupConfiguration = {
   config: MuximodConfig;
   environment: NodeJS.ProcessEnv;
   hostSettings: MuximodHostSettings;
+  configurationStatus: () => MuximodConfigurationStatus;
 };
 
 /** Resolves the instance-owned configuration inside the daemon process. */
@@ -26,36 +33,40 @@ export function resolveMuximodStartupConfiguration(
   instanceConfig: MuximoConfig,
   environment: NodeJS.ProcessEnv,
 ): MuximodStartupConfiguration {
-  const bootstrapConfig = options.config;
-  const inheritedEnvironment = resolveMuximodEnvironment(environment, bootstrapConfig.runtimeEnvironment);
+  const paths = resolveInstancePaths(options.instanceDirectory);
+  const inheritedEnvironment = resolveMuximodEnvironment(environment, options.runtimeEnvironment);
   const homeDirectory = inheritedEnvironment.HOME ?? homedir();
-  const allowedRoots = hasWorkspaceRoots(inheritedEnvironment)
-    ? bootstrapConfig.allowedRoots
-    : instanceConfig.workspace.roots.length === 0
-      ? bootstrapConfig.allowedRoots
-      : instanceConfig.workspace.roots.map((root) =>
-          resolveConfiguredPath(root, bootstrapConfig.workingDirectory, homeDirectory),
-        );
+  const workingDirectory = resolve(options.workingDirectory);
+  const resolution: MuximodConfigResolutionContext = { workingDirectory, homeDirectory };
+  const allowedRoots =
+    instanceConfig.workspace.roots.length === 0
+      ? [homeDirectory]
+      : instanceConfig.workspace.roots.map((root) => resolveMuximodConfiguredPath(root, resolution));
   const runtimeEnvironment = {
-    ...bootstrapConfig.runtimeEnvironment,
-    codexBinary:
-      bootstrapConfig.runtimeEnvironment.codexBinary ??
-      expandConfiguredExecutable(instanceConfig.agents.executables.codex, homeDirectory),
-    claudeBinary:
-      bootstrapConfig.runtimeEnvironment.claudeBinary ??
-      expandConfiguredExecutable(instanceConfig.agents.executables.claude, homeDirectory),
-    opencodeBinary:
-      bootstrapConfig.runtimeEnvironment.opencodeBinary ??
-      expandConfiguredExecutable(instanceConfig.agents.executables.opencode, homeDirectory),
-    tailscaleBinary:
-      bootstrapConfig.runtimeEnvironment.tailscaleBinary ??
-      expandConfiguredExecutable(instanceConfig.serve.tailscale.executable, homeDirectory),
+    ...options.runtimeEnvironment,
+    codexRemote: instanceConfig.agents.codexRemote,
+    codexBinary: resolveMuximodConfiguredExecutable(instanceConfig.agents.executables.codex, resolution),
+    claudeBinary: resolveMuximodConfiguredExecutable(instanceConfig.agents.executables.claude, resolution),
+    opencodeBinary: resolveMuximodConfiguredExecutable(instanceConfig.agents.executables.opencode, resolution),
+    tailscaleBinary: resolveMuximodConfiguredExecutable(instanceConfig.serve.tailscale.executable, resolution),
   };
   const config: MuximodConfig = {
-    ...bootstrapConfig,
+    host: instanceConfig.daemon.host,
+    port: instanceConfig.daemon.port,
+    instanceDirectory: paths.instanceDirectory,
+    configFile: paths.configFile,
+    hookOutputDirectory: paths.hookOutputDirectory,
+    opencodeRegistryFile: paths.opencodeRegistryFile,
+    pidFile: paths.pidFile,
+    controlSocket: paths.controlSocket,
+    allowedOrigins: [...instanceConfig.daemon.allowedOrigins],
     allowedRoots,
+    logLevel: instanceConfig.logging.level,
+    logFile: paths.logFile,
+    workingDirectory,
     enabledAgentBackends: [...instanceConfig.agents.enabled],
     defaultAgentBackend: instanceConfig.agents.default,
+    opencodeServerUrl: instanceConfig.agents.opencode.serverUrl,
     runtimeEnvironment,
   };
   const resolvedEnvironment = resolveMuximodEnvironment(environment, runtimeEnvironment);
@@ -64,25 +75,32 @@ export function resolveMuximodStartupConfiguration(
     tailscale: {
       enabled: tailscale.enabled,
       executable: runtimeEnvironment.tailscaleBinary ?? tailscale.executable,
-      args: resolveTailscaleArgs(resolvedEnvironment.MUXIMO_TAILSCALE_ARGS, tailscale.args),
-      hostname: resolveOptionalEnvironmentValue(resolvedEnvironment.MUXIMO_TAILSCALE_HOSTNAME, tailscale.hostname),
+      args: [...tailscale.args],
+      hostname: tailscale.hostname,
       externalPort: tailscale.externalPort,
-      path: resolveEnvironmentValue(resolvedEnvironment.MUXIMO_TAILSCALE_PATH, tailscale.path),
+      path: tailscale.path,
     },
   };
-  return { config, environment: resolvedEnvironment, hostSettings };
+  return {
+    config,
+    environment: resolvedEnvironment,
+    hostSettings,
+    configurationStatus: createMuximodConfigurationStatusReader({
+      configFile: paths.configFile,
+      startupConfig: instanceConfig,
+      resolution,
+    }),
+  };
 }
 
 /** Runs the muximod runtime from a validated, typed process bootstrap. */
 export async function runMuximod(options: MuximodEntrypointOptions): Promise<void> {
-  const bootstrapConfig = options.config;
-  const configurationFingerprint = muximodConfigurationFingerprint(options);
-  const logger = createLogger({
+  const paths = resolveInstancePaths(options.instanceDirectory);
+  let logger = createLogger({
     service: "muximod",
-    mode: bootstrapConfig.logFile ? "background" : "attached",
-    level: bootstrapConfig.logLevel,
-    logFile: bootstrapConfig.logFile,
-    showStack: bootstrapConfig.logLevel === "debug",
+    mode: "background",
+    level: "info",
+    logFile: paths.logFile,
   });
   let loggerClosed = false;
   const closeLogger = () => {
@@ -90,8 +108,8 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
     loggerClosed = true;
     logger.close();
   };
-  let config = bootstrapConfig;
-  let environment = resolveMuximodEnvironment(process.env, bootstrapConfig.runtimeEnvironment);
+  let config: MuximodConfig | undefined;
+  let environment = resolveMuximodEnvironment(process.env, options.runtimeEnvironment);
   let hostSettings: MuximodHostSettings | undefined;
   let server: ReturnType<typeof createMuximodServer> | undefined;
   let shutdownPromise: Promise<void> | undefined;
@@ -114,7 +132,7 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
         cleanupErrors.push(error);
       }
       try {
-        removeMuximodPidRecord(config.pidFile, process.pid);
+        if (config) removeMuximodPidRecord(config.pidFile, process.pid);
       } catch (error) {
         cleanupErrors.push(error);
       }
@@ -125,22 +143,29 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
   };
 
   try {
-    const startup = resolveMuximodStartupConfiguration(
-      options,
-      readMuximoConfig(bootstrapConfig.configFile),
-      process.env,
-    );
+    const instanceConfig = readMuximoConfig(paths.configFile);
+    logger.close();
+    logger = createLogger({
+      service: "muximod",
+      mode: "background",
+      level: instanceConfig.logging.level,
+      logFile: paths.logFile,
+      showStack: instanceConfig.logging.level === "debug",
+    });
+    const startup = resolveMuximodStartupConfiguration(options, instanceConfig, process.env);
     config = startup.config;
     environment = startup.environment;
     hostSettings = startup.hostSettings;
     const schemaSynchronizer =
-      options.schemaMode === "push"
+      instanceConfig.database.schemaMode === "push"
         ? createPushSchemaSynchronizer({ environment, force: true })
         : createMigrationSchemaSynchronizer();
     server = createMuximodServer({
       ...config,
+      databaseFile: paths.databaseFile,
+      opencodeRegistryFile: paths.opencodeRegistryFile,
       environment,
-      configurationFingerprint,
+      configurationStatus: startup.configurationStatus,
       hostSettings,
       schemaSynchronizer,
       logger,
@@ -167,7 +192,7 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
       // Preserve the startup error while still attempting all cleanup below.
     }
     try {
-      removeMuximodPidRecord(config.pidFile, process.pid);
+      if (config) removeMuximodPidRecord(config.pidFile, process.pid);
     } catch {
       // Preserve the startup error after attempting to remove the pid record.
     }
@@ -193,41 +218,4 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
   }
-}
-
-function hasWorkspaceRoots(environment: NodeJS.ProcessEnv): boolean {
-  return environment.MUXIMOD_WORKSPACE_ROOTS?.trim() !== undefined;
-}
-
-function expandConfiguredExecutable(value: string | undefined, homeDirectory: string): string | null {
-  if (value === undefined) return null;
-  if (value === "~") return homeDirectory;
-  return value.startsWith("~/") ? join(homeDirectory, value.slice(2)) : value;
-}
-
-function resolveConfiguredPath(value: string, baseDirectory: string, homeDirectory: string): string {
-  const expanded = value === "~" ? homeDirectory : value.startsWith("~/") ? join(homeDirectory, value.slice(2)) : value;
-  return resolve(isAbsolute(expanded) ? expanded : join(baseDirectory, expanded));
-}
-
-function resolveTailscaleArgs(value: string | undefined, fallback: readonly string[]): string[] {
-  if (value === undefined || value.trim() === "") return [...fallback];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch (error) {
-    throw new Error("MUXIMO_TAILSCALE_ARGS must be a JSON array of strings", { cause: error });
-  }
-  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
-    throw new Error("MUXIMO_TAILSCALE_ARGS must be a JSON array of strings");
-  }
-  return parsed;
-}
-
-function resolveEnvironmentValue(value: string | undefined, fallback: string): string {
-  return value?.trim() || fallback;
-}
-
-function resolveOptionalEnvironmentValue(value: string | undefined, fallback: string | null): string | null {
-  return value === undefined ? fallback : value.trim() || null;
 }

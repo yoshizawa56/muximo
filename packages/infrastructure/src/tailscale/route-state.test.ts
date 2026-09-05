@@ -39,7 +39,6 @@ type RouteContext = {
 
 const state: ServeRouteState = {
   schemaVersion: 1,
-  environment: "local",
   component: "web",
   provider: "tailscale",
   hostname: "machine.tailnet.ts.net",
@@ -67,7 +66,7 @@ const cases = [
     ],
   },
   {
-    name: "writes a default-profile route state without an environment name",
+    name: "writes an instance-owned route state without an environment name",
     input: { kind: "write-default" },
     assert: [
       hasObserved<RouteContext, ServeRouteState | undefined>("state", {
@@ -129,10 +128,8 @@ const table: OperationTable<RouteFixture, "default", RouteOperation, ServeRouteS
 function createFixture() {
   const root = mkdtempSync(join(tmpdir(), "muximo-route-state-test-"));
   mkdirSync(join(root, "nested"));
-  const defaultState: ServeRouteState = { ...state };
-  delete defaultState.environment;
   return {
-    fixture: { stateFile: join(root, "nested", "serve.json"), state, defaultState },
+    fixture: { stateFile: join(root, "nested", "serve.json"), state, defaultState: state },
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }
