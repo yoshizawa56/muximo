@@ -109,6 +109,7 @@ Create or inspect it with:
 muximo config init
 muximo config path
 muximo config show
+muximo config import .muximo/config.development.json
 ```
 
 The interactive editor uses the `@inquirer/prompts` keyboard interface. It
@@ -140,6 +141,30 @@ the appropriate executable path explicitly. Successful `config init` and
 `config set` commands report changed values as `before -> after`; use `config
 path` or `config show` when the file itself is needed. Configuration changes are
 applied after `muximo daemon restart`.
+
+Import files are versioned configuration profiles. They may contain only the
+settings that differ from the product defaults, for example:
+
+```json
+{
+  "version": 1,
+  "daemon": {
+    "port": 4318
+  },
+  "database": {
+    "schemaMode": "push"
+  }
+}
+```
+
+`muximo config import <file>` validates the profile, applies it to the
+defaults, and completely replaces the current instance configuration. Omitted
+values do not survive from the previous configuration. This makes committed
+profiles such as `.muximo/config.development.json` and
+`.muximo/config.local.json` suitable for selecting repository-specific
+development behavior without storing machine-specific hostnames or absolute
+executable paths. Use `muximo config show > muximo-config.backup.json` for a
+normalized backup.
 
 The default configuration enables no agent backends. Disabled providers are
 not registered by the daemon, so an uninstalled tool such as OpenCode cannot

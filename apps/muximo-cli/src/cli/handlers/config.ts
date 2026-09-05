@@ -9,6 +9,7 @@ import {
   type MuximoConfigValue,
   parseMuximoConfigValue,
   readMuximoConfig,
+  readMuximoConfigProfile,
   setMuximoConfigValue,
   writeMuximoConfig,
 } from "@muximo/instance-contract";
@@ -41,7 +42,7 @@ export function createConfigHandler(dependencies: ConfigHandlerDependencies): Cl
         if (!source) throw new Error('a source file is required for "import"');
         if (!existsSync(source)) throw new Error(`configuration file was not found: ${source}`);
         const current = readMuximoConfig(dependencies.filePath);
-        const next = readMuximoConfig(source);
+        const next = readMuximoConfigProfile(source);
         writeMuximoConfig(dependencies.filePath, next);
         writeConfigChanges(dependencies.output, diffMuximoConfig(current, next));
         return 0;

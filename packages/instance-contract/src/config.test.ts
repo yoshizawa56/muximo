@@ -17,6 +17,7 @@ import {
   getMuximoConfigValue,
   type MuximoConfig,
   readMuximoConfig,
+  readMuximoConfigProfile,
   setMuximoConfigValue,
   writeMuximoConfig,
 } from "./config.js";
@@ -151,12 +152,106 @@ describe("muximo instance configuration", () => {
   runOperationTable(it as unknown as TestRegistrar, defaultTable);
 });
 
+type ProfileOperation = "partial" | "full" | "unknown" | "invalid";
+type ProfileFixture = { filePath: string };
+type ProfileResult = {
+  port: number;
+  schemaMode: string;
+  enabledAgents: string;
+  tailscaleEnabled: boolean;
+};
+type ProfileContext = ProfileResult;
+
+const profileCases = [
+  {
+    name: "fills omitted values from defaults while applying a partial profile",
+    fixture: "partial" as const,
+    input: "partial" as const,
+    assert: [
+      hasObserved<ProfileContext, ProfileResult>("port", 4318),
+      hasObserved<ProfileContext, ProfileResult>("schemaMode", "push"),
+      hasObserved<ProfileContext, ProfileResult>("enabledAgents", ""),
+      hasObserved<ProfileContext, ProfileResult>("tailscaleEnabled", false),
+    ],
+  },
+  {
+    name: "accepts a complete configuration as an import profile",
+    fixture: "full" as const,
+    input: "full" as const,
+    assert: [hasObserved<ProfileContext, ProfileResult>("port", 4317)],
+  },
+  {
+    name: "rejects unknown profile keys",
+    fixture: "unknown" as const,
+    input: "unknown" as const,
+    assert: [hasError<ProfileContext, ProfileResult>({ message: /invalid muximo config profile/ })],
+  },
+  {
+    name: "rejects invalid profile values",
+    fixture: "invalid" as const,
+    input: "invalid" as const,
+    assert: [hasError<ProfileContext, ProfileResult>({ message: /invalid muximo config profile/ })],
+  },
+] satisfies readonly OperationCase<ProfileOperation, ProfileOperation, ProfileResult, ProfileContext>[];
+
+const profileTable: OperationTable<ProfileFixture, ProfileOperation, ProfileOperation, ProfileResult, ProfileContext> =
+  {
+    defaultFixture: () => createProfileFixture("partial"),
+    fixtures: {
+      partial: () => createProfileFixture("partial"),
+      full: () => createProfileFixture("full"),
+      unknown: () => createProfileFixture("unknown"),
+      invalid: () => createProfileFixture("invalid"),
+    },
+    cases: profileCases,
+    execute: (fixture) => {
+      const config = readMuximoConfigProfile(fixture.filePath);
+      return {
+        port: config.daemon.port,
+        schemaMode: config.database.schemaMode,
+        enabledAgents: config.agents.enabled.join(","),
+        tailscaleEnabled: config.serve.tailscale.enabled,
+      };
+    },
+    observe: (_fixture, result) =>
+      result.ok
+        ? result.value
+        : {
+            port: 0,
+            schemaMode: "",
+            enabledAgents: "",
+            tailscaleEnabled: false,
+          },
+  };
+
+describe("muximo configuration profiles", () => {
+  runOperationTable(it as unknown as TestRegistrar, profileTable);
+});
+
 function createFixture(kind?: "invalid") {
   const root = mkdtempSync(join(tmpdir(), "muximo-config-test-"));
   const directory = join(root, "instance");
   mkdirSync(directory, { recursive: true });
   const filePath = join(directory, "config.json");
   if (kind === "invalid") writeFileSync(filePath, `${JSON.stringify({ version: 1, legacy: true })}\n`);
+  return {
+    fixture: { filePath },
+    cleanup: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+function createProfileFixture(kind: "partial" | "full" | "unknown" | "invalid") {
+  const root = mkdtempSync(join(tmpdir(), "muximo-config-profile-test-"));
+  const filePath = join(root, "config.profile.json");
+  const profile =
+    kind === "partial"
+      ? { version: 1, daemon: { port: 4318 }, database: { schemaMode: "push" } }
+      : kind === "full"
+        ? defaultMuximoConfig()
+        : kind === "unknown"
+          ? { version: 1, daemon: { unsupported: true } }
+          : { version: 1, daemon: { port: 0 } };
+  writeFileSync(filePath, `${JSON.stringify(profile)}\n`);
   return {
     fixture: { filePath },
     cleanup: () => rmSync(root, { recursive: true, force: true }),

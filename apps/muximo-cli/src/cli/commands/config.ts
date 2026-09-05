@@ -16,13 +16,16 @@ export function registerConfigCommand(parent: Command, handlers: CliHandlers, co
   const config = parent.command("config").description("Manage the instance configuration");
   config.action(() => context.report(2));
   registerConfigAction(
-    registerArguments(config.command("import <file>").description("Import a complete configuration file"), [
-      {
-        key: "file",
-        description: "Configuration file to import",
-        completion: { kind: "file" },
-      },
-    ]),
+    registerArguments(
+      config.command("import <file>").description("Import a configuration profile and replace the instance config"),
+      [
+        {
+          key: "file",
+          description: "Configuration file to import",
+          completion: { kind: "file" },
+        },
+      ],
+    ),
     {
       command: "import",
     },

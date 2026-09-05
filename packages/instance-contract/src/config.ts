@@ -46,6 +46,29 @@ export type MuximoConfig = {
     channel: (typeof muximoUpdateChannels)[number];
   };
 };
+/**
+ * A versioned, importable configuration profile. Omitted values are populated
+ * from the product defaults; importing a profile never preserves the current
+ * instance configuration.
+ */
+export type MuximoConfigProfile = {
+  version: typeof muximoConfigVersion;
+  daemon?: Partial<MuximoConfig["daemon"]>;
+  logging?: Partial<MuximoConfig["logging"]>;
+  database?: Partial<MuximoConfig["database"]>;
+  workspace?: Partial<MuximoConfig["workspace"]>;
+  agents?: {
+    enabled?: MuximoAgentBackend[];
+    default?: MuximoAgentBackend | null;
+    executables?: Partial<Record<MuximoAgentBackend, string | null>>;
+    codexRemote?: string;
+    opencode?: Partial<MuximoConfig["agents"]["opencode"]>;
+  };
+  serve?: {
+    tailscale?: Partial<MuximoConfig["serve"]["tailscale"]>;
+  };
+  updates?: Partial<MuximoConfig["updates"]>;
+};
 export type MuximoAgentBackend = (typeof muximoAgentBackends)[number];
 export type MuximoUpdatePolicy = (typeof muximoUpdatePolicies)[number];
 export type MuximoLogLevel = (typeof muximoLogLevels)[number];
@@ -391,6 +414,21 @@ export function readMuximoConfig(filePath: string): MuximoConfig {
     return validateMuximoConfig(parsed);
   } catch (error) {
     throw new Error(`invalid muximo config ${filePath}: ${errorMessage(error)}`, { cause: error });
+  }
+}
+
+/** Reads an importable profile and materializes it as a complete configuration. */
+export function readMuximoConfigProfile(filePath: string): MuximoConfig {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch (error) {
+    throw new Error(`could not read muximo config profile ${filePath}`, { cause: error });
+  }
+  try {
+    return normalizeMuximoConfigProfile(parsed);
+  } catch (error) {
+    throw new Error(`invalid muximo config profile ${filePath}: ${errorMessage(error)}`, { cause: error });
   }
 }
 
@@ -784,6 +822,62 @@ function validateMuximoConfig(value: unknown): MuximoConfig {
       channel: requireChoice("updates.channel", updates.channel, muximoUpdateChannels),
     },
   };
+}
+
+function normalizeMuximoConfigProfile(value: unknown): MuximoConfig {
+  const profile = requireRecord(value, "configuration profile");
+  assertKeys(
+    profile,
+    ["version", "daemon", "logging", "database", "workspace", "agents", "serve", "updates"],
+    "configuration profile",
+  );
+  if (profile.version !== muximoConfigVersion) throw new Error(`version must be ${muximoConfigVersion}`);
+  assertOptionalRecordKeys(profile, "daemon", ["host", "port", "allowedOrigins"]);
+  assertOptionalRecordKeys(profile, "logging", ["level"]);
+  assertOptionalRecordKeys(profile, "database", ["schemaMode"]);
+  assertOptionalRecordKeys(profile, "workspace", ["roots"]);
+  assertOptionalRecordKeys(profile, "agents", ["enabled", "default", "executables", "codexRemote", "opencode"]);
+  if (isRecord(profile.agents)) {
+    assertOptionalRecordKeys(profile.agents, "executables", muximoAgentBackends);
+    assertOptionalRecordKeys(profile.agents, "opencode", ["serverUrl"]);
+  }
+  assertOptionalRecordKeys(profile, "serve", ["tailscale"]);
+  if (isRecord(profile.serve)) {
+    assertOptionalRecordKeys(profile.serve, "tailscale", [
+      "enabled",
+      "executable",
+      "args",
+      "hostname",
+      "externalPort",
+      "path",
+    ]);
+  }
+  assertOptionalRecordKeys(profile, "updates", ["policy", "channel"]);
+
+  let config = defaultMuximoConfig();
+  for (const setting of muximoConfigSettings) {
+    const valueAtKey = readProfileValue(profile, setting.key);
+    if (valueAtKey.present) {
+      config = setMuximoConfigValue(config, setting.key, valueAtKey.value as MuximoConfigValue);
+    }
+  }
+  return config;
+}
+
+function assertOptionalRecordKeys(parent: Record<string, unknown>, key: string, allowed: readonly string[]): void {
+  if (!Object.hasOwn(parent, key)) return;
+  const value = parent[key];
+  if (!isRecord(value)) throw new Error(`${key} must be an object`);
+  assertKeys(value, allowed, key);
+}
+
+function readProfileValue(value: Record<string, unknown>, key: string): { present: boolean; value?: unknown } {
+  let current: unknown = value;
+  for (const segment of key.split(".")) {
+    if (!isRecord(current) || !Object.hasOwn(current, segment)) return { present: false };
+    current = current[segment];
+  }
+  return { present: true, value: current };
 }
 
 function requireRecord(value: unknown, key: string): Record<string, unknown> {
