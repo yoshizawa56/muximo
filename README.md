@@ -109,7 +109,7 @@ Create or inspect it with:
 muximo config init
 muximo config path
 muximo config show
-muximo config import .muximo/config.development.json
+muximo config import config.dev.json
 ```
 
 The interactive editor uses the `@inquirer/prompts` keyboard interface. It
@@ -159,12 +159,12 @@ settings that differ from the product defaults, for example:
 
 `muximo config import <file>` validates the profile, applies it to the
 defaults, and completely replaces the current instance configuration. Omitted
-values do not survive from the previous configuration. This makes committed
-profiles such as `.muximo/config.development.json` and
-`.muximo/config.local.json` suitable for selecting repository-specific
-development behavior without storing machine-specific hostnames or absolute
-executable paths. Use `muximo config show > muximo-config.backup.json` for a
-normalized backup.
+values do not survive from the previous configuration. The committed
+`config.dev.json` and `config.local.json` profiles provide standard and
+alternate local development ports; import one explicitly because there is no
+implicit profile precedence. These profiles do not store machine-specific
+hostnames or absolute executable paths. Use `muximo config show >
+muximo-config.backup.json` for a normalized backup.
 
 The default configuration enables no agent backends. Disabled providers are
 not registered by the daemon, so an uninstalled tool such as OpenCode cannot
