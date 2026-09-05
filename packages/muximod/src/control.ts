@@ -5,7 +5,7 @@ import type {
   AgentExecutionResult,
   AgentExecutionSpec,
   AuthPairingClaimNotification,
-  MuximodAuthControlPort,
+  MuximodAuthControl,
   RunAgentSessionResult,
 } from "@muximo/application";
 import {
@@ -61,7 +61,7 @@ export type CompletedAgentExecution = {
 
 export type MuximodControlServerOptions = {
   socketPath: string;
-  auth: MuximodAuthControlPort;
+  auth: MuximodAuthControl;
   readLog?: (lines: number) => Promise<MuximodControlLogResult>;
   adoptAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
   observeAgentSession?: (request: AgentSessionObservationRequest) => Promise<void>;

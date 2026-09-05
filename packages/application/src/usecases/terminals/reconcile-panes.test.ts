@@ -9,16 +9,17 @@ import {
 } from "@muximo/test-support";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
+import type { ApplicationClock } from "../../effect-runtime.js";
 import { applicationClockLayer } from "../../effect-runtime.js";
-import type { ApplicationClock } from "../../ports/application.js";
-import type {
-  MuximodHostPort,
-  MuximodSessionManagementPort,
-  MuximodViewportPort,
-  TerminalHostSnapshot,
-} from "../../ports/host.js";
-import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
+import type { TerminalHostSnapshot } from "../../ports/host.js";
 import { reconcilePanes } from "./reconcile-panes.js";
+import type {
+  AgentSessionRepository,
+  MuximodHost,
+  MuximodSessionManagement,
+  MuximodViewport,
+  PaneRepository,
+} from "./terminal-services.js";
 import { terminalLayer } from "./terminal-services.js";
 
 type Input = {
@@ -39,7 +40,7 @@ type ReconcileContext = {
 
 type ReconcileFixture = {
   session: AgentSession;
-  host: MuximodHostPort;
+  host: MuximodHost;
   repository: PaneRepository;
   sessions: AgentSessionRepository;
   status: Map<string, { state: PaneState; recentOutput?: string }>;
@@ -267,7 +268,7 @@ function createFixture(): { fixture: ReconcileFixture } {
   return { fixture };
 }
 
-function createSessionManagement(): MuximodSessionManagementPort {
+function createSessionManagement(): MuximodSessionManagement {
   return {
     newId: () => "managed-session",
     hasSession: () => Effect.succeed(false),
@@ -276,14 +277,14 @@ function createSessionManagement(): MuximodSessionManagementPort {
   };
 }
 
-function createViewport(): MuximodViewportPort {
+function createViewport(): MuximodViewport {
   return {
     handleTerminalHostHook: () => Effect.succeed(undefined),
     reassertMobileViewport: () => Effect.succeed(undefined),
   };
 }
 
-function createHost(snapshot: TerminalHostSnapshot): MuximodHostPort {
+function createHost(snapshot: TerminalHostSnapshot): MuximodHost {
   return {
     newId: () => "generated-pane",
     hasSession: () => Effect.succeed(false),

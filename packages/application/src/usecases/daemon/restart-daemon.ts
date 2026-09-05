@@ -1,39 +1,33 @@
 import { Effect, Result } from "effect";
 import { DaemonHealthError, type DaemonOptions } from "../../ports/daemon.js";
-import { type DaemonLifecycleDependencies, terminateQuietly, waitFor, waitForHealthyOrExit } from "./policy.js";
-import type { StopDaemon } from "./stop-daemon.js";
-
-export type RestartDaemonDependencies = DaemonLifecycleDependencies & {
-  stop: StopDaemon;
-};
+import { DaemonClockService, DaemonLifecycleConfigService, DaemonRuntimeService } from "./daemon-services.js";
+import { terminateQuietly, waitFor, waitForHealthyOrExit } from "./policy.js";
+import { StopDaemon } from "./stop-daemon.js";
 
 export class RestartDaemon {
-  public constructor(private readonly dependencies: RestartDaemonDependencies) {}
-
   public readonly execute = Effect.fn("Daemon.restart")(
     { self: this },
     function* (this: RestartDaemon, options: DaemonOptions) {
-      const dependencies = this.dependencies;
-      yield* dependencies.runtime.writeRestartMarker(options.pidFile, options.refreshServers === true);
-      const stopped = yield* Effect.result(dependencies.stop.execute(options));
+      const runtime = yield* DaemonRuntimeService;
+      const clock = yield* DaemonClockService;
+      const config = yield* DaemonLifecycleConfigService;
+      yield* runtime.writeRestartMarker(options.pidFile, options.refreshServers === true);
+      const stopped = yield* Effect.result(new StopDaemon().execute(options));
       if (Result.isFailure(stopped)) {
-        yield* dependencies.runtime
-          .removeRestartMarker(options.pidFile)
-          .pipe(Effect.catch(() => Effect.succeed(undefined)));
+        yield* runtime.removeRestartMarker(options.pidFile).pipe(Effect.catch(() => Effect.succeed(undefined)));
         return yield* Effect.fail(stopped.failure);
       }
 
-      if (yield* waitFor(() => dependencies.runtime.isHealthy(options), 1_000, dependencies)) {
+      if (yield* waitFor(() => runtime.isHealthy(options), 1_000)) {
         return { state: "restarted-by-service-manager" as const, host: options.host, port: options.port };
       }
 
-      const startupStartedAt = dependencies.clock.now();
-      const child = yield* dependencies.runtime.spawn(options);
+      const startupStartedAt = clock.now();
+      const child = yield* runtime.spawn(options);
       const startup = yield* waitForHealthyOrExit(
-        () => dependencies.runtime.isHealthy(options, child.pid),
+        () => runtime.isHealthy(options, child.pid),
         child,
-        dependencies.lifecycleTimeoutMs,
-        dependencies,
+        config.lifecycleTimeoutMs,
       );
       if (startup.kind === "exited") {
         return yield* Effect.fail(

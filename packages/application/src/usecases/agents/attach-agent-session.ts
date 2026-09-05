@@ -1,32 +1,26 @@
 import { type AgentSession, AgentSessionId } from "@muximo/domain";
 import { Effect } from "effect";
 import { attemptSync } from "../../attempt.js";
-import type {
-  AttachAgentSessionInput,
-  ManagedAgentSessionRepository,
-  PanePublicationPort,
-  SessionClock,
-  SessionLauncherPort,
-} from "../../ports/agent-sessions.js";
+import type { AttachAgentSessionInput } from "../../ports/agent-sessions.js";
 import { ApplicationFailure } from "../../ports/application.js";
-
-export type AttachAgentSessionDependencies = {
-  sessions: ManagedAgentSessionRepository;
-  launcher: SessionLauncherPort;
-  panes: PanePublicationPort;
-  clock: SessionClock;
-};
+import {
+  ManagedAgentSessionRepositoryService,
+  PanePublicationService,
+  SessionClockService,
+  SessionLauncherService,
+} from "../agent-sessions/agent-session-services.js";
 
 /** Records the actual provider PID and starts daemon-side observation after host launch. */
 export class AttachAgentSession {
-  public constructor(private readonly deps: AttachAgentSessionDependencies) {}
-
   public readonly execute = Effect.fn("AgentSessions.attach")(
     { self: this },
     function* (this: AttachAgentSession, input: AttachAgentSessionInput) {
-      const deps = this.deps;
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const launcher = yield* SessionLauncherService;
+      const panes = yield* PanePublicationService;
+      const clock = yield* SessionClockService;
       const id = yield* attemptSync(() => AgentSessionId.create(input.agentSessionId));
-      const session = yield* deps.sessions.findById(id);
+      const session = yield* sessions.findById(id);
       // Attachment is best-effort bookkeeping. The host process may finish and
       // the daemon may finalize or delete the session before a delayed attach
       // request reaches it; that stale request must not become a second failure.
@@ -57,8 +51,8 @@ export class AttachAgentSession {
           );
         attached = session;
       } else {
-        const lastActivityAt = deps.clock.now();
-        const claimed = yield* deps.sessions.attachExecution({
+        const lastActivityAt = clock.now();
+        const claimed = yield* sessions.attachExecution({
           id,
           executionId: input.executionId,
           expectedExecutionOwnerPid: input.executionOwnerPid ?? null,
@@ -67,7 +61,7 @@ export class AttachAgentSession {
           executionStartedAt: input.executionStartedAt,
           lastActivityAt,
         });
-        const current = claimed ? undefined : yield* deps.sessions.findById(id);
+        const current = claimed ? undefined : yield* sessions.findById(id);
         if (!claimed) {
           if (current?.executionId !== input.executionId || current.executionPid !== input.executionPid) {
             return yield* Effect.fail(
@@ -94,9 +88,9 @@ export class AttachAgentSession {
       // These operations are intentionally idempotent. In particular, a retry
       // after a daemon crash must restore pane adoption and monitoring even when
       // the database already contains the provider PID.
-      yield* deps.panes.adopt(attached, input.hostPaneId);
-      yield* deps.panes.publish(attached, "running", input.hostPaneId);
-      yield* deps.launcher.startLaunch(attached);
+      yield* panes.adopt(attached, input.hostPaneId);
+      yield* panes.publish(attached, "running", input.hostPaneId);
+      yield* launcher.startLaunch(attached);
     },
   );
 }

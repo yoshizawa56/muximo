@@ -13,13 +13,18 @@ import {
 import { Effect, type Layer } from "effect";
 import { describe, it } from "vitest";
 import type { ApplicationEffect } from "../../effect.js";
-import type { WorkspaceRepository } from "../../ports/repositories.js";
-import type { WorkspaceAuditPort, WorkspaceDirectoryInfo, WorkspaceDirectoryPort } from "../../ports/workspace.js";
+import type { WorkspaceDirectoryInfo } from "../../ports/workspace.js";
 import { deleteWorkspace } from "./delete-workspace.js";
 import { registerWorkspace } from "./register-workspace.js";
 import { updateWorkspace } from "./update-workspace.js";
 import type { UpdateWorkspaceInput } from "./workspace-inputs.js";
-import { type WorkspaceServices, workspaceLayer } from "./workspace-services.js";
+import {
+  type WorkspaceAudit,
+  type WorkspaceDirectory,
+  type WorkspaceRepository,
+  type WorkspaceServices,
+  workspaceLayer,
+} from "./workspace-services.js";
 
 type WorkspaceStep =
   | { type: "register"; input: { directory: string; name?: string } }
@@ -129,7 +134,7 @@ function createWorkspaceFixture(): FixtureHandle<WorkspaceFixture> {
   const repository = new FakeWorkspaceRepository();
   const directory = new FakeWorkspaceDirectory();
   const auditEvents: string[] = [];
-  const audit: WorkspaceAuditPort = {
+  const audit: WorkspaceAudit = {
     record: (eventType: string) =>
       Effect.sync(() => {
         auditEvents.push(eventType);
@@ -195,7 +200,7 @@ class FakeWorkspaceRepository implements WorkspaceRepository {
   }
 }
 
-class FakeWorkspaceDirectory implements WorkspaceDirectoryPort {
+class FakeWorkspaceDirectory implements WorkspaceDirectory {
   public resolveDirectory(directory: string): ApplicationEffect<WorkspaceDirectoryInfo> {
     return Effect.succeed({
       id: WorkspaceId.create("workspace-1"),

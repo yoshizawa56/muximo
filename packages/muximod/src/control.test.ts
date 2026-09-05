@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AuthService } from "@muximo/application";
+import { AuthService, authLayer } from "@muximo/application";
 import { AgentSession, AgentSessionId, WorkspaceId } from "@muximo/domain";
 import {
   AuthStore,
@@ -122,18 +122,21 @@ const fixture = (
   });
   const store = new AuthStore(database.db, database.sqlite);
   const auth = new AuthService({
-    store,
     serverId: store.serverId,
-    crypto: nodeAuthCrypto,
-    clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
-    claimSink: { publish: () => Effect.succeed(undefined) },
-    challenges: new MemoryAuthChallengeStore(),
-    rateLimits: new MemoryAuthRateLimitStore(),
-    wsTickets: new MemoryAuthWsTicketStore(),
-    connections: {
-      disconnectDevice: () => Effect.succeed(undefined),
-      disconnectSession: () => Effect.succeed(undefined),
-    },
+    layer: authLayer({
+      store,
+      serverId: store.serverId,
+      crypto: nodeAuthCrypto,
+      clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
+      claimSink: { publish: () => Effect.succeed(undefined) },
+      challenges: new MemoryAuthChallengeStore(),
+      rateLimits: new MemoryAuthRateLimitStore(),
+      wsTickets: new MemoryAuthWsTicketStore(),
+      connections: {
+        disconnectDevice: () => Effect.succeed(undefined),
+        disconnectSession: () => Effect.succeed(undefined),
+      },
+    }),
   });
   const calls: string[] = [];
   const applicationRequests: unknown[] = [];

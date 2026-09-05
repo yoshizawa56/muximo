@@ -1,6 +1,8 @@
 import { type Dirent, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { Effect } from "effect";
+import { fromPromise, runEffectAsPromise } from "../effect.js";
 import type { AgentMonitor, AgentMonitorContext, AgentObservation, AgentObservationSink } from "./index.js";
 
 const monitorPollIntervalMs = 200;
@@ -18,6 +20,7 @@ export function createClaudeMonitor(context: AgentMonitorContext): AgentMonitor 
 
 type Provider = "codex" | "claude";
 type JsonObject = Record<string, unknown>;
+type JsonlMonitorEffect<A> = Effect.Effect<A, Error>;
 
 class JsonlAgentMonitor implements AgentMonitor {
   private readonly startedAtMs: number;
@@ -69,43 +72,48 @@ class JsonlAgentMonitor implements AgentMonitor {
   private async poll(): Promise<void> {
     if (this.stopped || this.polling) return;
     const operation = this.pollFile();
-    this.polling = operation;
+    const promise = runEffectAsPromise(operation);
+    this.polling = promise;
     try {
-      await operation;
+      await promise;
     } finally {
-      if (this.polling === operation) this.polling = undefined;
+      if (this.polling === promise) this.polling = undefined;
     }
   }
 
-  private async pollFile(): Promise<void> {
-    if (this.stopped) return;
-    if (!this.filePath && Date.now() >= this.nextDiscoveryAt) {
-      this.filePath = this.findSessionFile();
-      this.nextDiscoveryAt = Date.now() + discoveryRetryIntervalMs;
-      if (this.filePath) this.offset = 0;
-    }
-    if (!this.filePath || !existsSync(this.filePath)) {
-      this.filePath = undefined;
-      return;
-    }
+  private pollFile(): JsonlMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: JsonlAgentMonitor) {
+        if (this.stopped) return;
+        if (!this.filePath && Date.now() >= this.nextDiscoveryAt) {
+          this.filePath = this.findSessionFile();
+          this.nextDiscoveryAt = Date.now() + discoveryRetryIntervalMs;
+          if (this.filePath) this.offset = 0;
+        }
+        if (!this.filePath || !existsSync(this.filePath)) {
+          this.filePath = undefined;
+          return;
+        }
 
-    let content: string;
-    try {
-      content = readFileSync(this.filePath, "utf8");
-    } catch {
-      return;
-    }
-    if (content.length < this.offset) this.offset = 0;
-    const delta = content.slice(this.offset);
-    const lines = delta.split("\n");
-    const incomplete = lines.pop() ?? "";
-    this.offset = content.length - incomplete.length;
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const record = parseObject(line);
-      if (!record) continue;
-      await this.handleRecord(record);
-    }
+        let content: string;
+        try {
+          content = readFileSync(this.filePath, "utf8");
+        } catch {
+          return;
+        }
+        if (content.length < this.offset) this.offset = 0;
+        const delta = content.slice(this.offset);
+        const lines = delta.split("\n");
+        const incomplete = lines.pop() ?? "";
+        this.offset = content.length - incomplete.length;
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const record = parseObject(line);
+          if (!record) continue;
+          yield* this.handleRecord(record);
+        }
+      }.bind(this),
+    );
   }
 
   private findSessionFile(): string | undefined {
@@ -130,93 +138,115 @@ class JsonlAgentMonitor implements AgentMonitor {
     return claudeHeaderMatches(header, this.context.cwd, this.context.backendSessionId);
   }
 
-  private async handleRecord(record: JsonObject): Promise<void> {
-    if (this.provider === "codex") {
-      await this.handleCodexRecord(record);
-    } else {
-      await this.handleClaudeRecord(record);
-    }
+  private handleRecord(record: JsonObject): JsonlMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: JsonlAgentMonitor) {
+        if (this.provider === "codex") {
+          yield* this.handleCodexRecord(record);
+        } else {
+          yield* this.handleClaudeRecord(record);
+        }
+      }.bind(this),
+    );
   }
 
-  private async handleCodexRecord(record: JsonObject): Promise<void> {
-    const payload = objectValue(record.payload);
-    if (!payload) return;
-    const eventType = stringValue(payload.type) ?? "";
-    const normalizedType = eventType.toLowerCase();
-    if (isApprovalEvent(normalizedType)) {
-      await this.emit("waiting_approval", undefined, eventType);
-      return;
-    }
-    if (normalizedType === "task_started" || normalizedType === "turn_started" || normalizedType === "item_started") {
-      await this.emit("running", extractOutput(payload), eventType);
-      return;
-    }
-    if (
-      normalizedType === "task_complete" ||
-      normalizedType === "turn_complete" ||
-      normalizedType === "turn_completed"
-    ) {
-      await this.emit("waiting_input", extractOutput(payload), eventType);
-      return;
-    }
+  private handleCodexRecord(record: JsonObject): JsonlMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: JsonlAgentMonitor) {
+        const payload = objectValue(record.payload);
+        if (!payload) return;
+        const eventType = stringValue(payload.type) ?? "";
+        const normalizedType = eventType.toLowerCase();
+        if (isApprovalEvent(normalizedType)) {
+          yield* this.emit("waiting_approval", undefined, eventType);
+          return;
+        }
+        if (
+          normalizedType === "task_started" ||
+          normalizedType === "turn_started" ||
+          normalizedType === "item_started"
+        ) {
+          yield* this.emit("running", extractOutput(payload), eventType);
+          return;
+        }
+        if (
+          normalizedType === "task_complete" ||
+          normalizedType === "turn_complete" ||
+          normalizedType === "turn_completed"
+        ) {
+          yield* this.emit("waiting_input", extractOutput(payload), eventType);
+          return;
+        }
 
-    const output = extractOutput(payload);
-    if (output) await this.emit(this.lastState ?? "running", output, eventType || "output");
+        const output = extractOutput(payload);
+        if (output) yield* this.emit(this.lastState ?? "running", output, eventType || "output");
+      }.bind(this),
+    );
   }
 
-  private async handleClaudeRecord(record: JsonObject): Promise<void> {
-    const recordType = stringValue(record.type)?.toLowerCase() ?? "";
-    if (recordType === "user") {
-      await this.emit("running", undefined, "user input");
-      return;
-    }
-    if (recordType === "system") {
-      const subtype = stringValue(record.subtype)?.toLowerCase() ?? "";
-      if (subtype === "turn_duration" || subtype === "turn_complete" || subtype === "turn_completed") {
-        await this.emit("waiting_input", extractOutput(record), subtype);
-      } else {
-        await this.emit("running", extractOutput(record), subtype || "system event");
-      }
-      return;
-    }
-    if (recordType === "result") {
-      await this.emit("waiting_input", extractOutput(record), "result");
-      return;
-    }
-    if (recordType !== "assistant") return;
+  private handleClaudeRecord(record: JsonObject): JsonlMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: JsonlAgentMonitor) {
+        const recordType = stringValue(record.type)?.toLowerCase() ?? "";
+        if (recordType === "user") {
+          yield* this.emit("running", undefined, "user input");
+          return;
+        }
+        if (recordType === "system") {
+          const subtype = stringValue(record.subtype)?.toLowerCase() ?? "";
+          if (subtype === "turn_duration" || subtype === "turn_complete" || subtype === "turn_completed") {
+            yield* this.emit("waiting_input", extractOutput(record), subtype);
+          } else {
+            yield* this.emit("running", extractOutput(record), subtype || "system event");
+          }
+          return;
+        }
+        if (recordType === "result") {
+          yield* this.emit("waiting_input", extractOutput(record), "result");
+          return;
+        }
+        if (recordType !== "assistant") return;
 
-    const content = record.message && objectValue(record.message)?.content;
-    const blocks = Array.isArray(content) ? content : [];
-    const toolNames = blocks
-      .map((block) => objectValue(block))
-      .map((block) => stringValue(block?.name)?.toLowerCase())
-      .filter((name): name is string => Boolean(name));
-    const output = extractOutput(record);
-    if (toolNames.some((name) => /askuserquestion|question/.test(name))) {
-      await this.emit("waiting_input", output, "user question requested");
-    } else if (toolNames.some((name) => /approval|permission|plan/.test(name))) {
-      await this.emit("waiting_approval", output, "approval requested");
-    } else {
-      await this.emit("running", output, "assistant output");
-    }
+        const content = record.message && objectValue(record.message)?.content;
+        const blocks = Array.isArray(content) ? content : [];
+        const toolNames = blocks
+          .map((block) => objectValue(block))
+          .map((block) => stringValue(block?.name)?.toLowerCase())
+          .filter((name): name is string => Boolean(name));
+        const output = extractOutput(record);
+        if (toolNames.some((name) => /askuserquestion|question/.test(name))) {
+          yield* this.emit("waiting_input", output, "user question requested");
+        } else if (toolNames.some((name) => /approval|permission|plan/.test(name))) {
+          yield* this.emit("waiting_approval", output, "approval requested");
+        } else {
+          yield* this.emit("running", output, "assistant output");
+        }
+      }.bind(this),
+    );
   }
 
-  private async emit(
+  private emit(
     state: Extract<AgentObservation, { type: "state_changed" }>["state"],
     output: string | undefined,
     reason: string,
-  ): Promise<void> {
-    const recentOutput = output ? trimRecentOutput(output) : undefined;
-    if (this.lastState === state && this.lastOutput === recentOutput) return;
-    this.lastState = state;
-    this.lastOutput = recentOutput;
-    if (!this.sink) return;
-    await this.sink({
-      type: "state_changed",
-      state,
-      reason,
-      ...(recentOutput ? { recentOutput } : {}),
-    });
+  ): JsonlMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: JsonlAgentMonitor) {
+        const recentOutput = output ? trimRecentOutput(output) : undefined;
+        if (this.lastState === state && this.lastOutput === recentOutput) return;
+        this.lastState = state;
+        this.lastOutput = recentOutput;
+        if (!this.sink) return;
+        yield* fromPromise(() =>
+          this.sink?.({
+            type: "state_changed",
+            state,
+            reason,
+            ...(recentOutput ? { recentOutput } : {}),
+          }),
+        );
+      }.bind(this),
+    );
   }
 }
 

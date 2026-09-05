@@ -9,9 +9,10 @@ import {
 } from "@muximo/test-support";
 import { Effect } from "effect";
 import { describe, it } from "vitest";
-import type { PairingClaim, PairingControlPort, PairingOffer, PairingPresenterPort } from "../../ports/pairing.js";
+import type { PairingClaim, PairingOffer } from "../../ports/pairing.js";
 import type { PairDeviceResult } from "./pair-device.js";
 import { PairDevice } from "./pair-device.js";
+import { type PairingControl, type PairingPresenter, type PairingServices, pairingLayer } from "./pairing-services.js";
 
 const offer: PairingOffer = {
   pairingId: "pairing-1234567890123456",
@@ -31,7 +32,7 @@ const claim: PairingClaim = {
   expiresAt: new Date(Date.now() + 600_000).toISOString(),
 };
 
-class FakeControl implements PairingControlPort {
+class FakeControl implements PairingControl {
   public readonly calls: string[] = [];
   public createPairing() {
     return Effect.sync(() => {
@@ -58,7 +59,7 @@ class FakeControl implements PairingControlPort {
   }
 }
 
-class FakePresenter implements PairingPresenterPort {
+class FakePresenter implements PairingPresenter {
   public readonly calls: string[] = [];
   public constructor(private readonly answer: boolean) {}
   public showPairing(received: PairingOffer) {
@@ -74,7 +75,11 @@ class FakePresenter implements PairingPresenterPort {
   }
 }
 
-type PairFixture = { control: FakeControl; presenter: FakePresenter };
+type PairFixture = {
+  control: FakeControl;
+  presenter: FakePresenter;
+  layer: import("effect").Layer.Layer<PairingServices>;
+};
 type PairInput = { muximodBaseUrl: string };
 type PairContext = { controlCalls: readonly string[]; presenterCalls: readonly string[] };
 type PairKey = "approved" | "rejected";
@@ -82,7 +87,11 @@ type PairKey = "approved" | "rejected";
 const createPairFixture =
   (answer: boolean): (() => FixtureHandle<PairFixture>) =>
   () => ({
-    fixture: { control: new FakeControl(), presenter: new FakePresenter(answer) },
+    fixture: (() => {
+      const control = new FakeControl();
+      const presenter = new FakePresenter(answer);
+      return { control, presenter, layer: pairingLayer({ control, presenter }) };
+    })(),
   });
 
 const pairCases = [
@@ -125,7 +134,7 @@ const pairTable: OperationTable<PairFixture, PairKey, PairInput, PairDeviceResul
     rejected: createPairFixture(false),
   },
   cases: pairCases,
-  execute: (fixture, input) => new PairDevice(fixture.control, fixture.presenter).execute(input),
+  execute: (fixture, input) => new PairDevice().execute(input).pipe(Effect.provide(fixture.layer)),
   observe: (fixture) => ({ controlCalls: [...fixture.control.calls], presenterCalls: [...fixture.presenter.calls] }),
 };
 

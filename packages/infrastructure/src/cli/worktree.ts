@@ -6,8 +6,8 @@ import type {
   ManagedWorktreeState,
   ShellWorktree,
   ShellWorktreeAllocation,
-  ShellWorktreePort,
-  WorktreePort,
+  ShellWorktreeOperations,
+  Worktree,
 } from "@muximo/application";
 import type { AgentSession, WorkspaceDirectoryOption } from "@muximo/domain";
 import { Effect } from "effect";
@@ -31,7 +31,7 @@ export type WorktreeAdapterOptions = {
 };
 
 /** Git worktree capability adapter; it has no session orchestration policy. */
-export class GitWorktreeAdapter implements WorktreePort {
+export class GitWorktreeAdapter implements Worktree {
   public constructor(private readonly options: WorktreeAdapterOptions) {}
 
   public create(
@@ -357,7 +357,7 @@ export class GitWorktreeAdapter implements WorktreePort {
 }
 
 /** Adapts the Git capability to the shell workflow without moving policy into infrastructure. */
-export class GitShellWorktreeAdapter implements ShellWorktreePort {
+export class GitShellWorktreeAdapter implements ShellWorktreeOperations {
   public constructor(private readonly worktrees: GitWorktreeAdapter) {}
 
   public create(workspace: WorkspaceDirectoryOption, name: string): ApplicationEffect<ShellWorktreeAllocation> {

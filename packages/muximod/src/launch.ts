@@ -28,7 +28,8 @@ import type {
 import {
   type ApplicationEffect,
   type DaemonProcessHandle,
-  type DaemonRuntimePort,
+  type DaemonRuntime,
+  daemonLayer,
   EnsureDaemon,
   RestartDaemon,
   StartDaemon,
@@ -295,18 +296,19 @@ export function createMuximodLifecycle(options: MuximodLifecycleOptions): Muximo
     resolveConfig: options.resolveConfig,
   });
   const timing = { runtime, clock: systemClock, scheduler: systemScheduler, lifecycleTimeoutMs };
-  const ensure = new EnsureDaemon(timing);
-  const stop = new StopDaemon(timing);
-  const start = new StartDaemon({ ...timing, ensure });
-  const status = new StatusDaemon(timing);
-  const restart = new RestartDaemon({ ...timing, stop });
+  const layer = daemonLayer(timing);
+  const ensure = new EnsureDaemon();
+  const stop = new StopDaemon();
+  const start = new StartDaemon();
+  const status = new StatusDaemon();
+  const restart = new RestartDaemon();
   return {
-    ensure: (input) => Effect.runPromise(ensure.execute(input)),
+    ensure: (input) => Effect.runPromise(ensure.execute(input).pipe(Effect.provide(layer))),
     startForeground: (input) => runtime.startForeground(input),
-    start: (input) => Effect.runPromise(start.execute(input)),
-    status: (input) => Effect.runPromise(status.execute(input)),
-    stop: (input) => Effect.runPromise(stop.execute(input)),
-    restart: (input) => Effect.runPromise(restart.execute(input)),
+    start: (input) => Effect.runPromise(start.execute(input).pipe(Effect.provide(layer))),
+    status: (input) => Effect.runPromise(status.execute(input).pipe(Effect.provide(layer))),
+    stop: (input) => Effect.runPromise(stop.execute(input).pipe(Effect.provide(layer))),
+    restart: (input) => Effect.runPromise(restart.execute(input).pipe(Effect.provide(layer))),
   };
 }
 
@@ -446,7 +448,7 @@ function privateExecutableName(executable: string): string {
   return `${privateName === name && name !== "muximod" ? "muximod" : privateName}${extension}`;
 }
 
-class MuximodRuntime implements DaemonRuntimePort {
+class MuximodRuntime implements DaemonRuntime {
   public constructor(
     private readonly options: {
       schemaMode: "migrate" | "push";

@@ -1,23 +1,25 @@
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import {
-  type AgentObservationPort,
+  type AgentObservation,
+  type AgentSessionServices,
   type AgentStateObservation,
   type AgentStatusStore,
   type ApplicationClock,
   AttachAgentSession,
   AuthService,
+  agentSessionLayer,
+  authLayer,
   CleanupAgentSession,
   createMuximodApplication,
   ListAgentSessions,
-  LocateAgentSession,
-  type MuximodViewportPort,
-  type PanePublicationPort,
+  type MuximodViewport,
+  type PanePublication,
   ResumeAgentSession,
   RunAgentSession,
-  type SessionAuditPort,
+  type SessionAudit,
   terminalLayer,
-  type WorkspaceAuditPort,
+  type WorkspaceAudit,
   workspaceLayer,
 } from "@muximo/application";
 import type { AgentSession } from "@muximo/domain";
@@ -69,7 +71,7 @@ import {
   WorkspaceResolverAdapter,
   WorkspaceSelectionCatalog,
 } from "@muximo/infrastructure/runtime";
-import { Effect } from "effect";
+import { Effect, type Layer } from "effect";
 import { MuximodControlServer } from "./control.js";
 import { MuximodEventHub } from "./events.js";
 import { createMuximodApp, type MuximodApp } from "./http/app.js";
@@ -131,7 +133,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const tmux = new TmuxAdapter(environment.MUXIMOD_TMUX_SOCKET, undefined, environment);
   const host = new TmuxMuximodHostAdapter(tmux, environment);
   const viewportManager = new TmuxViewportManager(tmux);
-  const applicationViewportManager: MuximodViewportPort = {
+  const applicationViewportManager: MuximodViewport = {
     handleTerminalHostHook: (event, client) => fromPromise(() => viewportManager.handleTmuxHook(event, client)),
     reassertMobileViewport: (target: string) => fromPromise(() => viewportManager.reassertMobileViewport(target)),
   };
@@ -148,7 +150,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   const workspaceRepository = new DrizzleWorkspaceRepository(database.db);
   const workspaceCatalog = new WorkspaceSelectionCatalog(options.allowedRoots, options.workingDirectory);
   const clock: ApplicationClock = { now: () => new Date().toISOString() };
-  const workspaceAudit: WorkspaceAuditPort = {
+  const workspaceAudit: WorkspaceAudit = {
     record: (eventType, entityId, payload) =>
       fromPromise(() => {
         recordAuditEvent(database.db, { eventType, entityId, payload });
@@ -179,7 +181,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     debug: (event: string, fields?: Record<string, unknown>) => logger.debug(event, fields),
   };
   const sessionClock = { now: () => new Date().toISOString(), id: () => randomBytes(16).toString("hex") };
-  const sessionAudit: SessionAuditPort = {
+  const sessionAudit: SessionAudit = {
     record: (eventType, entityId, payload) =>
       fromPromise(() => {
         recordAuditEvent(database.db, { eventType, entityId, payload });
@@ -210,14 +212,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       environment.MUXIMO_CODEX_REMOTE ?? "unix://",
     ),
   });
-  const locator = new LocateAgentSession({ sessions: agentSessionRepository, workspace: workspaceResolver });
-  const listAgentSessions = new ListAgentSessions({
-    sessions: agentSessionRepository,
-    host: observations,
-    clock: { now: Date.now },
-  });
-  const runAgentSession = new RunAgentSession({
-    sessions: agentSessionRepository,
+  const agentSessionServices: Layer.Layer<AgentSessionServices> = agentSessionLayer({
     workspace: workspaceResolver,
     naming,
     hooks,
@@ -225,74 +220,70 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     launcher: backend,
     remote: backend,
     resources: backend,
+    observations: agentPane,
     panes: agentPane,
+    process: processObservation,
+    sessionObservation: observations,
+    listClock: { now: Date.now },
     audit: sessionAudit,
     clock: sessionClock,
+    sessions: agentSessionRepository,
     logger: sessionLogger,
     confirmCleanup: { confirm: () => fromPromise(() => false) },
-    process: processObservation,
   });
-  const resumeAgentSession = new ResumeAgentSession({
-    sessions: agentSessionRepository,
-    locator,
-    process: processObservation,
-    launcher: backend,
-    panes: agentPane,
-    clock: sessionClock,
-    logger: sessionLogger,
-  });
-  const attachAgentSession = new AttachAgentSession({
-    sessions: agentSessionRepository,
-    launcher: backend,
-    panes: agentPane,
-    clock: sessionClock,
-  });
-  const cleanupAgentSession = new CleanupAgentSession({
-    sessions: agentSessionRepository,
-    locator,
-    process: processObservation,
-    worktrees,
-    hooks,
-    remote: backend,
-    resources: backend,
-    audit: sessionAudit,
-    confirmCleanup: { confirm: () => fromPromise(() => false) },
-    clock: sessionClock,
-  });
+  const runAgentSession = new RunAgentSession();
+  const resumeAgentSession = new ResumeAgentSession();
+  const attachAgentSession = new AttachAgentSession();
+  const cleanupAgentSession = new CleanupAgentSession();
+  const listAgentSessions = new ListAgentSessions();
   application = createMuximodApplication({
     agentSessions: {
       prepareRun: (input, signal) =>
         executeAgentSession(
           "prepare_run",
           input,
-          () => Effect.runPromise(runAgentSession.prepare(input, signal)),
+          () => Effect.runPromise(runAgentSession.prepare(input, signal).pipe(Effect.provide(agentSessionServices))),
           logger,
         ),
       prepareResume: (input, signal) =>
         executeAgentSession(
           "prepare_resume",
           input,
-          () => Effect.runPromise(resumeAgentSession.prepare(input, signal)),
+          () => Effect.runPromise(resumeAgentSession.prepare(input, signal).pipe(Effect.provide(agentSessionServices))),
           logger,
         ),
       attach: (input) =>
-        executeAgentSession("attach", input, () => Effect.runPromise(attachAgentSession.execute(input)), logger),
+        executeAgentSession(
+          "attach",
+          input,
+          () => Effect.runPromise(attachAgentSession.execute(input).pipe(Effect.provide(agentSessionServices))),
+          logger,
+        ),
       completeRun: (input) =>
-        executeAgentSession("complete_run", input, () => Effect.runPromise(runAgentSession.complete(input)), logger),
+        executeAgentSession(
+          "complete_run",
+          input,
+          () => Effect.runPromise(runAgentSession.complete(input).pipe(Effect.provide(agentSessionServices))),
+          logger,
+        ),
       completeResume: (input) =>
         executeAgentSession(
           "complete_resume",
           input,
-          () => Effect.runPromise(resumeAgentSession.complete(input)),
+          () => Effect.runPromise(resumeAgentSession.complete(input).pipe(Effect.provide(agentSessionServices))),
           logger,
         ),
       cleanup: (input) =>
-        executeAgentSession("cleanup", input, () => Effect.runPromise(cleanupAgentSession.execute(input)), logger),
-      list: (input) => Effect.runPromise(listAgentSessions.execute(input)),
+        executeAgentSession(
+          "cleanup",
+          input,
+          () => Effect.runPromise(cleanupAgentSession.execute(input).pipe(Effect.provide(agentSessionServices))),
+          logger,
+        ),
+      list: (input) => Effect.runPromise(listAgentSessions.execute(input).pipe(Effect.provide(agentSessionServices))),
     },
     getTerminal: () => getLocalTerminal(environment),
     clock,
-    workspaceCatalog,
     workspaceLayer: workspaceLayer({
       repository: workspaceRepository,
       directories: workspaceCatalog,
@@ -325,15 +316,20 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
   });
   let controlServer!: MuximodControlServer;
   const auth = new AuthService({
-    store: authStore,
     serverId: authStore.serverId,
-    crypto: nodeAuthCrypto,
-    clock: { now: () => new Date() },
-    claimSink: { publish: (notification) => fromPromise(() => controlServer.notifyPairingClaim(notification)) },
-    challenges: authChallenges,
-    rateLimits: authRateLimits,
-    wsTickets: authWsTickets,
-    connections: authenticatedConnections,
+    layer: authLayer({
+      store: authStore,
+      serverId: authStore.serverId,
+      crypto: nodeAuthCrypto,
+      clock: { now: () => new Date() },
+      claimSink: {
+        publish: (notification) => fromPromise(() => controlServer.notifyPairingClaim(notification)),
+      },
+      challenges: authChallenges,
+      rateLimits: authRateLimits,
+      wsTickets: authWsTickets,
+      connections: authenticatedConnections,
+    }),
   });
   controlServer = new MuximodControlServer({
     socketPath: options.controlSocket,
@@ -667,7 +663,7 @@ export function createAgentPanePublication(
   getApplication: () => AgentPaneApplication,
   logger: Pick<Logger, "debug" | "warn">,
   environment: NodeJS.ProcessEnv = {},
-): PanePublicationPort & AgentObservationPort {
+): PanePublication & AgentObservation {
   const paneByExecution = new Map<string, string | undefined>();
   const defaultHostPaneId = normalizeHostPaneId(environment.TMUX_PANE);
   const resolveHostPaneId = (session: AgentSession, requested?: string): string | undefined =>

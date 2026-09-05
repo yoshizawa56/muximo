@@ -1,13 +1,4 @@
-import type {
-  AgentBackend,
-  AgentSession,
-  PaneState,
-  Workspace,
-  WorkspaceDirectoryOption,
-  WorkspaceId,
-} from "@muximo/domain";
-import type { ApplicationEffect } from "../effect.js";
-import type { ClaimAbandonedExecutionInput, ClaimExecutionInput } from "./repositories.js";
+import type { AgentBackend, AgentSession, PaneState } from "@muximo/domain";
 
 /** Provider-neutral input for starting a managed agent session. */
 export type StartAgentSessionInput = {
@@ -213,136 +204,14 @@ export type AgentExecutionReceipt =
       session: AgentSession;
     };
 
-export type CleanupAgentSessionResult = {
-  session: AgentSession;
-  cleanup: CleanupResult;
-};
-
-/** Resolves the workspace selected by the current runtime context. */
-export interface WorkspaceResolverPort {
-  resolveCurrent(input?: WorkspaceResolutionInput): ApplicationEffect<Workspace>;
-}
-
-/** Generates collision-free names without inspecting provider arguments. */
-export interface SessionNamingPort {
-  resolveName(
-    workspaceId: WorkspaceId,
-    requestedName: string | undefined,
-    backend: AgentBackend,
-  ): ApplicationEffect<string>;
-}
-
-/** Resolves and executes workspace hooks; it never mutates a session record. */
-export interface HookPort {
-  resolveHook(value: string, workspaceRoot: string): ApplicationEffect<string>;
-  resolveStoredHook(path: string | undefined): ApplicationEffect<string | undefined>;
-  run(session: AgentSession, kind: "setup" | "cleanup"): ApplicationEffect<HookResult>;
-  removeOutputs(session: AgentSession): ApplicationEffect<void>;
-}
-
-/** Owns Git worktree creation, copy, inspection, and removal. */
-export interface WorktreePort {
-  create(workspace: WorkspaceDirectoryOption, name: string, override?: string): ApplicationEffect<ManagedWorktreeState>;
-  copyFiles(target: Pick<AgentSession, "workspaceRoot" | "worktreePath">): ApplicationEffect<boolean>;
-  isRegistered(session: AgentSession): ApplicationEffect<boolean>;
-  hasChanges(session: AgentSession): ApplicationEffect<boolean>;
-  remove(session: AgentSession, force: boolean): ApplicationEffect<CleanupResult>;
-}
-
-/** Provider-neutral launch and baseline capability. */
-export interface SessionLauncherPort {
-  captureBaseline(session: AgentSession): ApplicationEffect<SessionBaselineResult>;
-  prepareLaunch(
-    session: AgentSession,
-    backendArgs: readonly string[],
-    resume: boolean,
-    signal?: AbortSignal,
-  ): ApplicationEffect<LaunchPreparation>;
-  startLaunch(session: AgentSession): ApplicationEffect<void>;
-  completeLaunch(
-    session: AgentSession,
-    process: AgentExecutionResult,
-  ): ApplicationEffect<SessionIdentityUpdate | undefined>;
-  disposeLaunch(session: AgentSession): ApplicationEffect<void>;
-}
-
-/** Provider-neutral remote-session lifecycle used by cleanup policy. */
-export interface RemoteSessionPort {
-  archive(session: AgentSession): ApplicationEffect<boolean>;
-  restore(session: AgentSession): ApplicationEffect<boolean>;
-}
-
-/** Releases provider-owned resources after the session record is deleted. */
-export interface SessionResourcePort {
-  releaseIfUnused(session: AgentSession, remaining: readonly AgentSession[]): ApplicationEffect<void>;
-}
-
 /** Provider state and output observed for a managed agent session. */
 export type AgentStateObservation = {
   state: PaneState;
   recentOutput?: string;
 };
 
-/** Receives provider observations for the currently running agent session. */
-export interface AgentObservationPort {
-  observe(session: AgentSession, observation: AgentStateObservation): ApplicationEffect<void>;
-}
-
-/** Publishes agent lifecycle state to the current pane/control transport. */
-export interface PanePublicationPort {
-  adopt(session: AgentSession, hostPaneId?: string): ApplicationEffect<void>;
-  release(session: AgentSession, hostPaneId?: string): ApplicationEffect<void>;
-  publish(
-    session: AgentSession,
-    state: "running" | "completed" | "failed" | "stopped",
-    hostPaneId?: string,
-  ): ApplicationEffect<void>;
-}
-
 export type ProcessLiveness = "alive" | "dead" | "unknown";
-
-export interface ProcessObservationPort {
-  observe(pid: number, expectedStartedAt?: string): ApplicationEffect<ProcessLiveness>;
-}
-
-/** Concrete observations used by the application-owned session list policy. */
-export type SessionObservationPort = {
-  resolveWorkspace(): ApplicationEffect<Pick<Workspace, "id">>;
-  observeSession(session: AgentSession, now: number): ApplicationEffect<AgentSessionListObservation>;
-};
-
-export type SessionListClock = {
-  now(): number;
-};
-
-export interface SessionAuditPort {
-  record(eventType: string, entityId: string, payload: unknown): ApplicationEffect<void>;
-}
-
-export type SessionClock = {
-  now(): string;
-  id(): string;
-};
-
-export type ManagedAgentSessionRepository = {
-  findById(id: AgentSession["id"]): ApplicationEffect<AgentSession | undefined>;
-  findByName(workspaceId: WorkspaceId, name: string): ApplicationEffect<AgentSession | undefined>;
-  list(workspaceId?: WorkspaceId): ApplicationEffect<AgentSession[]>;
-  insert(record: AgentSession): ApplicationEffect<void>;
-  update(record: AgentSession): ApplicationEffect<void>;
-  claimExecution(input: ClaimExecutionInput): ApplicationEffect<boolean>;
-  claimAbandonedExecution(input: ClaimAbandonedExecutionInput): ApplicationEffect<boolean>;
-  attachExecution(input: import("./repositories.js").AttachExecutionInput): ApplicationEffect<boolean>;
-  delete(id: AgentSession["id"]): ApplicationEffect<void>;
-  findExecutionReceipt(executionId: string): ApplicationEffect<AgentExecutionReceipt | undefined>;
-  saveExecutionReceipt(receipt: AgentExecutionReceipt): ApplicationEffect<void>;
-};
-
-export type SessionLogger = {
-  child(fields: Record<string, unknown>): SessionLogger;
-  debug(event: string, fields?: Record<string, unknown>): void;
-};
-
-export type SessionCleanupConfirmationPort = {
-  confirm(session: AgentSession, dirty: boolean): ApplicationEffect<boolean>;
+export type CleanupAgentSessionResult = {
+  session: AgentSession;
+  cleanup: CleanupResult;
 };

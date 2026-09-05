@@ -4,42 +4,42 @@ import { attemptSync } from "../../attempt.js";
 import type {
   AgentExecutionReceipt,
   CompleteAgentSessionInput,
-  ManagedAgentSessionRepository,
-  PanePublicationPort,
-  ProcessObservationPort,
   ResumeAgentSessionInput,
   ResumeAgentSessionResult,
-  SessionClock,
-  SessionLauncherPort,
-  SessionLogger,
+  SessionIdentityUpdate,
 } from "../../ports/agent-sessions.js";
 import { ApplicationFailure } from "../../ports/application.js";
-import type { LocateAgentSession } from "./locate-session.js";
+import {
+  type AgentSessionServices,
+  ManagedAgentSessionRepositoryService,
+  PanePublicationService,
+  ProcessObservationService,
+  SessionClockService,
+  SessionLauncherService,
+  SessionLoggerService,
+} from "./agent-session-services.js";
+import { LocateAgentSession } from "./locate-session.js";
 import { checkAborted, updateAgentSession } from "./session-updates.js";
-
-export type ResumeAgentSessionDependencies = {
-  sessions: ManagedAgentSessionRepository;
-  locator: LocateAgentSession;
-  process: ProcessObservationPort;
-  launcher: SessionLauncherPort;
-  panes: PanePublicationPort;
-  clock: SessionClock;
-  logger: SessionLogger;
-};
 
 /** Claims and prepares one persisted agent session for host-owned execution. */
 export class ResumeAgentSession {
-  private readonly completions = new Map<string, Effect.Effect<ResumeAgentSessionResult, Error>>();
-
-  public constructor(private readonly deps: ResumeAgentSessionDependencies) {}
+  private readonly completions = new Map<
+    string,
+    Effect.Effect<ResumeAgentSessionResult, Error, AgentSessionServices>
+  >();
 
   public readonly prepare = Effect.fn("AgentSessions.prepareResume")(
     { self: this },
     function* (this: ResumeAgentSession, input: ResumeAgentSessionInput, signal?: AbortSignal) {
-      const deps = this.deps;
+      const locator = new LocateAgentSession();
+      const processObservation = yield* ProcessObservationService;
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const launcher = yield* SessionLauncherService;
+      const clock = yield* SessionClockService;
+      const logger = yield* SessionLoggerService;
       const self = this;
       yield* checkAborted(signal);
-      let session = yield* deps.locator.execute({
+      let session = yield* locator.execute({
         reference: input.reference,
         workspaceScope: input.workspaceScope,
       });
@@ -71,7 +71,7 @@ export class ResumeAgentSession {
         );
       }
       if (session.executionPid !== undefined) {
-        const providerLiveness = yield* deps.process.observe(session.executionPid, session.executionStartedAt);
+        const providerLiveness = yield* processObservation.observe(session.executionPid, session.executionStartedAt);
         if (providerLiveness === "alive") {
           return yield* Effect.fail(
             new ApplicationFailure(
@@ -90,7 +90,10 @@ export class ResumeAgentSession {
         }
       }
       if (session.executionOwnerPid !== undefined) {
-        const ownerLiveness = yield* deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
+        const ownerLiveness = yield* processObservation.observe(
+          session.executionOwnerPid,
+          session.executionOwnerStartedAt,
+        );
         if (ownerLiveness === "alive") {
           return yield* Effect.fail(
             new ApplicationFailure(
@@ -109,12 +112,12 @@ export class ResumeAgentSession {
         }
       }
       let launchPrepared = false;
-      const executionId = deps.clock.id();
-      const executionStartedAt = deps.clock.now();
+      const executionId = clock.id();
+      const executionStartedAt = clock.now();
       yield* checkAborted(signal);
       let claimed = false;
       const body = Effect.gen(function* () {
-        claimed = yield* deps.sessions.claimExecution({
+        claimed = yield* sessions.claimExecution({
           id: session.id,
           expectedExecutionPid: session.executionPid ?? null,
           executionId,
@@ -143,7 +146,7 @@ export class ResumeAgentSession {
             ? { executionOwnerPid: clearPatch, executionOwnerStartedAt: clearPatch }
             : { executionOwnerPid: input.executionOwnerPid, executionOwnerStartedAt: executionStartedAt }),
         });
-        const preparation = yield* deps.launcher.prepareLaunch(session, input.backendArgs, true, signal);
+        const preparation = yield* launcher.prepareLaunch(session, input.backendArgs, true, signal);
         launchPrepared = true;
         yield* checkAborted(signal);
         session = yield* self.persistIdentityUpdate(session, preparation.sessionUpdate);
@@ -154,9 +157,9 @@ export class ResumeAgentSession {
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
             if (launchPrepared) {
-              yield* deps.launcher.disposeLaunch(session).pipe(
+              yield* launcher.disposeLaunch(session).pipe(
                 Effect.catch((disposeError) => {
-                  deps.logger.debug("session.resume_launch_cleanup_failed", {
+                  logger.debug("session.resume_launch_cleanup_failed", {
                     message: errorMessage(disposeError),
                   });
                   return Effect.succeed(undefined);
@@ -191,13 +194,15 @@ export class ResumeAgentSession {
   private readonly completeOnce = Effect.fn("AgentSessions.completeResumeOnce")(
     { self: this },
     function* (this: ResumeAgentSession, input: CompleteAgentSessionInput) {
-      const deps = this.deps;
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const launcher = yield* SessionLauncherService;
+      const panes = yield* PanePublicationService;
       const self = this;
-      const receipt = yield* deps.sessions.findExecutionReceipt(input.executionId);
+      const receipt = yield* sessions.findExecutionReceipt(input.executionId);
       if (receipt) return yield* this.fromReceipt(receipt, input);
 
       const completeSessionId = yield* attemptSync(() => AgentSessionId.create(input.agentSessionId));
-      let session = yield* deps.sessions
+      let session = yield* sessions
         .findById(completeSessionId)
         .pipe(
           Effect.flatMap((found) =>
@@ -218,9 +223,9 @@ export class ResumeAgentSession {
         );
 
       const published = Effect.gen(function* () {
-        const sessionUpdate = yield* deps.launcher.completeLaunch(session, input.process);
+        const sessionUpdate = yield* launcher.completeLaunch(session, input.process);
         session = yield* self.persistIdentityUpdate(session, sessionUpdate);
-        yield* deps.panes.publish(
+        yield* panes.publish(
           session,
           input.process.interrupted || input.process.code === 130 || input.process.code === 143
             ? "stopped"
@@ -237,7 +242,7 @@ export class ResumeAgentSession {
             return yield* Effect.fail(error);
           }),
         ),
-        Effect.ensuring(Effect.ignore(deps.panes.release(session, input.hostPaneId))),
+        Effect.ensuring(Effect.ignore(panes.release(session, input.hostPaneId))),
       );
 
       const next = yield* self.persist(session, {
@@ -253,7 +258,7 @@ export class ResumeAgentSession {
             : "exited",
         resuming: false,
       });
-      yield* deps.sessions.saveExecutionReceipt({
+      yield* sessions.saveExecutionReceipt({
         operation: "resume",
         agentSessionId: input.agentSessionId,
         executionId: input.executionId,
@@ -286,19 +291,16 @@ export class ResumeAgentSession {
   private readonly persist = Effect.fn("AgentSessions.persistResume")(
     { self: this },
     function* (this: ResumeAgentSession, session: AgentSession, input: AgentSessionUpdateInput) {
-      const next = yield* updateAgentSession(session, input, this.deps.clock);
-      yield* this.deps.sessions.update(next);
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const next = yield* updateAgentSession(session, input);
+      yield* sessions.update(next);
       return next;
     },
   );
 
   private readonly persistIdentityUpdate = Effect.fn("AgentSessions.persistResumeIdentity")(
     { self: this },
-    function* (
-      this: ResumeAgentSession,
-      session: AgentSession,
-      input: import("../../ports/agent-sessions.js").SessionIdentityUpdate | undefined,
-    ) {
+    function* (this: ResumeAgentSession, session: AgentSession, input: SessionIdentityUpdate | undefined) {
       return input?.backendSessionId === undefined
         ? session
         : yield* this.persist(session, { backendSessionId: input.backendSessionId });

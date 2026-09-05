@@ -23,6 +23,9 @@ import {
 import { createServer as createNetServer, type Server } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { attemptSync } from "@muximo/application";
+import { Effect } from "effect";
+import { fromPromise } from "../../effect.js";
 import { currentProcessStartedAt, observeProcessLiveness, type ProcessLiveness } from "../../process/process.js";
 import { type OpenCodeLog, type OpenCodeRequest, openCodeRequestTimeoutMs, requestWithTimeout } from "./client.js";
 
@@ -54,6 +57,7 @@ export type ProcessSignaller = {
 };
 
 export class OpenCodeRegistryLockTimeoutError extends Error {
+  public readonly _tag = "OpenCodeRegistryLockTimeoutError" as const;
   public readonly code = "opencode_registry_lock_timeout" as const;
   public readonly retryable = true;
 
@@ -67,6 +71,7 @@ export class OpenCodeRegistryLockTimeoutError extends Error {
 }
 
 export class OpenCodeServerUnavailableError extends Error {
+  public readonly _tag = "OpenCodeServerUnavailableError" as const;
   public readonly code = "opencode_server_unavailable" as const;
   public readonly retryable = true;
 
@@ -90,7 +95,7 @@ export type OpenCodeServerManagerOptions = {
     command: string,
     args: string[],
     options: { cwd: string; env: NodeJS.ProcessEnv; detached: boolean; logFile: string },
-  ) => SpawnedChild;
+  ) => Promise<SpawnedChild>;
   request?: OpenCodeRequest;
   allocatePort?: () => Promise<number>;
   probePort?: (port: number) => Promise<boolean>;
@@ -138,7 +143,7 @@ type ParsedServerUrl = {
 
 export class OpenCodeServerManager {
   private readonly executable: string;
-  private readonly spawn: OpenCodeServerManagerOptions["spawn"];
+  private readonly spawn: NonNullable<OpenCodeServerManagerOptions["spawn"]>;
   private readonly request: OpenCodeRequest;
   private readonly allocatePort: () => Promise<number>;
   private readonly probePort: (port: number) => Promise<boolean>;
@@ -186,94 +191,112 @@ export class OpenCodeServerManager {
    * detached OpenCode server as a bootstrap operation and leaves it running
    * after this manager exits.
    */
-  public async ensure(workspaceRoot: string, signal?: AbortSignal): Promise<OpenCodeServerEntry> {
+  public ensure(workspaceRoot: string, signal?: AbortSignal): Effect.Effect<OpenCodeServerEntry, Error> {
+    const manager = this;
     if (this.configuredServer !== undefined) {
-      throwIfAborted(signal);
-      const health = await this.readHealth(this.configuredServer.baseUrl, workspaceRoot, signal);
-      throwIfAborted(signal);
-      if (health === undefined) {
-        throw new OpenCodeServerUnavailableError(workspaceRoot, this.configuredServer.port);
-      }
-      return {
-        workspaceRoot,
-        port: this.configuredServer.port,
-        version: health.version,
-      };
+      const configuredServer = this.configuredServer;
+      return Effect.gen(function* () {
+        yield* ensureNotAborted(signal);
+        const health = yield* manager.readHealth(configuredServer.baseUrl, workspaceRoot, signal);
+        yield* ensureNotAborted(signal);
+        if (health === undefined)
+          return yield* Effect.fail(new OpenCodeServerUnavailableError(workspaceRoot, configuredServer.port));
+        return { workspaceRoot, port: configuredServer.port, version: health.version };
+      });
     }
 
-    return this.withFileLock(async () => {
-      const registry = this.readRegistry();
+    return this.withFileLock(
+      () =>
+        Effect.gen(function* () {
+          const registry = yield* manager.readRegistry();
 
-      const existing = registry[workspaceRoot];
-      if (existing !== undefined) {
-        try {
-          const health = await this.waitForHealth(
-            existing.port,
+          const existing = registry[workspaceRoot];
+          if (existing !== undefined) {
+            const healthResult = yield* manager
+              .waitForHealth(existing.port, workspaceRoot, existing.pid, existing.startedAt, signal)
+              .pipe(
+                Effect.map((health) => ({ ok: true as const, health })),
+                Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
+              );
+            if (healthResult.ok) {
+              const refreshed =
+                existing.pid !== undefined && manager.observe(existing.pid, existing.startedAt) === "dead"
+                  ? removeProcessIdentity(existing)
+                  : { ...existing, version: healthResult.health.version };
+              if (refreshed.version !== existing.version || refreshed.pid !== existing.pid) {
+                registry[workspaceRoot] = refreshed;
+                yield* manager.writeRegistry(registry);
+              }
+              return refreshed;
+            }
+
+            yield* ensureNotAborted(signal);
+            const liveness = existing.pid === undefined ? undefined : manager.observe(existing.pid, existing.startedAt);
+            const portAvailable =
+              liveness === "dead" ? true : yield* fromPromise(() => manager.probePort(existing.port));
+            if (liveness === "alive" || liveness === "unknown" || !portAvailable) {
+              return yield* Effect.fail(
+                new OpenCodeServerUnavailableError(workspaceRoot, existing.port, healthResult.error),
+              );
+            }
+            delete registry[workspaceRoot];
+          }
+
+          yield* ensureNotAborted(signal);
+          const port =
+            existing === undefined
+              ? yield* fromPromise(() => manager.allocatePort())
+              : yield* manager.allocatePreferredPort(existing.port);
+          yield* ensureNotAborted(signal);
+          const child = yield* manager.spawnServer(workspaceRoot, port);
+          const startingEntry: OpenCodeServerEntry = {
             workspaceRoot,
-            existing.pid,
-            existing.startedAt,
-            signal,
-          );
-          const refreshed =
-            existing.pid !== undefined && this.observe(existing.pid, existing.startedAt) === "dead"
-              ? removeProcessIdentity(existing)
-              : { ...existing, version: health.version };
-          if (refreshed.version !== existing.version || refreshed.pid !== existing.pid) {
-            registry[workspaceRoot] = refreshed;
-            this.writeRegistry(registry);
-          }
-          return refreshed;
-        } catch (error) {
-          throwIfAborted(signal);
-          const liveness = existing.pid === undefined ? undefined : this.observe(existing.pid, existing.startedAt);
-          const portAvailable = liveness === "dead" ? true : await this.probePort(existing.port);
-          if (liveness === "alive" || liveness === "unknown" || !portAvailable) {
-            throw new OpenCodeServerUnavailableError(workspaceRoot, existing.port, error);
-          }
-          delete registry[workspaceRoot];
-        }
-      }
+            pid: child.pid,
+            port,
+            version: "starting",
+            startedAt: new Date(manager.now()).toISOString(),
+          };
+          // Record the reference before waiting so a timeout does not turn a
+          // detached bootstrap process into an unreferenced duplicate on retry.
+          registry[workspaceRoot] = startingEntry;
+          yield* manager.writeRegistry(registry);
 
-      throwIfAborted(signal);
-      const port = existing === undefined ? await this.allocatePort() : await this.allocatePreferredPort(existing.port);
-      throwIfAborted(signal);
-      const child = this.spawnServer(workspaceRoot, port);
-      const startingEntry: OpenCodeServerEntry = {
-        workspaceRoot,
-        pid: child.pid,
-        port,
-        version: "starting",
-        startedAt: new Date(this.now()).toISOString(),
-      };
-      // Record the reference before waiting so a timeout does not turn a
-      // detached bootstrap process into an unreferenced duplicate on retry.
-      registry[workspaceRoot] = startingEntry;
-      this.writeRegistry(registry);
-
-      try {
-        const health = await this.waitForHealth(port, workspaceRoot, child.pid, startingEntry.startedAt, signal);
-        const entry: OpenCodeServerEntry = { ...startingEntry, version: health.version };
-        registry[workspaceRoot] = entry;
-        this.writeRegistry(registry);
-        return entry;
-      } catch (error) {
-        this.onLog?.("warn", "opencode.server_startup_incomplete", {
-          pid: child.pid,
-          port,
-          workspaceRoot,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-    }, signal);
+          const healthResult = yield* manager
+            .waitForHealth(port, workspaceRoot, child.pid, startingEntry.startedAt, signal)
+            .pipe(
+              Effect.map((health) => ({ ok: true as const, health })),
+              Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
+            );
+          if (!healthResult.ok) {
+            yield* Effect.sync(() =>
+              manager.onLog?.("warn", "opencode.server_startup_incomplete", {
+                pid: child.pid,
+                port,
+                workspaceRoot,
+                error: healthResult.error instanceof Error ? healthResult.error.message : String(healthResult.error),
+              }),
+            );
+            return yield* Effect.fail(healthResult.error);
+          }
+          const entry: OpenCodeServerEntry = { ...startingEntry, version: healthResult.health.version };
+          registry[workspaceRoot] = entry;
+          yield* manager.writeRegistry(registry);
+          return entry;
+        }),
+      signal,
+    );
   }
 
   /** Returns all connection references without probing or mutating them. */
   public list(): OpenCodeServerEntry[] {
-    return Object.values(this.readRegistry());
+    return Object.values(this.readRegistrySync());
   }
 
-  private readRegistry(): OpenCodeServerRegistry {
+  private readRegistry(): Effect.Effect<OpenCodeServerRegistry, Error> {
+    return attemptSync(() => this.readRegistrySync());
+  }
+
+  private readRegistrySync(): OpenCodeServerRegistry {
     let contents: string;
     try {
       contents = readFileSync(this.options.registryFile, "utf8");
@@ -302,83 +325,105 @@ export class OpenCodeServerManager {
     return registry;
   }
 
-  private writeRegistry(registry: OpenCodeServerRegistry): void {
-    const directory = dirnameOf(this.options.registryFile);
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const temporary = `${this.options.registryFile}.tmp`;
-    writeFileSync(temporary, JSON.stringify(registry, null, 2), { mode: 0o600 });
-    renameSync(temporary, this.options.registryFile);
+  private writeRegistry(registry: OpenCodeServerRegistry): Effect.Effect<void> {
+    const registryFile = this.options.registryFile;
+    return Effect.gen(function* () {
+      yield* Effect.sync(() => {
+        const directory = dirnameOf(registryFile);
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        const temporary = `${registryFile}.tmp`;
+        writeFileSync(temporary, JSON.stringify(registry, null, 2), { mode: 0o600 });
+        renameSync(temporary, registryFile);
+      });
+    });
   }
 
-  private spawnServer(workspaceRoot: string, port: number): SpawnedChild {
+  private spawnServer(workspaceRoot: string, port: number): Effect.Effect<SpawnedChild, Error> {
     const logFile = join(this.logFileDirectory, `opencode-${hashPath(workspaceRoot)}.log`);
     const spawn = this.spawn;
-    if (!spawn) throw new Error("opencode server cannot start without a spawn function");
-    const child = spawn(this.executable, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
-      cwd: workspaceRoot,
-      env: this.options.environment ?? process.env,
-      detached: true,
-      logFile,
+    const executable = this.executable;
+    const environment = this.options.environment ?? process.env;
+    const onLog = this.onLog;
+    return Effect.gen(function* () {
+      const child = yield* fromPromise(() =>
+        spawn(executable, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+          cwd: workspaceRoot,
+          env: environment,
+          detached: true,
+          logFile,
+        }),
+      );
+      yield* Effect.sync(() => {
+        onLog?.("debug", "opencode.server_bootstrapped", { pid: child.pid, port, workspaceRoot });
+        child.unref();
+      });
+      return child;
     });
-    this.onLog?.("debug", "opencode.server_bootstrapped", { pid: child.pid, port, workspaceRoot });
-    child.unref();
-    return child;
   }
 
-  private async waitForHealth(
+  private waitForHealth(
     port: number,
     workspaceRoot: string,
     pid: number | undefined,
     expectedStartedAt: string | undefined,
     signal?: AbortSignal,
-  ): Promise<OpenCodeHealth> {
-    const deadline = this.now() + this.startupTimeoutMs;
-    for (;;) {
-      throwIfAborted(signal);
-      const health = await this.readHealth(baseUrlForPort(port), workspaceRoot, signal);
-      if (health !== undefined) return health;
-      if (pid !== undefined && this.observe(pid, expectedStartedAt) === "dead") {
-        throw new Error(`opencode serve exited before it became healthy (${this.executable} serve --port ${port})`);
+  ): Effect.Effect<OpenCodeHealth, Error> {
+    const manager = this;
+    return Effect.gen(function* () {
+      const deadline = manager.now() + manager.startupTimeoutMs;
+      for (;;) {
+        yield* ensureNotAborted(signal);
+        const health = yield* manager.readHealth(baseUrlForPort(port), workspaceRoot, signal);
+        if (health !== undefined) return health;
+        if (pid !== undefined && manager.observe(pid, expectedStartedAt) === "dead") {
+          return yield* Effect.fail(
+            new Error(`opencode serve exited before it became healthy (${manager.executable} serve --port ${port})`),
+          );
+        }
+        if (manager.now() >= deadline) {
+          return yield* Effect.fail(
+            new Error(
+              `opencode serve did not become healthy within ${manager.startupTimeoutMs}ms (${manager.executable} serve --port ${port})`,
+            ),
+          );
+        }
+        yield* sleepWithAbort(manager.sleep, manager.healthPollIntervalMs, signal);
       }
-      if (this.now() >= deadline) {
-        throw new Error(
-          `opencode serve did not become healthy within ${this.startupTimeoutMs}ms (${this.executable} serve --port ${port})`,
-        );
-      }
-      await sleepWithAbort(this.sleep, this.healthPollIntervalMs, signal);
-    }
+    });
   }
 
-  private async readHealth(
+  private readHealth(
     baseUrl: string,
     workspaceRoot: string,
     signal?: AbortSignal,
-  ): Promise<OpenCodeHealth | undefined> {
-    try {
-      const response = await requestWithTimeout(
-        this.request,
+  ): Effect.Effect<OpenCodeHealth | undefined, never> {
+    const manager = this;
+    return Effect.gen(function* () {
+      const response = yield* requestWithTimeout(
+        manager.request,
         `${baseUrl}/global/health`,
         {
           headers: { "x-opencode-directory": workspaceRoot },
           ...(signal === undefined ? {} : { signal }),
         },
-        this.requestTimeoutMs,
+        manager.requestTimeoutMs,
+      ).pipe(Effect.catch(() => Effect.succeed(undefined)));
+      if (response === undefined || !response.ok) return undefined;
+      const body: unknown = yield* fromPromise(() => response.json()).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
       );
-      if (!response.ok) return undefined;
-      const body: unknown = await response.json().catch(() => undefined);
       if (!isRecord(body) || body.healthy !== true) return undefined;
-      if (typeof body.version !== "string" || body.version.length === 0) {
-        throw new Error("OpenCode health endpoint returned an invalid version");
-      }
+      if (typeof body.version !== "string" || body.version.length === 0) return undefined;
       return { healthy: true, version: body.version };
-    } catch {
-      return undefined;
-    }
+    });
   }
 
-  private async allocatePreferredPort(preferred: number): Promise<number> {
-    if (await this.probePort(preferred)) return preferred;
-    return this.allocatePort();
+  private allocatePreferredPort(preferred: number): Effect.Effect<number, Error> {
+    const manager = this;
+    return Effect.gen(function* () {
+      if (yield* fromPromise(() => manager.probePort(preferred))) return preferred;
+      return yield* fromPromise(() => manager.allocatePort());
+    });
   }
 
   private observe(pid: number, expectedStartedAt?: string): ProcessLiveness {
@@ -389,34 +434,41 @@ export class OpenCodeServerManager {
    * Serialize registry mutations across `muximo run` processes. The lock is a
    * coordination barrier for the registry only; it grants no process control.
    */
-  private async withFileLock<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    const lockPath = `${this.options.registryFile}.lock`;
-    mkdirSync(dirnameOf(lockPath), { recursive: true, mode: 0o700 });
-    const deadline = this.now() + this.registryLockTimeoutMs;
-    for (;;) {
-      throwIfAborted(signal);
-      const token = this.tryAcquireLock(lockPath);
-      if (token === undefined) {
-        this.tryReclaimStaleLock(lockPath);
-        throwIfAborted(signal);
-        if (this.now() >= deadline) {
-          this.onLog?.("warn", "opencode.registry_lock_timeout", { path: lockPath });
-          throw new OpenCodeRegistryLockTimeoutError(lockPath, this.registryLockTimeoutMs);
+  private withFileLock<T>(operation: () => Effect.Effect<T, Error>, signal?: AbortSignal): Effect.Effect<T, Error> {
+    const manager = this;
+    return Effect.gen(function* () {
+      const lockPath = `${manager.options.registryFile}.lock`;
+      yield* Effect.sync(() => mkdirSync(dirnameOf(lockPath), { recursive: true, mode: 0o700 }));
+      const deadline = manager.now() + manager.registryLockTimeoutMs;
+      for (;;) {
+        yield* ensureNotAborted(signal);
+        const token = yield* Effect.sync(() => manager.tryAcquireLock(lockPath));
+        if (token === undefined) {
+          yield* Effect.sync(() => manager.tryReclaimStaleLock(lockPath));
+          yield* ensureNotAborted(signal);
+          if (manager.now() >= deadline) {
+            yield* Effect.sync(() => manager.onLog?.("warn", "opencode.registry_lock_timeout", { path: lockPath }));
+            return yield* Effect.fail(new OpenCodeRegistryLockTimeoutError(lockPath, manager.registryLockTimeoutMs));
+          }
+          yield* sleepWithAbort(
+            manager.sleep,
+            Math.min(manager.registryLockPollIntervalMs, Math.max(1, deadline - manager.now())),
+            signal,
+          );
+          continue;
         }
-        await sleepWithAbort(
-          this.sleep,
-          Math.min(this.registryLockPollIntervalMs, Math.max(1, deadline - this.now())),
-          signal,
+
+        return yield* Effect.acquireUseRelease(
+          Effect.succeed(token),
+          () =>
+            Effect.gen(function* () {
+              yield* ensureNotAborted(signal);
+              return yield* operation();
+            }),
+          (lockToken) => Effect.sync(() => manager.releaseLock(lockPath, lockToken)),
         );
-        continue;
       }
-      try {
-        throwIfAborted(signal);
-        return await operation();
-      } finally {
-        this.releaseLock(lockPath, token);
-      }
-    }
+    });
   }
 
   private tryAcquireLock(lockPath: string): string | undefined {
@@ -521,11 +573,11 @@ export class OpenCodeServerManager {
   }
 }
 
-function spawnServe(
+async function spawnServe(
   command: string,
   args: string[],
   options: { cwd: string; env: NodeJS.ProcessEnv; detached: boolean; logFile: string },
-): SpawnedChild {
+): Promise<SpawnedChild> {
   let logFd: number | undefined;
   try {
     mkdirSync(dirnameOf(options.logFile), { recursive: true, mode: 0o700 });
@@ -704,30 +756,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
-function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (!signal?.aborted) return;
-  if (signal.reason instanceof Error) throw signal.reason;
-  throw new Error("OpenCode server preparation was cancelled");
+function ensureNotAborted(signal: AbortSignal | undefined): Effect.Effect<void, never> {
+  return Effect.sync(() => {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error ? signal.reason : new Error("OpenCode server preparation was cancelled");
+  });
 }
 
-async function sleepWithAbort(
+function sleepWithAbort(
   wait: (milliseconds: number) => Promise<void>,
   milliseconds: number,
   signal: AbortSignal | undefined,
-): Promise<void> {
-  if (signal === undefined) {
-    await wait(milliseconds);
-    return;
-  }
-  throwIfAborted(signal);
-  let onAbort: (() => void) | undefined;
-  const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new Error("operation aborted"));
-    signal.addEventListener("abort", onAbort, { once: true });
+): Effect.Effect<void, Error> {
+  if (signal === undefined) return fromPromise(() => wait(milliseconds));
+
+  return Effect.gen(function* () {
+    yield* ensureNotAborted(signal);
+    const resources = Effect.sync(() => {
+      let rejectAbort!: (reason: unknown) => void;
+      const aborted = new Promise<never>((_, reject) => {
+        rejectAbort = reject;
+      });
+      const onAbort = () =>
+        rejectAbort(signal.reason instanceof Error ? signal.reason : new Error("operation aborted"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      return { aborted, onAbort };
+    });
+    yield* Effect.acquireUseRelease(
+      resources,
+      ({ aborted }) =>
+        Effect.raceFirst(
+          fromPromise(() => wait(milliseconds)),
+          fromPromise(() => aborted),
+        ),
+      ({ onAbort }) => Effect.sync(() => signal.removeEventListener("abort", onAbort)),
+    );
   });
-  try {
-    await Promise.race([wait(milliseconds), aborted]);
-  } finally {
-    if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
-  }
 }

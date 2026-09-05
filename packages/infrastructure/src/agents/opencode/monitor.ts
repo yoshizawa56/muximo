@@ -10,6 +10,9 @@
  * Child sessions, other directories, and sessionless events are ignored.
  */
 
+import { attemptSync } from "@muximo/application";
+import { Duration, Effect, Schedule, Stream } from "effect";
+import { fromPromise, runEffectAsPromise } from "../../effect.js";
 import type { ActionDescriptor, AgentMonitor, AgentObservation, AgentObservationSink } from "../index.js";
 import {
   type OpenCodeClient,
@@ -52,6 +55,7 @@ const terminalStates = new Set<
 >(["failed", "completed", "stopped"]);
 
 type MonitorState = Extract<AgentObservation, { type: "state_changed" }>["state"];
+type OpenCodeMonitorEffect<A> = Effect.Effect<A, Error>;
 
 function defaultReconnectDelay(attempt: number): number {
   return Math.min(500 * 2 ** attempt, 10_000);
@@ -74,37 +78,49 @@ export class OpenCodeMonitor implements AgentMonitor {
     return Object.values(openCodeMonitorActions);
   }
 
-  public async execute(action: ActionDescriptor, _params?: unknown): Promise<void> {
+  public execute(action: ActionDescriptor, _params?: unknown): Promise<void> {
+    return runEffectAsPromise(this.executeEffect(action));
+  }
+
+  private executeEffect(action: ActionDescriptor): OpenCodeMonitorEffect<void> {
     const { client, sessionId } = this.options;
-    switch (action.id) {
-      case openCodeMonitorActions.abort.id: {
-        const aborted = await client.abortSession(sessionId);
-        if (!aborted) throw new Error(`OpenCode abort was not accepted for session ${sessionId}`);
-        this.aborted = true;
-        await this.emit("stopped", "session aborted");
-        return;
-      }
-      case openCodeMonitorActions.approve.id:
-      case openCodeMonitorActions.approveRemember.id:
-      case openCodeMonitorActions.reject.id:
-      case openCodeMonitorActions.rejectRemember.id: {
-        const permissionId = stringValue(action.metadata?.permissionID);
-        if (!permissionId) throw new Error(`permission action ${action.id} requires a permissionID`);
-        const response = action.id.startsWith("reject") ? "deny" : "allow";
-        const remember = action.id.endsWith("_remember");
-        const accepted = await client.replyPermission(sessionId, permissionId, response, remember);
-        if (!accepted) throw new Error(`OpenCode permission response was not accepted for ${permissionId}`);
-        return;
-      }
-      case openCodeMonitorActions.fork.id: {
-        const forked = await client.forkSession(sessionId);
-        if (!forked) throw new Error(`OpenCode fork was not accepted for session ${sessionId}`);
-        this.options.onLog?.("info", "opencode.session_forked", { forkedSessionId: forked });
-        return;
-      }
-      default:
-        throw new Error(`unknown OpenCode action: ${action.id}`);
-    }
+    return Effect.gen(
+      function* (this: OpenCodeMonitor) {
+        switch (action.id) {
+          case openCodeMonitorActions.abort.id: {
+            const aborted = yield* client.abortSession(sessionId);
+            if (!aborted)
+              return yield* Effect.fail(new Error(`OpenCode abort was not accepted for session ${sessionId}`));
+            this.aborted = true;
+            yield* this.emit("stopped", "session aborted");
+            return;
+          }
+          case openCodeMonitorActions.approve.id:
+          case openCodeMonitorActions.approveRemember.id:
+          case openCodeMonitorActions.reject.id:
+          case openCodeMonitorActions.rejectRemember.id: {
+            const permissionId = stringValue(action.metadata?.permissionID);
+            if (!permissionId)
+              return yield* Effect.fail(new Error(`permission action ${action.id} requires a permissionID`));
+            const response = action.id.startsWith("reject") ? "deny" : "allow";
+            const remember = action.id.endsWith("_remember");
+            const accepted = yield* client.replyPermission(sessionId, permissionId, response, remember);
+            if (!accepted)
+              return yield* Effect.fail(new Error(`OpenCode permission response was not accepted for ${permissionId}`));
+            return;
+          }
+          case openCodeMonitorActions.fork.id: {
+            const forked = yield* client.forkSession(sessionId);
+            if (!forked)
+              return yield* Effect.fail(new Error(`OpenCode fork was not accepted for session ${sessionId}`));
+            this.options.onLog?.("info", "opencode.session_forked", { forkedSessionId: forked });
+            return;
+          }
+          default:
+            return yield* Effect.fail(new Error(`unknown OpenCode action: ${action.id}`));
+        }
+      }.bind(this),
+    );
   }
 
   public async start(sink: AgentObservationSink): Promise<void> {
@@ -117,7 +133,7 @@ export class OpenCodeMonitor implements AgentMonitor {
     this.abortController?.abort();
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
-    void this.runStream(signal);
+    void runEffectAsPromise(this.runStream(signal));
   }
 
   public async stop(): Promise<void> {
@@ -130,39 +146,48 @@ export class OpenCodeMonitor implements AgentMonitor {
     this.abortController = undefined;
   }
 
-  private async runStream(signal: AbortSignal | undefined): Promise<void> {
-    while (!this.stopped) {
-      let stream: AsyncGenerator<OpenCodeEvent>;
-      try {
-        stream = this.options.client.events(signal);
-      } catch (error) {
-        this.options.onLog?.("warn", "opencode.stream_open_failed", { error: messageOf(error) });
-        await this.backoffAndReconcile();
-        continue;
-      }
-      try {
-        for await (const event of stream) {
+  private runStream(signal: AbortSignal | undefined): OpenCodeMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: OpenCodeMonitor) {
+        while (!this.stopped) {
+          const streamResult = yield* Effect.result(attemptSync(() => this.options.client.events(signal)));
+          if (streamResult._tag === "Failure") {
+            this.options.onLog?.("warn", "opencode.stream_open_failed", { error: messageOf(streamResult.failure) });
+            yield* this.backoffAndReconcile();
+            continue;
+          }
+          const eventsResult = yield* Effect.result(
+            Stream.runForEach(streamResult.success, (event) => {
+              if (this.stopped) return Effect.succeed(undefined);
+              this.reconnectAttempt = 0;
+              return this.handleEvent(event);
+            }),
+          );
           if (this.stopped) return;
-          this.reconnectAttempt = 0;
-          await this.handleEvent(event);
+          if (eventsResult._tag === "Failure") {
+            this.options.onLog?.("warn", "opencode.stream_closed", {
+              retryable: eventsResult.failure instanceof OpenCodeStreamClosedError,
+              error: messageOf(eventsResult.failure),
+            });
+          }
+          yield* this.backoffAndReconcile();
         }
-      } catch (error) {
-        if (this.stopped) return;
-        this.options.onLog?.("warn", "opencode.stream_closed", {
-          retryable: error instanceof OpenCodeStreamClosedError,
-          error: messageOf(error),
-        });
-      }
-      if (this.stopped) return;
-      await this.backoffAndReconcile();
-    }
+      }.bind(this),
+    );
   }
 
-  private async backoffAndReconcile(): Promise<void> {
-    await sleep(this.reconnectDelayMs(this.reconnectAttempt));
-    this.reconnectAttempt += 1;
-    if (this.stopped) return;
-    await this.reconcile();
+  private backoffAndReconcile(): OpenCodeMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: OpenCodeMonitor) {
+        const step = yield* Schedule.toStepWithSleep(
+          Schedule.duration(Duration.millis(this.reconnectDelayMs(this.reconnectAttempt))),
+        );
+        yield* step(undefined).pipe(Effect.catch(() => Effect.succeed(undefined)));
+        this.reconnectAttempt += 1;
+        if (this.stopped) return;
+        yield* this.reconcile();
+      }.bind(this),
+    );
   }
 
   /**
@@ -170,114 +195,142 @@ export class OpenCodeMonitor implements AgentMonitor {
    * A missing primary session is terminal; everything else re-establishes
    * the last known state instead of inventing a terminal one.
    */
-  private async reconcile(): Promise<void> {
-    let status: OpenCodeSessionStatus | undefined;
-    let exists: boolean | undefined;
-    try {
-      exists = await this.options.client.sessionExists(this.options.sessionId);
-      if (exists) status = await this.options.client.sessionStatus(this.options.sessionId);
-    } catch (error) {
-      this.options.onLog?.("debug", "opencode.reconcile_failed", { error: messageOf(error) });
-      return;
-    }
-    if (exists === false) {
-      await this.emit("failed", "OpenCode session no longer exists");
-      return;
-    }
-    switch (status) {
-      case "busy":
-        await this.emit("running", "reconnected while busy");
-        return;
-      case "retry":
-        await this.emit("running", "reconnected while retrying");
-        return;
-      case "idle":
-        await this.maybeWaitingInput("reconnected while idle");
-        return;
-      default:
-        // The server is reachable but the session status is unknown; keep
-        // the previous state rather than marking the run terminal.
-        return;
-    }
+  private reconcile(): OpenCodeMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: OpenCodeMonitor) {
+        const result = yield* Effect.result(
+          Effect.gen(
+            function* (this: OpenCodeMonitor) {
+              const exists = yield* this.options.client.sessionExists(this.options.sessionId);
+              const status = exists ? yield* this.options.client.sessionStatus(this.options.sessionId) : undefined;
+              return { exists, status };
+            }.bind(this),
+          ),
+        );
+        if (result._tag === "Failure") {
+          this.options.onLog?.("debug", "opencode.reconcile_failed", { error: messageOf(result.failure) });
+          return;
+        }
+        const { exists, status } = result.success;
+        if (exists === false) {
+          yield* this.emit("failed", "OpenCode session no longer exists");
+          return;
+        }
+        switch (status) {
+          case "busy":
+            yield* this.emit("running", "reconnected while busy");
+            return;
+          case "retry":
+            yield* this.emit("running", "reconnected while retrying");
+            return;
+          case "idle":
+            yield* this.maybeWaitingInput("reconnected while idle");
+            return;
+          default:
+            // The server is reachable but the session status is unknown; keep
+            // the previous state rather than marking the run terminal.
+            return;
+        }
+      }.bind(this),
+    );
   }
 
-  private async handleEvent(event: OpenCodeEvent): Promise<void> {
-    if (event.directory && event.directory !== this.options.workspaceRoot) return;
-    const properties = event.properties;
-    switch (event.type) {
-      case "session.status": {
-        if (!this.isPrimarySession(properties.sessionID)) return;
-        const status = sessionStatusValue(properties.status);
-        if (status === "busy") await this.emit("running", "session busy");
-        else if (status === "retry") {
-          await this.emit("running", "session retry");
-          this.options.onLog?.("warn", "opencode.session_retry", {
-            sessionID: properties.sessionID,
-            message: stringValue(properties.message),
-          });
-        } else if (status === "idle") await this.maybeWaitingInput("session idle");
-        return;
-      }
-      case "session.idle": {
-        if (!this.isPrimarySession(properties.sessionID)) return;
-        await this.maybeWaitingInput("session idle");
-        return;
-      }
-      case "permission.updated": {
-        await this.handlePermission(properties as unknown as OpenCodePermission);
-        return;
-      }
-      case "permission.replied": {
-        if (!this.isPrimarySession(properties.sessionID)) return;
-        await this.emit("running", "permission replied");
-        return;
-      }
-      case "session.error": {
-        // `session.error` may be global (no sessionID); only fail the primary.
-        if (properties.sessionID !== undefined && !this.isPrimarySession(properties.sessionID)) return;
-        if (properties.sessionID === undefined) return;
-        await this.emit("failed", `session error: ${errorName(properties.error) ?? "unknown"}`);
-        return;
-      }
-      default:
-        // Sessionless events (`server.connected`, `file.edited`, ...) and
-        // unsupported session events never affect the primary state.
-        return;
-    }
+  private handleEvent(event: OpenCodeEvent): OpenCodeMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: OpenCodeMonitor) {
+        if (event.directory && event.directory !== this.options.workspaceRoot) return;
+        const properties = event.properties;
+        switch (event.type) {
+          case "session.status": {
+            if (!this.isPrimarySession(properties.sessionID)) return;
+            const status = sessionStatusValue(properties.status);
+            if (status === "busy") yield* this.emit("running", "session busy");
+            else if (status === "retry") {
+              yield* this.emit("running", "session retry");
+              this.options.onLog?.("warn", "opencode.session_retry", {
+                sessionID: properties.sessionID,
+                message: stringValue(properties.message),
+              });
+            } else if (status === "idle") yield* this.maybeWaitingInput("session idle");
+            return;
+          }
+          case "session.idle": {
+            if (!this.isPrimarySession(properties.sessionID)) return;
+            yield* this.maybeWaitingInput("session idle");
+            return;
+          }
+          case "permission.updated": {
+            yield* this.handlePermission(properties as unknown as OpenCodePermission);
+            return;
+          }
+          case "permission.replied": {
+            if (!this.isPrimarySession(properties.sessionID)) return;
+            yield* this.emit("running", "permission replied");
+            return;
+          }
+          case "session.error": {
+            // `session.error` may be global (no sessionID); only fail the primary.
+            if (properties.sessionID !== undefined && !this.isPrimarySession(properties.sessionID)) return;
+            if (properties.sessionID === undefined) return;
+            yield* this.emit("failed", `session error: ${errorName(properties.error) ?? "unknown"}`);
+            return;
+          }
+          default:
+            // Sessionless events (`server.connected`, `file.edited`, ...) and
+            // unsupported session events never affect the primary state.
+            return;
+        }
+      }.bind(this),
+    );
   }
 
-  private async handlePermission(permission: OpenCodePermission): Promise<void> {
-    if (!this.isPrimarySession(permission.sessionID)) return;
-    const permissionId = stringValue(permission.id);
-    if (!permissionId) return;
-    const title = stringValue(permission.title) ?? "Permission request";
-    const metadata: Record<string, unknown> = { permissionID: permissionId, title };
-    await this.emit("waiting_approval", `permission: ${title}`);
-    for (const action of [openCodeMonitorActions.approve, openCodeMonitorActions.reject]) {
-      await this.sink?.({ type: "action_requested", action: { ...action, metadata } });
-    }
+  private handlePermission(permission: OpenCodePermission): OpenCodeMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: OpenCodeMonitor) {
+        if (!this.isPrimarySession(permission.sessionID)) return;
+        const permissionId = stringValue(permission.id);
+        if (!permissionId) return;
+        const title = stringValue(permission.title) ?? "Permission request";
+        const metadata: Record<string, unknown> = { permissionID: permissionId, title };
+        yield* this.emit("waiting_approval", `permission: ${title}`);
+        const sink = this.sink;
+        if (!sink) return;
+        for (const action of [openCodeMonitorActions.approve, openCodeMonitorActions.reject]) {
+          yield* fromPromise(() => sink({ type: "action_requested", action: { ...action, metadata } }));
+        }
+      }.bind(this),
+    );
   }
 
-  private async maybeWaitingInput(reason: string): Promise<void> {
-    if (this.aborted) return;
-    if (this.lastState === undefined) return;
-    if (terminalStates.has(this.lastState as MonitorState)) return;
-    await this.emit("waiting_input", reason);
+  private maybeWaitingInput(reason: string): OpenCodeMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: OpenCodeMonitor) {
+        if (this.aborted) return;
+        if (this.lastState === undefined) return;
+        if (terminalStates.has(this.lastState as MonitorState)) return;
+        yield* this.emit("waiting_input", reason);
+      }.bind(this),
+    );
   }
 
   private isPrimarySession(sessionId: unknown): boolean {
     return sessionId === this.options.sessionId;
   }
 
-  private async emit(state: MonitorState, reason: string): Promise<void> {
-    if (this.stopped) return;
-    // After an explicit abort only the stopped state may be emitted.
-    if (this.aborted && state !== "stopped") return;
-    if (this.lastState === state) return;
-    // A terminal state is final; late events must not resurrect the run.
-    if (terminalStates.has(this.lastState as MonitorState)) return;
-    this.lastState = state;
-    await this.sink?.({ type: "state_changed", state, reason });
+  private emit(state: MonitorState, reason: string): OpenCodeMonitorEffect<void> {
+    return Effect.gen(
+      function* (this: OpenCodeMonitor) {
+        if (this.stopped) return;
+        // After an explicit abort only the stopped state may be emitted.
+        if (this.aborted && state !== "stopped") return;
+        if (this.lastState === state) return;
+        // A terminal state is final; late events must not resurrect the run.
+        if (terminalStates.has(this.lastState as MonitorState)) return;
+        this.lastState = state;
+        const sink = this.sink;
+        if (sink) yield* fromPromise(() => sink({ type: "state_changed", state, reason }));
+      }.bind(this),
+    );
   }
 }
 
@@ -300,8 +353,4 @@ function stringValue(value: unknown): string | undefined {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }

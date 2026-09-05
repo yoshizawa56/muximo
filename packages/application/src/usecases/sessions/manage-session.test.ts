@@ -11,8 +11,7 @@ import {
 import { Effect } from "effect";
 import { describe, it } from "vitest";
 import type { ManageSessionResult } from "../../ports/application.js";
-import type { MuximodSessionManagementPort } from "../../ports/host.js";
-import { muximodSessionManagementLayer } from "../terminals/terminal-services.js";
+import { type MuximodSessionManagement, muximodSessionManagementLayer } from "../terminals/terminal-services.js";
 import { manageSession } from "./manage-session.js";
 
 type Input = {
@@ -22,7 +21,7 @@ type Input = {
 };
 
 type Fixture = {
-  host: MuximodSessionManagementPort;
+  host: MuximodSessionManagement;
   input: Input | undefined;
   calls: string[];
 };

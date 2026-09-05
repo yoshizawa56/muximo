@@ -13,10 +13,6 @@ import type {
   StartAgentSessionInput,
 } from "./agent-sessions.js";
 
-export type ApplicationClock = {
-  now(): string;
-};
-
 export type TerminalHostHookEvent =
   | "client-attached"
   | "client-active"

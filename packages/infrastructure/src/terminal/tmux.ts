@@ -1,4 +1,4 @@
-// This adapter owns all tmux process I/O; application code sees only MuximodHostPort.
+// This adapter owns all tmux process I/O; application code sees only the MuximodHost capability.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";

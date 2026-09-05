@@ -15,7 +15,7 @@ import type { MuximodApp } from "./app.js";
 import { createMuximodApp } from "./app.js";
 import { createOriginPolicy } from "./middleware.js";
 import { TestMuximodSocketAdapter } from "./test-socket.js";
-import type { MuximodAuthPort } from "./types.js";
+import type { MuximodAuth } from "./types.js";
 
 const authContext = {
   sessionId: "session-http-test-00000000",
@@ -76,7 +76,7 @@ const fixture = (): FixtureHandle<SocketFixture> => {
   const validTickets = new Set(["ticket-terminal"]);
   let terminalConnections = 0;
   let socketFactoryCalls = 0;
-  const auth: MuximodAuthPort = {
+  const auth: MuximodAuth = {
     serverId: authContext.serverId,
     authenticateAccessToken: () => Effect.succeed(authContext),
     claimPairing: () => Effect.fail(new Error("not used")),

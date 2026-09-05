@@ -1,13 +1,12 @@
 import type { Pane, PaneState } from "@muximo/domain";
 import { Effect, Layer } from "effect";
-import { type ApplicationClockService, applicationClockLayer } from "../../effect-runtime.js";
+import { type ApplicationClock, type ApplicationClockService, applicationClockLayer } from "../../effect-runtime.js";
 import type {
-  ApplicationClock,
   MuximodAgentSessionApplication,
   MuximodApplication,
   MuximodTerminalEndpoint,
 } from "../../ports/application.js";
-import type { MuximodWorkspaceCatalogPort, TerminalHostSnapshot } from "../../ports/host.js";
+import type { TerminalHostSnapshot } from "../../ports/host.js";
 import { adoptAgentSession } from "../agents/adopt-agent-session.js";
 import { observeAgentSession } from "../agents/observe-agent-session.js";
 import { releaseAgentSession } from "../agents/release-agent-session.js";
@@ -23,13 +22,12 @@ import { deleteWorkspace } from "../workspaces/delete-workspace.js";
 import { listWorkspaces } from "../workspaces/list-workspaces.js";
 import { registerWorkspace } from "../workspaces/register-workspace.js";
 import { updateWorkspace } from "../workspaces/update-workspace.js";
-import type { WorkspaceServices } from "../workspaces/workspace-services.js";
+import { MuximodWorkspaceCatalogService, type WorkspaceServices } from "../workspaces/workspace-services.js";
 
 export type MuximodApplicationResources = {
   agentSessions: MuximodAgentSessionApplication;
   getTerminal: () => Promise<MuximodTerminalEndpoint>;
   clock: ApplicationClock;
-  workspaceCatalog: MuximodWorkspaceCatalogPort;
   workspaceLayer: Layer.Layer<WorkspaceServices>;
   terminalLayer: Layer.Layer<TerminalServices>;
 };
@@ -52,40 +50,58 @@ export type MuximodApplicationRuntime = MuximodApplication & {
  * application facade consumed by HTTP and CLI adapters.
  */
 export function createMuximodApplication(resources: MuximodApplicationResources): MuximodApplicationRuntime {
-  const { clock, workspaceCatalog, workspaceLayer, terminalLayer } = resources;
+  const { clock, workspaceLayer, terminalLayer } = resources;
   return {
     agentSessions: resources.agentSessions,
     terminal: { get: resources.getTerminal },
     workspaces: {
-      list: async () =>
-        (await runWorkspaceEffect(listWorkspaces(), clock, workspaceLayer)).map((workspace) =>
-          workspaceCatalog.toDirectoryOption(workspace),
-        ),
-      browse: (parentPath) => runEffect(workspaceCatalog.browseDirectories(parentPath)),
-      register: async (input) => {
-        const workspace = await runWorkspaceEffect(
-          registerWorkspace({
-            directory: input.directory,
-            name: input.name,
-            setupHook: input.setupScriptPath,
-            cleanupHook: input.cleanupScriptPath,
+      list: () =>
+        runWorkspaceEffect(
+          Effect.gen(function* () {
+            const workspaces = yield* listWorkspaces();
+            const catalog = yield* MuximodWorkspaceCatalogService;
+            return workspaces.map((workspace) => catalog.toDirectoryOption(workspace));
           }),
           clock,
           workspaceLayer,
-        );
-        return workspaceCatalog.toDirectoryOption(workspace);
-      },
-      update: async (workspaceId, input) =>
-        workspaceCatalog.toDirectoryOption(
-          await runWorkspaceEffect(
-            updateWorkspace(workspaceId, {
+        ),
+      browse: (parentPath) =>
+        runWorkspaceEffect(
+          Effect.gen(function* () {
+            const catalog = yield* MuximodWorkspaceCatalogService;
+            return yield* catalog.browseDirectories(parentPath);
+          }),
+          clock,
+          workspaceLayer,
+        ),
+      register: (input) =>
+        runWorkspaceEffect(
+          Effect.gen(function* () {
+            const workspace = yield* registerWorkspace({
+              directory: input.directory,
               name: input.name,
               setupHook: input.setupScriptPath,
               cleanupHook: input.cleanupScriptPath,
-            }),
-            clock,
-            workspaceLayer,
-          ),
+            });
+            const catalog = yield* MuximodWorkspaceCatalogService;
+            return catalog.toDirectoryOption(workspace);
+          }),
+          clock,
+          workspaceLayer,
+        ),
+      update: (workspaceId, input) =>
+        runWorkspaceEffect(
+          Effect.gen(function* () {
+            const workspace = yield* updateWorkspace(workspaceId, {
+              name: input.name,
+              setupHook: input.setupScriptPath,
+              cleanupHook: input.cleanupScriptPath,
+            });
+            const catalog = yield* MuximodWorkspaceCatalogService;
+            return catalog.toDirectoryOption(workspace);
+          }),
+          clock,
+          workspaceLayer,
         ),
       delete: async (workspaceId) => {
         await runWorkspaceEffect(deleteWorkspace(workspaceId), clock, workspaceLayer);
@@ -119,10 +135,6 @@ export function createMuximodApplication(resources: MuximodApplicationResources)
     releaseAgentSession: (request) =>
       runTerminalEffect(releaseAgentSession(request), clock, workspaceLayer, terminalLayer),
   };
-}
-
-function runEffect<A, E>(effect: Effect.Effect<A, E, never>): Promise<A> {
-  return Effect.runPromise(effect);
 }
 
 function runWorkspaceEffect<A, E>(

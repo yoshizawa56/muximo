@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, normalize, resolve } from "node:path";
-import type { ApplicationEffect, SessionWorktreeLookupPort, ShellWorkspaceResolverPort } from "@muximo/application";
+import type { ApplicationEffect, SessionWorktreeLookup, ShellWorkspaceResolver } from "@muximo/application";
 import type { WorkspaceDirectory } from "@muximo/contract/api";
 import { type WorkspaceDirectoryOption, WorkspaceId } from "@muximo/domain";
 import {
@@ -16,7 +16,7 @@ import type { MuximodApiClient } from "./muximod-api-client.js";
 type MuximodApiProvider = () => Promise<MuximodApiClient>;
 
 /** Resolves shell workspace context from the daemon API and local Git state. */
-export class MuximodShellWorkspaceResolver implements ShellWorkspaceResolverPort {
+export class MuximodShellWorkspaceResolver implements ShellWorkspaceResolver {
   private readonly cwd: string;
 
   public constructor(
@@ -52,7 +52,7 @@ export class MuximodShellWorkspaceResolver implements ShellWorkspaceResolverPort
 }
 
 /** Resolves a managed shell worktree using session data returned by the daemon. */
-export class MuximodShellSessionWorktreeLookup implements SessionWorktreeLookupPort {
+export class MuximodShellSessionWorktreeLookup implements SessionWorktreeLookup {
   public constructor(private readonly api: MuximodApiProvider) {}
 
   public findWorktreePath(

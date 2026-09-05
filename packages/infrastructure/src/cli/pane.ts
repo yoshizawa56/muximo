@@ -1,9 +1,9 @@
 import type {
-  AgentObservationPort,
+  AgentObservation,
   AgentStateObservation,
   ApplicationEffect,
-  PanePublicationPort,
-  ShellPanePort,
+  PanePublication,
+  ShellPane,
 } from "@muximo/application";
 import type { AgentSession, PaneState } from "@muximo/domain";
 import { fromPromise } from "../effect.js";
@@ -34,7 +34,7 @@ export type PaneAdapterOptions = {
 };
 
 /** Tmux/control-socket adapter for pane identity and agent observation. */
-export class TmuxPanePublicationAdapter implements PanePublicationPort, AgentObservationPort, ShellPanePort {
+export class TmuxPanePublicationAdapter implements PanePublication, AgentObservation, ShellPane {
   public constructor(private readonly options: PaneAdapterOptions) {}
 
   public adopt(session: AgentSession, hostPaneId?: string): ApplicationEffect<void> {

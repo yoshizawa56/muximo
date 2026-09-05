@@ -1,6 +1,7 @@
 import type {
   AgentSessionRepository,
-  SessionAuditPort,
+  ApplicationEffect,
+  SessionAudit,
   SessionBaselineResult,
   SessionIdentityUpdate,
 } from "@muximo/application";
@@ -29,7 +30,7 @@ export type AgentBackendProviderOptions = {
   environment: NodeJS.ProcessEnv;
   plugins: AgentPluginRegistry;
   sessions: AgentSessionRepository;
-  audit: SessionAuditPort;
+  audit: SessionAudit;
   logger: Pick<Logger, "debug" | "info" | "warn"> & {
     child(context: Record<string, unknown>): Pick<Logger, "debug" | "info" | "warn">;
   };
@@ -37,20 +38,24 @@ export type AgentBackendProviderOptions = {
 
 export interface AgentBackendProvider {
   readonly backend: AgentBackend;
-  captureBaseline(session: AgentSession): Promise<SessionBaselineResult>;
+  captureBaseline(session: AgentSession): ApplicationEffect<SessionBaselineResult>;
   prepareLaunch(
     session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
     signal?: AbortSignal,
-  ): Promise<AgentBackendProviderPreparation>;
+  ): ApplicationEffect<AgentBackendProviderPreparation>;
   /** Reconstructs daemon-side observation for a process that survived a daemon restart. */
-  restoreLaunch?(session: AgentSession): Promise<AgentBackendLaunch | undefined>;
-  afterRun(session: AgentSession, runDir: string, startedAt: number): Promise<SessionIdentityUpdate | undefined>;
-  disposeLaunch(session: AgentSession, runDir: string): Promise<void>;
-  archive(session: AgentSession): Promise<boolean>;
-  restore(session: AgentSession): Promise<boolean>;
-  releaseIfUnused(session: AgentSession, remaining: readonly AgentSession[]): Promise<void>;
+  restoreLaunch?(session: AgentSession): ApplicationEffect<AgentBackendLaunch | undefined>;
+  afterRun(
+    session: AgentSession,
+    runDir: string,
+    startedAt: number,
+  ): ApplicationEffect<SessionIdentityUpdate | undefined>;
+  disposeLaunch(session: AgentSession, runDir: string): ApplicationEffect<void>;
+  archive(session: AgentSession): ApplicationEffect<boolean>;
+  restore(session: AgentSession): ApplicationEffect<boolean>;
+  releaseIfUnused(session: AgentSession, remaining: readonly AgentSession[]): ApplicationEffect<void>;
 }
 
 export class AgentBackendProviderRegistry {

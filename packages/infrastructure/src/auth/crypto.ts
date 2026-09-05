@@ -1,9 +1,9 @@
 // Node crypto is the infrastructure implementation of the application crypto port.
 import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
-import type { AuthCryptoPort } from "@muximo/application";
+import type { AuthCrypto } from "@muximo/application";
 import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 
-export const nodeAuthCrypto: AuthCryptoPort = {
+export const nodeAuthCrypto: AuthCrypto = {
   randomOpaque(bytes) {
     return randomBytes(bytes).toString("base64url");
   },

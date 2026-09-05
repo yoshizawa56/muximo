@@ -10,24 +10,25 @@ import {
 } from "@muximo/test-support";
 import { Effect, Layer } from "effect";
 import { describe, it } from "vitest";
+import type { ApplicationClock } from "../../effect-runtime.js";
 import { applicationClockLayer } from "../../effect-runtime.js";
-import type { ApplicationClock, MuximodSessionSummary } from "../../ports/application.js";
-import type {
-  HostPaneSnapshot,
-  MuximodHostPort,
-  MuximodSessionManagementPort,
-  MuximodViewportPort,
-  TerminalHostSnapshot,
-} from "../../ports/host.js";
-import type { AgentSessionRepository, PaneRepository } from "../../ports/repositories.js";
+import type { MuximodSessionSummary } from "../../ports/application.js";
+import type { HostPaneSnapshot, TerminalHostSnapshot } from "../../ports/host.js";
 import type { AgentStatusStore } from "../sessions/agent-status.js";
+import type {
+  AgentSessionRepository,
+  MuximodHost,
+  MuximodSessionManagement,
+  MuximodViewport,
+  PaneRepository,
+} from "../terminals/terminal-services.js";
 import { terminalLayer } from "../terminals/terminal-services.js";
 import { listSessions } from "./list-sessions.js";
 
 type Input = { managed: boolean };
 
 type ListFixture = {
-  host: MuximodHostPort;
+  host: MuximodHost;
   paneRepository: PaneRepository;
   agentSessionRepository: AgentSessionRepository;
   agentStatus: AgentStatusStore;
@@ -136,7 +137,7 @@ function createFixture(): FixtureHandle<ListFixture> {
   };
 }
 
-function createSessionManagement(): MuximodSessionManagementPort {
+function createSessionManagement(): MuximodSessionManagement {
   return {
     newId: () => "managed-session",
     hasSession: () => Effect.succeed(false),
@@ -145,7 +146,7 @@ function createSessionManagement(): MuximodSessionManagementPort {
   };
 }
 
-function createViewport(): MuximodViewportPort {
+function createViewport(): MuximodViewport {
   return {
     handleTerminalHostHook: () => Effect.succeed(undefined),
     reassertMobileViewport: () => Effect.succeed(undefined),
@@ -181,7 +182,7 @@ function createSnapshot(sessionName: string, managed: boolean): TerminalHostSnap
   };
 }
 
-function createHost(snapshot: TerminalHostSnapshot): MuximodHostPort {
+function createHost(snapshot: TerminalHostSnapshot): MuximodHost {
   return {
     newId: () => "generated-pane",
     hasSession: () => Effect.succeed(false),

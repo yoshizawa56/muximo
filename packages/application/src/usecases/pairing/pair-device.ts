@@ -1,5 +1,6 @@
 import { Effect } from "effect";
-import type { PairDeviceInput, PairingControlPort, PairingPresenterPort } from "../../ports/pairing.js";
+import type { PairDeviceInput } from "../../ports/pairing.js";
+import { PairingControlService, PairingPresenterService } from "./pairing-services.js";
 
 export type PairDeviceResult = { status: "approved"; deviceId: string } | { status: "rejected" };
 
@@ -8,16 +9,11 @@ export type PairDeviceResult = { status: "approved"; deviceId: string } | { stat
  * channel or the user's terminal is implemented.
  */
 export class PairDevice {
-  public constructor(
-    private readonly control: PairingControlPort,
-    private readonly presenter: PairingPresenterPort,
-  ) {}
-
   public readonly execute = Effect.fn("Pairing.pairDevice")(
     { self: this },
     function* (this: PairDevice, input: PairDeviceInput) {
-      const control = this.control;
-      const presenter = this.presenter;
+      const control = yield* PairingControlService;
+      const presenter = yield* PairingPresenterService;
       const offer = yield* control.createPairing(input);
       yield* presenter.showPairing(offer);
 

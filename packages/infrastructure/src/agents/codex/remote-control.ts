@@ -2,6 +2,10 @@ import { createHash, randomBytes } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type ApplicationEffect, attemptSync } from "@muximo/application";
+import { Effect } from "effect";
+import type { Scope } from "effect/Scope";
+import { fromPromise, runEffectAsPromise } from "../../effect.js";
 
 export type CodexThreadOperation = "name" | "archive" | "unarchive";
 
@@ -15,33 +19,54 @@ type RpcMessage = {
 
 const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+export class CodexTransportError extends Error {
+  public readonly _tag = "CodexTransportError" as const;
+  public readonly retryable = false;
+
+  public constructor(cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    super(message);
+    this.name = "CodexTransportError";
+    this.cause = cause;
+  }
+}
+
+export type CodexRpcError = CodexTransportError;
+
 /**
  * Minimal Unix-socket WebSocket client for the Codex app-server control API.
  *
  * The app-server endpoint is a Unix socket carrying the current WebSocket
  * protocol. Keeping this transport here makes the `muximo` command self-contained.
  */
-export async function manageCodexThread(options: {
+export function manageCodexThread(options: {
   threadId: string;
   operation: CodexThreadOperation;
   name?: string;
   socketPath?: string;
 }): Promise<void> {
   const socketPath = options.socketPath ?? defaultCodexSocket();
-  const client = await CodexRpcClient.connect(socketPath);
-  try {
-    await client.initialize();
-    if (options.operation === "name") {
-      if (!options.name) throw new Error("Codex thread name is required");
-      await client.request("thread/name/set", { threadId: options.threadId, name: options.name });
-    } else if (options.operation === "archive") {
-      await client.request("thread/archive", { threadId: options.threadId });
-    } else {
-      await client.request("thread/unarchive", { threadId: options.threadId });
-    }
-  } finally {
-    client.close();
-  }
+  return runEffectAsPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* CodexRpcClient.connect(socketPath);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            yield* client.initialize();
+            if (options.operation === "name") {
+              if (!options.name) return yield* Effect.fail(new Error("Codex thread name is required"));
+              yield* client.request("thread/name/set", { threadId: options.threadId, name: options.name });
+            } else if (options.operation === "archive") {
+              yield* client.request("thread/archive", { threadId: options.threadId });
+            } else {
+              yield* client.request("thread/unarchive", { threadId: options.threadId });
+            }
+          }),
+          Effect.sync(() => client.close()),
+        );
+      }),
+    ),
+  );
 }
 
 export function defaultCodexSocket(env: NodeJS.ProcessEnv = process.env): string {
@@ -58,30 +83,40 @@ class CodexRpcClient {
     this.buffer = buffered;
   }
 
-  public static async connect(path: string): Promise<CodexRpcClient> {
-    const socket = await openSocket(path);
-    const result = await performHandshake(socket);
-    return new CodexRpcClient(socket, result.remaining);
-  }
-
-  public async initialize(): Promise<void> {
-    await this.request("initialize", {
-      clientInfo: { name: "muximo_wrapper", title: "muximo wrapper", version: "1" },
+  public static connect(path: string): Effect.Effect<CodexRpcClient, Error, Scope> {
+    return Effect.gen(function* () {
+      const socket = yield* openSocket(path);
+      const result = yield* performHandshake(socket);
+      return new CodexRpcClient(socket, result.remaining);
     });
-    this.sendFrame(0x1, Buffer.from('{"method":"initialized","params":{}}', "utf8"));
   }
 
-  public async request(method: string, params: unknown): Promise<RpcMessage> {
-    const id = this.nextRequestId++;
-    this.sendFrame(0x1, Buffer.from(JSON.stringify({ id, method, params }), "utf8"));
-    while (true) {
-      const message = await this.receiveMessage();
-      if (message.id !== id) continue;
-      if (message.error) {
-        throw new Error(`app-server ${method} failed: ${message.error.message ?? JSON.stringify(message.error)}`);
+  public initialize(): ApplicationEffect<void> {
+    const client = this;
+    return Effect.gen(function* () {
+      yield* client.request("initialize", {
+        clientInfo: { name: "muximo_wrapper", title: "muximo wrapper", version: "1" },
+      });
+      yield* attemptSync(() => client.sendFrame(0x1, Buffer.from('{"method":"initialized","params":{}}', "utf8")));
+    });
+  }
+
+  public request(method: string, params: unknown): ApplicationEffect<RpcMessage> {
+    const client = this;
+    return Effect.gen(function* () {
+      const id = yield* attemptSync(() => client.nextRequestId++);
+      yield* attemptSync(() => client.sendFrame(0x1, Buffer.from(JSON.stringify({ id, method, params }), "utf8")));
+      while (true) {
+        const message = yield* client.receiveMessage();
+        if (message.id !== id) continue;
+        if (message.error) {
+          return yield* Effect.fail(
+            new Error(`app-server ${method} failed: ${message.error.message ?? JSON.stringify(message.error)}`),
+          );
+        }
+        return message;
       }
-      return message;
-    }
+    });
   }
 
   public close(): void {
@@ -120,71 +155,90 @@ class CodexRpcClient {
     this.socket.write(Buffer.concat([header, mask, masked]));
   }
 
-  private async receiveMessage(): Promise<RpcMessage> {
-    const fragments: Buffer[] = [];
-    let messageOpcode: number | undefined;
-    while (true) {
-      const first = await this.readByte();
-      const second = await this.readByte();
-      const fin = (first & 0x80) !== 0;
-      const opcode = first & 0x0f;
-      let length = second & 0x7f;
-      if (length === 126) length = (await this.readBytes(2)).readUInt16BE(0);
-      if (length === 127) {
-        const largeLength = (await this.readBytes(8)).readBigUInt64BE(0);
-        if (largeLength > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Codex frame is too large");
-        length = Number(largeLength);
-      }
-      if ((second & 0x80) !== 0) throw new Error("Codex app-server sent a masked WebSocket frame");
-      const payload = await this.readBytes(length);
+  private receiveMessage(): ApplicationEffect<RpcMessage> {
+    const client = this;
+    return Effect.gen(function* () {
+      const fragments: Buffer[] = [];
+      let messageOpcode: number | undefined;
+      while (true) {
+        const first = yield* client.readByte();
+        const second = yield* client.readByte();
+        const fin = (first & 0x80) !== 0;
+        const opcode = first & 0x0f;
+        let length = second & 0x7f;
+        if (length === 126) length = (yield* client.readBytes(2)).readUInt16BE(0);
+        if (length === 127) {
+          const largeLength = (yield* client.readBytes(8)).readBigUInt64BE(0);
+          if (largeLength > BigInt(Number.MAX_SAFE_INTEGER))
+            return yield* Effect.fail(new Error("Codex frame is too large"));
+          length = Number(largeLength);
+        }
+        if ((second & 0x80) !== 0)
+          return yield* Effect.fail(new Error("Codex app-server sent a masked WebSocket frame"));
+        const payload = yield* client.readBytes(length);
 
-      if (opcode === 0x8) throw new Error("app-server closed the WebSocket");
-      if (opcode === 0x9) {
-        this.sendFrame(0xa, payload);
-        continue;
+        if (opcode === 0x8) return yield* Effect.fail(new Error("app-server closed the WebSocket"));
+        if (opcode === 0x9) {
+          yield* attemptSync(() => client.sendFrame(0xa, payload));
+          continue;
+        }
+        if (opcode === 0xa) continue;
+        if (opcode === 0x1 || opcode === 0x2) {
+          messageOpcode = opcode;
+          fragments.push(payload);
+        } else if (opcode === 0x0 && messageOpcode !== undefined) {
+          fragments.push(payload);
+        } else {
+          continue;
+        }
+        if (fin && messageOpcode !== undefined) {
+          return yield* attemptSync(() => JSON.parse(Buffer.concat(fragments).toString("utf8")) as RpcMessage);
+        }
       }
-      if (opcode === 0xa) continue;
-      if (opcode === 0x1 || opcode === 0x2) {
-        messageOpcode = opcode;
-        fragments.push(payload);
-      } else if (opcode === 0x0 && messageOpcode !== undefined) {
-        fragments.push(payload);
-      } else {
-        continue;
-      }
-      if (fin && messageOpcode !== undefined) {
-        return JSON.parse(Buffer.concat(fragments).toString("utf8")) as RpcMessage;
-      }
-    }
+    });
   }
 
-  private async readByte(): Promise<number> {
-    const value = (await this.readBytes(1))[0];
-    if (value === undefined) throw new Error("Codex frame ended before a byte was read");
-    return value;
+  private readByte(): ApplicationEffect<number> {
+    const client = this;
+    return Effect.gen(function* () {
+      const value = (yield* client.readBytes(1))[0];
+      if (value === undefined) return yield* Effect.fail(new Error("Codex frame ended before a byte was read"));
+      return value;
+    });
   }
 
-  private async readBytes(size: number): Promise<Buffer> {
-    while (this.buffer.byteLength < size) {
-      const chunk = await readChunk(this.socket);
-      this.buffer = Buffer.concat([this.buffer, chunk]);
-    }
-    const result = this.buffer.subarray(0, size);
-    this.buffer = this.buffer.subarray(size);
-    return result;
+  private readBytes(size: number): ApplicationEffect<Buffer> {
+    const client = this;
+    return Effect.gen(function* () {
+      while (client.buffer.byteLength < size) {
+        const chunk = yield* fromCodexPromise(() => readChunk(client.socket));
+        client.buffer = Buffer.concat([client.buffer, chunk]);
+      }
+      const result = client.buffer.subarray(0, size);
+      client.buffer = client.buffer.subarray(size);
+      return result;
+    });
   }
 }
 
-async function openSocket(path: string): Promise<Socket> {
+function openSocket(path: string): Effect.Effect<Socket, CodexRpcError, Scope> {
+  return Effect.acquireRelease(
+    fromCodexPromise(() => connectSocket(path)),
+    (socket) => Effect.sync(() => socket.destroy()),
+  );
+}
+
+function connectSocket(path: string): Promise<Socket> {
   const socket = createConnection(path);
   socket.setTimeout(10_000);
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<Socket>((resolve, reject) => {
     const onConnect = () => {
       cleanup();
-      resolve();
+      resolve(socket);
     };
     const onError = (error: Error) => {
       cleanup();
+      socket.destroy();
       reject(error);
     };
     const onTimeout = () => onError(new Error("Codex app-server socket timed out"));
@@ -197,31 +251,44 @@ async function openSocket(path: string): Promise<Socket> {
     socket.once("error", onError);
     socket.once("timeout", onTimeout);
   });
-  return socket;
 }
 
-async function performHandshake(socket: Socket): Promise<{ remaining: Buffer }> {
-  const key = randomBytes(16).toString("base64");
-  socket.write(
-    `GET /rpc HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+function performHandshake(socket: Socket): ApplicationEffect<{ remaining: Buffer }> {
+  return Effect.gen(function* () {
+    const key = randomBytes(16).toString("base64");
+    yield* attemptSync(() =>
+      socket.write(
+        `GET /rpc HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      ),
+    );
+    let buffer = Buffer.alloc(0);
+    while (!buffer.includes(Buffer.from("\r\n\r\n"))) {
+      buffer = Buffer.concat([buffer, yield* fromCodexPromise(() => readChunk(socket))]);
+      if (buffer.byteLength > 65_536)
+        return yield* Effect.fail(new Error("Codex app-server WebSocket handshake is too large"));
+    }
+    const delimiter = buffer.indexOf(Buffer.from("\r\n\r\n"));
+    const header = buffer.subarray(0, delimiter).toString("latin1");
+    const statusLine = header.split("\r\n", 1)[0] ?? "";
+    if (!statusLine.includes(" 101 "))
+      return yield* Effect.fail(new Error(`Codex app-server WebSocket handshake failed: ${statusLine}`));
+    const headers = new Map<string, string>();
+    for (const line of header.split("\r\n").slice(1)) {
+      const separator = line.indexOf(":");
+      if (separator !== -1)
+        headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
+    }
+    const expected = createHash("sha1").update(`${key}${websocketGuid}`).digest("base64");
+    if (headers.get("sec-websocket-accept") !== expected)
+      return yield* Effect.fail(new Error("Invalid Codex WebSocket accept key"));
+    return { remaining: buffer.subarray(delimiter + 4) };
+  });
+}
+
+function fromCodexPromise<A>(evaluate: () => A | PromiseLike<A>): Effect.Effect<A, CodexTransportError> {
+  return fromPromise(evaluate).pipe(
+    Effect.mapError((error) => (error instanceof CodexTransportError ? error : new CodexTransportError(error))),
   );
-  let buffer = Buffer.alloc(0);
-  while (!buffer.includes(Buffer.from("\r\n\r\n"))) {
-    buffer = Buffer.concat([buffer, await readChunk(socket)]);
-    if (buffer.byteLength > 65_536) throw new Error("Codex app-server WebSocket handshake is too large");
-  }
-  const delimiter = buffer.indexOf(Buffer.from("\r\n\r\n"));
-  const header = buffer.subarray(0, delimiter).toString("latin1");
-  const statusLine = header.split("\r\n", 1)[0] ?? "";
-  if (!statusLine.includes(" 101 ")) throw new Error(`Codex app-server WebSocket handshake failed: ${statusLine}`);
-  const headers = new Map<string, string>();
-  for (const line of header.split("\r\n").slice(1)) {
-    const separator = line.indexOf(":");
-    if (separator !== -1) headers.set(line.slice(0, separator).trim().toLowerCase(), line.slice(separator + 1).trim());
-  }
-  const expected = createHash("sha1").update(`${key}${websocketGuid}`).digest("base64");
-  if (headers.get("sec-websocket-accept") !== expected) throw new Error("Invalid Codex WebSocket accept key");
-  return { remaining: buffer.subarray(delimiter + 4) };
 }
 
 function readChunk(socket: Socket): Promise<Buffer> {
@@ -234,7 +301,7 @@ function readChunk(socket: Socket): Promise<Buffer> {
       cleanup();
       reject(error);
     };
-    const onClose = () => onError(new Error("Codex app-server socket closed unexpectedly"));
+    const onClose = () => onError(new CodexTransportError("Codex app-server socket closed unexpectedly"));
     const onTimeout = () => onError(new Error("Codex app-server socket timed out"));
     const cleanup = () => {
       socket.off("data", onData);

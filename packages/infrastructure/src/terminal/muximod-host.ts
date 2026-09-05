@@ -6,7 +6,7 @@ import {
   type CreatePaneInput,
   type HostPaneReference,
   type HostPaneSnapshot,
-  type MuximodHostPort,
+  type MuximodHost,
   type MuximodPaneClassification,
   type MuximodPaneObservation,
   type TerminalHostSnapshot,
@@ -25,7 +25,7 @@ import {
   type TmuxPaneRef,
 } from "./tmux.js";
 
-export class TmuxMuximodHostAdapter implements MuximodHostPort {
+export class TmuxMuximodHostAdapter implements MuximodHost {
   public constructor(
     private readonly adapter: TmuxAdapter,
     private readonly environment: NodeJS.ProcessEnv = process.env,

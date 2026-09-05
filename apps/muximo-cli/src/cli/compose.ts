@@ -6,9 +6,12 @@ import type { Readable } from "node:stream";
 import {
   type DaemonOptions,
   PairDevice,
+  type PairDeviceResult,
+  pairingLayer,
   type ResumeAgentSessionInput,
   RunShell,
   type StartAgentSessionInput,
+  shellLayer,
 } from "@muximo/application";
 import type { ResumeAgentSessionResponse, RunAgentSessionResponse } from "@muximo/contract/api";
 import { AgentSession } from "@muximo/domain";
@@ -196,10 +199,13 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     connect: (socketPath) => MuximodPairingControlAdapter.connect(socketPath),
     logger,
   });
-  const shell = new RunShell({
-    cwd,
-    paneName: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
-    defaultShell: environment.SHELL ?? "sh",
+  const shell = new RunShell();
+  const shellLayerValue = shellLayer({
+    context: {
+      cwd,
+      paneName: environment.MUXIMOD_PANE_NAME ?? environment.MUXIMOD_MANAGED_SESSION_NAME ?? "shell",
+      defaultShell: environment.SHELL ?? "sh",
+    },
     workspace: new MuximodShellWorkspaceResolver({ cwd, environment, api: ensureApi }),
     sessions: new MuximodShellSessionWorktreeLookup(ensureApi),
     process: new ShellProcessAdapter({ environment }),
@@ -208,7 +214,8 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     panes: pane,
   });
   const shellExecutor = {
-    execute: (input: Parameters<RunShell["execute"]>[0]) => Effect.runPromise(shell.execute(input)),
+    execute: (input: Parameters<RunShell["execute"]>[0]) =>
+      Effect.runPromise(shell.execute(input).pipe(Effect.provide(shellLayerValue))),
   };
   const tmuxSession = new TmuxNewSessionService({ environment, tmux });
   const daemonDefaults: DaemonOptions = {
@@ -402,7 +409,10 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
           ? new TerminalPairingPresenter({ out: io.out, input })
           : new BrowserPairingPresenter({ out: io.out, input });
       return {
-        useCase: new PairDevice(control, presenter),
+        useCase: {
+          execute: (input): Effect.Effect<PairDeviceResult, Error, never> =>
+            new PairDevice().execute(input).pipe(Effect.provide(pairingLayer({ control, presenter }))),
+        },
         close: async () => {
           if (presenter instanceof BrowserPairingPresenter) await presenter.close();
           control.close();

@@ -7,7 +7,7 @@ import type {
   ApprovedDevice,
   PairDeviceInput,
   PairingClaim,
-  PairingControlPort,
+  PairingControl,
   PairingOffer,
 } from "@muximo/application";
 import type { AuthSessionResponse } from "@muximo/contract/api";
@@ -58,7 +58,7 @@ export class PairingControlError extends Error {
 }
 
 /** Unix-socket adapter for muximod's private pairing and pane control protocol. */
-export class MuximodPairingControlAdapter implements PairingControlPort {
+export class MuximodPairingControlAdapter implements PairingControl {
   private readonly reader: Interface;
   private readonly responses: AsyncIterableIterator<string>;
   private requestQueue: Promise<void> = Promise.resolve();

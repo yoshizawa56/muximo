@@ -7,6 +7,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect, Stream } from "effect";
 import { describe, it } from "vitest";
 import {
   OpenCodeClient,
@@ -157,7 +158,7 @@ const sseTable: OperationTable<undefined, "default", SseInput, SseResult, EmptyC
     let endedWithStreamClosed = false;
     let errorStatus: number | undefined;
     try {
-      for await (const event of client.events()) events.push(event);
+      await Effect.runPromise(Stream.runForEach(client.events(), (event) => Effect.sync(() => events.push(event))));
     } catch (error) {
       if (error instanceof OpenCodeStreamClosedError) {
         endedWithStreamClosed = true;
@@ -345,31 +346,31 @@ const endpointTable: OperationTable<undefined, "default", EndpointInput, Endpoin
     try {
       switch (input.kind) {
         case "health":
-          value = await client.health();
+          value = await Effect.runPromise(client.health());
           break;
         case "create":
-          value = await client.createSession(input.title);
+          value = await Effect.runPromise(client.createSession(input.title));
           break;
         case "abort":
-          value = await client.abortSession(input.sessionId!);
+          value = await Effect.runPromise(client.abortSession(input.sessionId!));
           break;
         case "permission":
-          value = await client.replyPermission(input.sessionId!, input.permissionId!, "allow", true);
+          value = await Effect.runPromise(client.replyPermission(input.sessionId!, input.permissionId!, "allow", true));
           break;
         case "fork":
-          value = await client.forkSession(input.sessionId!);
+          value = await Effect.runPromise(client.forkSession(input.sessionId!));
           break;
         case "status":
-          value = await client.sessionStatus(input.sessionId!);
+          value = await Effect.runPromise(client.sessionStatus(input.sessionId!));
           break;
         case "title":
-          value = await client.setSessionTitle(input.sessionId!, input.title!);
+          value = await Effect.runPromise(client.setSessionTitle(input.sessionId!, input.title!));
           break;
         case "directory":
-          value = await client.createSession();
+          value = await Effect.runPromise(client.createSession());
           break;
         case "timeout":
-          await client.createSession();
+          await Effect.runPromise(client.createSession());
           value = { error: "request unexpectedly completed" };
           break;
       }

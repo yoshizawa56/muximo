@@ -6,6 +6,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect, Stream } from "effect";
 import { describe, it } from "vitest";
 import type { AgentObservation } from "../index.js";
 import { type OpenCodeEvent, type OpenCodeSessionStatus, OpenCodeStreamClosedError } from "./client.js";
@@ -448,51 +449,54 @@ function createFakeState(): FakeState {
 
 function createFakeClient(state: FakeState): OpenCodeMonitorClient {
   return {
-    async *events(signal?: AbortSignal) {
-      state.started = true;
-      if (signal) {
-        state.streamSignals += 1;
-        signal.addEventListener("abort", () => {
-          state.streamAborted = true;
-        });
-      }
-      if (state.streamFailures > 0) {
-        state.streamFailures -= 1;
-        throw new OpenCodeStreamClosedError("test stream failure");
-      }
-      let index = state.drainedIndex;
-      for (;;) {
-        while (index < state.queue.length) {
-          state.drainedIndex = index + 1;
-          yield state.queue[index];
-          index += 1;
-        }
-        if (state.endAfterDrain) {
-          state.generatorEnded = true;
-          throw new OpenCodeStreamClosedError("test stream ended");
-        }
-        await sleep(1);
-      }
+    events(signal) {
+      return Stream.fromAsyncIterable(fakeEvents(state, signal), (error) =>
+        error instanceof OpenCodeStreamClosedError ? error : new OpenCodeStreamClosedError(String(error)),
+      );
     },
-    async sessionExists() {
-      return state.sessionExists;
-    },
-    async sessionStatus() {
-      return state.sessionStatus;
-    },
-    async abortSession() {
-      state.abortCalls += 1;
-      state.aborted = true;
-      return true;
-    },
-    async replyPermission(sessionId: string, permissionId: string, response: "allow" | "deny", remember: boolean) {
-      state.permissionCalls.push({ sessionId, permissionId, response, remember });
-      return true;
-    },
-    async forkSession() {
-      return "forked-session";
-    },
+    sessionExists: () => Effect.succeed(state.sessionExists),
+    sessionStatus: () => Effect.succeed(state.sessionStatus),
+    abortSession: () =>
+      Effect.sync(() => {
+        state.abortCalls += 1;
+        state.aborted = true;
+        return true;
+      }),
+    replyPermission: (sessionId: string, permissionId: string, response: "allow" | "deny", remember: boolean) =>
+      Effect.sync(() => {
+        state.permissionCalls.push({ sessionId, permissionId, response, remember });
+        return true;
+      }),
+    forkSession: () => Effect.succeed("forked-session"),
   };
+}
+
+async function* fakeEvents(state: FakeState, signal?: AbortSignal): AsyncGenerator<OpenCodeEvent> {
+  state.started = true;
+  if (signal) {
+    state.streamSignals += 1;
+    signal.addEventListener("abort", () => {
+      state.streamAborted = true;
+    });
+  }
+  if (state.streamFailures > 0) {
+    state.streamFailures -= 1;
+    throw new OpenCodeStreamClosedError("test stream failure");
+  }
+  let index = state.drainedIndex;
+  for (;;) {
+    while (index < state.queue.length) {
+      state.drainedIndex = index + 1;
+      const event = state.queue[index];
+      if (event) yield event;
+      index += 1;
+    }
+    if (state.endAfterDrain) {
+      state.generatorEnded = true;
+      throw new OpenCodeStreamClosedError("test stream ended");
+    }
+    await sleep(1);
+  }
 }
 
 async function settle(state: FakeState): Promise<void> {

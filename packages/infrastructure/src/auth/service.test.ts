@@ -6,8 +6,9 @@ import {
   type AuthPairingPayload,
   AuthService,
   type AuthSessionResponse,
+  type AuthStore as AuthStoreCapability,
   AuthStoreError,
-  type AuthStorePort,
+  authLayer,
 } from "@muximo/application";
 import { canonicalPublicJwk, pairingClaimMessage, sessionMessage } from "@muximo/domain";
 import {
@@ -82,27 +83,35 @@ type AuthContext = Pick<
 const authFixture = async (): Promise<FixtureHandle<AuthFixture>> => {
   const database = createAgentDatabase(":memory:", { schemaSynchronizer: createMigrationSchemaSynchronizer() });
   const store = new AuthStore(database.db, database.sqlite);
+  const challenges = new MemoryAuthChallengeStore();
+  const rateLimits = new MemoryAuthRateLimitStore();
+  const wsTickets = new MemoryAuthWsTicketStore();
   const disconnectDeviceCalls: string[] = [];
   const disconnectSessionCalls: string[] = [];
+  const clock = { now: () => new Date("2099-08-15T00:00:00.000Z") };
+  const connections = {
+    disconnectDevice: (deviceId: string) =>
+      Effect.sync(() => {
+        disconnectDeviceCalls.push(deviceId);
+      }),
+    disconnectSession: (sessionId: string) =>
+      Effect.sync(() => {
+        disconnectSessionCalls.push(sessionId);
+      }),
+  };
   const auth = new AuthService({
-    store,
     serverId: store.serverId,
-    crypto: nodeAuthCrypto,
-    clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
-    claimSink: { publish: () => Effect.succeed(undefined) },
-    challenges: new MemoryAuthChallengeStore(),
-    rateLimits: new MemoryAuthRateLimitStore(),
-    wsTickets: new MemoryAuthWsTicketStore(),
-    connections: {
-      disconnectDevice: (deviceId) =>
-        Effect.sync(() => {
-          disconnectDeviceCalls.push(deviceId);
-        }),
-      disconnectSession: (sessionId) =>
-        Effect.sync(() => {
-          disconnectSessionCalls.push(sessionId);
-        }),
-    },
+    layer: authLayer({
+      store,
+      serverId: store.serverId,
+      crypto: nodeAuthCrypto,
+      clock,
+      claimSink: { publish: () => Effect.succeed(undefined) },
+      challenges,
+      rateLimits,
+      wsTickets,
+      connections,
+    }),
   });
   const keyPair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
   const exported = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
@@ -368,19 +377,25 @@ type RevokeContext = {
 const createRevokeFixture = (storeFails: boolean): FixtureHandle<RevokeFixture> => {
   const events: string[] = [];
   const state: RevokeState = { credentialActive: true, connectionActive: true };
+  const store = createRevokeStore(events, state, storeFails);
+  const connections = {
+    disconnectDevice: (deviceId: string) => Effect.sync(() => disconnectConnection(events, state, "device", deviceId)),
+    disconnectSession: (sessionId: string) =>
+      Effect.sync(() => disconnectConnection(events, state, "session", sessionId)),
+  };
   const auth = new AuthService({
-    store: createRevokeStore(events, state, storeFails),
     serverId: "server-1",
-    crypto: nodeAuthCrypto,
-    clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
-    claimSink: { publish: () => Effect.succeed(undefined) },
-    challenges: new MemoryAuthChallengeStore(),
-    rateLimits: new MemoryAuthRateLimitStore(),
-    wsTickets: new MemoryAuthWsTicketStore(),
-    connections: {
-      disconnectDevice: (deviceId) => Effect.sync(() => disconnectConnection(events, state, "device", deviceId)),
-      disconnectSession: (sessionId) => Effect.sync(() => disconnectConnection(events, state, "session", sessionId)),
-    },
+    layer: authLayer({
+      store,
+      serverId: "server-1",
+      crypto: nodeAuthCrypto,
+      clock: { now: () => new Date("2099-08-15T00:00:00.000Z") },
+      claimSink: { publish: () => Effect.succeed(undefined) },
+      challenges: new MemoryAuthChallengeStore(),
+      rateLimits: new MemoryAuthRateLimitStore(),
+      wsTickets: new MemoryAuthWsTicketStore(),
+      connections,
+    }),
   });
   return { fixture: { auth, events, state } };
 };
@@ -459,7 +474,7 @@ describe("authentication revocation ordering", () => {
   runOperationTable(it as unknown as TestRegistrar, revokeTable);
 });
 
-function createRevokeStore(events: string[], state: RevokeState, storeFails: boolean): AuthStorePort {
+function createRevokeStore(events: string[], state: RevokeState, storeFails: boolean): AuthStoreCapability {
   const unused = (): ApplicationEffect<never> => Effect.fail(new Error("unused authentication store operation"));
   const persist = (target: RevokeTarget, id: string): ApplicationEffect<void> =>
     Effect.sync(() => {

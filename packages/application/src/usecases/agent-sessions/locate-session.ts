@@ -1,29 +1,21 @@
 import { AgentSession } from "@muximo/domain";
 import { Effect } from "effect";
-import type {
-  ManagedAgentSessionRepository,
-  WorkspaceResolverPort,
-  WorkspaceScope,
-} from "../../ports/agent-sessions.js";
+import type { WorkspaceScope } from "../../ports/agent-sessions.js";
 import { ApplicationFailure } from "../../ports/application.js";
+import { ManagedAgentSessionRepositoryService, WorkspaceResolverService } from "./agent-session-services.js";
 
 export type LocateAgentSessionInput = {
   reference: string;
   workspaceScope: WorkspaceScope;
 };
 
-export type LocateAgentSessionDependencies = {
-  sessions: ManagedAgentSessionRepository;
-  workspace: WorkspaceResolverPort;
-};
-
 /** Resolves a workspace/name reference without touching host APIs. */
 export class LocateAgentSession {
-  public constructor(private readonly deps: LocateAgentSessionDependencies) {}
-
   public readonly execute = Effect.fn("AgentSessions.locate")(
     { self: this },
     function* (this: LocateAgentSession, input: LocateAgentSessionInput) {
+      const sessionsRepository = yield* ManagedAgentSessionRepositoryService;
+      const workspace = yield* WorkspaceResolverService;
       const separatorIndex = input.reference.indexOf("/");
       if (input.workspaceScope === "current" && separatorIndex >= 0) {
         return yield* Effect.fail(
@@ -40,8 +32,8 @@ export class LocateAgentSession {
           new ApplicationFailure("invalid_session_reference", `invalid session reference: ${input.reference}`),
         );
 
-      const sessions = yield* this.deps.sessions.list(
-        input.workspaceScope === "all" ? undefined : (yield* this.deps.workspace.resolveCurrent()).id,
+      const sessions = yield* sessionsRepository.list(
+        input.workspaceScope === "all" ? undefined : (yield* workspace.resolveCurrent()).id,
       );
       const scoped = sessions.filter(
         (session) => !selector || session.workspaceId === selector || session.workspaceName === selector,

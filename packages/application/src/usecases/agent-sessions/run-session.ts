@@ -5,71 +5,63 @@ import type {
   AgentExecutionReceipt,
   CleanupResult,
   CompleteAgentSessionInput,
-  HookPort,
-  ManagedAgentSessionRepository,
-  PanePublicationPort,
-  ProcessObservationPort,
-  RemoteSessionPort,
   RunAgentSessionResult,
-  SessionAuditPort,
-  SessionCleanupConfirmationPort,
-  SessionClock,
   SessionIdentityUpdate,
-  SessionLauncherPort,
-  SessionLogger,
-  SessionNamingPort,
-  SessionResourcePort,
   StartAgentSessionInput,
-  WorkspaceResolverPort,
-  WorktreePort,
 } from "../../ports/agent-sessions.js";
 import { ApplicationFailure } from "../../ports/application.js";
+import {
+  type AgentSessionServices,
+  HookService,
+  ManagedAgentSessionRepositoryService,
+  PanePublicationService,
+  ProcessObservationService,
+  RemoteSessionService,
+  SessionAuditService,
+  SessionCleanupConfirmationService,
+  SessionClockService,
+  SessionLauncherService,
+  SessionLoggerService,
+  SessionNamingService,
+  SessionResourceService,
+  WorkspaceResolverService,
+  WorktreeService,
+} from "./agent-session-services.js";
 import { checkAborted, updateAgentSession } from "./session-updates.js";
-
-export type RunAgentSessionDependencies = {
-  sessions: ManagedAgentSessionRepository;
-  workspace: WorkspaceResolverPort;
-  naming: SessionNamingPort;
-  hooks: HookPort;
-  worktrees: WorktreePort;
-  launcher: SessionLauncherPort;
-  remote: RemoteSessionPort;
-  resources: SessionResourcePort;
-  panes: PanePublicationPort;
-  audit: SessionAuditPort;
-  clock: SessionClock;
-  logger: SessionLogger;
-  confirmCleanup: SessionCleanupConfirmationPort;
-  process: ProcessObservationPort;
-};
 
 /** Prepares, completes, and optionally removes one host-owned agent session. */
 export class RunAgentSession {
-  private readonly completions = new Map<string, Effect.Effect<RunAgentSessionResult, Error>>();
+  private readonly completions = new Map<string, Effect.Effect<RunAgentSessionResult, Error, AgentSessionServices>>();
   private readonly preparing = new Set<string>();
   private readonly recovering = new Set<string>();
   private readonly recoveringExecutions = new Set<string>();
 
-  public constructor(private readonly deps: RunAgentSessionDependencies) {}
-
   public readonly prepare = Effect.fn("AgentSessions.prepare")(
     { self: this },
     function* (this: RunAgentSession, input: StartAgentSessionInput, signal?: AbortSignal) {
-      const deps = this.deps;
       const self = this;
+      const loggerService = yield* SessionLoggerService;
+      const workspaceResolver = yield* WorkspaceResolverService;
+      const naming = yield* SessionNamingService;
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const hooks = yield* HookService;
+      const worktrees = yield* WorktreeService;
+      const clock = yield* SessionClockService;
+      const audit = yield* SessionAuditService;
+      const launcher = yield* SessionLauncherService;
       yield* checkAborted(signal);
-      const logger = deps.logger.child({ operation: "run", backend: input.backend });
+      const logger = loggerService.child({ operation: "run", backend: input.backend });
       logger.debug("session.starting", {
         useWorktree: input.useWorktree,
         backendArgumentCount: input.backendArgs.length,
       });
 
-      const workspace = yield* deps.workspace.resolveCurrent({ workspace: input.workspace, cwd: input.cwd });
+      const workspace = yield* workspaceResolver.resolveCurrent({ workspace: input.workspace, cwd: input.cwd });
       yield* checkAborted(signal);
-      const resolvedName = yield* deps.naming.resolveName(workspace.id, input.name, input.backend);
-      const name = AgentSession.normalizeName(resolvedName);
+      const resolvedName = yield* naming.resolveName(workspace.id, input.name, input.backend);
+      const name = yield* attemptSync(() => AgentSession.normalizeName(resolvedName));
       yield* checkAborted(signal);
-      const existing = yield* deps.sessions.findByName(workspace.id, name);
+      const existing = yield* sessions.findByName(workspace.id, name);
       if (existing && !(yield* self.recoverAbandonedExecution(existing, signal))) {
         return yield* Effect.fail(
           new ApplicationFailure("agent_session_name_exists", `session name already exists in this workspace: ${name}`),
@@ -80,28 +72,28 @@ export class RunAgentSession {
       const setupHook = input.setupHookExplicit
         ? input.setupHook === undefined
           ? undefined
-          : yield* deps.hooks.resolveHook(input.setupHook, workspace.rootPath)
+          : yield* hooks.resolveHook(input.setupHook, workspace.rootPath)
         : input.useWorktree
-          ? yield* deps.hooks.resolveStoredHook(workspace.setupScriptPath)
+          ? yield* hooks.resolveStoredHook(workspace.setupScriptPath)
           : undefined;
       const cleanupHook = input.cleanupHookExplicit
         ? input.cleanupHook === undefined
           ? undefined
-          : yield* deps.hooks.resolveHook(input.cleanupHook, workspace.rootPath)
+          : yield* hooks.resolveHook(input.cleanupHook, workspace.rootPath)
         : input.useWorktree
-          ? yield* deps.hooks.resolveStoredHook(workspace.cleanupScriptPath)
+          ? yield* hooks.resolveStoredHook(workspace.cleanupScriptPath)
           : undefined;
       yield* checkAborted(signal);
       let session: AgentSession | undefined;
       let inserted = false;
       let launchPrepared = false;
       const body = Effect.gen(function* () {
-        const worktree = input.useWorktree ? yield* deps.worktrees.create(workspace, name, input.worktreeRoot) : {};
+        const worktree = input.useWorktree ? yield* worktrees.create(workspace, name, input.worktreeRoot) : {};
         yield* checkAborted(signal);
-        const now = deps.clock.now();
+        const now = clock.now();
         session = yield* attemptSync(() =>
           AgentSession.create({
-            id: AgentSessionId.create(deps.clock.id()),
+            id: AgentSessionId.create(clock.id()),
             name,
             backend: input.backend,
             status: "starting",
@@ -114,7 +106,7 @@ export class RunAgentSession {
             ...(cleanupHook === undefined ? {} : { cleanupHook }),
             setupRan: false,
             resuming: false,
-            executionId: deps.clock.id(),
+            executionId: clock.id(),
             executionStartedAt: now,
             ...(input.executionOwnerPid === undefined
               ? {}
@@ -123,11 +115,11 @@ export class RunAgentSession {
           }),
         );
 
-        yield* deps.sessions.insert(session);
+        yield* sessions.insert(session);
         inserted = true;
         self.preparing.add(session.id);
         yield* checkAborted(signal);
-        yield* deps.audit.record("agent_session.created", session.id, {
+        yield* audit.record("agent_session.created", session.id, {
           name: session.name,
           backend: session.backend,
           workspace: session.workspaceRoot,
@@ -135,13 +127,13 @@ export class RunAgentSession {
 
         session = yield* self.persist(session, { status: "setup" });
         yield* checkAborted(signal);
-        if (!(yield* deps.worktrees.copyFiles(session))) {
+        if (!(yield* worktrees.copyFiles(session))) {
           yield* self.markSetupFailed(session);
           return yield* Effect.fail(new ApplicationFailure("worktree_file_copy_failed", "worktree file copy failed"));
         }
         yield* checkAborted(signal);
 
-        const setup = yield* deps.hooks.run(session, "setup");
+        const setup = yield* hooks.run(session, "setup");
         yield* checkAborted(signal);
         session = yield* self.persistHookUpdate(session, setup.sessionUpdate);
         if (!setup.success) {
@@ -155,7 +147,7 @@ export class RunAgentSession {
           status: "ready",
         });
         yield* checkAborted(signal);
-        const baseline = yield* deps.launcher.captureBaseline(session);
+        const baseline = yield* launcher.captureBaseline(session);
         yield* checkAborted(signal);
         if (!baseline.success) {
           yield* self.markSetupFailed(session);
@@ -166,7 +158,7 @@ export class RunAgentSession {
 
         session = yield* self.persist(session, { status: "running", backendSessionId: clearPatch });
         yield* checkAborted(signal);
-        const preparation = yield* deps.launcher.prepareLaunch(session, input.backendArgs, false, signal);
+        const preparation = yield* launcher.prepareLaunch(session, input.backendArgs, false, signal);
         launchPrepared = true;
         yield* checkAborted(signal);
         session = yield* self.persistIdentityUpdate(session, preparation.sessionUpdate);
@@ -193,7 +185,11 @@ export class RunAgentSession {
   private readonly recoverAbandonedExecution = Effect.fn("AgentSessions.recoverAbandoned")(
     { self: this },
     function* (this: RunAgentSession, session: AgentSession, signal?: AbortSignal) {
-      const deps = this.deps;
+      const processObservation = yield* ProcessObservationService;
+      const clock = yield* SessionClockService;
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const logger = yield* SessionLoggerService;
+      const launcher = yield* SessionLauncherService;
       const self = this;
       yield* checkAborted(signal);
       if (
@@ -224,11 +220,11 @@ export class RunAgentSession {
           new ApplicationFailure("agent_session_being_finalized", `session '${session.name}' is being finalized`),
         );
       }
-      const providerLiveness = yield* deps.process.observe(session.executionPid, session.executionStartedAt);
+      const providerLiveness = yield* processObservation.observe(session.executionPid, session.executionStartedAt);
       const ownerLiveness =
         session.executionOwnerPid === undefined
           ? "dead"
-          : yield* deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
+          : yield* processObservation.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
       yield* checkAborted(signal);
       if (providerLiveness !== "dead" || ownerLiveness !== "dead") {
         return false;
@@ -250,32 +246,32 @@ export class RunAgentSession {
           session.update({
             status: "recovering",
             resuming: false,
-            lastActivityAt: deps.clock.now(),
+            lastActivityAt: clock.now(),
           }),
         );
-        claimed = yield* deps.sessions.claimAbandonedExecution({
+        claimed = yield* sessions.claimAbandonedExecution({
           id: session.id,
           executionId,
           expectedExecutionPid: executionPid,
           expectedExecutionStartedAt: executionStartedAt,
           expectedExecutionOwnerPid: session.executionOwnerPid ?? null,
           expectedExecutionOwnerStartedAt: session.executionOwnerStartedAt ?? null,
-          lastActivityAt: deps.clock.now(),
+          lastActivityAt: clock.now(),
         });
         if (!claimed) return false;
         // Once recovery is claimed in the database, finish it even if the
         // caller's preparation signal is cancelled. Leaving the record in
         // `recovering` would permanently block the session name.
-        deps.logger.debug("session.abandoned_execution_recovering", {
+        logger.debug("session.abandoned_execution_recovering", {
           sessionId: session.id,
           sessionName: session.name,
           executionId,
           executionPid: session.executionPid,
           executionOwnerPid: session.executionOwnerPid,
         });
-        yield* deps.launcher.disposeLaunch(recoveringSession).pipe(
+        yield* launcher.disposeLaunch(recoveringSession).pipe(
           Effect.catch((error) => {
-            deps.logger.debug("session.abandoned_execution_disposal_failed", {
+            logger.debug("session.abandoned_execution_disposal_failed", {
               sessionId: session.id,
               message: errorMessage(error),
             });
@@ -318,7 +314,7 @@ export class RunAgentSession {
                   session.update({
                     status: "recovering",
                     resuming: false,
-                    lastActivityAt: deps.clock.now(),
+                    lastActivityAt: clock.now(),
                   }),
                 ),
               );
@@ -355,7 +351,10 @@ export class RunAgentSession {
   private readonly completeOnce = Effect.fn("AgentSessions.completeRunOnce")(
     { self: this },
     function* (this: RunAgentSession, input: CompleteAgentSessionInput) {
-      const deps = this.deps;
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const launcher = yield* SessionLauncherService;
+      const panes = yield* PanePublicationService;
+      const logger = yield* SessionLoggerService;
       const self = this;
       if (this.recoveringExecutions.has(input.executionId)) {
         return yield* Effect.fail(
@@ -365,11 +364,11 @@ export class RunAgentSession {
           ),
         );
       }
-      const receipt = yield* deps.sessions.findExecutionReceipt(input.executionId);
+      const receipt = yield* sessions.findExecutionReceipt(input.executionId);
       if (receipt) return yield* this.fromReceipt(receipt, input);
 
       const completeSessionId = yield* attemptSync(() => AgentSessionId.create(input.agentSessionId));
-      let session = yield* deps.sessions
+      let session = yield* sessions
         .findById(completeSessionId)
         .pipe(
           Effect.flatMap((found) =>
@@ -390,9 +389,9 @@ export class RunAgentSession {
         );
 
       const published = Effect.gen(function* () {
-        const sessionUpdate = yield* deps.launcher.completeLaunch(session, input.process);
+        const sessionUpdate = yield* launcher.completeLaunch(session, input.process);
         session = yield* self.persistIdentityUpdate(session, sessionUpdate);
-        yield* deps.panes.publish(
+        yield* panes.publish(
           session,
           input.process.interrupted || input.process.code === 130 || input.process.code === 143
             ? "stopped"
@@ -409,11 +408,11 @@ export class RunAgentSession {
             return yield* Effect.fail(error);
           }),
         ),
-        Effect.ensuring(Effect.ignore(deps.panes.release(session, input.hostPaneId))),
+        Effect.ensuring(Effect.ignore(panes.release(session, input.hostPaneId))),
       );
 
       const result = yield* self.finalize(session, input.process);
-      yield* deps.sessions.saveExecutionReceipt({
+      yield* sessions.saveExecutionReceipt({
         operation: "run",
         agentSessionId: input.agentSessionId,
         executionId: input.executionId,
@@ -421,7 +420,7 @@ export class RunAgentSession {
         session: result.session,
         cleanup: result.cleanup,
       });
-      deps.logger.debug("session.finished", {
+      logger.debug("session.finished", {
         status: result.session.status,
         cleanup: result.cleanup.disposition,
       });
@@ -454,8 +453,9 @@ export class RunAgentSession {
       this: RunAgentSession,
       session: AgentSession,
       process: RunAgentSessionResult["process"],
-    ): Effect.fn.Return<RunAgentSessionResult, Error> {
-      const deps = this.deps;
+    ): Effect.fn.Return<RunAgentSessionResult, Error, AgentSessionServices> {
+      const worktrees = yield* WorktreeService;
+      const confirmCleanup = yield* SessionCleanupConfirmationService;
       const next = yield* this.persist(session, {
         lastExitStatus: process.code,
         executionId: clearPatch,
@@ -476,8 +476,8 @@ export class RunAgentSession {
         return { process, session: next, cleanup: { disposition: "not_requested", reason: "no_worktree" } };
       }
 
-      const dirty = yield* deps.worktrees.hasChanges(next);
-      if (!(yield* deps.confirmCleanup.confirm(next, dirty))) {
+      const dirty = yield* worktrees.hasChanges(next);
+      if (!(yield* confirmCleanup.confirm(next, dirty))) {
         return { process, session: next, cleanup: { disposition: "retained", reason: "cleanup_declined" } };
       }
       const cleanup = yield* this.removeResources(next, dirty);
@@ -492,27 +492,32 @@ export class RunAgentSession {
       session: AgentSession,
       force: boolean,
       archiveRemote = true,
-    ): Effect.fn.Return<CleanupResult, Error> {
-      const deps = this.deps;
-      if (archiveRemote && !(yield* deps.remote.archive(session))) {
+    ): Effect.fn.Return<CleanupResult, Error, AgentSessionServices> {
+      const remote = yield* RemoteSessionService;
+      const hooks = yield* HookService;
+      const worktrees = yield* WorktreeService;
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const audit = yield* SessionAuditService;
+      const resources = yield* SessionResourceService;
+      if (archiveRemote && !(yield* remote.archive(session))) {
         return { disposition: "failed", reason: "remote_archive_failed" };
       }
-      const hook = yield* deps.hooks.run(session, "cleanup");
+      const hook = yield* hooks.run(session, "cleanup");
       session = yield* this.persistHookUpdate(session, hook.sessionUpdate);
       if (!hook.success) {
-        const restored = !archiveRemote || (yield* deps.remote.restore(session));
+        const restored = !archiveRemote || (yield* remote.restore(session));
         return { disposition: "failed", reason: restored ? "cleanup_hook_failed" : "remote_restore_failed" };
       }
-      const worktree = yield* deps.worktrees.remove(session, force);
+      const worktree = yield* worktrees.remove(session, force);
       if (worktree.disposition !== "removed") {
-        const restored = !archiveRemote || (yield* deps.remote.restore(session));
+        const restored = !archiveRemote || (yield* remote.restore(session));
         return restored ? worktree : { disposition: "failed", reason: "remote_restore_failed" };
       }
-      yield* deps.sessions.delete(session.id);
-      yield* deps.audit.record("agent_session.deleted", session.id, { name: session.name });
-      yield* deps.hooks.removeOutputs(session);
-      const remaining = yield* deps.sessions.list(session.workspaceId);
-      yield* deps.resources.releaseIfUnused(session, remaining);
+      yield* sessions.delete(session.id);
+      yield* audit.record("agent_session.deleted", session.id, { name: session.name });
+      yield* hooks.removeOutputs(session);
+      const remaining = yield* sessions.list(session.workspaceId);
+      yield* resources.releaseIfUnused(session, remaining);
       return worktree;
     },
   );
@@ -520,12 +525,13 @@ export class RunAgentSession {
   private readonly cleanupFailedStartup = Effect.fn("AgentSessions.cleanupFailedStartup")(
     { self: this },
     function* (this: RunAgentSession, session: AgentSession, launchPrepared: boolean) {
-      const deps = this.deps;
+      const launcher = yield* SessionLauncherService;
+      const logger = yield* SessionLoggerService;
       const self = this;
       if (launchPrepared) {
-        yield* deps.launcher.disposeLaunch(session).pipe(
+        yield* launcher.disposeLaunch(session).pipe(
           Effect.catch((error) => {
-            deps.logger.debug("session.startup_launch_cleanup_failed", { message: errorMessage(error) });
+            logger.debug("session.startup_launch_cleanup_failed", { message: errorMessage(error) });
             return Effect.succeed(undefined);
           }),
         );
@@ -543,11 +549,11 @@ export class RunAgentSession {
         });
         const cleanup = yield* self.removeResources(failed, true, Boolean(failed.backendSessionId));
         if (cleanup.disposition !== "removed") {
-          deps.logger.debug("session.startup_cleanup_failed", { reason: cleanup.reason });
+          logger.debug("session.startup_cleanup_failed", { reason: cleanup.reason });
         }
       }).pipe(
         Effect.catch((error) => {
-          deps.logger.debug("session.startup_cleanup_failed", { message: errorMessage(error) });
+          logger.debug("session.startup_cleanup_failed", { message: errorMessage(error) });
           return Effect.succeed(undefined);
         }),
       );
@@ -572,8 +578,9 @@ export class RunAgentSession {
   private readonly persist = Effect.fn("AgentSessions.persistRun")(
     { self: this },
     function* (this: RunAgentSession, session: AgentSession, input: AgentSessionUpdateInput) {
-      const next = yield* updateAgentSession(session, input, this.deps.clock);
-      yield* this.deps.sessions.update(next);
+      const sessions = yield* ManagedAgentSessionRepositoryService;
+      const next = yield* updateAgentSession(session, input);
+      yield* sessions.update(next);
       return next;
     },
   );

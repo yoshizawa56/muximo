@@ -1,17 +1,18 @@
 import { Effect } from "effect";
 import { DaemonHealthError, type DaemonOptions } from "../../ports/daemon.js";
-import { type DaemonLifecycleDependencies, terminateQuietly, waitForHealthyOrExit } from "./policy.js";
+import { DaemonClockService, DaemonLifecycleConfigService, DaemonRuntimeService } from "./daemon-services.js";
+import { terminateQuietly, waitForHealthyOrExit } from "./policy.js";
 
 export class EnsureDaemon {
-  public constructor(private readonly dependencies: DaemonLifecycleDependencies) {}
-
   public readonly execute = Effect.fn("Daemon.ensure")(
     { self: this },
     function* (this: EnsureDaemon, options: DaemonOptions) {
-      const dependencies = this.dependencies;
-      const healthCheckStartedAt = dependencies.clock.now();
-      const record = yield* dependencies.runtime.readPidRecord(options.pidFile);
-      if (yield* dependencies.runtime.isHealthy(options, record?.pid)) {
+      const runtime = yield* DaemonRuntimeService;
+      const clock = yield* DaemonClockService;
+      const config = yield* DaemonLifecycleConfigService;
+      const healthCheckStartedAt = clock.now();
+      const record = yield* runtime.readPidRecord(options.pidFile);
+      if (yield* runtime.isHealthy(options, record?.pid)) {
         return {
           state: "already-running",
           host: record?.host ?? options.host,
@@ -19,19 +20,18 @@ export class EnsureDaemon {
         } as const;
       }
 
-      if (record && (yield* dependencies.runtime.isAlive(record.pid))) {
+      if (record && (yield* runtime.isAlive(record.pid))) {
         return yield* Effect.fail(
           new DaemonHealthError("pid_unhealthy", options, { startedAt: healthCheckStartedAt, pid: record.pid }),
         );
       }
 
-      const startupStartedAt = dependencies.clock.now();
-      const child = yield* dependencies.runtime.spawn(options);
+      const startupStartedAt = clock.now();
+      const child = yield* runtime.spawn(options);
       const startup = yield* waitForHealthyOrExit(
-        () => dependencies.runtime.isHealthy(options, child.pid),
+        () => runtime.isHealthy(options, child.pid),
         child,
-        dependencies.lifecycleTimeoutMs,
-        dependencies,
+        config.lifecycleTimeoutMs,
       );
       if (startup.kind === "exited") {
         return yield* Effect.fail(

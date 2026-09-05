@@ -8,10 +8,11 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { Effect } from "effect";
+import { Effect, type Layer } from "effect";
 import { describe, it } from "vitest";
 import type { ShellProcessInput } from "../../ports/shell.js";
 import { RunShell, type RunShellResult } from "./run-shell.js";
+import { type ShellHook, type ShellServices, shellLayer } from "./shell-services.js";
 
 type ShellFixture = {
   workspaceRoot: string;
@@ -19,6 +20,7 @@ type ShellFixture = {
   events: string[];
   shellInputs: ShellProcessInput[];
   exitCode: number;
+  layer: Layer.Layer<ShellServices>;
   service: RunShell;
 };
 
@@ -203,13 +205,15 @@ const table: OperationTable<ShellFixture, ShellFixtureKey, Input, ShellResult, S
   cases,
   execute: (fixture, input) =>
     Effect.gen(function* () {
-      const result = yield* fixture.service.execute({
-        shell: input.shell,
-        command: [],
-        exitAfterCommand: false,
-        worktree: true,
-        worktreeName: "review",
-      });
+      const result = yield* fixture.service
+        .execute({
+          shell: input.shell,
+          command: [],
+          exitAfterCommand: false,
+          worktree: true,
+          worktreeName: "review",
+        })
+        .pipe(Effect.provide(fixture.layer));
       return {
         process: result.process,
         events: [...fixture.events],
@@ -245,9 +249,10 @@ function createShellFixture(
     events,
     shellInputs: [],
     exitCode,
+    layer: undefined as unknown as Layer.Layer<ShellServices>,
     service: undefined as unknown as RunShell,
   };
-  fixture.service = new RunShell({
+  const dependencies = {
     cwd: workspaceRoot,
     paneName: "shell-pane",
     defaultShell: "/bin/zsh",
@@ -262,7 +267,7 @@ function createShellFixture(
       findWorktreePath: () => Effect.succeed(workspaceRoot),
     },
     process: {
-      run: (input) =>
+      run: (input: ShellProcessInput) =>
         Effect.sync(() => {
           fixture.shellInputs.push({ ...input, args: [...input.args] });
           record("shell");
@@ -297,7 +302,7 @@ function createShellFixture(
           record(value === "setup-hook" ? "resolve-setup" : "resolve-cleanup");
           return value;
         }),
-      runShell: (input) =>
+      runShell: (input: Parameters<ShellHook["runShell"]>[0]) =>
         Effect.sync(() => {
           record(`${input.kind}-hook`);
           return input.kind === "setup" ? (behavior.setupHook ?? true) : (behavior.cleanupHook ?? true);
@@ -307,7 +312,17 @@ function createShellFixture(
       markShell: () => record("mark-shell"),
       restoreShell: () => record("restore-shell"),
     },
+  };
+  fixture.layer = shellLayer({
+    context: { cwd: workspaceRoot, paneName: "shell-pane", defaultShell: "/bin/zsh" },
+    workspace: dependencies.workspace,
+    sessions: dependencies.sessions,
+    process: dependencies.process,
+    worktrees: dependencies.worktrees,
+    hooks: dependencies.hooks,
+    panes: dependencies.panes,
   });
+  fixture.service = new RunShell();
   return { fixture };
 }
 

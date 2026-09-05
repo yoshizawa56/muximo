@@ -4,16 +4,12 @@ import type {
   AgentSessionListInput,
   AgentSessionListObservation,
   AgentSessionListProjection,
-  ManagedAgentSessionRepository,
-  SessionListClock,
-  SessionObservationPort,
 } from "../../ports/agent-sessions.js";
-
-export type ListAgentSessionsDependencies = {
-  sessions: ManagedAgentSessionRepository;
-  host: SessionObservationPort;
-  clock: SessionListClock;
-};
+import {
+  ManagedAgentSessionRepositoryService,
+  SessionListClockService,
+  SessionObservationService,
+} from "./agent-session-services.js";
 
 export const sessionListPolicy = {
   worktreeCheckGraceMs: 5 * 60 * 1_000,
@@ -26,18 +22,18 @@ const resumableStates = new Set<AgentSessionState>(["exited", "interrupted"]);
 
 /** Application policy for projecting and filtering managed agent sessions. */
 export class ListAgentSessions {
-  public constructor(private readonly deps: ListAgentSessionsDependencies) {}
-
   public readonly execute = Effect.fn("AgentSessions.list")(
     { self: this },
     function* (this: ListAgentSessions, input: AgentSessionListInput) {
-      const deps = this.deps;
-      const workspaceId = input.workspaceScope === "all" ? undefined : (yield* deps.host.resolveWorkspace()).id;
-      const now = deps.clock.now();
-      const sessions = yield* deps.sessions.list(workspaceId);
+      const sessionsRepository = yield* ManagedAgentSessionRepositoryService;
+      const observation = yield* SessionObservationService;
+      const clock = yield* SessionListClockService;
+      const workspaceId = input.workspaceScope === "all" ? undefined : (yield* observation.resolveWorkspace()).id;
+      const now = clock.now();
+      const sessions = yield* sessionsRepository.list(workspaceId);
       const allViews = yield* Effect.all(
         sessions.map((session) =>
-          deps.host
+          observation
             .observeSession(session, now)
             .pipe(Effect.map((observation) => projectAgentSession(session, observation))),
         ),

@@ -9,6 +9,9 @@
  * session.
  */
 
+import { Effect } from "effect";
+import { runEffectAsPromise } from "../../effect.js";
+
 import type {
   AgentManifest,
   AgentMonitor,
@@ -97,35 +100,7 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
         signal?: AbortSignal;
       },
     ): Promise<LaunchPlan> {
-      const root = input.cwd;
-      input.signal?.throwIfAborted();
-      const entry = await manager.ensure(root, input.signal);
-      input.signal?.throwIfAborted();
-      const baseUrl = `http://127.0.0.1:${entry.port}`;
-      const client =
-        options.clientFactory?.(baseUrl, root) ??
-        new OpenCodeClient(baseUrl, { onLog: options.onLog, directory: root });
-      const sessionId = await resolveSessionId(client, entry, input.resumeSessionId ?? null, input.name, input.signal);
-      input.signal?.throwIfAborted();
-      const monitor =
-        options.monitorFactory?.({
-          baseUrl,
-          sessionId,
-          workspaceRoot: root,
-          client,
-        }) ?? new OpenCodeMonitor({ baseUrl, sessionId, workspaceRoot: root, client });
-      const attachExecutable = options.attachExecutable ?? "opencode";
-
-      return {
-        primary: {
-          command: attachExecutable,
-          args: ["attach", baseUrl, "--dir", root, "--session", sessionId],
-          cwd: root,
-          environment: { ...input.environment },
-        },
-        monitor,
-        backendSessionId: sessionId,
-      };
+      return runEffectAsPromise(prepareLaunch(manager, options, input));
     },
 
     actions() {
@@ -134,33 +109,76 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
   };
 }
 
-async function resolveSessionId(
+function prepareLaunch(
+  manager: OpenCodeServerManager,
+  options: OpenCodePluginOptions,
+  input: LaunchInput & {
+    monitorContext: AgentMonitorContext;
+    resumeSessionId?: string | null;
+    signal?: AbortSignal;
+  },
+): Effect.Effect<LaunchPlan, Error> {
+  return Effect.gen(function* () {
+    const root = input.cwd;
+    input.signal?.throwIfAborted();
+    const entry = yield* manager.ensure(root, input.signal);
+    input.signal?.throwIfAborted();
+    const baseUrl = `http://127.0.0.1:${entry.port}`;
+    const client =
+      options.clientFactory?.(baseUrl, root) ?? new OpenCodeClient(baseUrl, { onLog: options.onLog, directory: root });
+    const sessionId = yield* resolveSessionId(client, entry, input.resumeSessionId ?? null, input.name, input.signal);
+    input.signal?.throwIfAborted();
+    const monitor =
+      options.monitorFactory?.({
+        baseUrl,
+        sessionId,
+        workspaceRoot: root,
+        client,
+      }) ?? new OpenCodeMonitor({ baseUrl, sessionId, workspaceRoot: root, client });
+    const attachExecutable = options.attachExecutable ?? "opencode";
+
+    return {
+      primary: {
+        command: attachExecutable,
+        args: ["attach", baseUrl, "--dir", root, "--session", sessionId],
+        cwd: root,
+        environment: { ...input.environment },
+      },
+      monitor,
+      backendSessionId: sessionId,
+    };
+  });
+}
+
+function resolveSessionId(
   client: OpenCodeClient,
   entry: OpenCodeServerEntry,
   resumeSessionId: string | null,
   sessionName: string | undefined,
   signal?: AbortSignal,
-): Promise<string> {
-  if (!resumeSessionId) {
-    const created = await client.createSession(sessionName, signal);
-    if (!created) {
-      throw new OpenCodePluginError(
-        `OpenCode server on port ${entry.port} did not accept a new session; check 'opencode serve' diagnostics`,
-      );
+): Effect.Effect<string, Error> {
+  return Effect.gen(function* () {
+    if (!resumeSessionId) {
+      const created = yield* client.createSession(sessionName, signal);
+      if (!created)
+        return yield* Effect.fail(
+          new OpenCodePluginError(
+            `OpenCode server on port ${entry.port} did not accept a new session; check 'opencode serve' diagnostics`,
+          ),
+        );
+      return created;
     }
-    return created;
-  }
-  const exists = await client.sessionExists(resumeSessionId, signal);
-  if (!exists) {
-    throw new OpenCodePluginError(
-      `OpenCode session ${resumeSessionId} no longer exists on the OpenCode server; start a new session instead of resuming`,
-      "opencode_session_not_found",
-    );
-  }
-  // Keep the session title in sync with the agent session name. This is
-  // cosmetic; a title update failure must not block the resume.
-  if (sessionName) {
-    await client.setSessionTitle(resumeSessionId, sessionName, signal);
-  }
-  return resumeSessionId;
+    const exists = yield* client.sessionExists(resumeSessionId, signal);
+    if (!exists)
+      return yield* Effect.fail(
+        new OpenCodePluginError(
+          `OpenCode session ${resumeSessionId} no longer exists on the OpenCode server; start a new session instead of resuming`,
+          "opencode_session_not_found",
+        ),
+      );
+    // Keep the session title in sync with the agent session name. This is
+    // cosmetic; a title update failure must not block the resume.
+    if (sessionName) yield* client.setSessionTitle(resumeSessionId, sessionName, signal);
+    return resumeSessionId;
+  });
 }

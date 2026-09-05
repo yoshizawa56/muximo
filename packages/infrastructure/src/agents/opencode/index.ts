@@ -1,11 +1,15 @@
 export {
   OpenCodeClient,
+  type OpenCodeClientError,
   type OpenCodeEvent,
   type OpenCodeHealth,
   type OpenCodeLog,
   type OpenCodePermission,
+  OpenCodeRequestTimeoutError,
+  OpenCodeResponseTooLargeError,
   type OpenCodeSessionStatus,
   OpenCodeStreamClosedError,
+  OpenCodeTransportError,
 } from "./client.js";
 export {
   OpenCodeMonitor,

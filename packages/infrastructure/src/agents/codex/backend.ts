@@ -1,6 +1,8 @@
 import type { SessionBaselineResult, SessionIdentityUpdate } from "@muximo/application";
+import { type ApplicationEffect, attemptSync } from "@muximo/application";
 import type { AgentSession } from "@muximo/domain";
-import { runEffectAsPromise } from "../../effect.js";
+import { Effect } from "effect";
+import { fromPromise, runEffectAsPromise } from "../../effect.js";
 import { errorFields } from "../../logging/index.js";
 import type { AgentBackendProvider, AgentBackendProviderOptions, AgentBackendProviderPreparation } from "../backend.js";
 import {
@@ -30,85 +32,112 @@ export class CodexBackendProvider implements AgentBackendProvider {
     private readonly defaultRemote: string,
   ) {}
 
-  public async captureBaseline(session: AgentSession): Promise<SessionBaselineResult> {
-    if (session.backend !== this.backend) return { success: true };
-    const collected = await collectCodexSessionBaseline(this.codexDeps());
-    const current = (await this.state.find(session.id)) ?? {};
-    await this.state.save(session.id, { ...current, sessionBaseline: collected.baseline }, session.lastActivityAt);
-    return { success: true };
+  public captureBaseline(session: AgentSession): ApplicationEffect<SessionBaselineResult> {
+    const stateRepository = this.state;
+    const dependencies = this.codexDeps();
+    return Effect.gen(function* () {
+      if (session.backend !== "codex") return { success: true };
+      const collected = collectCodexSessionBaseline(dependencies);
+      const current = (yield* stateRepository.find(session.id)) ?? {};
+      yield* stateRepository.save(
+        session.id,
+        { ...current, sessionBaseline: collected.baseline },
+        session.lastActivityAt,
+      );
+      return { success: true };
+    });
   }
 
-  public async prepareLaunch(
+  public prepareLaunch(
     session: AgentSession,
     backendArgs: readonly string[],
     resume: boolean,
     _signal?: AbortSignal,
-  ): Promise<AgentBackendProviderPreparation> {
-    let effective = session;
-    let sessionUpdate: SessionIdentityUpdate | undefined;
-    const currentState = (await this.state.find(session.id)) ?? {};
-    const runDir = session.worktreePath ?? session.workspaceRoot;
+  ): ApplicationEffect<AgentBackendProviderPreparation> {
+    const stateRepository = this.state;
+    const environment = this.options.environment;
+    const logger = this.options.logger;
+    const defaultRemote = this.defaultRemote;
+    const dependencies = this.codexDeps();
+    return Effect.gen(function* () {
+      let effective = session;
+      let sessionUpdate: SessionIdentityUpdate | undefined;
+      const currentState = (yield* stateRepository.find(session.id)) ?? {};
+      const runDir = session.worktreePath ?? session.workspaceRoot;
 
-    if (resume && !session.backendSessionId) {
-      const recovered = await recoverCodexSessionId(this.codexDeps(), session, runDir);
-      if (!recovered.selectedId) {
-        throw new Error(`session '${session.name}' has no backend session ID; it cannot be resumed`);
+      if (resume && !session.backendSessionId) {
+        const recovered = yield* recoverCodexSessionId(dependencies, session, runDir);
+        if (!recovered.selectedId)
+          return yield* Effect.fail(
+            new Error(`session '${session.name}' has no backend session ID; it cannot be resumed`),
+          );
+        const update = { backendSessionId: recovered.selectedId } satisfies SessionIdentityUpdate;
+        sessionUpdate = update;
+        effective = yield* attemptSync(() => effective.update(update));
       }
-      sessionUpdate = { backendSessionId: recovered.selectedId };
-      effective = effective.update(sessionUpdate);
-    }
 
-    const profile = currentState.profile ?? profileFromArgs(backendArgs);
-    const state: CodexSessionState = {
-      ...currentState,
-      ...(profile === undefined ? {} : { profile }),
-      remote: currentState.remote ?? codexRemoteEndpoint(backendArgs, this.defaultRemote),
-    };
-    await this.state.save(session.id, state, session.lastActivityAt);
+      const profile = currentState.profile ?? profileFromArgs(backendArgs);
+      const state: CodexSessionState = {
+        ...currentState,
+        ...(profile === undefined ? {} : { profile }),
+        remote: currentState.remote ?? codexRemoteEndpoint(backendArgs, defaultRemote),
+      };
+      yield* stateRepository.save(session.id, state, session.lastActivityAt);
 
-    const binary = resolveCodexCommand(this.options.environment);
-    ensureCodexRemoteControl(backendArgs, binary, this.defaultRemote, this.options.environment, this.options.logger);
-    const command = resume
-      ? buildCodexResumeCommand(effective, backendArgs, this.defaultRemote, binary, state)
-      : buildCodexRunCommand(effective, backendArgs, this.defaultRemote, binary, state);
-    return { sessionUpdate, launch: { command } };
+      const binary = yield* attemptSync(() => resolveCodexCommand(environment));
+      yield* attemptSync(() => ensureCodexRemoteControl(backendArgs, binary, defaultRemote, environment, logger));
+      const command = resume
+        ? buildCodexResumeCommand(effective, backendArgs, defaultRemote, binary, state)
+        : buildCodexRunCommand(effective, backendArgs, defaultRemote, binary, state);
+      return { sessionUpdate, launch: { command } };
+    });
   }
 
-  public async afterRun(
+  public afterRun(
     session: AgentSession,
     runDir: string,
     startedAt: number,
-  ): Promise<SessionIdentityUpdate | undefined> {
-    if (session.backendSessionId) return undefined;
-    const discovery = await discoverCodexSessionId(this.codexDeps(), startedAt, runDir, session.id);
-    if (!discovery.selectedId) {
-      await reportCodexDiscoveryFailure(this.codexDeps(), session, runDir, "finalize", discovery);
-      return undefined;
-    }
-    const sessionUpdate = { backendSessionId: discovery.selectedId } satisfies SessionIdentityUpdate;
-    await this.manageRemoteOperation(session.update({ backendSessionId: discovery.selectedId }), "name");
-    return sessionUpdate;
+  ): ApplicationEffect<SessionIdentityUpdate | undefined> {
+    const dependencies = this.codexDeps();
+    const manageRemoteOperation = this.manageRemoteOperation.bind(this);
+    return Effect.gen(function* () {
+      if (session.backendSessionId) return undefined;
+      const discovery = yield* discoverCodexSessionId(dependencies, startedAt, runDir, session.id);
+      if (!discovery.selectedId) {
+        yield* reportCodexDiscoveryFailure(dependencies, session, runDir, "finalize", discovery);
+        return undefined;
+      }
+      const selectedId = discovery.selectedId;
+      const sessionUpdate = { backendSessionId: selectedId } satisfies SessionIdentityUpdate;
+      const updated = yield* attemptSync(() => session.update({ backendSessionId: selectedId }));
+      yield* fromPromise(() => manageRemoteOperation(updated, "name"));
+      return sessionUpdate;
+    });
   }
 
-  public async disposeLaunch(_session: AgentSession, _runDir: string): Promise<void> {}
-
-  public archive(session: AgentSession): Promise<boolean> {
-    return this.manageRemoteOperation(session, "archive");
+  public disposeLaunch(_session: AgentSession, _runDir: string): ApplicationEffect<void> {
+    return Effect.succeed(undefined);
   }
 
-  public restore(session: AgentSession): Promise<boolean> {
-    return this.manageRemoteOperation(session, "unarchive");
+  public archive(session: AgentSession): ApplicationEffect<boolean> {
+    return fromPromise(() => this.manageRemoteOperation(session, "archive"));
   }
 
-  public async releaseIfUnused(session: AgentSession, _remaining: readonly AgentSession[]): Promise<void> {
-    await this.state.delete(session.id);
+  public restore(session: AgentSession): ApplicationEffect<boolean> {
+    return fromPromise(() => this.manageRemoteOperation(session, "unarchive"));
+  }
+
+  public releaseIfUnused(session: AgentSession, _remaining: readonly AgentSession[]): ApplicationEffect<void> {
+    return this.state.delete(session.id);
   }
 
   private async manageRemoteOperation(
     session: AgentSession,
     operation: "name" | "archive" | "unarchive",
   ): Promise<boolean> {
-    const state = await this.state.find(session.id);
+    // Keep the Promise mutex: remote thread mutations must remain strictly ordered,
+    // while the state lookup is the single intentional bridge into the Effect port.
+    const state = await runEffectAsPromise(this.state.find(session.id));
     if (!state?.remote || !session.backendSessionId) {
       this.options.logger.warn("codex.remote_operation_unavailable", {
         operation,
@@ -165,8 +194,7 @@ export class CodexBackendProvider implements AgentBackendProvider {
       logger: this.options.logger,
       sessions: this.options.sessions,
       state: this.state,
-      audit: (eventType, entityId, payload) =>
-        runEffectAsPromise(this.options.audit.record(eventType, entityId, payload)),
+      audit: (eventType, entityId, payload) => this.options.audit.record(eventType, entityId, payload),
       manageRemoteThread: (session, operation, signal) =>
         signal?.aborted ? Promise.resolve(false) : this.manageRemoteOperation(session, operation),
     };

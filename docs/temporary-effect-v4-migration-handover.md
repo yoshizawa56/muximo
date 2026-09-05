@@ -933,6 +933,74 @@ composition-root facades.
   web-daemon kill failure), table rules 117 files, lint clean except the
   pre-existing html file.
 
+### Capability service migration continuation (2026-09-04 session)
+
+Completed the remaining application capability migration described by the
+temporary service-migration work instruction:
+
+- Every former capability interface/type under `packages/application/src/ports`
+  is now either a `Context.Service` Tag with a composition-root Layer in the
+  corresponding use-case service module, or boundary/data vocabulary that is
+  intentionally kept as plain types.
+- Added service modules and assemblers for agent sessions, auth, daemon,
+  pairing, shell, terminals, and workspaces. Use cases resolve capabilities
+  with `yield*`; infrastructure adapters and roots provide Layers.
+- Moved the daemon process handle into the daemon service vocabulary and
+  deleted the old `ports/transactions.ts` capability declaration.
+- Moved `ApplicationClock` out of the application ports and retained the
+  application and transport Promise facades only at explicit composition and
+  delivery boundaries.
+- Updated the `muximod` application facade, daemon launch root, server root,
+  CLI composition, infrastructure adapters, and tests to use the new Layers.
+  Agent lifecycle tests now use one fresh, Layer-backed fixture per case.
+
+Verification for this continuation:
+
+- `node node_modules/turbo/bin/turbo run typecheck`: 16/16 successful.
+- `bun run check:architecture`: pass.
+- `bun run test:table`: pass (117 files).
+- `bun run test:local`: 935 pass, 1 skip, 0 fail.
+- `apps/web` Vitest with threads: 219/219 pass.
+- `node node_modules/turbo/bin/turbo run build`: 9/9 successful.
+- `bun run audit:public`: pass.
+- `bunx biome ci .`: exit 0; only the pre-existing
+  `docs/logo-exploration.html` `noImportantStyles` warnings remain.
+- `git diff --check`: pass.
+
+### Provider-layer await-to-Effect continuation (2026-09-04 session)
+
+Implemented the updated provider mapping in `docs/temporary-provider-effect-mapping.md`:
+
+- Converted OpenCode short-lived requests, response-body ownership, SSE events,
+  server registry and lock lifecycle, plugin internals, and monitor event
+  handling to Effect programs while preserving Promise extension contracts.
+- Added the specified OpenCode and Codex transport error unions, tags, retryable
+  defaults, timeout/size limits, abort propagation, and stream cleanup.
+- Converted Codex state persistence, remote-control socket ownership, session
+  discovery, provider backends, and the CLI backend adapter to compose Effects
+  directly. The Codex remote-operation Promise mutex and monitor/callback
+  contracts remain at their documented boundaries.
+- Converted JSONL provider monitor internals to Effects while preserving the
+  200ms polling, 500ms discovery retry, offset bookkeeping, and state/output
+  deduplication behavior.
+- Kept launch builders unchanged and retained Promise seams for injected
+  transports, process spawning, timers, plugin APIs, monitor lifecycle methods,
+  and callback sinks as required by the mapping.
+
+Verification for this continuation:
+
+- `node node_modules/turbo/bin/turbo run typecheck`: 16/16 successful.
+- `bun run check:architecture`: pass.
+- `bun run test:table`: pass (117 files).
+- `bun test packages/infrastructure/src/agents packages/infrastructure/src/cli/backend.test.ts`: 77 pass, 0 fail.
+- `bun run test:local`: 935 pass, 1 skip, 0 fail.
+- `apps/web` Vitest with threads: 219/219 pass.
+- `node node_modules/turbo/bin/turbo run build`: 9/9 successful.
+- `bun run audit:public`: pass.
+- `bunx biome ci .`: exit 0; only the pre-existing
+  `docs/logo-exploration.html` `noImportantStyles` warnings remain.
+- `git diff --check`: pass.
+
 ## Reference material
 
 These official Effect references explain the primitives used by the migration:

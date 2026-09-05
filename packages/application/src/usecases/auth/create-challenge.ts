@@ -1,35 +1,30 @@
 import { Effect } from "effect";
-import type {
-  AuthChallengeStorePort,
-  AuthCryptoPort,
-  AuthRateLimitStorePort,
-  AuthStorePort,
-  Clock,
-} from "../../ports/auth.js";
 import { AuthStoreError } from "./auth-errors.js";
+import {
+  AuthChallengeStoreService,
+  AuthClockService,
+  AuthCryptoService,
+  AuthRateLimitStoreService,
+  AuthServerIdService,
+} from "./auth-services.js";
 import { requireActiveDevice } from "./device-guard.js";
 
 export const authChallengeTtlMs = 60_000;
 export const authRateWindowMs = 60_000;
 export const authRateWindowMax = 10;
 
-export const createChallenge = Effect.fn("Auth.createChallenge")(function* (
-  deps: {
-    store: AuthStorePort;
-    crypto: AuthCryptoPort;
-    challenges: AuthChallengeStorePort;
-    rateLimits: AuthRateLimitStorePort;
-    serverId: string;
-    clock: Clock;
-  },
-  deviceId: string,
-) {
-  const device = yield* requireActiveDevice(deps.store, deps.serverId, deviceId);
-  const now = deps.clock.now();
+export const createChallenge = Effect.fn("Auth.createChallenge")(function* (deviceId: string) {
+  const crypto = yield* AuthCryptoService;
+  const challenges = yield* AuthChallengeStoreService;
+  const rateLimits = yield* AuthRateLimitStoreService;
+  const clock = yield* AuthClockService;
+  const serverId = yield* AuthServerIdService;
+  const device = yield* requireActiveDevice(deviceId);
+  const now = clock.now();
   const nowMs = now.getTime();
-  const window = deps.rateLimits.window(deviceId);
+  const window = rateLimits.window(deviceId);
   if (!window || nowMs - window.startedAt >= authRateWindowMs) {
-    deps.rateLimits.setWindow(deviceId, { startedAt: nowMs, count: 1 });
+    rateLimits.setWindow(deviceId, { startedAt: nowMs, count: 1 });
   } else {
     if (window.count >= authRateWindowMax) {
       return yield* Effect.fail(
@@ -38,9 +33,9 @@ export const createChallenge = Effect.fn("Auth.createChallenge")(function* (
     }
     window.count += 1;
   }
-  const challengeId = deps.crypto.randomOpaque(24);
-  const nonce = deps.crypto.randomOpaque(32);
+  const challengeId = crypto.randomOpaque(24);
+  const nonce = crypto.randomOpaque(32);
   const expiresAt = new Date(nowMs + authChallengeTtlMs).toISOString();
-  deps.challenges.put({ challengeId, deviceId, nonce, expiresAt });
-  return { serverId: deps.serverId, deviceId: device.deviceId, challengeId, nonce, expiresAt };
+  challenges.put({ challengeId, deviceId, nonce, expiresAt });
+  return { serverId, deviceId: device.deviceId, challengeId, nonce, expiresAt };
 });

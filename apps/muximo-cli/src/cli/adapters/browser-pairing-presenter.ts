@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
-import type { ApplicationEffect, PairingClaim, PairingOffer, PairingPresenterPort } from "@muximo/application";
+import type { ApplicationEffect, PairingClaim, PairingOffer, PairingPresenter } from "@muximo/application";
 import { fromPromise } from "@muximo/infrastructure/cli-client";
 import { SvgQrRenderer } from "./svg-qr-renderer.js";
 import type { QrRendererPort } from "./terminal-qr-renderer.js";
@@ -26,7 +26,7 @@ type PairingPage = {
 };
 
 /** Pairing presenter that displays the QR in a local browser page. */
-export class BrowserPairingPresenter implements PairingPresenterPort {
+export class BrowserPairingPresenter implements PairingPresenter {
   private readonly qrRenderer: QrRendererPort;
   private page: PairingPage | undefined;
   private expiryTimer: ReturnType<typeof setTimeout> | undefined;

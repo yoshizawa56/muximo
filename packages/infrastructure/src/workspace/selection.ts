@@ -8,10 +8,10 @@ import { basename, delimiter, isAbsolute, relative, resolve } from "node:path";
 import {
   type ApplicationEffect,
   attemptSync,
-  type MuximodWorkspaceCatalogPort,
+  type MuximodWorkspaceCatalog,
   type MuximodWorkspaceDirectory,
+  type WorkspaceDirectory,
   type WorkspaceDirectoryInfo,
-  type WorkspaceDirectoryPort,
 } from "@muximo/application";
 import {
   validateWorkspaceSelection,
@@ -91,7 +91,7 @@ export class AllowedRootPolicy {
   }
 }
 
-export class WorkspaceSelectionCatalog implements WorkspaceDirectoryPort, MuximodWorkspaceCatalogPort {
+export class WorkspaceSelectionCatalog implements WorkspaceDirectory, MuximodWorkspaceCatalog {
   public readonly policy: AllowedRootPolicy;
 
   public constructor(allowedRoots: readonly string[], basePath = process.cwd()) {

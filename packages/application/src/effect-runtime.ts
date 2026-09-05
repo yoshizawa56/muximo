@@ -1,5 +1,8 @@
 import { Context, Layer } from "effect";
-import type { ApplicationClock } from "./ports/application.js";
+
+export type ApplicationClock = {
+  now(): string;
+};
 
 /** Runtime service for application-owned timestamps used by state transitions. */
 export class ApplicationClockService extends Context.Service<ApplicationClockService, ApplicationClock>()(

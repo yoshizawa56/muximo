@@ -13,7 +13,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
-import type { ApplicationEffect, HookPort, HookResult, ShellHookPort } from "@muximo/application";
+import type { ApplicationEffect, Hook, HookResult, ShellHook } from "@muximo/application";
 import type { AgentBackend, AgentSession } from "@muximo/domain";
 import { fromPromise } from "../effect.js";
 import { errorFields, type Logger } from "../logging/index.js";
@@ -27,7 +27,7 @@ export type HookAdapterOptions = {
 };
 
 /** Filesystem/process adapter for executable workspace hooks. */
-export class WorkspaceHookAdapter implements HookPort, ShellHookPort {
+export class WorkspaceHookAdapter implements Hook, ShellHook {
   public constructor(private readonly options: HookAdapterOptions) {}
 
   public resolveHook(value: string, workspaceRoot: string): ApplicationEffect<string> {

@@ -10,11 +10,11 @@ import {
 } from "@muximo/test-support";
 import { Effect, Layer } from "effect";
 import { describe, it } from "vitest";
-import type { WorkspaceRepository } from "../../ports/repositories.js";
-import type { WorkspaceDirectoryPort } from "../../ports/workspace.js";
 import { findWorkspace } from "./find-workspace.js";
 import {
+  type WorkspaceDirectory,
   type WorkspaceDirectoryService,
+  type WorkspaceRepository,
   type WorkspaceRepositoryService,
   workspaceDirectoryLayer,
   workspaceRepositoryLayer,
@@ -93,7 +93,7 @@ function createFixture(directoryError: Error): FindWorkspaceFixture {
     upsert: () => Effect.succeed(undefined),
     delete: () => Effect.succeed(undefined),
   };
-  const directories: WorkspaceDirectoryPort = {
+  const directories: WorkspaceDirectory = {
     resolveDirectory: () => Effect.fail(directoryError),
     resolveHook: () => Effect.succeed("/work/project/hook.sh"),
   };

@@ -1,44 +1,30 @@
 import type { AgentSession } from "@muximo/domain";
 import { Effect } from "effect";
-import type {
-  CleanupAgentSessionInput,
-  CleanupAgentSessionResult,
-  HookPort,
-  ManagedAgentSessionRepository,
-  ProcessObservationPort,
-  RemoteSessionPort,
-  SessionAuditPort,
-  SessionCleanupConfirmationPort,
-  SessionClock,
-  SessionResourcePort,
-  WorktreePort,
-} from "../../ports/agent-sessions.js";
+import type { CleanupAgentSessionInput, CleanupAgentSessionResult } from "../../ports/agent-sessions.js";
 import { ApplicationFailure } from "../../ports/application.js";
-import type { LocateAgentSession } from "./locate-session.js";
+import {
+  HookService,
+  ManagedAgentSessionRepositoryService,
+  ProcessObservationService,
+  RemoteSessionService,
+  SessionAuditService,
+  SessionCleanupConfirmationService,
+  SessionResourceService,
+  WorktreeService,
+} from "./agent-session-services.js";
+import { LocateAgentSession } from "./locate-session.js";
 import { updateAgentSession } from "./session-updates.js";
-
-export type CleanupAgentSessionDependencies = {
-  sessions: ManagedAgentSessionRepository;
-  locator: LocateAgentSession;
-  process: ProcessObservationPort;
-  worktrees: WorktreePort;
-  hooks: HookPort;
-  remote: RemoteSessionPort;
-  resources: SessionResourcePort;
-  audit: SessionAuditPort;
-  confirmCleanup: SessionCleanupConfirmationPort;
-  clock: SessionClock;
-};
 
 /** Application policy for cleanup with explicit removed, retained, and failed outcomes. */
 export class CleanupAgentSession {
-  public constructor(private readonly deps: CleanupAgentSessionDependencies) {}
-
   public readonly execute = Effect.fn("AgentSessions.cleanup")(
     { self: this },
     function* (this: CleanupAgentSession, input: CleanupAgentSessionInput) {
-      const deps = this.deps;
-      const session = yield* deps.locator.execute({
+      const locator = new LocateAgentSession();
+      const process = yield* ProcessObservationService;
+      const worktrees = yield* WorktreeService;
+      const confirmation = yield* SessionCleanupConfirmationService;
+      const session = yield* locator.execute({
         reference: input.reference,
         workspaceScope: input.workspaceScope,
       });
@@ -50,7 +36,7 @@ export class CleanupAgentSession {
       const providerLiveness =
         session.executionPid === undefined
           ? undefined
-          : yield* deps.process.observe(session.executionPid, session.executionStartedAt);
+          : yield* process.observe(session.executionPid, session.executionStartedAt);
       if (providerLiveness === "alive") {
         return yield* Effect.fail(
           new ApplicationFailure(
@@ -70,7 +56,7 @@ export class CleanupAgentSession {
       const ownerLiveness =
         session.executionOwnerPid === undefined
           ? undefined
-          : yield* deps.process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
+          : yield* process.observe(session.executionOwnerPid, session.executionOwnerStartedAt);
       if (
         session.executionOwnerPid !== undefined &&
         isLiveExecutionState(session.status) &&
@@ -107,7 +93,7 @@ export class CleanupAgentSession {
           ),
         );
       }
-      if (session.useWorktree && session.worktreePath && !(yield* deps.worktrees.isRegistered(session))) {
+      if (session.useWorktree && session.worktreePath && !(yield* worktrees.isRegistered(session))) {
         return yield* Effect.fail(
           new ApplicationFailure(
             "worktree_not_registered",
@@ -116,9 +102,9 @@ export class CleanupAgentSession {
         );
       }
 
-      const dirty = session.useWorktree ? yield* deps.worktrees.hasChanges(session) : false;
+      const dirty = session.useWorktree ? yield* worktrees.hasChanges(session) : false;
       let force = input.force;
-      if (session.useWorktree && !force && !(yield* deps.confirmCleanup.confirm(session, dirty))) {
+      if (session.useWorktree && !force && !(yield* confirmation.confirm(session, dirty))) {
         const retained: CleanupAgentSessionResult = {
           session,
           cleanup: { disposition: "retained", reason: "cleanup_declined" },
@@ -127,44 +113,46 @@ export class CleanupAgentSession {
       }
       if (dirty) force = true;
 
-      const result = yield* removeResources(deps, session, force);
+      const result = yield* removeResources(session, force);
       return { session, cleanup: result };
     },
   );
 }
 
-const removeResources = Effect.fn("AgentSessions.removeResources")(function* (
-  deps: CleanupAgentSessionDependencies,
-  session: AgentSession,
-  force: boolean,
-) {
+const removeResources = Effect.fn("AgentSessions.removeResources")(function* (session: AgentSession, force: boolean) {
+  const sessions = yield* ManagedAgentSessionRepositoryService;
+  const hooks = yield* HookService;
+  const remote = yield* RemoteSessionService;
+  const resources = yield* SessionResourceService;
+  const audit = yield* SessionAuditService;
+  const worktrees = yield* WorktreeService;
   const archiveRemote = session.backendSessionId !== undefined;
-  if (archiveRemote && !(yield* deps.remote.archive(session))) {
+  if (archiveRemote && !(yield* remote.archive(session))) {
     return { disposition: "failed" as const, reason: "remote_archive_failed" as const };
   }
 
-  const hook = yield* deps.hooks.run(session, "cleanup");
-  const updated = hook.sessionUpdate ? yield* updateAgentSession(session, hook.sessionUpdate, deps.clock) : session;
-  if (hook.sessionUpdate) yield* deps.sessions.update(updated);
+  const hook = yield* hooks.run(session, "cleanup");
+  const updated = hook.sessionUpdate ? yield* updateAgentSession(session, hook.sessionUpdate) : session;
+  if (hook.sessionUpdate) yield* sessions.update(updated);
   if (!hook.success) {
-    const restored = !archiveRemote || (yield* deps.remote.restore(updated));
+    const restored = !archiveRemote || (yield* remote.restore(updated));
     return {
       disposition: "failed" as const,
       reason: restored ? ("cleanup_hook_failed" as const) : ("remote_restore_failed" as const),
     };
   }
 
-  const result = yield* deps.worktrees.remove(updated, force);
+  const result = yield* worktrees.remove(updated, force);
   if (result.disposition !== "removed") {
-    const restored = !archiveRemote || (yield* deps.remote.restore(updated));
+    const restored = !archiveRemote || (yield* remote.restore(updated));
     return restored ? result : { disposition: "failed" as const, reason: "remote_restore_failed" as const };
   }
 
-  yield* deps.sessions.delete(updated.id);
-  yield* deps.audit.record("agent_session.deleted", updated.id, { name: updated.name });
-  yield* deps.hooks.removeOutputs(updated);
-  const remaining = yield* deps.sessions.list(updated.workspaceId);
-  yield* deps.resources.releaseIfUnused(updated, remaining);
+  yield* sessions.delete(updated.id);
+  yield* audit.record("agent_session.deleted", updated.id, { name: updated.name });
+  yield* hooks.removeOutputs(updated);
+  const remaining = yield* sessions.list(updated.workspaceId);
+  yield* resources.releaseIfUnused(updated, remaining);
   return result;
 });
 

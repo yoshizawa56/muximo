@@ -1,16 +1,19 @@
 import { Effect } from "effect";
-import type { AuthCryptoPort, AuthStorePort, AuthWsTicketStorePort, Clock } from "../../ports/auth.js";
+import { AuthClockService, AuthCryptoService, AuthStoreService, AuthWsTicketStoreService } from "./auth-services.js";
 import { contextForSession } from "./device-guard.js";
 
 export const consumeWebSocketTicket = Effect.fn("Auth.consumeWebSocketTicket")(function* (
-  deps: { store: AuthStorePort; crypto: AuthCryptoPort; wsTickets: AuthWsTicketStorePort; clock: Clock },
   ticket: string | undefined,
   endpoint: "terminal",
 ) {
+  const store = yield* AuthStoreService;
+  const crypto = yield* AuthCryptoService;
+  const wsTickets = yield* AuthWsTicketStoreService;
+  const clock = yield* AuthClockService;
   if (!ticket) return undefined;
-  const nowIso = deps.clock.now().toISOString();
-  const pending = deps.wsTickets.take(deps.crypto.hashOpaque(ticket));
+  const nowIso = clock.now().toISOString();
+  const pending = wsTickets.take(crypto.hashOpaque(ticket));
   if (!pending || pending.endpoint !== endpoint || pending.expiresAt <= nowIso) return undefined;
-  const session = yield* deps.store.findSessionById(pending.sessionId);
-  return session ? yield* contextForSession(deps.store, session) : undefined;
+  const session = yield* store.findSessionById(pending.sessionId);
+  return session ? yield* contextForSession(session) : undefined;
 });

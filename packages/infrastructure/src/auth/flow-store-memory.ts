@@ -1,10 +1,10 @@
 import type {
-  AuthChallengeStorePort,
-  AuthConnectionPort,
-  AuthRateLimitStorePort,
-  AuthWsTicketStorePort,
+  AuthChallengeStore,
+  AuthClock,
+  AuthConnection,
+  AuthRateLimitStore,
+  AuthWsTicketStore,
   ChallengeRateWindow,
-  Clock,
   PendingChallengeRecord,
   PendingWsTicketRecord,
 } from "@muximo/application";
@@ -12,7 +12,7 @@ import { type ApplicationEffect, authRateWindowMs } from "@muximo/application";
 import { fromPromise } from "../effect.js";
 import { type MuximodSocket, muximodSocketReadyState } from "../http/socket.js";
 
-export class MemoryAuthChallengeStore implements AuthChallengeStorePort {
+export class MemoryAuthChallengeStore implements AuthChallengeStore {
   private readonly challenges = new Map<string, PendingChallengeRecord>();
 
   public put(record: PendingChallengeRecord): void {
@@ -36,7 +36,7 @@ export class MemoryAuthChallengeStore implements AuthChallengeStorePort {
   }
 }
 
-export class MemoryAuthRateLimitStore implements AuthRateLimitStorePort {
+export class MemoryAuthRateLimitStore implements AuthRateLimitStore {
   private readonly windows = new Map<string, ChallengeRateWindow>();
 
   public window(deviceId: string): ChallengeRateWindow | undefined {
@@ -58,7 +58,7 @@ export class MemoryAuthRateLimitStore implements AuthRateLimitStorePort {
   }
 }
 
-export class MemoryAuthWsTicketStore implements AuthWsTicketStorePort {
+export class MemoryAuthWsTicketStore implements AuthWsTicketStore {
   private readonly tickets = new Map<string, PendingWsTicketRecord>();
 
   public put(ticketHash: string, record: PendingWsTicketRecord): void {
@@ -88,10 +88,10 @@ export type AuthFlowSweepScheduler = {
 };
 
 export type AuthFlowLifecycleOptions = {
-  challenges: AuthChallengeStorePort;
-  rateLimits: AuthRateLimitStorePort;
-  wsTickets: AuthWsTicketStorePort;
-  clock: Clock;
+  challenges: AuthChallengeStore;
+  rateLimits: AuthRateLimitStore;
+  wsTickets: AuthWsTicketStore;
+  clock: AuthClock;
   intervalMs?: number;
   scheduler?: AuthFlowSweepScheduler;
 };
@@ -154,7 +154,7 @@ type TrackedConnection = {
 };
 
 /** Owns authenticated transport registration and its concrete close lifecycle. */
-export class MemoryAuthenticatedConnectionRegistry implements AuthConnectionPort {
+export class MemoryAuthenticatedConnectionRegistry implements AuthConnection {
   private readonly tracked = new Set<TrackedConnection>();
   private readonly now: () => number;
   private readonly scheduler: AuthConnectionScheduler;

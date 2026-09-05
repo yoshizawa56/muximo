@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
-import type { ApplicationEffect, PairingClaim, PairingOffer, PairingPresenterPort } from "@muximo/application";
+import type { ApplicationEffect, PairingClaim, PairingOffer, PairingPresenter } from "@muximo/application";
 import { fromPromise } from "@muximo/infrastructure/cli-client";
 import { type QrRendererPort, TerminalQrRenderer } from "./terminal-qr-renderer.js";
 
@@ -11,7 +11,7 @@ export type TerminalPairingPresenterOptions = {
 };
 
 /** Terminal UI adapter for the pairing use case. */
-export class TerminalPairingPresenter implements PairingPresenterPort {
+export class TerminalPairingPresenter implements PairingPresenter {
   private readonly qrRenderer: QrRendererPort;
 
   public constructor(private readonly options: TerminalPairingPresenterOptions) {

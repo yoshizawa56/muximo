@@ -17,8 +17,8 @@ export { muximodSocketReadyState } from "@muximo/infrastructure/runtime";
 export { MuximodHttpError } from "./middleware.js";
 export type { MuximodRpcContext } from "./rpc-handlers.js";
 export type {
+  MuximodAuth,
   MuximodAuthContext,
-  MuximodAuthPort,
   MuximodHookEvent,
   MuximodHttpDependencies,
   MuximodHttpStatus,

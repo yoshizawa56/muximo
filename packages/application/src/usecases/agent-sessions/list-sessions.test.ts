@@ -6,9 +6,16 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { describe, it } from "vitest";
-import { type AgentSessionListObservation, type AgentSessionListResult, ListAgentSessions } from "../../index.js";
+import {
+  type AgentSessionListObservation,
+  type AgentSessionListResult,
+  ListAgentSessions,
+  managedAgentSessionRepositoryLayer,
+  sessionListClockLayer,
+  sessionObservationLayer,
+} from "../../index.js";
 
 type Fixture = {
   sessions: AgentSession[];
@@ -164,9 +171,9 @@ const table: OperationTable<Fixture, CaseKey, Input, AgentSessionListResult, Con
       ),
   },
   cases,
-  execute: (fixture, input) =>
-    new ListAgentSessions({
-      sessions: {
+  execute: (fixture, input) => {
+    const layer = Layer.mergeAll(
+      managedAgentSessionRepositoryLayer({
         findById: () => Effect.succeed(undefined),
         findByName: () => Effect.succeed(undefined),
         list: () => Effect.succeed(fixture.sessions),
@@ -178,13 +185,17 @@ const table: OperationTable<Fixture, CaseKey, Input, AgentSessionListResult, Con
         findExecutionReceipt: () => Effect.succeed(undefined),
         saveExecutionReceipt: () => Effect.succeed(undefined),
         delete: () => Effect.succeed(undefined),
-      },
-      host: {
+      }),
+      sessionObservationLayer({
         resolveWorkspace: () => Effect.succeed({ id: workspaceId }),
         observeSession: () => Effect.succeed(fixture.observation),
-      },
-      clock: { now: () => fixture.observation.now },
-    }).execute({ workspaceScope: "current", includeUnavailable: input.includeUnavailable }),
+      }),
+      sessionListClockLayer({ now: () => fixture.observation.now }),
+    );
+    return new ListAgentSessions()
+      .execute({ workspaceScope: "current", includeUnavailable: input.includeUnavailable })
+      .pipe(Effect.provide(layer));
+  },
   observe: (_fixture, result) => ({
     resume: result.ok ? result.value.allViews[0]?.resume : undefined,
     reason: result.ok ? result.value.allViews[0]?.resumeReason : undefined,

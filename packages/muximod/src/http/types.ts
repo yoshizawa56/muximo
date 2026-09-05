@@ -1,13 +1,13 @@
 import type {
   TerminalHostHookEvent as ApplicationHookEvent,
   MuximodApplication,
+  MuximodAuth,
   MuximodAuthContext,
-  MuximodAuthPort,
 } from "@muximo/application";
 import type { MuximodEvent } from "@muximo/contract/api";
 import type { MuximodSocket, MuximodSocketFactory } from "@muximo/infrastructure/runtime";
 
-export type { MuximodAuthContext, MuximodAuthDevice, MuximodAuthPort } from "@muximo/application";
+export type { MuximodAuth, MuximodAuthContext, MuximodAuthDevice } from "@muximo/application";
 
 export type MuximodHookEvent = ApplicationHookEvent;
 
@@ -24,7 +24,7 @@ export type MuximodOriginPolicy = {
 };
 
 export type MuximodHttpDependencies = {
-  auth: MuximodAuthPort;
+  auth: MuximodAuth;
   application: MuximodApplication;
   isReady?: () => boolean;
   configurationFingerprint: string;

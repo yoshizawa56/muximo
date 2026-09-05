@@ -6,17 +6,19 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { Effect } from "effect";
+import { Effect, type Layer } from "effect";
 import { describe, it } from "vitest";
 import {
   type DaemonEnsureResult,
   DaemonHealthError,
   type DaemonOptions,
   type DaemonRestartResult,
-  type DaemonRuntimePort,
+  type DaemonRuntime,
+  type DaemonServices,
   type DaemonStartResult,
   type DaemonStatusResult,
   type DaemonStopResult,
+  daemonLayer,
   EnsureDaemon,
   type ProcessResult,
   RestartDaemon,
@@ -67,6 +69,7 @@ type LifecycleFixture = {
   terminateCount: number;
   removePidCount: number;
   markerWrites: boolean[];
+  layer: Layer.Layer<DaemonServices>;
   service: {
     ensure: EnsureDaemon;
     restart: RestartDaemon;
@@ -294,17 +297,19 @@ const table: OperationTable<LifecycleFixture, LifecycleFixtureKey, LifecycleInpu
       switch (input.operation) {
         case "ensure":
         case "ensure-dynamic-port":
-          return fixture.service.ensure.execute(options);
+          return fixture.service.ensure.execute(options).pipe(Effect.provide(fixture.layer));
         case "restart":
-          return fixture.service.restart.execute({ ...options, refreshServers: input.refreshServers });
+          return fixture.service.restart
+            .execute({ ...options, refreshServers: input.refreshServers })
+            .pipe(Effect.provide(fixture.layer));
         case "start-background":
-          return fixture.service.start.execute({ options, foreground: false });
+          return fixture.service.start.execute({ options, foreground: false }).pipe(Effect.provide(fixture.layer));
         case "start-foreground":
-          return fixture.service.start.execute({ options, foreground: true });
+          return fixture.service.start.execute({ options, foreground: true }).pipe(Effect.provide(fixture.layer));
         case "status":
-          return fixture.service.status.execute(options);
+          return fixture.service.status.execute(options).pipe(Effect.provide(fixture.layer));
         case "stop":
-          return fixture.service.stop.execute(options);
+          return fixture.service.stop.execute(options).pipe(Effect.provide(fixture.layer));
       }
     },
     observe: (fixture, result) => {
@@ -377,10 +382,11 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
     terminateCount: 0,
     removePidCount: 0,
     markerWrites: [],
+    layer: undefined as unknown as Layer.Layer<DaemonServices>,
     service: undefined as unknown as LifecycleFixture["service"],
   };
 
-  const runtime: DaemonRuntimePort = {
+  const runtime: DaemonRuntime = {
     runForeground: () => Effect.succeed({ started: true, code: 0, interrupted: false }),
     spawn: () =>
       Effect.sync(() => {
@@ -439,13 +445,14 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
     },
     lifecycleTimeoutMs: 100,
   };
-  const ensure = new EnsureDaemon(timing);
-  const stop = new StopDaemon(timing);
+  fixture.layer = daemonLayer(timing);
+  const ensure = new EnsureDaemon();
+  const stop = new StopDaemon();
   fixture.service = {
     ensure,
-    restart: new RestartDaemon({ ...timing, stop }),
-    start: new StartDaemon({ ...timing, ensure }),
-    status: new StatusDaemon(timing),
+    restart: new RestartDaemon(),
+    start: new StartDaemon(),
+    status: new StatusDaemon(),
     stop,
   };
   return fixture;

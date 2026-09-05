@@ -1,4 +1,4 @@
-import type { MuximodApplication, MuximodAuthPort } from "@muximo/application";
+import type { MuximodApplication, MuximodAuth } from "@muximo/application";
 import {
   type FixtureHandle,
   hasObserved,
@@ -70,7 +70,7 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
     consumedTickets: 0,
     upgrades: 0,
   };
-  const auth: MuximodAuthPort = {
+  const auth: MuximodAuth = {
     serverId: authContext.serverId,
     authenticateAccessToken: (token) =>
       Effect.sync(() => {

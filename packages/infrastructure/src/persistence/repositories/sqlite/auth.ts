@@ -8,8 +8,8 @@ import {
   type AuthPairingRecord,
   type AuthPairingStatus,
   type AuthSessionRecord,
+  type AuthStore as AuthStoreCapability,
   AuthStoreError,
-  type AuthStorePort,
   type ClaimPairingInput,
   type ClaimPairingResult,
   type CreatePairingInput,
@@ -46,7 +46,7 @@ export type {
  * application transaction automatically use its dedicated Drizzle client.
  * JSON and SQL NULL values are converted to application records here.
  */
-export class AuthStore implements AuthStorePort {
+export class AuthStore implements AuthStoreCapability {
   public readonly serverId: string;
 
   public constructor(

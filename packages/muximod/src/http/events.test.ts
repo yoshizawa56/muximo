@@ -1,4 +1,4 @@
-import type { MuximodApplication, MuximodAuthPort } from "@muximo/application";
+import type { MuximodApplication, MuximodAuth } from "@muximo/application";
 import type { MuximodEvent } from "@muximo/contract/api";
 import {
   type FixtureHandle,
@@ -117,7 +117,7 @@ describe("muximod event transport", () => {
   runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
-const testAuth: MuximodAuthPort = {
+const testAuth: MuximodAuth = {
   serverId: authContext.serverId,
   authenticateAccessToken: (token) => Effect.succeed(token === "events-token" ? authContext : undefined),
   claimPairing: () => Effect.fail(new Error("not used")),

@@ -2,7 +2,17 @@ import type { WorkspaceDirectoryOption } from "@muximo/domain";
 import { Effect } from "effect";
 import type { ProcessResult } from "../../ports/agent-sessions.js";
 import { ApplicationFailure } from "../../ports/application.js";
-import type { RunShellDependencies, RunShellInput, ShellWorktree, ShellWorktreeAllocation } from "../../ports/shell.js";
+import type { RunShellInput, ShellWorktree, ShellWorktreeAllocation } from "../../ports/shell.js";
+import type { ShellServices } from "./shell-services.js";
+import {
+  SessionWorktreeLookupService,
+  ShellContextService,
+  ShellHookService,
+  ShellPaneService,
+  ShellProcessService,
+  ShellWorkspaceResolverService,
+  ShellWorktreeService,
+} from "./shell-services.js";
 
 export type RunShellResult = {
   process: ProcessResult;
@@ -19,49 +29,53 @@ type ShellWorktreeLease = {
 
 /** Application workflow for an interactive shell and its optional managed worktree. */
 export class RunShell {
-  public constructor(private readonly deps: RunShellDependencies) {}
-
   public readonly execute = Effect.fn("Shell.run")({ self: this }, function* (this: RunShell, input: RunShellInput) {
-    yield* Effect.sync(() => this.deps.panes.markShell(this.deps.paneName));
+    const context = yield* ShellContextService;
+    const panes = yield* ShellPaneService;
+    yield* Effect.sync(() => panes.markShell(context.paneName));
     return yield* Effect.ensuring(
       this.runWorkflow(input),
-      Effect.sync(() => this.deps.panes.restoreShell()),
+      Effect.sync(() => panes.restoreShell()),
     );
   });
 
-  private runWorkflow(input: RunShellInput): Effect.Effect<RunShellResult, Error, never> {
-    const deps = this.deps;
+  private runWorkflow(input: RunShellInput): Effect.Effect<RunShellResult, Error, ShellServices> {
     return Effect.gen(function* () {
-      let shellCwd = deps.cwd;
+      const context = yield* ShellContextService;
+      const workspaceResolver = yield* ShellWorkspaceResolverService;
+      const sessionLookup = yield* SessionWorktreeLookupService;
+      const process = yield* ShellProcessService;
+      const worktrees = yield* ShellWorktreeService;
+      let shellCwd = context.cwd;
       if (input.command.length > 0) {
         const executable = input.command[0];
         if (!executable)
           return yield* Effect.fail(
             new ApplicationFailure("shell_command_executable_missing", "shell command executable is missing"),
           );
-        const result = yield* deps.process.run({
+        const result = yield* process.run({
           executable,
           args: input.command.slice(1),
-          cwd: deps.cwd,
+          cwd: context.cwd,
           interactive: false,
         });
         if (input.exitAfterCommand) return { process: result };
-        const workspace = yield* deps.workspace.resolveCurrent();
-        shellCwd = yield* deps.sessions.findWorktreePath(workspace.id, deps.paneName, deps.cwd);
+        const workspace = yield* workspaceResolver.resolveCurrent();
+        shellCwd = yield* sessionLookup.findWorktreePath(workspace.id, context.paneName, context.cwd);
       }
 
-      if (!input.worktree) return yield* runInteractiveShell(deps, input, shellCwd);
+      if (!input.worktree) return yield* runInteractiveShell(input, shellCwd, context.defaultShell);
 
-      const workspace = yield* deps.workspace.resolveCurrent();
+      const workspace = yield* workspaceResolver.resolveCurrent();
       if (!workspace.isGit)
         return yield* Effect.fail(
           new ApplicationFailure("managed_worktree_requires_git", "a managed worktree requires a git workspace"),
         );
-      const name = input.worktreeName ?? deps.paneName;
+      const name = input.worktreeName ?? context.paneName;
 
       return yield* Effect.acquireUseRelease(
         Effect.map(
-          deps.worktrees.create(workspace, name),
+          worktrees.create(workspace, name),
           (allocation) =>
             ({
               allocation,
@@ -70,19 +84,21 @@ export class RunShell {
               cleanupHook: null,
             }) satisfies ShellWorktreeLease,
         ),
-        (lease) => useShellWorktree(deps, lease, input),
-        (lease) => releaseShellWorktree(deps, lease),
+        (lease) => useShellWorktree(lease, input, context.defaultShell),
+        (lease) => releaseShellWorktree(lease),
       );
     });
   }
 }
 
 function useShellWorktree(
-  deps: RunShellDependencies,
   lease: ShellWorktreeLease,
   input: RunShellInput,
-): Effect.Effect<RunShellResult, Error, never> {
+  defaultShell: string,
+): Effect.Effect<RunShellResult, Error, ShellServices> {
   return Effect.gen(function* () {
+    const hooks = yield* ShellHookService;
+    const worktrees = yield* ShellWorktreeService;
     const setupScriptPath = lease.workspace.setupScriptPath;
     const cleanupScriptPath = lease.workspace.cleanupScriptPath;
     const worktree: ShellWorktree = {
@@ -92,19 +108,17 @@ function useShellWorktree(
       worktreePath: lease.allocation.worktreePath,
       branch: lease.allocation.branch,
       baseCommit: lease.allocation.baseCommit,
-      setupHook: setupScriptPath ? yield* deps.hooks.resolveHook(setupScriptPath, lease.workspace.rootPath) : null,
-      cleanupHook: cleanupScriptPath
-        ? yield* deps.hooks.resolveHook(cleanupScriptPath, lease.workspace.rootPath)
-        : null,
+      setupHook: setupScriptPath ? yield* hooks.resolveHook(setupScriptPath, lease.workspace.rootPath) : null,
+      cleanupHook: cleanupScriptPath ? yield* hooks.resolveHook(cleanupScriptPath, lease.workspace.rootPath) : null,
     };
     lease.worktree = worktree;
     lease.cleanupHook = worktree.cleanupHook;
 
-    if (!(yield* deps.worktrees.copyFiles(worktree))) {
+    if (!(yield* worktrees.copyFiles(worktree))) {
       return yield* Effect.fail(new ApplicationFailure("worktree_file_copy_failed", "worktree file copy failed"));
     }
     if (
-      !(yield* deps.hooks.runShell({
+      !(yield* hooks.runShell({
         ...worktree,
         hook: worktree.setupHook,
         kind: "setup",
@@ -113,14 +127,11 @@ function useShellWorktree(
     ) {
       return yield* Effect.fail(new ApplicationFailure("setup_hook_failed", "setup hook failed"));
     }
-    return yield* runInteractiveShell(deps, input, worktree.worktreePath);
+    return yield* runInteractiveShell(input, worktree.worktreePath, defaultShell);
   });
 }
 
-function releaseShellWorktree(
-  deps: RunShellDependencies,
-  lease: ShellWorktreeLease,
-): Effect.Effect<void, Error, never> {
+function releaseShellWorktree(lease: ShellWorktreeLease): Effect.Effect<void, Error, ShellServices> {
   const worktree: ShellWorktree = lease.worktree ?? {
     name: lease.name,
     workspaceRoot: lease.workspace.rootPath,
@@ -132,15 +143,17 @@ function releaseShellWorktree(
     cleanupHook: lease.cleanupHook,
   };
   return Effect.gen(function* () {
+    const hooks = yield* ShellHookService;
+    const worktrees = yield* ShellWorktreeService;
     const cleanup = yield* Effect.result(
-      deps.hooks.runShell({
+      hooks.runShell({
         ...worktree,
         hook: worktree.cleanupHook,
         kind: "cleanup",
         runDir: worktree.worktreePath,
       }),
     );
-    const removal = yield* Effect.result(deps.worktrees.remove(worktree));
+    const removal = yield* Effect.result(worktrees.remove(worktree));
     if (removal._tag === "Failure") return yield* Effect.fail(removal.failure);
     if (!removal.success)
       return yield* Effect.fail(
@@ -153,18 +166,13 @@ function releaseShellWorktree(
 }
 
 function runInteractiveShell(
-  deps: RunShellDependencies,
   input: RunShellInput,
   cwd: string,
-): Effect.Effect<RunShellResult, Error, never> {
-  const shell = input.shell ?? deps.defaultShell;
-  return Effect.map(
-    deps.process.run({
-      executable: shell,
-      args: ["-l", "-i"],
-      cwd,
-      interactive: true,
-    }),
-    (process) => ({ process }),
-  );
+  defaultShell: string,
+): Effect.Effect<RunShellResult, Error, ShellServices> {
+  const shell = input.shell ?? defaultShell;
+  return Effect.gen(function* () {
+    const process = yield* ShellProcessService;
+    return { process: yield* process.run({ executable: shell, args: ["-l", "-i"], cwd, interactive: true }) };
+  });
 }

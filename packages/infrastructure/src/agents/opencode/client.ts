@@ -6,6 +6,9 @@
  * SDK types (`Event`, `SessionStatus`, `Permission`, `GlobalEvent`).
  */
 
+import { Effect, Stream } from "effect";
+import { fromPromise } from "../../effect.js";
+
 export type OpenCodeSessionStatus = "idle" | "retry" | "busy";
 
 export type OpenCodeHealth = {
@@ -40,6 +43,18 @@ export type OpenCodeLog = (
 
 export type OpenCodeRequest = (url: string, init?: RequestInit) => Promise<Response>;
 
+export class OpenCodeTransportError extends Error {
+  public readonly _tag = "OpenCodeTransportError" as const;
+  public readonly retryable = false;
+
+  public constructor(cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    super(message);
+    this.name = "OpenCodeTransportError";
+    this.cause = cause;
+  }
+}
+
 export type OpenCodeClientOptions = {
   request?: OpenCodeRequest;
   onLog?: OpenCodeLog;
@@ -51,6 +66,7 @@ export type OpenCodeClientOptions = {
 
 /** Thrown when the SSE stream is closed or the server becomes unreachable. */
 export class OpenCodeStreamClosedError extends Error {
+  public readonly _tag = "OpenCodeStreamClosedError" as const;
   public readonly retryable = true;
 
   public constructor(message = "OpenCode event stream closed") {
@@ -64,6 +80,7 @@ export const openCodeRequestTimeoutMs = 5_000;
 export const openCodeResponseMaxBytes = 4 * 1024 * 1024;
 
 export class OpenCodeRequestTimeoutError extends Error {
+  public readonly _tag = "OpenCodeRequestTimeoutError" as const;
   public readonly retryable = true;
 
   public constructor(
@@ -76,6 +93,7 @@ export class OpenCodeRequestTimeoutError extends Error {
 }
 
 export class OpenCodeResponseTooLargeError extends Error {
+  public readonly _tag = "OpenCodeResponseTooLargeError" as const;
   public readonly retryable = false;
 
   public constructor(
@@ -87,95 +105,140 @@ export class OpenCodeResponseTooLargeError extends Error {
   }
 }
 
+export type OpenCodeClientError =
+  | OpenCodeRequestTimeoutError
+  | OpenCodeResponseTooLargeError
+  | OpenCodeStreamClosedError
+  | OpenCodeTransportError;
+
+type OpenCodeEffect<A> = Effect.Effect<A, OpenCodeClientError>;
+
+type RequestResources = {
+  controller: AbortController;
+  sourceSignal: AbortSignal | undefined;
+  abortSource: (() => void) | undefined;
+  timer: ReturnType<typeof setTimeout>;
+  abort: Promise<never> | undefined;
+  timeout: Promise<never>;
+};
+
 /**
  * Bounds a short-lived request and aborts the underlying fetch when possible.
  * The promise race also protects callers that inject a request implementation
  * which does not observe AbortSignal.
  */
-export async function requestWithTimeout(
+export function requestWithTimeout(
   request: OpenCodeRequest,
   url: string,
   init: RequestInit | undefined,
   timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
+): OpenCodeEffect<Response> {
   const sourceSignal = init?.signal ?? undefined;
-  let abortSource: (() => void) | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const abortPromise =
-    sourceSignal === undefined
-      ? undefined
-      : new Promise<never>((_, reject) => {
-          abortSource = () => {
-            controller.abort(sourceSignal.reason);
-            reject(sourceSignal.reason instanceof Error ? sourceSignal.reason : new Error("OpenCode request aborted"));
-          };
-          if (sourceSignal.aborted) abortSource();
-          else sourceSignal.addEventListener("abort", abortSource, { once: true });
+  return Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const controller = new AbortController();
+      let abortSource: (() => void) | undefined;
+      let abort: Promise<never> | undefined;
+      if (sourceSignal !== undefined) {
+        let rejectAbort!: (reason: unknown) => void;
+        abort = new Promise<never>((_, reject) => {
+          rejectAbort = reject;
         });
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => {
-        controller.abort();
-        reject(new OpenCodeRequestTimeoutError(url, timeoutMs));
-      },
-      Math.max(0, timeoutMs),
-    );
-  });
-  const requestPromise = (async () => {
-    const response = await request(url, { ...init, signal: controller.signal });
-    const body = await readResponseBody(response, url);
-    return new Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  })();
-  try {
-    return await Promise.race(
-      abortPromise === undefined ? [requestPromise, timeoutPromise] : [requestPromise, timeoutPromise, abortPromise],
-    );
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    if (abortSource !== undefined) sourceSignal?.removeEventListener("abort", abortSource);
-    controller.abort();
-  }
+        abortSource = () => {
+          controller.abort(sourceSignal.reason);
+          rejectAbort(
+            sourceSignal.reason instanceof Error ? sourceSignal.reason : new Error("OpenCode request aborted"),
+          );
+        };
+        if (sourceSignal.aborted) abortSource();
+        else sourceSignal.addEventListener("abort", abortSource, { once: true });
+      }
+
+      let rejectTimeout!: (reason: unknown) => void;
+      const timeout = new Promise<never>((_, reject) => {
+        rejectTimeout = reject;
+      });
+      const timer = setTimeout(
+        () => {
+          controller.abort();
+          rejectTimeout(new OpenCodeRequestTimeoutError(url, timeoutMs));
+        },
+        Math.max(0, timeoutMs),
+      );
+      return { controller, sourceSignal, abortSource, timer, abort, timeout } satisfies RequestResources;
+    }),
+    (resources) => {
+      const requestEffect = fromOpenCodePromise(() =>
+        request(url, { ...init, signal: resources.controller.signal }),
+      ).pipe(
+        Effect.flatMap((response) => readResponseBody(response, url).pipe(Effect.map((body) => ({ response, body })))),
+        Effect.map(
+          ({ response, body }) =>
+            new Response(body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            }),
+        ),
+      );
+      const timeoutEffect = fromPromise(() => resources.timeout).pipe(Effect.mapError(toOpenCodeClientError));
+      if (resources.abort === undefined) return Effect.raceFirst(requestEffect, timeoutEffect);
+      // Abort reasons belong to the caller's signal. Preserve the original
+      // reason rather than translating it into a transport error.
+      const abortEffect = fromPromise(() => resources.abort as Promise<never>).pipe(
+        Effect.mapError((error) => error as OpenCodeClientError),
+      );
+      return Effect.raceFirst(requestEffect, Effect.raceFirst(timeoutEffect, abortEffect));
+    },
+    (resources) =>
+      Effect.sync(() => {
+        clearTimeout(resources.timer);
+        if (resources.abortSource !== undefined)
+          resources.sourceSignal?.removeEventListener("abort", resources.abortSource);
+        resources.controller.abort();
+      }),
+  );
 }
 
-async function readResponseBody(response: Response, url: string): Promise<ArrayBuffer> {
-  if (!response.body) {
-    const body = await response.arrayBuffer();
-    if (body.byteLength > openCodeResponseMaxBytes) {
-      throw new OpenCodeResponseTooLargeError(url, openCodeResponseMaxBytes);
-    }
-    return body;
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value === undefined) continue;
-      size += value.byteLength;
-      if (size > openCodeResponseMaxBytes) {
-        await reader.cancel();
-        throw new OpenCodeResponseTooLargeError(url, openCodeResponseMaxBytes);
+function readResponseBody(response: Response, url: string): OpenCodeEffect<ArrayBuffer> {
+  const responseBody = response.body;
+  if (!responseBody) {
+    return Effect.gen(function* () {
+      const body = yield* fromOpenCodePromise(() => response.arrayBuffer());
+      if (body.byteLength > openCodeResponseMaxBytes) {
+        return yield* Effect.fail(new OpenCodeResponseTooLargeError(url, openCodeResponseMaxBytes));
       }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
+      return body;
+    });
   }
-  const body = new ArrayBuffer(size);
-  const view = new Uint8Array(body);
-  let offset = 0;
-  for (const chunk of chunks) {
-    view.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
+  return Effect.acquireUseRelease(
+    Effect.sync(() => responseBody.getReader()),
+    (reader) =>
+      Effect.gen(function* () {
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        for (;;) {
+          const { done, value } = yield* fromOpenCodePromise(() => reader.read());
+          if (done) break;
+          if (value === undefined) continue;
+          size += value.byteLength;
+          if (size > openCodeResponseMaxBytes) {
+            yield* fromOpenCodePromise(() => reader.cancel());
+            return yield* Effect.fail(new OpenCodeResponseTooLargeError(url, openCodeResponseMaxBytes));
+          }
+          chunks.push(value);
+        }
+        const body = new ArrayBuffer(size);
+        const view = new Uint8Array(body);
+        let offset = 0;
+        for (const chunk of chunks) {
+          view.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return body;
+      }),
+    (reader) => Effect.sync(() => reader.releaseLock()),
+  );
 }
 
 export class OpenCodeClient {
@@ -190,162 +253,176 @@ export class OpenCodeClient {
     this.requestTimeoutMs = Math.max(0, options.requestTimeoutMs ?? openCodeRequestTimeoutMs);
   }
 
-  public async health(signal?: AbortSignal): Promise<OpenCodeHealth | undefined> {
-    const response = await this.get("/global/health", signal);
-    if (!response.ok) return undefined;
-    const body = await safeJson(response);
-    const healthy = objectValue(body)?.healthy === true;
-    const version = stringValue(objectValue(body)?.version) ?? "";
-    return healthy ? { healthy, version } : undefined;
+  public health(signal?: AbortSignal): OpenCodeEffect<OpenCodeHealth | undefined> {
+    const client = this;
+    return Effect.gen(function* () {
+      const response = yield* client.get("/global/health", signal);
+      if (!response.ok) return undefined;
+      const body = yield* safeJson(response);
+      const healthy = objectValue(body)?.healthy === true;
+      const version = stringValue(objectValue(body)?.version) ?? "";
+      return healthy ? { healthy, version } : undefined;
+    });
   }
 
   /** Creates a session and optionally sets its title. */
-  public async createSession(title?: string, signal?: AbortSignal): Promise<string | undefined> {
-    const response = await this.requestWithTimeout(`${this.baseUrl}/session`, {
-      method: "POST",
-      headers: this.headers(openCodeJsonHeaders),
-      body: title ? JSON.stringify({ title }) : "{}",
-      ...(signal === undefined ? {} : { signal }),
+  public createSession(title?: string, signal?: AbortSignal): OpenCodeEffect<string | undefined> {
+    const client = this;
+    return Effect.gen(function* () {
+      const response = yield* client.requestWithTimeout(`${client.baseUrl}/session`, {
+        method: "POST",
+        headers: client.headers(openCodeJsonHeaders),
+        body: title ? JSON.stringify({ title }) : "{}",
+        ...(signal === undefined ? {} : { signal }),
+      });
+      if (!response.ok) return undefined;
+      const body = yield* safeJson(response);
+      return stringValue(objectValue(body)?.id);
     });
-    if (!response.ok) return undefined;
-    const body = await safeJson(response);
-    return stringValue(objectValue(body)?.id);
   }
 
   /** Renames an existing session. */
-  public async setSessionTitle(sessionId: string, title: string, signal?: AbortSignal): Promise<boolean> {
-    const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}`, {
-      method: "PATCH",
-      headers: this.headers(openCodeJsonHeaders),
-      body: JSON.stringify({ title }),
-      ...(signal === undefined ? {} : { signal }),
+  public setSessionTitle(sessionId: string, title: string, signal?: AbortSignal): OpenCodeEffect<boolean> {
+    const client = this;
+    return Effect.gen(function* () {
+      const response = yield* client.requestWithTimeout(`${client.baseUrl}/session/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: client.headers(openCodeJsonHeaders),
+        body: JSON.stringify({ title }),
+        ...(signal === undefined ? {} : { signal }),
+      });
+      if (!response.ok) {
+        yield* Effect.sync(() => client.options.onLog?.("warn", "opencode.session_title_update_failed", { sessionId }));
+        return false;
+      }
+      return true;
     });
-    if (!response.ok) {
-      this.options.onLog?.("warn", "opencode.session_title_update_failed", { sessionId });
-      return false;
-    }
-    return true;
   }
 
-  public async sessionExists(sessionId: string, signal?: AbortSignal): Promise<boolean> {
-    const response = await this.get(`/session/${encodeURIComponent(sessionId)}`, signal);
-    return response.ok;
+  public sessionExists(sessionId: string, signal?: AbortSignal): OpenCodeEffect<boolean> {
+    const client = this;
+    return Effect.gen(function* () {
+      const response = yield* client.get(`/session/${encodeURIComponent(sessionId)}`, signal);
+      return response.ok;
+    });
   }
 
   /** Current status of one session, or `undefined` when it cannot be determined. */
-  public async sessionStatus(sessionId: string, signal?: AbortSignal): Promise<OpenCodeSessionStatus | undefined> {
-    const response = await this.get("/session/status", signal);
-    if (!response.ok) return undefined;
-    const body = await safeJson(response);
-    const entry = objectValue(body)?.[sessionId];
-    return sessionStatusValue(entry);
-  }
-
-  public async abortSession(sessionId: string, signal?: AbortSignal): Promise<boolean> {
-    const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}/abort`, {
-      method: "POST",
-      headers: this.headers(openCodeJsonHeaders),
-      ...(signal === undefined ? {} : { signal }),
+  public sessionStatus(sessionId: string, signal?: AbortSignal): OpenCodeEffect<OpenCodeSessionStatus | undefined> {
+    const client = this;
+    return Effect.gen(function* () {
+      const response = yield* client.get("/session/status", signal);
+      if (!response.ok) return undefined;
+      const body = yield* safeJson(response);
+      const entry = objectValue(body)?.[sessionId];
+      return sessionStatusValue(entry);
     });
-    if (!response.ok) return false;
-    const body = await safeJson(response);
-    return body === true;
   }
 
-  public async replyPermission(
+  public abortSession(sessionId: string, signal?: AbortSignal): OpenCodeEffect<boolean> {
+    const client = this;
+    return Effect.gen(function* () {
+      const response = yield* client.requestWithTimeout(
+        `${client.baseUrl}/session/${encodeURIComponent(sessionId)}/abort`,
+        {
+          method: "POST",
+          headers: client.headers(openCodeJsonHeaders),
+          ...(signal === undefined ? {} : { signal }),
+        },
+      );
+      if (!response.ok) return false;
+      const body = yield* safeJson(response);
+      return body === true;
+    });
+  }
+
+  public replyPermission(
     sessionId: string,
     permissionId: string,
     response: "allow" | "deny",
     remember = false,
     signal?: AbortSignal,
-  ): Promise<boolean> {
-    const result = await this.requestWithTimeout(
-      `${this.baseUrl}/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`,
-      {
-        method: "POST",
-        headers: this.headers(openCodeJsonHeaders),
-        body: JSON.stringify({ response, remember }),
-        ...(signal === undefined ? {} : { signal }),
-      },
-    );
-    if (!result.ok) return false;
-    const body = await safeJson(result);
-    return body === true;
+  ): OpenCodeEffect<boolean> {
+    const client = this;
+    return Effect.gen(function* () {
+      const result = yield* client.requestWithTimeout(
+        `${client.baseUrl}/session/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`,
+        {
+          method: "POST",
+          headers: client.headers(openCodeJsonHeaders),
+          body: JSON.stringify({ response, remember }),
+          ...(signal === undefined ? {} : { signal }),
+        },
+      );
+      if (!result.ok) return false;
+      const body = yield* safeJson(result);
+      return body === true;
+    });
   }
 
-  public async forkSession(sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
-    const response = await this.requestWithTimeout(`${this.baseUrl}/session/${encodeURIComponent(sessionId)}/fork`, {
-      method: "POST",
-      headers: this.headers(openCodeJsonHeaders),
-      body: "{}",
-      ...(signal === undefined ? {} : { signal }),
+  public forkSession(sessionId: string, signal?: AbortSignal): OpenCodeEffect<string | undefined> {
+    const client = this;
+    return Effect.gen(function* () {
+      const response = yield* client.requestWithTimeout(
+        `${client.baseUrl}/session/${encodeURIComponent(sessionId)}/fork`,
+        {
+          method: "POST",
+          headers: client.headers(openCodeJsonHeaders),
+          body: "{}",
+          ...(signal === undefined ? {} : { signal }),
+        },
+      );
+      if (!response.ok) return undefined;
+      const body = yield* safeJson(response);
+      return stringValue(objectValue(body)?.id);
     });
-    if (!response.ok) return undefined;
-    const body = await safeJson(response);
-    return stringValue(objectValue(body)?.id);
   }
 
   /**
    * Open the `/global/event` SSE stream. Events are normalized into
-   * `OpenCodeEvent`; malformed chunks are skipped. The generator ends by
-   * throwing `OpenCodeStreamClosedError` so callers can reconnect.
+   * `OpenCodeEvent`; malformed chunks are skipped. The stream fails with
+   * `OpenCodeStreamClosedError` when the connection closes so callers can
+   * reconnect.
    * Pass a signal to abort the connection so the socket is released.
    */
-  public async *events(signal?: AbortSignal): AsyncGenerator<OpenCodeEvent> {
-    const response = await this.request(`${this.baseUrl}/global/event`, {
-      headers: this.headers({ Accept: "text/event-stream" }),
-      ...(signal ? { signal } : {}),
-    });
-    if (!response.ok) {
-      throw new OpenCodeStreamClosedError(`OpenCode event stream returned ${response.status}`);
-    }
-    if (!response.body) {
-      throw new OpenCodeStreamClosedError("OpenCode event stream has no body");
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let boundary = findEventBoundary(buffer);
-        while (boundary !== -1) {
-          const block = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 1);
-          const event = parseSseBlock(block);
-          if (event) yield event;
-          boundary = findEventBoundary(buffer);
-        }
-      }
-    } catch (error) {
-      if (error instanceof OpenCodeStreamClosedError) throw error;
-      throw new OpenCodeStreamClosedError(
-        `OpenCode event stream failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    } finally {
-      reader.releaseLock();
-    }
-    throw new OpenCodeStreamClosedError("OpenCode event stream ended");
+  public events(signal?: AbortSignal): Stream.Stream<OpenCodeEvent, OpenCodeClientError> {
+    const open = fromOpenCodePromise((effectSignal) =>
+      this.request(`${this.baseUrl}/global/event`, {
+        headers: this.headers({ Accept: "text/event-stream" }),
+        signal: signal ?? effectSignal,
+      }),
+    ).pipe(
+      Effect.flatMap((response) => {
+        if (!response.ok)
+          return Effect.fail(new OpenCodeStreamClosedError(`OpenCode event stream returned ${response.status}`));
+        const responseBody = response.body;
+        if (!responseBody) return Effect.fail(new OpenCodeStreamClosedError("OpenCode event stream has no body"));
+        return Effect.acquireRelease(
+          Effect.sync(() => responseBody.getReader()),
+          (reader) => Effect.sync(() => reader.releaseLock()),
+        ).pipe(Effect.map((reader) => ({ reader, decoder: new TextDecoder(), buffer: "" })));
+      }),
+    );
+    return Stream.scoped(Stream.unwrap(open.pipe(Effect.map((state) => Stream.unfold(state, readSseEvent)))));
   }
 
-  private async get(path: string, signal?: AbortSignal): Promise<Response> {
-    try {
-      return await this.requestWithTimeout(`${this.baseUrl}${path}`, {
-        headers: this.headers(openCodeJsonHeaders),
-        ...(signal === undefined ? {} : { signal }),
-      });
-    } catch (error) {
-      this.options.onLog?.("debug", "opencode.request_failed", {
-        path,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
+  private get(path: string, signal?: AbortSignal): OpenCodeEffect<Response> {
+    return this.requestWithTimeout(`${this.baseUrl}${path}`, {
+      headers: this.headers(openCodeJsonHeaders),
+      ...(signal === undefined ? {} : { signal }),
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() =>
+          this.options.onLog?.("debug", "opencode.request_failed", {
+            path,
+            error: error.message,
+          }),
+        ),
+      ),
+    );
   }
 
-  private requestWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  private requestWithTimeout(url: string, init: RequestInit): OpenCodeEffect<Response> {
     return requestWithTimeout(this.request, url, init, this.requestTimeoutMs);
   }
 
@@ -354,6 +431,40 @@ export class OpenCodeClient {
       ? headers
       : { ...headers, "x-opencode-directory": this.options.directory };
   }
+}
+
+function fromOpenCodePromise<A>(
+  evaluate: (signal: AbortSignal) => A | PromiseLike<A>,
+): Effect.Effect<A, OpenCodeTransportError> {
+  return fromPromise(evaluate).pipe(Effect.mapError((error) => new OpenCodeTransportError(error)));
+}
+
+function toOpenCodeClientError(error: Error): OpenCodeClientError {
+  return error instanceof OpenCodeRequestTimeoutError ? error : new OpenCodeTransportError(error);
+}
+
+type SseReaderState = {
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  decoder: TextDecoder;
+  buffer: string;
+};
+
+function readSseEvent(state: SseReaderState): OpenCodeEffect<readonly [OpenCodeEvent, SseReaderState]> {
+  return Effect.gen(function* () {
+    for (;;) {
+      const boundary = findEventBoundary(state.buffer);
+      if (boundary !== -1) {
+        const block = state.buffer.slice(0, boundary);
+        state.buffer = state.buffer.slice(boundary + 1);
+        const event = parseSseBlock(block);
+        if (event) return [event, state] as const;
+        continue;
+      }
+      const { done, value } = yield* fromOpenCodePromise(() => state.reader.read());
+      if (done) return yield* Effect.fail(new OpenCodeStreamClosedError("OpenCode event stream ended"));
+      if (value !== undefined) state.buffer += state.decoder.decode(value, { stream: true });
+    }
+  });
 }
 
 function sessionStatusValue(value: unknown): OpenCodeSessionStatus | undefined {
@@ -407,12 +518,8 @@ function findEventBoundary(buffer: string): number {
   return -1;
 }
 
-async function safeJson(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    return undefined;
-  }
+function safeJson(response: Response): Effect.Effect<unknown, never> {
+  return fromPromise(() => response.json()).pipe(Effect.catch(() => Effect.succeed(undefined)));
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

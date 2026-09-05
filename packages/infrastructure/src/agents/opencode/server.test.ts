@@ -10,6 +10,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect } from "effect";
 import { describe, it } from "vitest";
 import {
   defaultOpenCodeRegistryFile,
@@ -128,7 +129,7 @@ function createManager(harness: Harness, input: ServerInput): OpenCodeServerMana
     environment: input.environment,
     spawn: (command, args, options) => {
       if (input.environment !== undefined) harness.spawnEnvironments.push(options.env);
-      return spawnRecord(harness, command, args, options.cwd);
+      return Promise.resolve(spawnRecord(harness, command, args, options.cwd));
     },
     allocatePort: async () => 49_152 + harness.spawnRecords.length,
     probePort: async (port) => harness.availablePorts.has(port),
@@ -489,7 +490,7 @@ const table: OperationTable<ServerFixture, "default", ServerInput, ServerResult,
     let entry: OpenCodeServerEntry | undefined;
     let entries: OpenCodeServerEntry[] = [];
     try {
-      if (input.operation === "ensure") entry = await manager.ensure("/ws");
+      if (input.operation === "ensure") entry = await Effect.runPromise(manager.ensure("/ws"));
       else entries = manager.list();
     } catch (caught) {
       const result: ServerResult = {

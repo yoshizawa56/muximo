@@ -9,6 +9,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import { Effect, Stream } from "effect";
 import { describe, it } from "vitest";
 import type { AgentMonitor, AgentObservationSink, AgentPluginV1 } from "../index.js";
 import type { OpenCodeClient, OpenCodeSessionStatus } from "./client.js";
@@ -28,11 +29,13 @@ function fakeManager(
   overrides: { ensureThrows?: boolean; sessions?: Record<string, unknown>; afterEnsure?: () => void } = {},
 ): OpenCodeServerManager {
   return {
-    ensure: async (root: string) => {
-      if (overrides.ensureThrows) throw new Error("opencode serve did not become healthy within 15000ms");
-      overrides.afterEnsure?.();
-      return { ...serverEntry, workspaceRoot: root };
-    },
+    ensure: (root: string) =>
+      Effect.gen(function* () {
+        if (overrides.ensureThrows)
+          return yield* Effect.fail(new Error("opencode serve did not become healthy within 15000ms"));
+        yield* Effect.sync(() => overrides.afterEnsure?.());
+        return { ...serverEntry, workspaceRoot: root };
+      }),
     list: () => [serverEntry],
   } as unknown as OpenCodeServerManager;
 }
@@ -44,22 +47,22 @@ type ClientRecords = {
 
 function fakeClient(records: ClientRecords, sessions: Record<string, unknown> = {}): OpenCodeClient {
   return {
-    createSession: async (title?: string) => {
-      records.createdTitles.push(title);
-      return "session-created";
-    },
-    sessionExists: async (sessionId: string) => Object.hasOwn(sessions, sessionId),
-    sessionStatus: async () => "idle" as OpenCodeSessionStatus,
-    abortSession: async () => true,
-    replyPermission: async () => true,
-    forkSession: async () => "session-forked",
-    setSessionTitle: async (sessionId: string, title: string) => {
-      records.renamedSessions.push({ sessionId, title });
-      return true;
-    },
-    events: async function* () {
-      yield* [];
-    },
+    createSession: (title?: string) =>
+      Effect.sync(() => {
+        records.createdTitles.push(title);
+        return "session-created";
+      }),
+    sessionExists: (sessionId: string) => Effect.succeed(Object.hasOwn(sessions, sessionId)),
+    sessionStatus: () => Effect.succeed("idle" as OpenCodeSessionStatus),
+    abortSession: () => Effect.succeed(true),
+    replyPermission: () => Effect.succeed(true),
+    forkSession: () => Effect.succeed("session-forked"),
+    setSessionTitle: (sessionId: string, title: string) =>
+      Effect.sync(() => {
+        records.renamedSessions.push({ sessionId, title });
+        return true;
+      }),
+    events: () => Stream.empty,
   } as unknown as OpenCodeClient;
 }
 

@@ -283,9 +283,9 @@ function createBackendFixture(
 
 function emptyCodexStateRepository(): CodexSessionStateRepository {
   return {
-    find: async () => undefined,
-    save: async () => undefined,
-    delete: async () => undefined,
+    find: () => Effect.succeed(undefined),
+    save: () => Effect.succeed(undefined),
+    delete: () => Effect.succeed(undefined),
   };
 }
 

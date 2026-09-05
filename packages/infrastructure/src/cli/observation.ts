@@ -5,8 +5,8 @@ import type {
   AgentSessionWorktreeState,
   ApplicationEffect,
   ProcessLiveness,
-  ProcessObservationPort,
-  SessionObservationPort,
+  ProcessObservation,
+  SessionObservation,
 } from "@muximo/application";
 import { shouldCheckAgentSessionWorktree } from "@muximo/application";
 import type { AgentSession } from "@muximo/domain";
@@ -21,7 +21,7 @@ export type SessionObservationOptions = {
 };
 
 /** Filesystem/process observation adapter for the application list projection. */
-export class AgentSessionObservationAdapter implements SessionObservationPort {
+export class AgentSessionObservationAdapter implements SessionObservation {
   public constructor(private readonly options: SessionObservationOptions) {}
 
   public resolveWorkspace(): ApplicationEffect<{ id: AgentSession["workspaceId"] }> {
@@ -82,7 +82,7 @@ export class AgentSessionObservationAdapter implements SessionObservationPort {
   }
 }
 
-export class ProcessObservationAdapter implements ProcessObservationPort {
+export class ProcessObservationAdapter implements ProcessObservation {
   public observe(pid: number, expectedStartedAt?: string): ApplicationEffect<ProcessLiveness> {
     return fromPromise(() => observeProcessLiveness(pid, expectedStartedAt));
   }

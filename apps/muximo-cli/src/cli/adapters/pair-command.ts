@@ -1,5 +1,5 @@
 import type { Readable, Writable } from "node:stream";
-import type { PairDevice } from "@muximo/application";
+import type { PairDeviceInput, PairDeviceResult } from "@muximo/application";
 import { Effect } from "effect";
 
 export type PairCommandIo = {
@@ -16,7 +16,9 @@ export type ResolvedPairCommandOptions = {
 };
 
 export type PairDeviceRuntime = {
-  useCase: Pick<PairDevice, "execute">;
+  useCase: {
+    execute(input: PairDeviceInput): Effect.Effect<PairDeviceResult, Error, never>;
+  };
   close(): void | Promise<void>;
 };
 

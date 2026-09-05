@@ -9,13 +9,13 @@ import {
 } from "@muximo/test-support";
 import { Effect } from "effect";
 import { describe, it } from "vitest";
-import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
+import { createMuximodApp, type MuximodApp, type MuximodAuth } from "./app.js";
 import { createOriginPolicy } from "./middleware.js";
 import { createHttpTestClient } from "./test-client.js";
 import { createTestMuximodSocketFactory } from "./test-socket.js";
 
 const serverId = "server-auth-test-000000";
-const auth: MuximodAuthPort = {
+const auth: MuximodAuth = {
   serverId,
   authenticateAccessToken: () => Effect.succeed(undefined),
   claimPairing: () => Effect.fail(new Error("not used")),

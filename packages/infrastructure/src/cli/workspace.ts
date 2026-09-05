@@ -4,11 +4,11 @@ import { basename, resolve } from "node:path";
 import type {
   ApplicationEffect,
   ManagedAgentSessionRepository,
-  SessionNamingPort,
-  WorkspaceDirectoryPort,
+  SessionNaming,
+  WorkspaceDirectory,
   WorkspaceRepository,
   WorkspaceResolutionInput,
-  WorkspaceResolverPort,
+  WorkspaceResolver,
 } from "@muximo/application";
 import { type AgentBackend, Workspace, WorkspaceId } from "@muximo/domain";
 import { Effect } from "effect";
@@ -19,11 +19,11 @@ export type WorkspaceResolverOptions = {
   cwd: string;
   environment: NodeJS.ProcessEnv;
   workspaces: WorkspaceRepository;
-  directory?: WorkspaceDirectoryPort;
+  directory?: WorkspaceDirectory;
 };
 
 /** Resolves the current workspace from CLI selection, Git, and registrations. */
-export class WorkspaceResolverAdapter implements WorkspaceResolverPort {
+export class WorkspaceResolverAdapter implements WorkspaceResolver {
   private readonly cwd: string;
 
   public constructor(private readonly options: WorkspaceResolverOptions) {
@@ -121,7 +121,7 @@ export class WorkspaceResolverAdapter implements WorkspaceResolverPort {
 }
 
 /** Generates deterministic, collision-free names for a backend/workspace pair. */
-export class SessionNamingAdapter implements SessionNamingPort {
+export class SessionNamingAdapter implements SessionNaming {
   public constructor(private readonly sessions: ManagedAgentSessionRepository) {}
 
   public resolveName(

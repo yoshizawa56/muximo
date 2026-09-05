@@ -15,7 +15,7 @@ import {
 } from "@muximo/test-support";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { createMuximodApp, type MuximodApp, type MuximodAuthPort } from "./app.js";
+import { createMuximodApp, type MuximodApp, type MuximodAuth } from "./app.js";
 import { createOriginPolicy, muximoCapacitorOrigin } from "./middleware.js";
 import { createHttpTestClient } from "./test-client.js";
 import { createTestMuximodSocketFactory } from "./test-socket.js";
@@ -423,7 +423,7 @@ describe("muximod transport boundary", () => {
   runOperationTable(register, rpcTable);
 });
 
-const testAuth: MuximodAuthPort = {
+const testAuth: MuximodAuth = {
   serverId: authContext.serverId,
   authenticateAccessToken: (token) => Effect.succeed(token === "test-token" ? authContext : undefined),
   claimPairing: () => Effect.fail(new Error("not used")),
