@@ -14,7 +14,6 @@ import type {
   UpdateWorkspaceRequest,
   WorkspaceDirectory,
 } from "@muximo/contract/api";
-import type { MuximodControlLogResult } from "@muximo/contract/control";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
@@ -31,9 +30,6 @@ export type MuximodApiClient = {
     cleanup(input: CleanupAgentSessionRequest): Promise<CleanupAgentSessionResponse>;
     list(input: ListAgentSessionsRequest): Promise<AgentSessionListResponse>;
   };
-  daemon: {
-    readLog(lines: number): Promise<MuximodControlLogResult>;
-  };
   workspaces: {
     list(): Promise<readonly WorkspaceDirectory[]>;
     register(input: RegisterWorkspaceRequest): Promise<WorkspaceDirectory>;
@@ -48,11 +44,6 @@ export type MuximodApiConnectionOptions = {
   cwd?: string;
   ensureDaemon?: () => Promise<void>;
   resolveHttpBaseUrl?: () => string | Promise<string>;
-};
-
-export type MuximodDaemonLogOptions = {
-  controlSocket: string;
-  lines: number;
 };
 
 /** Opens the API with a short-lived token minted through the private socket. */
@@ -119,15 +110,7 @@ export async function connectMuximodApi(options: MuximodApiConnectionOptions): P
         return workspace;
       },
     },
-    daemon: {
-      readLog: (lines) => readMuximodDaemonLog({ controlSocket: options.controlSocket, lines }),
-    },
   };
-}
-
-/** Reads daemon diagnostics through the private contract without starting a daemon or requiring HTTP health. */
-export async function readMuximodDaemonLog(options: MuximodDaemonLogOptions): Promise<MuximodControlLogResult> {
-  return readDaemonLogThroughControl(options.controlSocket, options.lines);
 }
 
 async function mintLocalSession(socketPath: string): Promise<AuthSessionResponse> {
@@ -146,15 +129,6 @@ async function mintLocalSessionWithRecovery(options: MuximodApiConnectionOptions
     if (!options.ensureDaemon || !isConnectionError(error)) throw error;
     await options.ensureDaemon();
     return mintLocalSession(options.controlSocket);
-  }
-}
-
-async function readDaemonLogThroughControl(socketPath: string, lines: number): Promise<MuximodControlLogResult> {
-  const control = await MuximodPairingControlAdapter.connect(socketPath);
-  try {
-    return await control.readLog(lines);
-  } finally {
-    control.close();
   }
 }
 

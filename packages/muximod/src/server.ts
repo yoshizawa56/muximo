@@ -55,7 +55,6 @@ import {
   mapTmuxSnapshotToTerminalHostSnapshot,
   nodeAuthCrypto,
   ProcessObservationAdapter,
-  readDaemonLog,
   recordAuditEvent,
   SessionNamingAdapter,
   SqliteTransactionManager,
@@ -376,11 +375,6 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
         ? await options.configurationStatus()
         : { state: "unavailable", changedKeys: [] },
     }),
-    readLog: async (lines) => {
-      if (options.logFile === undefined) throw new Error("muximod log file is not configured");
-      const result = await readDaemonLog(options.logFile, lines);
-      return { ...result, lines: [...result.lines] };
-    },
     readHostSettings: () => options.hostSettings ?? { tailscale: defaultTailscaleSettings() },
     readWebSettings: () => options.webSettings ?? { proxy: defaultWebProxySettings() },
     setServeOrigin: (origin) => {

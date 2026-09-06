@@ -29,7 +29,6 @@ import { MuximodControlServer } from "./control.js";
 type ControlRequest = { agentSessionId: string; hostPaneId: string; executionId: string };
 type ControlStep =
   | { type: "adopt" | "observe" | "release" }
-  | { type: "read-log"; lines: number }
   | { type: "read-host-settings" }
   | { type: "read-web-settings" }
   | { type: "read-daemon-status" }
@@ -45,7 +44,6 @@ type ControlFixture = {
   calls: string[];
   applicationRequests: unknown[];
   observations: string[];
-  logReads: number[];
   serveOrigins: Array<string | null>;
   socket: ControlTestSocket;
   database: ReturnType<typeof createAgentDatabase>;
@@ -57,7 +55,6 @@ type ControlContext = {
   calls: readonly string[];
   applicationRequests: readonly unknown[];
   observations: readonly string[];
-  logReads: readonly number[];
   serveOrigins: readonly (string | null)[];
   prepareCancelled: boolean;
 };
@@ -141,7 +138,6 @@ const fixture = (
   const calls: string[] = [];
   const applicationRequests: unknown[] = [];
   const observations: string[] = [];
-  const logReads: number[] = [];
   const serveOrigins: Array<string | null> = [];
   const responses: string[] = [];
   let prepareCancelled = false;
@@ -155,10 +151,6 @@ const fixture = (
         daemonVersion: "0.1.0",
         configuration: { state: "restart_recommended", changedKeys: ["daemon.port"] },
       };
-    },
-    readLog: async (lines) => {
-      logReads.push(lines);
-      return { state: "available", logFile: "/tmp/muximod.log", lines: ["first", "second"].slice(-lines) };
     },
     readHostSettings: () => ({
       tailscale: {
@@ -257,7 +249,6 @@ const fixture = (
       calls,
       applicationRequests,
       observations,
-      logReads,
       serveOrigins,
       socket,
       database,
@@ -317,17 +308,6 @@ const cases = [
       hasObserved<ControlContext, undefined>("observations", [
         "session-id:%1:execution-id-123456:waiting_input:recent output",
       ]),
-    ],
-  },
-  {
-    name: "returns daemon log data through the private control contract",
-    steps: [{ type: "read-log", lines: 2 }],
-    assert: [
-      hasObserved<ControlContext, undefined>("responses", [
-        { type: "daemon_log", state: "available", logFile: "/tmp/muximod.log", lines: ["first", "second"] },
-      ]),
-      hasObserved<ControlContext, undefined>("requestIds", ["control-request-1"]),
-      hasObserved<ControlContext, undefined>("logReads", [2]),
     ],
   },
   {
@@ -473,59 +453,55 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
             ? "observe_agent_session"
             : step.type === "release"
               ? "release_agent_session"
-              : step.type === "read-log"
-                ? "read_log"
-                : step.type === "read-host-settings"
-                  ? "read_host_settings"
-                  : step.type === "read-web-settings"
-                    ? "read_web_settings"
-                    : step.type === "read-daemon-status"
-                      ? "read_daemon_status"
-                      : step.type === "set-serve-origin"
-                        ? "set_serve_origin"
-                        : step.type === "prepare-execution"
-                          ? "prepare_agent_execution"
-                          : step.type === "attach-execution"
-                            ? "attach_agent_execution"
-                            : "complete_agent_execution";
+              : step.type === "read-host-settings"
+                ? "read_host_settings"
+                : step.type === "read-web-settings"
+                  ? "read_web_settings"
+                  : step.type === "read-daemon-status"
+                    ? "read_daemon_status"
+                    : step.type === "set-serve-origin"
+                      ? "set_serve_origin"
+                      : step.type === "prepare-execution"
+                        ? "prepare_agent_execution"
+                        : step.type === "attach-execution"
+                          ? "attach_agent_execution"
+                          : "complete_agent_execution";
       const expectedCount = testFixture.responses.length + 1;
       testFixture.handleRequest(
         JSON.stringify({
           type,
           requestId: `control-request-${expectedCount}`,
-          ...(step.type === "read-log"
-            ? { lines: step.lines }
-            : step.type === "read-host-settings"
+          ...(step.type === "read-host-settings"
+            ? {}
+            : step.type === "read-web-settings"
               ? {}
-              : step.type === "read-web-settings"
+              : step.type === "read-daemon-status"
                 ? {}
-                : step.type === "read-daemon-status"
-                  ? {}
-                  : step.type === "set-serve-origin"
-                    ? { origin: step.origin }
-                    : step.type === "prepare-execution"
-                      ? {
-                          operation: "run",
-                          input: {
-                            backend: "codex",
-                            hostPaneId: request.hostPaneId,
-                            cwd: execution.cwd,
-                            useWorktree: false,
-                            setupHookExplicit: false,
-                            cleanupHookExplicit: false,
-                            backendArgs: [],
-                          },
-                        }
-                      : step.type === "attach-execution"
-                        ? { ...testFixture.request, executionPid: 456, executionStartedAt }
-                        : step.type === "complete-execution"
-                          ? { ...testFixture.request, operation: "run", result: executionProcess }
-                          : {
-                              ...testFixture.request,
-                              ...(step.type === "observe"
-                                ? { state: "waiting_input", recentOutput: "recent output" }
-                                : {}),
-                            }),
+                : step.type === "set-serve-origin"
+                  ? { origin: step.origin }
+                  : step.type === "prepare-execution"
+                    ? {
+                        operation: "run",
+                        input: {
+                          backend: "codex",
+                          hostPaneId: request.hostPaneId,
+                          cwd: execution.cwd,
+                          useWorktree: false,
+                          setupHookExplicit: false,
+                          cleanupHookExplicit: false,
+                          backendArgs: [],
+                        },
+                      }
+                    : step.type === "attach-execution"
+                      ? { ...testFixture.request, executionPid: 456, executionStartedAt }
+                      : step.type === "complete-execution"
+                        ? { ...testFixture.request, operation: "run", result: executionProcess }
+                        : {
+                            ...testFixture.request,
+                            ...(step.type === "observe"
+                              ? { state: "waiting_input", recentOutput: "recent output" }
+                              : {}),
+                          }),
         }),
       );
       await waitFor(() => testFixture.responses.length === expectedCount);
@@ -541,7 +517,6 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
     calls: [...testFixture.calls],
     applicationRequests: [...testFixture.applicationRequests],
     observations: [...testFixture.observations],
-    logReads: [...testFixture.logReads],
     serveOrigins: [...testFixture.serveOrigins],
     prepareCancelled: testFixture.prepareCancelled,
   }),

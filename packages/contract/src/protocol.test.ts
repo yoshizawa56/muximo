@@ -499,18 +499,6 @@ const pairingCases = [
     assert: [isValid()],
   },
   {
-    name: "accepts a bounded daemon log request",
-    input: {
-      kind: "request",
-      value: {
-        type: "read_log",
-        requestId: controlRequestId,
-        lines: 100,
-      },
-    },
-    assert: [isValid()],
-  },
-  {
     name: "accepts a private host settings request",
     input: {
       kind: "request",
@@ -580,18 +568,6 @@ const pairingCases = [
     assert: [isInvalid(["origin"])],
   },
   {
-    name: "rejects an unbounded daemon log request",
-    input: {
-      kind: "request",
-      value: {
-        type: "read_log",
-        requestId: controlRequestId,
-        lines: 10_001,
-      },
-    },
-    assert: [isInvalid(["lines"])],
-  },
-  {
     name: "accepts an agent session adopted response",
     input: {
       kind: "response",
@@ -630,20 +606,6 @@ const pairingCases = [
         hostPaneId: "%1",
         executionId: "execution-id-123456",
         state: "waiting_input",
-      },
-    },
-    assert: [isValid()],
-  },
-  {
-    name: "accepts a daemon log response",
-    input: {
-      kind: "response",
-      value: {
-        type: "daemon_log",
-        requestId: controlRequestId,
-        state: "available",
-        logFile: "/var/tmp/muximod.log",
-        lines: ["muximod started"],
       },
     },
     assert: [isValid()],

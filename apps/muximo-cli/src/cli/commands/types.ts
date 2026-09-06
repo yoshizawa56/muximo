@@ -66,6 +66,9 @@ export type CliDaemonInput = {
   command: "start" | "status" | "stop" | "restart" | "ensure" | "log";
   refreshServers: boolean;
   lines?: number;
+  json?: boolean;
+  filter?: string;
+  follow?: boolean;
 };
 
 export type CliPairInput = {

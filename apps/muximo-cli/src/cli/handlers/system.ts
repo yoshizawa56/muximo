@@ -8,9 +8,11 @@ import type {
   StartDaemonInput,
 } from "@muximo/application";
 import { DaemonHealthError } from "@muximo/application";
-import type { MuximodControlLogResult, MuximodDaemonStatus } from "@muximo/contract/control";
+import type { MuximodDaemonStatus } from "@muximo/contract/control";
 import type {
   DoctorReport,
+  MuximodLogFileLine,
+  MuximodLogFileReadResult,
   ServeRouteState,
   TailscaleServeResult,
   TailscaleServeRouteStatus,
@@ -23,6 +25,7 @@ import {
   presentDaemonStart,
   presentDaemonStatus,
   presentDaemonStop,
+  renderDaemonLogLine,
 } from "../presenters/daemon.js";
 import { presentDoctorReport } from "../presenters/doctor.js";
 import { presentServeResult } from "../presenters/serve.js";
@@ -46,6 +49,16 @@ export type ServeResult =
     }
   | { command: "stop"; state: "stopped" | "already-stopped"; publicUrl?: string };
 
+export type DaemonLogRequest = {
+  lines?: number;
+  json: boolean;
+  filter?: string;
+  follow: boolean;
+  onLines?: (lines: readonly MuximodLogFileLine[]) => void;
+};
+
+export type DaemonLogResult = MuximodLogFileReadResult & { followed: boolean };
+
 export type SystemHandlerDependencies = {
   doctor: { execute(input: CliDoctorInput): Promise<DoctorReport> };
   daemon: {
@@ -56,7 +69,7 @@ export type SystemHandlerDependencies = {
     stop: AsyncService<DaemonOptions, DaemonStopResult>;
     restart: AsyncService<DaemonOptions, DaemonRestartResult>;
     ensure: AsyncService<DaemonOptions, DaemonEnsureResult>;
-    log: AsyncService<{ lines: number }, MuximodControlLogResult>;
+    log: AsyncService<DaemonLogRequest, DaemonLogResult>;
   };
   clientVersion: string;
   serve: { execute(input: CliServeInput): Promise<ServeResult> };
@@ -92,8 +105,21 @@ export function createSystemHandlers(
             );
           case "log":
             return presentDaemonLog(
-              await dependencies.daemon.log.execute({ lines: input.lines ?? 100 }),
+              await dependencies.daemon.log.execute({
+                lines: input.lines ?? 100,
+                json: input.json === true,
+                filter: input.filter,
+                follow: input.follow === true,
+                onLines: input.follow
+                  ? (lines) => {
+                      for (const line of lines) {
+                        dependencies.io.out.write(`${renderDaemonLogLine(line, input.json === true)}\n`);
+                      }
+                    }
+                  : undefined,
+              }),
               dependencies.io,
+              input.json === true,
             );
         }
       } catch (error) {

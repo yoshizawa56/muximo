@@ -34,7 +34,23 @@ export {
 export * from "./cli/shell.js";
 export * from "./cli/tmux-session.js";
 export { GitShellWorktreeAdapter, GitWorktreeAdapter, type WorktreeAdapterOptions } from "./cli/worktree.js";
-export { createLogger, type Logger, type LogLevel, parseLogLevel } from "./logging/index.js";
+export {
+  createLogger,
+  formatHumanRecord,
+  type Logger,
+  type LogLevel,
+  type LogRecord,
+  parseLogLevel,
+} from "./logging/index.js";
+export {
+  compileMuximodLogFilter,
+  defaultMuximodLogFollowIntervalMs,
+  followMuximodLogFile,
+  type MuximodLogFileLine,
+  type MuximodLogFileReadResult,
+  parseMuximodLogFileLine,
+  readMuximodLogFile,
+} from "./logging/log-file.js";
 export { sanitizeProcessDiagnostic } from "./process/process.js";
 export {
   buildServeArgs,

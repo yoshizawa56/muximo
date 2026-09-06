@@ -17,18 +17,43 @@ const daemonSchema = z.object({
   refreshServers: z.boolean().default(false),
 });
 
-export const daemonLogOptionSpecs = defineOptions({
-  key: "lines",
-  flags: ["-n, --lines <count>"],
-  description: "Number of recent daemon log lines to print.",
-  exposure: "cli",
-  defaultValue: 100,
-  completion: { kind: "integer" },
-});
+export const daemonLogOptionSpecs = defineOptions(
+  {
+    key: "lines",
+    flags: ["-n, --lines <count>"],
+    description: "Number of recent daemon log lines to print.",
+    exposure: "cli",
+    defaultValue: 100,
+    completion: { kind: "integer" },
+  },
+  {
+    key: "json",
+    flags: ["--json"],
+    description: "Print raw JSON log lines instead of the human-readable format.",
+    exposure: "cli",
+    defaultValue: false,
+  },
+  {
+    key: "filter",
+    flags: ["--filter <pattern>"],
+    description: "Only print log lines whose rendered text or raw JSON matches the pattern (case-insensitive).",
+    exposure: "cli",
+  },
+  {
+    key: "follow",
+    flags: ["-f, --follow"],
+    description: "Keep reading the log file and print new lines as muximod writes them.",
+    exposure: "cli",
+    defaultValue: false,
+  },
+);
 
 const daemonLogSchema = z.object({
   command: z.literal("log"),
   lines: z.coerce.number().int().min(1).max(10_000).default(100),
+  json: z.boolean().default(false),
+  filter: z.string().min(1).optional(),
+  follow: z.boolean().default(false),
   refreshServers: z.literal(false).default(false),
 });
 
@@ -51,7 +76,9 @@ export function registerDaemonCommands(parent: Command, handlers: CliHandlers, c
       );
     });
   }
-  const log = daemon.command("log").description("Show recent muximod log lines");
+  const log = daemon
+    .command("log")
+    .description("Read muximod log lines directly from the log file without contacting the daemon");
   registerOptions(log, daemonLogOptionSpecs, context.buildMode);
   log.action(async (options) => {
     const resolved = resolveCommandOptions(options, daemonLogOptionSpecs, context);

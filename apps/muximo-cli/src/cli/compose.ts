@@ -20,6 +20,7 @@ import {
   createLogger,
   createTailscaleServeClient,
   ensureTailscaleServe,
+  followMuximodLogFile,
   GitShellWorktreeAdapter,
   GitWorktreeAdapter,
   inspectTailscaleServeRoute,
@@ -29,6 +30,7 @@ import {
   normalizeTailscaleServeHostname,
   normalizeTailscaleServePath,
   normalizeTailscaleServeTarget,
+  readMuximodLogFile,
   readServeRouteState,
   removeServeRouteState,
   runDoctor,
@@ -48,7 +50,7 @@ import {
 import { muximoCliVersion } from "../version.js";
 import { confirmCleanup } from "./adapters/cleanup-prompt.js";
 import { BrowserPairingPresenter, PairCommand, TerminalPairingPresenter } from "./adapters/index.js";
-import { connectMuximodApi, type MuximodApiClient, readMuximodDaemonLog } from "./adapters/muximod-api-client.js";
+import { connectMuximodApi, type MuximodApiClient } from "./adapters/muximod-api-client.js";
 import {
   MuximodPairingControlAdapter,
   muximodControlRequestTimeoutMs,
@@ -89,6 +91,20 @@ export type CliComposition = {
   execute(args: readonly string[]): Promise<number>;
   close(): void;
 };
+
+/** Aborts when the user interrupts the CLI so `daemon log --follow` can exit cleanly. */
+function abortOnSigint(): AbortSignal & { dispose(): void } {
+  const controller = new AbortController();
+  const onSigint = (): void => {
+    controller.abort();
+  };
+  process.once("SIGINT", onSigint);
+  return Object.assign(controller.signal, {
+    dispose: () => {
+      process.removeListener("SIGINT", onSigint);
+    },
+  });
+}
 
 /** The sole CLI composition root: all client and host resources are wired here. */
 export function createCliComposition(options: CliCompositionOptions): CliComposition {
@@ -621,11 +637,27 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         },
       },
       log: {
-        execute: (value) =>
-          readMuximodDaemonLog({
-            controlSocket: runtime.controlSocket,
+        execute: async (value) => {
+          const read = readMuximodLogFile({
+            logFile: runtime.logFile,
             lines: value.lines,
-          }),
+            filter: value.filter,
+          });
+          if (read.state === "available") value.onLines?.(read.lines);
+          if (!value.follow) return { ...read, followed: false };
+          const signal = abortOnSigint();
+          try {
+            await followMuximodLogFile({
+              logFile: runtime.logFile,
+              filter: value.filter,
+              signal,
+              onLines: (lines) => value.onLines?.(lines),
+            });
+          } finally {
+            signal.dispose();
+          }
+          return { ...read, followed: true };
+        },
       },
     },
     clientVersion: muximoCliVersion,

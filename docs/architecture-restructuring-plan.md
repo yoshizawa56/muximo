@@ -119,7 +119,10 @@ command tree, while each command module validates Commander values with Zod and 
 one typed handler. The entrypoint owns only argv, environment, streams, invocation,
 error reporting, and exit status. The CLI is a pure daemon client for daemon-owned
 state: it does not open SQLite, construct repositories, synchronize schemas, copy
-snapshots, or read daemon log/state files.
+snapshots, or read daemon state files. The one deliberate exception is
+`muximo daemon log`, which reads the `muximod.log` file directly through
+`@muximo/instance-contract` paths so diagnostics stay available while the daemon
+is stopped.
 
 Application lifecycle policy is split into `RunAgentSession`, `ResumeAgentSession`,
 `ListAgentSessions`, `CleanupAgentSession`, and `LocateAgentSession`. Their focused ports

@@ -5,7 +5,12 @@ import type {
   DaemonStatusResult,
   DaemonStopResult,
 } from "@muximo/application";
-import type { MuximodControlLogResult, MuximodDaemonStatus } from "@muximo/contract/control";
+import type { MuximodDaemonStatus } from "@muximo/contract/control";
+import {
+  formatHumanRecord,
+  type MuximodLogFileLine,
+  type MuximodLogFileReadResult,
+} from "@muximo/infrastructure/cli-client";
 import type { CliIo } from "../commands/types.js";
 
 export function presentDaemonStart(result: DaemonStartResult, io: CliIo): number {
@@ -87,27 +92,49 @@ export function presentDaemonRestart(result: DaemonRestartResult, io: CliIo): nu
   return 0;
 }
 
-export function presentDaemonLog(result: MuximodControlLogResult, io: CliIo): number {
+/** Renders one muximod log line for humans by default or as raw JSON with --json. */
+export function renderDaemonLogLine(line: MuximodLogFileLine, json: boolean): string {
+  if (json || line.record === undefined) return line.raw;
+  return formatHumanRecord(line.record);
+}
+
+export function presentDaemonLog(
+  result: MuximodLogFileReadResult & { followed: boolean },
+  io: CliIo,
+  json = false,
+): number {
+  if (result.followed) {
+    if (result.state === "missing") {
+      io.out.write(`[muximo-cli] muximod log file does not exist yet: ${result.logFile}\n`);
+      io.out.write("[muximo-cli] waiting for the log file; press Ctrl+C to stop\n");
+    }
+    return 0;
+  }
   if (result.state === "missing") {
     io.err.write(`[muximo-cli] error: muximod log file was not found: ${result.logFile}\n`);
+    io.err.write(
+      '[muximo-cli] hint: muximod creates the log when it first starts for this instance directory; check "--instance-dir" if the daemon runs elsewhere\n',
+    );
     return 1;
   }
   if (result.state === "empty") {
     io.out.write(`[muximo-cli] muximod log file is empty: ${result.logFile}\n`);
     return 0;
   }
-  io.out.write(`${result.lines.join("\n")}\n`);
+  for (const line of result.lines) io.out.write(`${renderDaemonLogLine(line, json)}\n`);
   return 0;
 }
 
 export function presentDaemonError(error: DaemonHealthError, io: CliIo, fallbackLogFile?: string): number {
   const logFile = error.details.options.logFile ?? fallbackLogFile;
-  io.err.write(`[muximo-cli] error: ${healthErrorMessage(error)}${logFile ? `\nmuximod log: ${logFile}` : ""}\n`);
+  io.err.write(`${presentHealthFailure(`[muximo-cli] error: ${healthErrorMessage(error)}`, logFile)}\n`);
   return 1;
 }
 
 function presentHealthFailure(message: string, logFile: string | undefined): string {
-  return logFile ? `${message}\nmuximod log: ${logFile}` : message;
+  return logFile
+    ? `${message}\nmuximod log: ${logFile}\ninspect it with "muximo daemon log" (works while muximod is stopped)`
+    : message;
 }
 
 function healthErrorMessage(error: DaemonHealthError): string {

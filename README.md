@@ -87,10 +87,14 @@ Production releases contain one `muximo` binary. The daemon is an internal
 process mode started and managed by that binary; `muximod` is not a separate
 user-facing executable.
 
-`muximo daemon log` prints the most recent 100 lines from the daemon's instance
-log. Use `--lines N` to change the limit. The default instance directory is
-`~/.local/state/muximo`; select another one with `--instance-dir <path>` or
-`MUXIMOD_INSTANCE_DIR`.
+`muximo daemon log` reads the daemon's instance log file directly, so it works
+even while `muximod` is not running. It renders the structured log lines in a
+human-readable format by default; pass `--json` to print the raw JSON lines,
+`--filter <pattern>` to keep only matching lines (case-insensitive), and
+`--follow` / `-f` to keep printing new lines as the daemon writes them. Use
+`--lines N` to change how many recent lines are printed (default 100). The
+default instance directory is `~/.local/state/muximo`; select another one with
+`--instance-dir <path>` or `MUXIMOD_INSTANCE_DIR`.
 
 The daemon is started and managed by the local `muximo` command. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
 

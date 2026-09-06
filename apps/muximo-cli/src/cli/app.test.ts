@@ -379,6 +379,85 @@ const cases = [
             command: "log",
             refreshServers: false,
             lines: 100,
+            json: false,
+            follow: false,
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches daemon log with a custom line limit",
+    input: { args: ["daemon", "log", "-n", "5"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "daemon",
+          input: {
+            command: "log",
+            refreshServers: false,
+            lines: 5,
+            json: false,
+            follow: false,
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches daemon log with raw JSON output",
+    input: { args: ["daemon", "log", "--json"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "daemon",
+          input: {
+            command: "log",
+            refreshServers: false,
+            lines: 100,
+            json: true,
+            follow: false,
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches daemon log with a filter pattern",
+    input: { args: ["daemon", "log", "--filter", "server.started"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "daemon",
+          input: {
+            command: "log",
+            refreshServers: false,
+            lines: 100,
+            json: false,
+            follow: false,
+            filter: "server.started",
+          },
+        },
+      ]),
+    ],
+  },
+  {
+    name: "dispatches daemon log with follow enabled",
+    input: { args: ["daemon", "log", "-f"] },
+    assert: [
+      returns<Context, number>(7),
+      hasObserved<Context, number>("calls", [
+        {
+          command: "daemon",
+          input: {
+            command: "log",
+            refreshServers: false,
+            lines: 100,
+            json: false,
+            follow: true,
           },
         },
       ]),
