@@ -13,11 +13,12 @@
     "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@inquirer/prompts": "^8.7.0",
     "@muximo/application": "workspace:*",
     "@muximo/contract": "workspace:*",
     "@muximo/domain": "workspace:*",
-    "@muximo/profile": "workspace:*",
     "@muximo/infrastructure": "workspace:*",
+    "@muximo/instance-contract": "workspace:*",
     "@muximo/muximod": "workspace:*",
     "@orpc/client": "^1.15.0",
     "@orpc/contract": "^1.15.0",

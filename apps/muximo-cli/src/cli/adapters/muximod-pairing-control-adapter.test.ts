@@ -19,6 +19,7 @@ import { describe, it } from "vitest";
 import { MuximodPairingControlAdapter } from "./muximod-pairing-control-adapter.js";
 
 type AdapterStep =
+  | { type: "set-serve-origin"; origin: string | null }
   | { type: "prepare" }
   | { type: "prepare-response" }
   | { type: "attach" }
@@ -72,6 +73,15 @@ const cases = [
     ],
   },
   {
+    name: "registers and clears the ephemeral Serve origin",
+    fixture: "default" as const,
+    steps: [{ type: "set-serve-origin", origin: "https://machine.tailnet.ts.net:8444" }],
+    assert: [
+      hasObserved<AdapterContext, undefined>("requestTypes", ["set_serve_origin"]),
+      hasObserved<AdapterContext, undefined>("closed", false),
+    ],
+  },
+  {
     name: "fails a pending control request when the socket closes without executing a process",
     fixture: "default" as const,
     steps: [{ type: "prepare" }, { type: "close" }],
@@ -102,6 +112,13 @@ const table: ScenarioTable<AdapterFixture, AdapterKey, AdapterStep, undefined, A
   cases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
+      if (step.type === "set-serve-origin") {
+        const updated = fixture.adapter.setServeOrigin(step.origin);
+        const request = await waitForRequest(fixture, "set_serve_origin");
+        fixture.push({ type: "serve_origin_set", requestId: request.requestId, origin: step.origin });
+        await updated;
+        continue;
+      }
       if (step.type === "prepare") {
         fixture.preparePromise = fixture.adapter.prepareAgentExecution({
           operation: "run",

@@ -27,6 +27,7 @@ export type AgentBackendProviderPreparation = {
 
 export type AgentBackendProviderOptions = {
   environment: NodeJS.ProcessEnv;
+  enabled?: readonly AgentBackend[];
   plugins: AgentPluginRegistry;
   sessions: AgentSessionRepository;
   audit: SessionAuditPort;
@@ -76,9 +77,10 @@ export function createDefaultAgentBackendProviders(
   codexState: CodexSessionStateRepository,
   codexDefaultRemote: string,
 ): AgentBackendProviderRegistry {
-  return new AgentBackendProviderRegistry([
-    new CodexBackendProvider(options, codexState, codexDefaultRemote),
-    new ClaudeBackendProvider(options),
-    new OpenCodeBackendProvider(options),
-  ]);
+  const enabled = new Set(options.enabled ?? ["codex", "claude", "opencode"]);
+  const providers: AgentBackendProvider[] = [];
+  if (enabled.has("codex")) providers.push(new CodexBackendProvider(options, codexState, codexDefaultRemote));
+  if (enabled.has("claude")) providers.push(new ClaudeBackendProvider(options));
+  if (enabled.has("opencode")) providers.push(new OpenCodeBackendProvider(options));
+  return new AgentBackendProviderRegistry(providers);
 }

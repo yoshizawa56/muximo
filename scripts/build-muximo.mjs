@@ -9,25 +9,17 @@ const defaultRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "
 export function createMuximoBuildPlan({
   repositoryRoot = defaultRepositoryRoot,
   output = process.env.MUXIMO_BUILD_OUTPUT ?? "dist/muximo",
-  muximodOutput = process.env.MUXIMO_MUXIMOD_BUILD_OUTPUT,
   target = process.env.MUXIMO_BUILD_TARGET,
 } = {}) {
   const root = resolve(repositoryRoot);
   const outputPath = isAbsolute(output) ? resolve(output) : join(root, output);
-  const muximodOutputPath = muximodOutput
-    ? isAbsolute(muximodOutput)
-      ? resolve(muximodOutput)
-      : join(root, muximodOutput)
-    : join(dirname(outputPath), deriveMuximodBinaryName(outputPath));
   const infrastructureMigrationsDirectory = join(root, "packages", "infrastructure", "drizzle");
 
   return {
     repositoryRoot: root,
     outputPath,
-    muximodOutputPath,
     target,
-    cliEntrypoint: join(root, "apps", "muximo-cli", "src", "production-entrypoint.ts"),
-    muximodEntrypoint: join(root, "packages", "muximod", "src", "process-entrypoint.ts"),
+    productionEntrypoint: join(root, "scripts", "muximo-production-entrypoint.ts"),
     syncEmbeddedMigrationsScript: join(root, "scripts", "sync-embedded-migrations.mjs"),
     embeddedMigrationsDirectory: infrastructureMigrationsDirectory,
     embeddedMigrationsJournal: join(infrastructureMigrationsDirectory, "meta", "_journal.json"),
@@ -36,8 +28,7 @@ export function createMuximoBuildPlan({
 
 export function assertRequiredBuildArtifacts(plan) {
   const requiredArtifacts = [
-    ["muximo CLI entrypoint", plan.cliEntrypoint, "file"],
-    ["private muximod process entrypoint", plan.muximodEntrypoint, "file"],
+    ["muximo production entrypoint", plan.productionEntrypoint, "file"],
     ["embedded migration sync script", plan.syncEmbeddedMigrationsScript, "file"],
     ["canonical infrastructure migrations directory", plan.embeddedMigrationsDirectory, "directory"],
     ["canonical infrastructure migration journal", plan.embeddedMigrationsJournal, "file"],
@@ -55,25 +46,14 @@ export function buildMuximo(options = {}) {
   assertRequiredBuildArtifacts(plan);
 
   mkdirSync(dirname(plan.outputPath), { recursive: true });
-  mkdirSync(dirname(plan.muximodOutputPath), { recursive: true });
   run(process.execPath, [plan.syncEmbeddedMigrationsScript], plan.repositoryRoot);
 
-  const buildArgs = ["build", plan.cliEntrypoint, "--compile", "--minify"];
+  const buildArgs = ["build", plan.productionEntrypoint, "--compile", "--minify"];
   if (plan.target) buildArgs.push(`--target=${plan.target}`);
   buildArgs.push("--outfile", plan.outputPath);
   run(process.execPath, buildArgs, plan.repositoryRoot);
 
-  const muximodBuildArgs = ["build", plan.muximodEntrypoint, "--compile", "--minify"];
-  if (plan.target) muximodBuildArgs.push(`--target=${plan.target}`);
-  muximodBuildArgs.push("--outfile", plan.muximodOutputPath);
-  run(process.execPath, muximodBuildArgs, plan.repositoryRoot);
-
   return plan;
-}
-
-function deriveMuximodBinaryName(outputPath) {
-  const name = outputPath.split("/").at(-1) ?? "muximo";
-  return name === "muximo" ? "muximod" : name.replace(/^muximo(?=-|$)/u, "muximod");
 }
 
 function run(command, args, cwd, environment = process.env) {

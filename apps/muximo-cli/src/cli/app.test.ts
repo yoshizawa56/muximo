@@ -1,4 +1,5 @@
 import { Writable } from "node:stream";
+import { resolveInstancePaths } from "@muximo/instance-contract";
 import {
   hasObserved,
   type OperationCase,
@@ -28,7 +29,7 @@ type Fixture = {
 
 type Input = { args: readonly string[] };
 type Context = Fixture & { output: string; error: string };
-type FixtureKey = "environment";
+type FixtureKey = "instance-directory" | "no-agent-default";
 
 function contains<ContextType>(key: keyof ContextType, value: string) {
   return {
@@ -40,21 +41,15 @@ function contains<ContextType>(key: keyof ContextType, value: string) {
 }
 
 const defaultRuntime: MuximoCliRuntimeOptions = {
-  environmentName: undefined,
-  stateRoot: "/workspace/.state",
-  muximodInstanceDirectory: "/workspace/.state/muximod",
-  muximodHost: "127.0.0.1",
-  muximodPort: 4317,
-  muximodServePort: 8444,
-  schemaMode: "migrate",
-  logLevel: "info",
-  logFile: "/workspace/.state/muximod/muximod.log",
-  allowedOrigins: [],
-  codexRemote: "unix://",
+  ...resolveInstancePaths("/workspace/.state"),
   verbose: false,
 };
 
-function createFixture(environment: NodeJS.ProcessEnv = {}, runtime: MuximoCliRuntimeOptions = defaultRuntime) {
+function createFixture(
+  environment: NodeJS.ProcessEnv = {},
+  runtime: MuximoCliRuntimeOptions = defaultRuntime,
+  noAgentDefault = false,
+) {
   const out = new CaptureOutput();
   const err = new CaptureOutput();
   const calls: Fixture["calls"] = [];
@@ -75,13 +70,21 @@ function createFixture(environment: NodeJS.ProcessEnv = {}, runtime: MuximoCliRu
     "workspaceAdd",
     "workspaceUpdate",
     "workspaceDelete",
+    "config",
   ] as const) {
     handlers[key] = async (input: never) => {
       calls.push({ command: key, input });
       return 7;
     };
   }
-  const app = createCliApp({ io: { out, err }, cwd: "/workspace", environment, runtime, handlers });
+  const app = createCliApp({
+    io: { out, err },
+    cwd: "/workspace",
+    environment,
+    runtime,
+    handlers,
+    resolveAgentCapabilities: noAgentDefault ? async () => ({ enabled: [], default: null }) : undefined,
+  });
   return { fixture: { out, err, calls, app } };
 }
 
@@ -94,7 +97,7 @@ const cases = [
     assert: [
       returns<Context, number>(2),
       contains<Context>("output", "Usage: muximo"),
-      contains<Context>("output", "--env <profile>"),
+      contains<Context>("output", "--instance-dir <path>"),
       hasObserved<Context, number>("calls", []),
     ],
   },
@@ -104,6 +107,19 @@ const cases = [
     assert: [
       returns<Context, number>(0),
       contains<Context>("output", "Commands:"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
+    name: "documents config setting values in set help",
+    input: { args: ["config", "set", "--help"] },
+    assert: [
+      returns<Context, number>(0),
+      contains<Context>("output", "Configuration keys and value formats:"),
+      contains<Context>("output", "agents.default"),
+      contains<Context>("output", "Value: one enabled backend name or none"),
+      contains<Context>("output", "Choices: codex, claude, opencode"),
+      contains<Context>("output", "Example: muximo config set updates.policy notify"),
       hasObserved<Context, number>("calls", []),
     ],
   },
@@ -206,6 +222,26 @@ const cases = [
           },
         },
       ]),
+    ],
+  },
+  {
+    name: "reports a clear error when no agent backend is selected",
+    fixture: "no-agent-default" as const,
+    input: { args: ["run"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "No agent backend selected"),
+      contains<Context>("error", "agents.default"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
+    name: "reports a validation error for an unknown agent backend",
+    input: { args: ["run", "notabackend"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "Invalid arguments for muximo run"),
+      hasObserved<Context, number>("calls", []),
     ],
   },
   {
@@ -326,8 +362,6 @@ const cases = [
           input: {
             provider: "tailscale",
             command: "tailscale",
-            localPort: 4317,
-            externalPort: 8444,
           },
         },
       ]),
@@ -343,7 +377,6 @@ const cases = [
           command: "daemon",
           input: {
             command: "log",
-            foreground: false,
             refreshServers: false,
             lines: 100,
           },
@@ -361,6 +394,15 @@ const cases = [
     ],
   },
   {
+    name: "rejects foreground daemon ownership by an external service manager",
+    input: { args: ["daemon", "start", "--foreground"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "unknown option"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
     name: "rejects component-specific serve overrides",
     input: { args: ["serve", "tailscale", "--port", "9444"] },
     assert: [
@@ -370,8 +412,8 @@ const cases = [
     ],
   },
   {
-    name: "resolves daemon values from the command environment",
-    fixture: "environment",
+    name: "keeps daemon settings in the instance configuration",
+    fixture: "instance-directory",
     input: { args: ["daemon", "start"] },
     assert: [
       returns<Context, number>(7),
@@ -380,7 +422,6 @@ const cases = [
           command: "daemon",
           input: {
             command: "start",
-            foreground: false,
             refreshServers: false,
           },
         },
@@ -388,8 +429,8 @@ const cases = [
     ],
   },
   {
-    name: "resolves serve values from the command environment",
-    fixture: "environment",
+    name: "keeps Serve settings in the instance configuration",
+    fixture: "instance-directory",
     input: { args: ["serve", "tailscale"] },
     assert: [
       returns<Context, number>(7),
@@ -399,8 +440,6 @@ const cases = [
           input: {
             provider: "tailscale",
             command: "tailscale",
-            localPort: 5001,
-            externalPort: 9443,
           },
         },
       ]),
@@ -411,18 +450,8 @@ const cases = [
 const table: OperationTable<AppFixture, FixtureKey, Input, number, Context> = {
   defaultFixture: () => createFixture(),
   fixtures: {
-    environment: () =>
-      createFixture(
-        {
-          MUXIMOD_HOST: "0.0.0.0",
-          MUXIMOD_PORT: "5001",
-          MUXIMO_MUXIMOD_SERVE_PORT: "9443",
-          MUXIMO_LOG_LEVEL: "debug",
-          MUXIMO_LOG_FILE: "/tmp/muximod.log",
-          MUXIMOD_ALLOWED_ORIGINS: "https://configured.example,http://127.0.0.1:5227",
-        },
-        { ...defaultRuntime, muximodPort: 5001, muximodServePort: 9443 },
-      ),
+    "instance-directory": () => createFixture({ MUXIMOD_INSTANCE_DIR: "/workspace/.state" }, defaultRuntime),
+    "no-agent-default": () => createFixture({}, defaultRuntime, true),
   },
   cases,
   execute: (fixture, input) => fixture.app.execute(input.args),

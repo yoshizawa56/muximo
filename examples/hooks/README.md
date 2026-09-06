@@ -13,10 +13,11 @@ The setup hook performs these steps:
 1. Validate the host workspace and managed worktree paths.
 2. Run `bun install --frozen-lockfile` when `MUXIMO_INSTALL_DEPENDENCIES=1`.
 
-Muximo environment state is selected explicitly with `muximo --env <name>`.
-All worktrees selecting the same profile use the same environment state,
-configured ports, and daemon. The hook does not create environment files, allocate ports,
-copy databases, seed data, migrate schemas, or otherwise open a muximod database.
+The Muximo instance is selected explicitly with `--instance-dir <path>` or
+`MUXIMOD_INSTANCE_DIR`. All worktrees using the same instance share its
+configuration, ports, and daemon. The hook does not create environment files,
+allocate ports, copy databases, seed data, migrate schemas, or otherwise open a
+muximod database.
 
 The cleanup hook has no environment or process state to release.
 

@@ -1,10 +1,6 @@
 import { defineConfig } from "drizzle-kit";
-import { resolveMuximodPaths } from "./src/persistence/paths.js";
 
-const databaseFileOverride = [process.env.MUXIMOD_DB_FILE, process.env.MUXIMO_DATABASE_FILE].find((value) =>
-  Boolean(value?.trim()),
-);
-const configuredDatabase = Boolean(process.env.MUXIMOD_INSTANCE_DIR?.trim() || databaseFileOverride?.trim());
+const databaseFileOverride = process.env.MUXIMOD_DATABASE_FILE?.trim();
 
 // Authentication tables are bootstrapped by the runtime for legacy database
 // compatibility. Keep them out of development pushes so Drizzle Kit does not
@@ -24,8 +20,6 @@ export default defineConfig({
   tablesFilter: developmentTables,
   dialect: "sqlite",
   dbCredentials: {
-    url: configuredDatabase
-      ? resolveMuximodPaths(process.env, { databaseFile: databaseFileOverride }).databaseFile
-      : "./muximod.sqlite",
+    url: databaseFileOverride?.trim() || "./muximod.sqlite",
   },
 });

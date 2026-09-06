@@ -137,11 +137,11 @@ type BootstrapResult = ReturnType<typeof scanRootOptions> & { values: Record<str
 type BootstrapContext = BootstrapResult;
 
 const bootstrapOptionSpecs = defineOptions(...optionSpecs, {
-  key: "environment",
-  flags: ["--env <profile>"],
-  description: "Profile",
+  key: "target",
+  flags: ["--target <name>"],
+  description: "Target",
   exposure: "both",
-  environment: { name: "MUXIMO_ENV", description: "Profile" },
+  environment: { name: "MUXIMO_TARGET", description: "Target" },
 });
 
 const bootstrapCases = [
@@ -157,13 +157,13 @@ const bootstrapCases = [
     ],
   },
   {
-    name: "supports an inline environment selector before a command",
-    input: { args: ["--port=5000", "--env=dev", "daemon", "start"] },
+    name: "supports an inline target option before a command",
+    input: { args: ["--port=5000", "--target=dev", "daemon", "start"] },
     assert: [
       returns<BootstrapContext, BootstrapResult>({
-        options: ["--port=5000", "--env=dev"],
+        options: ["--port=5000", "--target=dev"],
         commandIndex: 2,
-        values: { port: "5000", environment: "dev" },
+        values: { port: "5000", target: "dev" },
       }),
     ],
   },

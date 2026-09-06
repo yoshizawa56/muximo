@@ -83,26 +83,114 @@ muximo daemon restart
 muximo daemon stop
 ```
 
-`muximo daemon log` prints the most recent 100 lines from the daemon's derived
-state log. Use `--lines N` to change the limit. The standalone production command
-uses the unnamed default profile and does not load source repository profiles.
-Use the checkout-based `mise muximo --env <name>` command for a named profile;
-each named profile has its own derived state directory, ports, database, PID
-file, socket, and log.
+Production releases contain one `muximo` binary. The daemon is an internal
+process mode started and managed by that binary; `muximod` is not a separate
+user-facing executable.
 
-Use `muximo daemon start --foreground` when a service manager owns the process. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
+`muximo daemon log` prints the most recent 100 lines from the daemon's instance
+log. Use `--lines N` to change the limit. The default instance directory is
+`~/.local/state/muximo`; select another one with `--instance-dir <path>` or
+`MUXIMOD_INSTANCE_DIR`.
+
+The daemon is started and managed by the local `muximo` command. `muximod` remains bound to loopback and is exposed through a trusted HTTPS route such as Tailscale Serve.
+
+## Instance configuration
+
+Host-wide settings are stored in `config.json` inside the selected muximod
+instance directory (`~/.local/state/muximo/config.json` by default). Select the
+directory with `--instance-dir <path>` or `MUXIMOD_INSTANCE_DIR`. `muximo config`
+is the intentional local file-management exception; the daemon reads and
+validates the file during startup, and normal CLI commands obtain daemon-owned
+values through the daemon API or private control socket.
+
+Create or inspect it with:
+
+```sh
+muximo config init
+muximo config path
+muximo config show
+muximo config import config.stg.json
+```
+
+The interactive editor uses the `@inquirer/prompts` keyboard interface. It
+first asks which agent backends to enable; selecting none keeps the instance in
+tmux-only mode. Detected executables are offered as choices, while executable
+and workspace paths can be entered with filesystem completion. Tailscale and
+other settings are presented as high-level recommended/custom choices, and
+individual fields are asked only when selected. Every value is validated as
+soon as it is entered, with the error shown before the same field is retried. The
+non-interactive form is useful for scripts:
+
+```sh
+muximo config set workspace.roots ~/work/project,~/work/other
+muximo config set agents.enabled codex,claude
+muximo config set agents.default claude
+muximo config set agents.executables.claude ~/.local/bin/claude
+muximo config set serve.tailscale.enabled true
+muximo config set serve.tailscale.executable /usr/local/bin/tailscale
+muximo config set serve.tailscale.args '["--socket", "/run/user/1000/tailscaled.sock"]'
+```
+
+Run `muximo config set --help` for the complete key catalog, accepted value
+formats, choices, and examples. The generated zsh completion uses the same
+catalog for configuration keys and key-specific values. On macOS, the default
+Tailscale executable is `/Applications/Tailscale.app/Contents/MacOS/Tailscale`,
+which is the bundled CLI path for the App Store application. If the standalone
+CLI integration is installed instead, configure `/usr/local/bin/tailscale` or
+the appropriate executable path explicitly. Successful `config init` and
+`config set` commands report changed values as `before -> after`; use `config
+path` or `config show` when the file itself is needed. Configuration changes are
+applied after `muximo daemon restart`.
+
+Import files are versioned configuration profiles. They may contain only the
+settings that differ from the product defaults, for example:
+
+```json
+{
+  "version": 1,
+  "daemon": {
+    "port": 4318
+  },
+  "database": {
+    "schemaMode": "push"
+  }
+}
+```
+
+`muximo config import <file>` validates the profile, applies it to the
+defaults, and completely replaces the current instance configuration. Omitted
+values do not survive from the previous configuration. The committed
+`config.stg.json` and `config.local.json` profiles provide staging and local
+development settings; the staging profile keeps the Web proxy disabled. Import
+one explicitly because there is no implicit profile precedence. These profiles do not store machine-specific
+hostnames or absolute executable paths. Use `muximo config show >
+muximo-config.backup.json` for a normalized backup.
+
+The default configuration enables no agent backends. Disabled providers are
+not registered by the daemon, so an uninstalled tool such as OpenCode cannot
+prevent daemon startup. A provider executable is resolved only when a session
+using that provider is launched. After changing agent settings, run
+`muximo daemon restart` before starting new sessions.
+
+Executable settings accept a program name or path. Tailscale arguments are
+stored separately as an argv prefix. Neither setting evaluates shell aliases or
+shell command strings; use a wrapper executable when a per-user command needs
+custom setup. Configuration files are written atomically with user-only
+permissions.
 
 Starting `muximod` does not create a tmux session. Create a new managed session with `muximo tmux new-session`, adopt an existing session with `muximo tmux manage-session --name <name>`, or let the Web connection flow adopt an unmanaged session automatically.
 
-To configure a muximod-only Tailscale Serve route:
+To configure a Tailscale Serve route for the local muximo daemon:
 
 ```sh
+muximo config set serve.tailscale.enabled true
 muximo serve tailscale
 ```
 
-The command discovers the current Tailscale hostname, configures the fixed
-environment route, and records its public URL in the environment state. It
-does not start or supervise `muximod`.
+The command ensures the local daemon is running, starts the configured Vite
+development proxy when enabled, discovers the current Tailscale hostname,
+configures the fixed instance route, and records its public URL in the instance
+state.
 
 ## Pair a device
 
@@ -126,6 +214,7 @@ Start and manage agent sessions on the host:
 ```sh
 muximo run codex --worktree review
 muximo run claude --no-worktree -n quick-fix
+muximo config set agents.enabled codex,claude,opencode
 muximo run opencode --worktree experiment
 muximo session resume review
 muximo session list --json
@@ -145,34 +234,16 @@ muximo tmux new-session -s project -c ~/work/project
 muximo doctor --verbose
 ```
 
-OpenCode server connections are shared across Muximo environments under the
-same state root. Muximo reuses a healthy server and starts one only when no
-connection is available; stopping or restarting `muximod` does not stop it.
-To use an OpenCode server started outside Muximo, set its local URL before
-running the session:
+OpenCode server connections are shared within one Muximo instance. Muximo
+reuses a healthy server and starts one only when no connection is available;
+stopping or restarting `muximod` does not stop it. To use an OpenCode server
+started outside Muximo, configure its local URL before running the session:
 
 ```sh
-MUXIMO_OPENCODE_SERVER_URL=http://127.0.0.1:4096 muximo run opencode
+muximo config set agents.opencode.serverUrl http://127.0.0.1:4096
+muximo daemon restart
+muximo run opencode
 ```
-
-The selected environment is shared by all worktrees on the host. Generate an
-ignored profile with the interactive setup command:
-
-```sh
-mise profile
-```
-
-The command asks for an arbitrary profile name, a tracked `.env.<name>.example`
-recipe, client runtime (`browser`, `capacitor`, or `none`), connection details,
-schema mode, and optional iOS Local configuration. A browser client requires a
-Web runtime in the recipe. A bundled Capacitor client can use a recipe without
-Web settings because muximod always allows its fixed `capacitor://localhost`
-origin; a Capacitor Local client uses the generated HTTP(S) Web origin instead.
-Each run regenerates the selected `.env.<name>` file from the recipe and
-overwrites the generated iOS configuration when requested. The tracked
-`.env.local.example` and `.env.stg.example` files are recommended recipes, not
-fixed environment names. No worktree-local database, snapshot, or port
-allocation is created.
 
 The Web UI can also create shell or agent panes, choose a new tmux window or split, and select a workspace or managed worktree. Use `muximo --help` for commands and options not shown here.
 
@@ -184,23 +255,27 @@ The repository uses `mise` for Bun, Node.js, and tmux versions:
 mise install
 bun install --frozen-lockfile
 
-# Generate or overwrite the ignored local profile and optional iOS settings.
-mise profile
-
-# Start the local muximod and Web processes independently.
-mise muximo --env local daemon restart
-mise web --env local daemon restart
-mise muximo --env local serve tailscale
-mise web --env local serve tailscale
+# Configure the local muximo instance and start its daemon.
+mise muximo config init
+mise muximo config import config.local.json
+# The daemon starts the Vite Web process automatically when web.proxy.enabled is true.
+mise muximo daemon restart
+mise muximo serve tailscale
 ```
 
-The Web process uses one fixed local port and keeps HMR available after `web
-daemon start`; the two processes have independent lifecycle commands. To inspect
-the Web UI without a running muximod:
+The Vite process is managed by the local `muximo` CLI and proxied through
+`muximod`, so the browser uses one origin and Vite HMR remains available. To
+make that route work even when the reverse proxy rewrites the incoming Host
+header, `muximo serve tailscale` registers the exact HTTPS Serve origin in the
+daemon's in-memory origin policy when both Tailscale Serve and the Web proxy
+are enabled. The origin is cleared by `muximo serve stop` and is never written
+to `config.json`; production configurations with the Web proxy disabled do not
+receive this additional origin.
+
+To inspect the Web UI without a running muximod:
 
 ```sh
-cd apps/web
-VITE_MUXIMOD_MOCK_MODE=true bun node_modules/vite/bin/vite.js
+VITE_MUXIMOD_MOCK_MODE=true bun --cwd apps/web run dev
 ```
 
 For the Capacitor iOS workflow, use `mise ios` to build, sync, and open the native project. To run the local CLI through the repository's toolchain, use `mise muximo <option>`, for example `mise muximo --help`.

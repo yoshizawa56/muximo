@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { storyPanes, storySession, storyTerminal, storyWorkspaces } from "../../../../../-story-fixtures";
 import type { WorkspacePickerViewModel, WorkspaceSelectionMode } from "../../../-workspace-picker-viewmodel";
-import type { NewPaneAgent } from "./-agent-options";
+import { agentOptions, type NewPaneAgent } from "./-agent-options";
 import { NewPaneView } from "./-new-pane-view";
 import type { NewPaneKind, NewPaneViewModel } from "./-new-pane-viewmodel";
 
@@ -48,6 +48,7 @@ function buildViewModel(overrides: Partial<NewPaneViewModel> = {}): NewPaneViewM
     workspacePicker: buildWorkspacePicker("worktree", fn()),
     kind: "agent",
     agentId: "codex",
+    agentOptions,
     existingPanes: storyPanes,
     placement: "window",
     targetPaneId: storyPanes[0].hostPaneId,
@@ -89,6 +90,7 @@ function NewPaneStory({
       workspacePicker: buildWorkspacePicker(mode, setMode),
       kind,
       agentId,
+      agentOptions,
       existingPanes: initialPanes,
       placement,
       targetPaneId,
@@ -154,6 +156,17 @@ export const ShellPane: Story = {
 export const Creating: Story = {
   args: {
     viewModel: buildViewModel({ isCreating: true }),
+  },
+};
+
+export const NoAgentBackends: Story = {
+  args: {
+    viewModel: buildViewModel({ agentOptions: [] }),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText(/No agent backends are enabled/i)).toBeVisible();
+    await expect(canvas.getByRole("button", { name: /open pane/i })).toBeDisabled();
   },
 };
 

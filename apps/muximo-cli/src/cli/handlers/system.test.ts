@@ -9,6 +9,7 @@ import type {
 } from "@muximo/application";
 import { DaemonHealthError } from "@muximo/application";
 import type { MuximodControlLogResult } from "@muximo/contract/control";
+import { protocolVersion } from "@muximo/contract/shared";
 import type { DoctorReport, ServeRouteState, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
 import { type OperationCase, type OperationTable, runOperationTable, type TestRegistrar } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
@@ -21,7 +22,13 @@ type SystemInput =
   | { kind: "serve"; input: CliServeInput };
 
 type SystemResult = { status: number; out: string; err: string; calls: readonly string[] };
-type SystemFixtureKey = "default" | "startup-failed" | "pid-unhealthy";
+type SystemFixtureKey =
+  | "default"
+  | "startup-failed"
+  | "pid-unhealthy"
+  | "config-changed"
+  | "status-unavailable"
+  | "serve-mismatch";
 type SystemFixture = {
   out: string[];
   err: string[];
@@ -37,22 +44,25 @@ function containsText(name: string, key: "out" | "err", expected: string) {
   return { name, check: (context: SystemResult) => expect(context[key]).toContain(expected) };
 }
 
+function excludesText(name: string, key: "out" | "err", expected: string) {
+  return { name, check: (context: SystemResult) => expect(context[key]).not.toContain(expected) };
+}
+
 function includesCall(name: string, expected: string) {
   return { name, check: (context: SystemResult) => expect(context.calls).toContain(expected) };
 }
 
 const daemonInputs: readonly CliDaemonInput[] = [
-  { command: "start", foreground: false, refreshServers: false },
-  { command: "status", foreground: false, refreshServers: false },
-  { command: "stop", foreground: false, refreshServers: false },
-  { command: "restart", foreground: false, refreshServers: true },
-  { command: "ensure", foreground: false, refreshServers: false },
-  { command: "log", foreground: false, refreshServers: false, lines: 20 },
+  { command: "start", refreshServers: false },
+  { command: "status", refreshServers: false },
+  { command: "stop", refreshServers: false },
+  { command: "restart", refreshServers: true },
+  { command: "ensure", refreshServers: false },
+  { command: "log", refreshServers: false, lines: 20 },
 ];
 
 const routeState: ServeRouteState = {
   schemaVersion: 1,
-  environment: "local",
   component: "muximod",
   provider: "tailscale",
   hostname: "tail.example",
@@ -101,7 +111,7 @@ const cases = [
     name: "presents a configured serve route",
     input: {
       kind: "serve",
-      input: { provider: "tailscale", command: "tailscale", localPort: 4317, externalPort: 8444 },
+      input: { provider: "tailscale", command: "tailscale" },
     },
     assert: [
       includesCall("passes the serve command", "serve:tailscale"),
@@ -111,15 +121,32 @@ const cases = [
   },
   {
     name: "presents serve status without controlling muximod",
-    input: { kind: "serve", input: { provider: "tailscale", command: "status", localPort: 4317, externalPort: 8444 } },
+    input: { kind: "serve", input: { provider: "tailscale", command: "status" } },
     assert: [
       includesCall("passes serve status", "serve:status"),
-      containsText("presents route status", "out", routeState.publicUrl),
+      containsText("presents route status", "out", `public URL: ${routeState.publicUrl}`),
+      containsText("presents the configured proxy target", "out", `proxy target: ${routeState.localTarget} (matches)`),
+      excludesText("does not dump provider JSON", "out", "unrelated-provider-route"),
+    ] as const,
+  },
+  {
+    name: "reports when the live route does not match the active configuration",
+    fixture: "serve-mismatch" as const,
+    input: { kind: "serve", input: { provider: "tailscale", command: "status" } },
+    assert: [
+      hasValue("returns a failure status", "status", 1),
+      containsText("presents the configured external port", "out", "external port: 8445 (not found)"),
+      containsText(
+        "presents the configured proxy target",
+        "out",
+        "proxy target: http://127.0.0.1:4317 (does not match)",
+      ),
+      containsText("reports the route mismatch", "err", "live Tailscale Serve route does not match"),
     ] as const,
   },
   {
     name: "presents serve stop",
-    input: { kind: "serve", input: { provider: "tailscale", command: "stop", localPort: 4317, externalPort: 8444 } },
+    input: { kind: "serve", input: { provider: "tailscale", command: "stop" } },
     assert: [
       includesCall("passes serve stop", "serve:stop"),
       containsText("presents stop", "out", "Serve stopped"),
@@ -130,7 +157,7 @@ const cases = [
 const startupFailureCase = {
   name: "presents a daemon startup exit with its log path",
   fixture: "startup-failed" as const,
-  input: { kind: "daemon", input: { command: "start", foreground: false, refreshServers: false } },
+  input: { kind: "daemon", input: { command: "start", refreshServers: false } },
   assert: [
     hasValue("returns a failure status", "status", 1),
     containsText("presents the startup exit", "err", "muximod exited during startup with exit code 1"),
@@ -140,17 +167,41 @@ const startupFailureCase = {
 } satisfies OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>;
 
 const pidUnhealthyCase = {
-  name: "recommends restarting a daemon that does not match the selected environment",
+  name: "recommends restarting a daemon that does not match the selected instance",
   fixture: "pid-unhealthy" as const,
-  input: { kind: "daemon", input: { command: "ensure", foreground: false, refreshServers: false } },
+  input: { kind: "daemon", input: { command: "ensure", refreshServers: false } },
   assert: [
     hasValue("returns a failure status", "status", 1),
-    containsText("presents the process ownership failure", "err", "is not owned by the selected environment"),
+    containsText("presents the process ownership failure", "err", "is not owned by the selected instance"),
     containsText("recommends applying the selected configuration", "err", 'run "muximo daemon restart"'),
   ] as const,
 } satisfies OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>;
 
-const allCases = [...cases, startupFailureCase, pidUnhealthyCase] as const;
+const configChangedCase = {
+  name: "shows a restart recommendation for changed daemon configuration",
+  fixture: "config-changed" as const,
+  input: { kind: "daemon", input: { command: "status", refreshServers: false } },
+  assert: [
+    hasValue("returns a successful status", "status", 0),
+    containsText("reports the daemon version separately", "out", "daemon version: 0.1.0"),
+    containsText("reports the client version separately", "out", "client version: 0.1.0"),
+    containsText("reports the changed keys", "out", "daemon.port, serve.tailscale.enabled"),
+    containsText("recommends a restart", "out", "muximo daemon restart"),
+  ] as const,
+} satisfies OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>;
+
+const statusUnavailableCase = {
+  name: "keeps daemon status usable when configuration diagnostics are unavailable",
+  fixture: "status-unavailable" as const,
+  input: { kind: "daemon", input: { command: "status", refreshServers: false } },
+  assert: [
+    hasValue("returns a successful status", "status", 0),
+    containsText("reports the daemon as running", "out", "muximod running"),
+    containsText("explains unavailable diagnostics", "out", "configuration status is unavailable"),
+  ] as const,
+} satisfies OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>;
+
+const allCases = [...cases, startupFailureCase, pidUnhealthyCase, configChangedCase, statusUnavailableCase] as const;
 
 const table: OperationTable<SystemFixture, SystemFixtureKey, SystemInput, SystemResult, SystemResult> = {
   defaultFixture: () => ({ fixture: createFixture("default") }),
@@ -158,6 +209,9 @@ const table: OperationTable<SystemFixture, SystemFixtureKey, SystemInput, System
     default: () => ({ fixture: createFixture("default") }),
     "startup-failed": () => ({ fixture: createFixture("startup-failed") }),
     "pid-unhealthy": () => ({ fixture: createFixture("pid-unhealthy") }),
+    "config-changed": () => ({ fixture: createFixture("config-changed") }),
+    "status-unavailable": () => ({ fixture: createFixture("status-unavailable") }),
+    "serve-mismatch": () => ({ fixture: createFixture("serve-mismatch") }),
   },
   cases: allCases,
   execute: async (fixture, input) => {
@@ -196,15 +250,13 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
     },
   };
   const daemonOptions: DaemonOptions = {
-    host: "127.0.0.1",
-    port: 4317,
     pidFile: "/tmp/muximod.pid",
     controlSocket: "/tmp/muximod.sock",
     logFile: "/tmp/muximod.log",
   };
   const daemon = {
     start: {
-      execute: async (input: StartDaemonInput): Promise<DaemonStartResult> => {
+      execute: async (_input: StartDaemonInput): Promise<DaemonStartResult> => {
         calls.push("daemon:start");
         if (key === "startup-failed") {
           throw new DaemonHealthError(
@@ -223,13 +275,13 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
             },
           );
         }
-        return { kind: "background", result: { state: "started", host: input.options.host, port: input.options.port } };
+        return { kind: "background", result: { state: "started", host: "127.0.0.1", port: 4317 } };
       },
     },
     status: {
-      execute: async (input: DaemonOptions): Promise<DaemonStatusResult> => {
+      execute: async (_input: DaemonOptions): Promise<DaemonStatusResult> => {
         calls.push("daemon:status");
-        return { state: "running", host: input.host, port: input.port };
+        return { state: "running", host: "127.0.0.1", port: 4317 };
       },
     },
     stop: {
@@ -239,18 +291,31 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
       },
     },
     restart: {
-      execute: async (input: DaemonOptions): Promise<DaemonRestartResult> => {
+      execute: async (_input: DaemonOptions): Promise<DaemonRestartResult> => {
         calls.push("daemon:restart");
-        return { state: "restarted", host: input.host, port: input.port };
+        return { state: "restarted", host: "127.0.0.1", port: 4317 };
       },
     },
     ensure: {
-      execute: async (input: DaemonOptions): Promise<DaemonEnsureResult> => {
+      execute: async (_input: DaemonOptions): Promise<DaemonEnsureResult> => {
         calls.push("daemon:ensure");
         if (key === "pid-unhealthy") {
           throw new DaemonHealthError("pid_unhealthy", { logFile: "/tmp/muximod.log" }, { startedAt: 0, pid: 402 });
         }
-        return { state: "started", host: input.host, port: input.port };
+        return { state: "started", host: "127.0.0.1", port: 4317 };
+      },
+    },
+    readStatus: {
+      execute: async (): Promise<import("@muximo/contract/control").MuximodDaemonStatus> => {
+        if (key === "status-unavailable") throw new Error("configuration status unavailable");
+        return {
+          protocolVersion,
+          daemonVersion: "0.1.0",
+          configuration:
+            key === "config-changed"
+              ? { state: "restart_recommended", changedKeys: ["daemon.port", "serve.tailscale.enabled"] }
+              : { state: "current", changedKeys: [] },
+        };
       },
     },
     log: {
@@ -268,12 +333,26 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
       },
     },
     daemon: { defaults: daemonOptions, ...daemon },
+    clientVersion: "0.1.0",
     serve: {
       execute: async (input) => {
         calls.push(`serve:${input.command}`);
         if (input.command === "tailscale") return { command: "tailscale", result: serveResult, state: routeState };
-        if (input.command === "status")
-          return { command: "status", state: routeState, providerOutput: "route status\n" };
+        if (input.command === "status") {
+          const mismatch = key === "serve-mismatch";
+          return {
+            command: "status",
+            state: routeState,
+            expectedExternalPort: mismatch ? 8445 : routeState.externalPort,
+            expectedLocalTarget: routeState.localTarget,
+            expectedPath: routeState.path,
+            expectedPublicUrl: mismatch ? "https://tail.example:8445/" : routeState.publicUrl,
+            stateMatchesConfiguration: !mismatch,
+            liveRoute: mismatch
+              ? { endpointAvailable: false, pathAvailable: false, proxyTargetMatches: false }
+              : { endpointAvailable: true, pathAvailable: true, proxyTargetMatches: true },
+          };
+        }
         return { command: "stop", state: "stopped", publicUrl: routeState.publicUrl };
       },
     },

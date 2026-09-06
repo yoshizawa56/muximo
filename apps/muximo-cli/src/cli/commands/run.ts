@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { z } from "zod";
 import { defineOptions, registerOptions } from "../options/index.js";
 import type { CliCommandContext, CliHandlers } from "./types.js";
-import { invokeCliHandler, resolveCommandOptions } from "./validation.js";
+import { invokeCliHandler, reportValidationError, resolveCommandOptions } from "./validation.js";
 
 export const runOptionSpecs = defineOptions(
   {
@@ -87,16 +87,54 @@ export const runSchema = z
   });
 
 export function registerRunCommand(parent: Command, handlers: CliHandlers, context: CliCommandContext): Command {
-  const command = parent.command("run <backend> [backendArgs...]").description("Run an agent backend");
+  const command = parent.command("run [backend] [backendArgs...]").description("Run an agent backend");
   registerOptions(command, runOptionSpecs, context.buildMode);
   command.allowUnknownOption(true);
 
   command.action(async (backend, backendArgs, options) => {
     const resolved = resolveCommandOptions(options, runOptionSpecs, context);
+    const capabilities = context.resolveAgentCapabilities ? await context.resolveAgentCapabilities() : undefined;
+    const selectedBackend = backend ?? capabilities?.default;
+    if (selectedBackend === undefined || selectedBackend === null) {
+      context.report(
+        reportValidationError(
+          context,
+          ["run"],
+          new z.ZodError([
+            {
+              code: "custom",
+              path: ["backend"],
+              message: 'No agent backend selected; pass a backend or configure "agents.default".',
+            },
+          ]),
+        ),
+      );
+      return;
+    }
+    // Validate the backend value before the enabled check so an unknown
+    // backend reports a schema validation error instead of "disabled".
+    const parsedBackend = agentBackendSchema.safeParse(selectedBackend);
+    if (!parsedBackend.success) {
+      context.report(
+        await invokeCliHandler({
+          schema: runSchema,
+          rawInput: { ...resolved, backend: selectedBackend, backendArgs },
+          commandPath: ["run"],
+          context,
+          handler: handlers.run,
+        }),
+      );
+      return;
+    }
+    if (capabilities && !capabilities.enabled.includes(parsedBackend.data)) {
+      throw new Error(
+        `agent backend is disabled: ${parsedBackend.data}; enable it with "muximo config set agents.enabled"`,
+      );
+    }
     context.report(
       await invokeCliHandler({
         schema: runSchema,
-        rawInput: { ...resolved, backend, backendArgs },
+        rawInput: { ...resolved, backend: parsedBackend.data, backendArgs },
         commandPath: ["run"],
         context,
         handler: handlers.run,

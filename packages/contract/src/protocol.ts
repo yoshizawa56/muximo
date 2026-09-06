@@ -16,7 +16,7 @@ import { z } from "zod";
  * compatibility version; changing its schemas is a breaking change that must
  * ship with both sides together.
  */
-export const protocolVersion = 2 as const;
+export const protocolVersion = 3 as const;
 export const terminalProtocolVersion = protocolVersion;
 export const muximodControlMaxRequestBytes = 64 * 1024;
 export const muximodControlMaxResponseBytes = 4 * 1024 * 1024;
@@ -34,14 +34,45 @@ export const muximodHealthSchema = z
     service: z.literal("muximod"),
     protocolVersion: z.literal(protocolVersion),
     pid: z.number().int().positive(),
-    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   })
   .strict();
 export type MuximodHealth = z.infer<typeof muximodHealthSchema>;
 
+/** Minimal health envelope used to distinguish protocol incompatibility. */
+export const muximodHealthProbeSchema = z
+  .object({
+    ok: z.literal(true),
+    service: z.literal("muximod"),
+    protocolVersion: z.number().int().positive(),
+  })
+  .passthrough();
+
+export const muximodConfigurationStatusSchema = z
+  .object({
+    state: z.enum(["current", "restart_recommended", "unavailable"]),
+    changedKeys: z.array(z.string().min(1).max(128)).max(64),
+  })
+  .strict();
+export type MuximodConfigurationStatus = z.infer<typeof muximodConfigurationStatusSchema>;
+
+export const muximodDaemonStatusSchema = z
+  .object({
+    protocolVersion: z.literal(protocolVersion),
+    daemonVersion: z.string().trim().min(1).max(128),
+    configuration: muximodConfigurationStatusSchema,
+  })
+  .strict();
+export type MuximodDaemonStatus = z.infer<typeof muximodDaemonStatusSchema>;
+
 export const muximodCapabilitiesSchema = z
   .object({
     protocolVersion: z.literal(protocolVersion),
+    agents: z
+      .object({
+        enabled: z.array(agentBackendSchema),
+        default: agentBackendSchema.nullable(),
+      })
+      .strict(),
     features: z
       .object({
         tmuxSessions: z.boolean(),
@@ -159,6 +190,11 @@ const httpUrlSchema = z
     return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
   }, "URL must use http or https without credentials");
 
+const httpsOriginSchema = httpUrlSchema.refine((value) => {
+  const url = new URL(value);
+  return url.protocol === "https:" && url.origin === value;
+}, "URL must be an exact HTTPS origin");
+
 export const publicKeyJwkSchema = z
   .object({
     kty: z.literal("EC"),
@@ -213,6 +249,43 @@ const pairingClaimNotificationSchema = z
   })
   .strict();
 export type PairingClaimNotification = z.infer<typeof pairingClaimNotificationSchema>;
+
+const muximodTailscaleSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    executable: z.string().min(1).max(4_096),
+    args: z.array(z.string().max(16_384)).max(256),
+    hostname: z.string().min(1).max(256).nullable(),
+    externalPort: z.number().int().min(1).max(65_535),
+    path: z.string().min(1).max(4_096),
+  })
+  .strict();
+export const muximodHostSettingsSchema = z
+  .object({
+    tailscale: muximodTailscaleSettingsSchema,
+  })
+  .strict();
+export type MuximodHostSettings = z.infer<typeof muximodHostSettingsSchema>;
+
+export const muximodWebProxySettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    host: z
+      .string()
+      .min(1)
+      .refine(
+        (value): boolean => value === "localhost" || value === "127.0.0.1" || value === "::1",
+        "host must be loopback",
+      ),
+    port: z.number().int().min(1).max(65_535),
+  })
+  .strict();
+export const muximodWebSettingsSchema = z
+  .object({
+    proxy: muximodWebProxySettingsSchema,
+  })
+  .strict();
+export type MuximodWebSettings = z.infer<typeof muximodWebSettingsSchema>;
 
 export const muximodControlRequestSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("create_local_session"), requestId: controlRequestIdSchema }).strict(),
@@ -271,6 +344,16 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
       type: z.literal("read_log"),
       requestId: controlRequestIdSchema,
       lines: z.number().int().min(1).max(10_000),
+    })
+    .strict(),
+  z.object({ type: z.literal("read_host_settings"), requestId: controlRequestIdSchema }).strict(),
+  z.object({ type: z.literal("read_web_settings"), requestId: controlRequestIdSchema }).strict(),
+  z.object({ type: z.literal("read_daemon_status"), requestId: controlRequestIdSchema }).strict(),
+  z
+    .object({
+      type: z.literal("set_serve_origin"),
+      requestId: controlRequestIdSchema,
+      origin: httpsOriginSchema.nullable(),
     })
     .strict(),
   z.discriminatedUnion("operation", [
@@ -397,6 +480,34 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
       state: z.enum(["available", "empty", "missing"]),
       logFile: z.string().min(1),
       lines: z.array(z.string()).max(10_000),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("host_settings"),
+      requestId: controlRequestIdSchema,
+      ...muximodHostSettingsSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("web_settings"),
+      requestId: controlRequestIdSchema,
+      ...muximodWebSettingsSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("daemon_status"),
+      requestId: controlRequestIdSchema,
+      ...muximodDaemonStatusSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("serve_origin_set"),
+      requestId: controlRequestIdSchema,
+      origin: httpsOriginSchema.nullable(),
     })
     .strict(),
   z

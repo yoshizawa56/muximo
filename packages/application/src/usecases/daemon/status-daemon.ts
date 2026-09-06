@@ -10,8 +10,7 @@ export class StatusDaemon {
     if (await this.dependencies.runtime.isHealthy(options, record?.pid)) {
       return {
         state: "running",
-        host: record?.host ?? options.host,
-        port: record?.port ?? options.port,
+        ...(record === undefined ? {} : { host: record.host, port: record.port }),
         pid: record?.pid,
       };
     }
@@ -28,6 +27,6 @@ export class StatusDaemon {
     }
 
     if (record) this.dependencies.runtime.removePidRecord(options.pidFile, record.pid);
-    return { state: "stopped", host: options.host, port: options.port };
+    return { state: "stopped" };
   }
 }

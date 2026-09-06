@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer as createNetServer, type Server } from "node:net";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { currentProcessStartedAt, observeProcessLiveness, type ProcessLiveness } from "../../process/process.js";
 import { type OpenCodeLog, type OpenCodeRequest, openCodeRequestTimeoutMs, requestWithTimeout } from "./client.js";
@@ -113,17 +113,8 @@ export const openCodeServerHealthPollMs = 100;
 export const openCodeRegistryLockTimeoutMs = 30_000;
 export const openCodeRegistryLockPollMs = 50;
 
-export function defaultOpenCodeRegistryFile(env: NodeJS.ProcessEnv = process.env): string {
-  const configured = env.MUXIMO_OPENCODE_REGISTRY_FILE?.trim();
-  if (configured) return configured;
-
-  const stateRoot = env.MUXIMO_STATE_ROOT?.trim();
-  if (stateRoot) return join(stateRoot, "opencode-servers.json");
-
-  const instanceDirectory = env.MUXIMOD_INSTANCE_DIR?.trim()
-    ? env.MUXIMOD_INSTANCE_DIR.trim()
-    : join(env.HOME ?? homedir(), ".local", "state", "muximo");
-  return join(instanceDirectory, "opencode-servers.json");
+export function defaultOpenCodeRegistryFile(): string {
+  return join(tmpdir(), "muximo", "opencode-servers.json");
 }
 
 type OpenCodeHealth = {
@@ -156,7 +147,7 @@ export class OpenCodeServerManager {
   private readonly configuredServer: ParsedServerUrl | undefined;
 
   public constructor(private readonly options: OpenCodeServerManagerOptions) {
-    this.executable = options.executable ?? options.environment?.MUXIMO_OPENCODE_BIN ?? "opencode";
+    this.executable = options.executable ?? "opencode";
     this.spawn = options.spawn ?? ((command, args, spawnOptions) => spawnServe(command, args, spawnOptions));
     this.request = options.request ?? ((url, init) => fetch(url, init));
     this.allocatePort = options.allocatePort ?? allocateLoopbackPort;
@@ -172,7 +163,7 @@ export class OpenCodeServerManager {
     this.signaller = options.signaller ?? defaultSignaller;
     this.onLog = options.onLog;
     this.processStartedAt = currentProcessStartedAt();
-    const configuredServerUrl = options.serverUrl ?? options.environment?.MUXIMO_OPENCODE_SERVER_URL;
+    const configuredServerUrl = options.serverUrl;
     this.configuredServer =
       configuredServerUrl === undefined || configuredServerUrl.trim().length === 0
         ? undefined

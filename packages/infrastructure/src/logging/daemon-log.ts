@@ -1,6 +1,5 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { resolve } from "node:path";
-import { defaultLogFile } from "./index.js";
 
 export type DaemonLogResult = {
   state: "available" | "empty" | "missing";
@@ -14,12 +13,12 @@ export const maxDaemonLogReadBytes = 512 * 1024;
 const maxDaemonLogLineBytes = 64 * 1024;
 
 /** Reads a bounded diagnostic tail inside the daemon's infrastructure boundary. */
-export function readDaemonLog(logFile: string | undefined, lineCount = 100): DaemonLogResult {
+export function readDaemonLog(logFile: string, lineCount = 100): DaemonLogResult {
   if (!Number.isInteger(lineCount) || lineCount < 1 || lineCount > 10_000) {
     throw new Error("daemon log line count must be between 1 and 10000");
   }
 
-  const path = resolve(logFile ?? defaultLogFile());
+  const path = resolve(logFile);
   let contents: string;
   try {
     contents = readLogTail(path);

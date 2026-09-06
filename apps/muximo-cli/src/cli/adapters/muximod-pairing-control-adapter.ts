@@ -16,6 +16,9 @@ import {
   type MuximodControlLogResult,
   type MuximodControlRequest,
   type MuximodControlResponse,
+  type MuximodDaemonStatus,
+  type MuximodHostSettings,
+  type MuximodWebSettings,
   muximodControlMaxResponseBytes,
 } from "@muximo/contract/control";
 
@@ -120,6 +123,38 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
     const response = await this.request({ type: "read_log", lines });
     if (response.type !== "daemon_log") throw unexpectedResponse("daemon_log", response.type);
     return response;
+  }
+
+  public async readHostSettings(): Promise<MuximodHostSettings> {
+    const response = await this.request({ type: "read_host_settings" });
+    if (response.type !== "host_settings") throw unexpectedResponse("host_settings", response.type);
+    return { tailscale: { ...response.tailscale, args: [...response.tailscale.args] } };
+  }
+
+  public async readWebSettings(): Promise<MuximodWebSettings> {
+    const response = await this.request({ type: "read_web_settings" });
+    if (response.type !== "web_settings") throw unexpectedResponse("web_settings", response.type);
+    return { proxy: { ...response.proxy } };
+  }
+
+  public async readDaemonStatus(): Promise<MuximodDaemonStatus> {
+    const response = await this.request({ type: "read_daemon_status" });
+    if (response.type !== "daemon_status") throw unexpectedResponse("daemon_status", response.type);
+    return {
+      protocolVersion: response.protocolVersion,
+      daemonVersion: response.daemonVersion,
+      configuration: {
+        state: response.configuration.state,
+        changedKeys: [...response.configuration.changedKeys],
+      },
+    };
+  }
+
+  public async setServeOrigin(origin: string | null): Promise<void> {
+    const response = await this.request({ type: "set_serve_origin", origin });
+    if (response.type !== "serve_origin_set" || response.origin !== origin) {
+      throw unexpectedResponse("serve_origin_set", response.type);
+    }
   }
 
   public async prepareAgentExecution(input: AgentExecutionPrepareCommand): Promise<AgentExecutionPreparedResponse> {

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "daemon": {
+    "port": 4318
+  },
+  "database": {
+    "schemaMode": "push"
+  },
+  "serve": {
+    "tailscale": {
+      "enabled": true,
+      "externalPort": 8445
+    }
+  },
+  "web": {
+    "proxy": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 5228
+    }
+  }
+}

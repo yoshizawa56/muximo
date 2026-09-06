@@ -16,18 +16,20 @@ The same sync-and-open sequence is available as `mise ios`. `cap:sync` already p
 
 `cap:sync` builds `apps/web/dist` and copies it into the iOS project. Run the Debug app from Xcode or use `cap:run` after the native project has been prepared.
 
-The `Local` scheme loads a fixed Web URL from the ignored `apps/web/ios/local.xcconfig`. Generate it together with a runtime profile:
+The `Local` scheme loads a fixed muximod URL from the ignored
+`apps/web/ios/local.xcconfig`. Create it from the committed example and edit the
+URL for the host running the muximo daemon and Tailscale Serve route:
 
 ```sh
-mise profile
+cp apps/web/ios/local.xcconfig.example apps/web/ios/local.xcconfig
 ```
 
-When prompted, enable the iOS Local configuration. The command asks for the
-connection details and writes `MUXIMO_WEB_SCHEME`, `MUXIMO_WEB_HOST`, and
-`MUXIMO_WEB_PORT`. Rerunning it replaces the ignored file. Changing this
-machine-specific URL requires a native rebuild, but does not require a
-Capacitor sync. The committed `apps/web/ios/local.xcconfig.example` remains
-available for manual setup.
+Set `MUXIMO_WEB_SCHEME`, `MUXIMO_WEB_HOST`, and `MUXIMO_WEB_PORT` in the copied
+file. `MUXIMO_WEB_PORT` is the Tailscale Serve port, not the loopback Vite port.
+Changing this machine-specific URL requires a native rebuild, but does not
+require a Capacitor sync. When `web.proxy.enabled` is true, muximod serves the
+Vite application and its HMR endpoint on this same origin, so no separate Vite
+origin needs to be added to `daemon.allowedOrigins`.
 
 The project has three shared schemes:
 
@@ -41,10 +43,21 @@ that first-party origin automatically, so it must not be added to
 time. The first-run flow pairs with `muximo pair`, then stores the connection
 profile and browser device key through the client authentication flow.
 
-The `Local` scheme loads the remote Web runtime from `local.xcconfig`, so its
-HTTP(S) origin must be included in the generated profile's
-`MUXIMOD_ALLOWED_ORIGINS`. `mise profile` derives both values together when
-the Capacitor client and iOS Local configuration are selected.
+The `Local` scheme loads the remote Web runtime from the muximod proxy. When
+the Web proxy and Tailscale Serve are enabled, `muximo serve tailscale`
+registers the exact HTTPS Serve origin in muximod's in-memory origin policy,
+including the case where the reverse proxy rewrites the incoming Host header.
+The origin is not persisted in `config.json`; other remote Web origins still
+require an explicit `daemon.allowedOrigins` entry.
+
+> Security note: the Web proxy is intentionally unauthenticated. Requests
+> without an `Origin` header (curl, non-browser clients, and any peer that
+> simply omits it) bypass the origin policy entirely, so enabling Tailscale
+> Serve together with `web.proxy.enabled` exposes the Vite development server
+> and its HMR WebSocket to the tailnet without authentication. Treat Tailscale
+> ACLs as the only access control on that surface: restrict which devices and
+> users can reach the Serve URL, and disable the Web proxy whenever local
+> development serving is not needed.
 
 ## Release CI and App Store Connect
 

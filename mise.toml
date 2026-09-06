@@ -19,16 +19,10 @@ raw_args = true
 run = "bun --no-env-file apps/muximo-cli/src/index.ts --"
 
 [tasks.web]
-description = "Run the Web lifecycle CLI with the supplied arguments"
+description = "Run the Vite Web development server with the supplied arguments"
 raw = true
 raw_args = true
-run = "bun --no-env-file apps/web/cli.ts --"
-
-[tasks.profile]
-description = "Generate an ignored runtime profile and optional iOS configuration"
-raw = true
-raw_args = true
-run = "bun --no-env-file scripts/profile.ts"
+run = "bun --no-env-file --cwd apps/web run dev --"
 
 [tasks.check]
 description = "Run the complete repository verification"

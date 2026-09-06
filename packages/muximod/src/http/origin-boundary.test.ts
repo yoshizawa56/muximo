@@ -36,8 +36,8 @@ const authContext = {
 };
 
 type OriginInput = {
-  route: "rpc" | "events" | "terminal";
-  origin: "allowed" | "capacitor" | "custom" | "denied" | "none";
+  route: "rpc" | "events" | "terminal" | "hook" | "hook-oversize";
+  origin: "allowed" | "same-origin" | "capacitor" | "custom" | "denied" | "none";
 };
 type OriginResult = { status: number; body: unknown };
 type OriginFixture = {
@@ -48,6 +48,7 @@ type OriginFixture = {
   subscriptions: number;
   consumedTickets: number;
   upgrades: number;
+  hookCalls: number;
   originalFetch: typeof globalThis.fetch;
   lastResponse: Response | null;
   lastStatus: number;
@@ -59,6 +60,7 @@ type OriginContext = {
   subscriptions: number;
   consumedTickets: number;
   upgrades: number;
+  hookCalls: number;
 };
 
 const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
@@ -68,6 +70,7 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
     subscriptions: 0,
     consumedTickets: 0,
     upgrades: 0,
+    hookCalls: 0,
   };
   const auth: MuximodAuthPort = {
     serverId: authContext.serverId,
@@ -98,12 +101,11 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
   };
   const application = createApplication(state);
   const originPolicy = allowNoOrigin
-    ? createOriginPolicy({ allowedOrigins: [allowedOrigin], allowNoOrigin: true })
-    : createOriginPolicy({ allowedOrigins: [allowedOrigin], allowNoOrigin: false });
+    ? createOriginPolicy({ allowedOrigins: [allowedOrigin], allowNoOrigin: true, allowSameOrigin: true })
+    : createOriginPolicy({ allowedOrigins: [allowedOrigin], allowNoOrigin: false, allowSameOrigin: true });
   const app = createMuximodApp({
     auth,
     application,
-    configurationFingerprint: "0".repeat(64),
     originPolicy,
     hookToken: "hook",
     socketFactory: createTestMuximodSocketFactory(),
@@ -111,6 +113,7 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
       state.subscriptions += 1;
       return events();
     },
+    webProxy: { enabled: true, host: "127.0.0.1", port: 5227 },
   });
   const server = {
     upgrade: (_request: Request, _options: unknown) => {
@@ -137,6 +140,9 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
     get upgrades() {
       return state.upgrades;
     },
+    get hookCalls() {
+      return state.hookCalls;
+    },
     originalFetch,
     lastResponse: null,
     lastStatus: 0,
@@ -159,6 +165,15 @@ const cases = [
   {
     name: "dispatches protected RPC from an allowlisted browser origin",
     input: { route: "rpc", origin: "allowed" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 200),
+      hasObserved<OriginContext, OriginResult>("sessionsCalls", 1),
+      hasObserved<OriginContext, OriginResult>("authCalls", 1),
+    ],
+  },
+  {
+    name: "dispatches protected RPC from the muximod same origin when Web proxying is enabled",
+    input: { route: "rpc", origin: "same-origin" },
     assert: [
       hasObserved<OriginContext, OriginResult>("status", 200),
       hasObserved<OriginContext, OriginResult>("sessionsCalls", 1),
@@ -274,12 +289,44 @@ const cases = [
   },
   {
     name: "rejects a terminal WebSocket from no-Origin when the policy disallows it before ticket use",
-    fixture: "no-origin-denied",
+    fixture: "no-origin-denied" as const,
     input: { route: "terminal", origin: "none" },
     assert: [
       hasObserved<OriginContext, OriginResult>("status", 403),
       hasObserved<OriginContext, OriginResult>("consumedTickets", 0),
       hasObserved<OriginContext, OriginResult>("upgrades", 0),
+    ],
+  },
+  {
+    name: "dispatches a tmux hook from an allowlisted browser origin",
+    input: { route: "hook", origin: "allowed" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 204),
+      hasObserved<OriginContext, OriginResult>("hookCalls", 1),
+    ],
+  },
+  {
+    name: "rejects a tmux hook from a non-allowlisted browser origin before handling",
+    input: { route: "hook", origin: "denied" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 403),
+      hasObserved<OriginContext, OriginResult>("hookCalls", 0),
+    ],
+  },
+  {
+    name: "dispatches a tmux hook from a trusted no-Origin client",
+    input: { route: "hook", origin: "none" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 204),
+      hasObserved<OriginContext, OriginResult>("hookCalls", 1),
+    ],
+  },
+  {
+    name: "rejects a tmux hook whose body exceeds the limit before handling",
+    input: { route: "hook-oversize", origin: "allowed" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 413),
+      hasObserved<OriginContext, OriginResult>("hookCalls", 0),
     ],
   },
 ] satisfies readonly OperationCase<"default" | "no-origin-denied", OriginInput, OriginResult, OriginContext>[];
@@ -294,11 +341,13 @@ const table: OperationTable<OriginFixture, "default" | "no-origin-denied", Origi
         ? undefined
         : input.origin === "allowed"
           ? allowedOrigin
-          : input.origin === "capacitor"
-            ? muximoCapacitorOrigin
-            : input.origin === "custom"
-              ? customOrigin
-              : deniedOrigin;
+          : input.origin === "same-origin"
+            ? "http://muximod.local"
+            : input.origin === "capacitor"
+              ? muximoCapacitorOrigin
+              : input.origin === "custom"
+                ? customOrigin
+                : deniedOrigin;
     if (input.route === "terminal") {
       const headers = new Headers({ upgrade: "websocket" });
       if (origin) headers.set("origin", origin);
@@ -309,6 +358,24 @@ const table: OperationTable<OriginFixture, "default" | "no-origin-denied", Origi
       testFixture.lastResponse = response ?? null;
       testFixture.lastStatus = response?.status ?? 101;
       return { status: response?.status ?? 101, body: response ? await response.json() : null };
+    }
+    if (input.route === "hook" || input.route === "hook-oversize") {
+      const headers = new Headers({
+        "x-muximod-hook-token": "hook",
+        "content-type": "application/x-www-form-urlencoded",
+      });
+      if (origin) headers.set("origin", origin);
+      const body =
+        input.route === "hook-oversize"
+          ? new Uint8Array(64 * 1024 + 1)
+          : new URLSearchParams({ event: "client-active", client: "/dev/test" }).toString();
+      const response = await testFixture.app.fetch(
+        new Request("http://muximod.local/internal/tmux-hook", { method: "POST", headers, body }),
+        testFixture.server,
+      );
+      testFixture.lastResponse = response ?? null;
+      testFixture.lastStatus = response?.status ?? 0;
+      return { status: response?.status ?? 0, body: response ? await response.text() : null };
     }
 
     const client = createHttpTestClient({
@@ -335,6 +402,7 @@ const table: OperationTable<OriginFixture, "default" | "no-origin-denied", Origi
     subscriptions: testFixture.subscriptions,
     consumedTickets: testFixture.consumedTickets,
     upgrades: testFixture.upgrades,
+    hookCalls: testFixture.hookCalls,
   }),
 };
 
@@ -342,7 +410,7 @@ describe("muximod authenticated origin boundary", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
 });
 
-function createApplication(state: { sessionsCalls: number }): MuximodApplication {
+function createApplication(state: { sessionsCalls: number; hookCalls: number }): MuximodApplication {
   return {
     agentSessions: {
       prepareRun: async () => {
@@ -405,7 +473,11 @@ function createApplication(state: { sessionsCalls: number }): MuximodApplication
         throw new Error("not used");
       },
     },
-    hooks: { handleTerminalHostHook: async () => undefined },
+    hooks: {
+      handleTerminalHostHook: async () => {
+        state.hookCalls += 1;
+      },
+    },
   };
 }
 

@@ -241,12 +241,12 @@ adapters, but no CLI handler is exported by `infrastructure`.
 ## Composition roots and CLI
 
 `apps/muximo-cli/src/entrypoint.ts`, `apps/muximo-cli/src/cli/compose.ts`,
-`apps/web/cli.ts`, and `packages/muximod/src/server.ts` are composition roots for
+and `packages/muximod/src/server.ts` are composition roots for
 their respective boundaries. These
 composition roots may:
 
 - read argv and environment variables;
-- select a command or runtime profile;
+- resolve the bootstrap instance directory;
 - construct concrete infrastructure adapters;
 - inject dependencies;
 - start and stop the process;
@@ -280,27 +280,43 @@ transactions and private control contract provide the cross-process boundary.
 ## Muximod lifecycle and environment topology
 
 `packages/muximod` owns the typed lifecycle API exposed to the CLI:
-`ensure`, `start`, `startForeground`, `status`, `stop`, and `restart`. It also
+`ensure`, `start`, `status`, `stop`, and `restart`. It also
 owns the child-process bootstrap, PID and restart markers, schema synchronization,
 and cleanup of muximod resources. A private process bootstrap is used for the
 separate runtime process; it is an internal package implementation detail, not
 a hidden or public CLI command.
 
-The CLI resolves all Muximo configuration before calling that lifecycle API. The
-source/development CLI's selected `--env <name>` profile determines the shared
-profile state directory and its configured ports. Without a selected profile, the
-CLI uses the state root directly and applies built-in defaults. The standalone
-production CLI uses the same unnamed default profile and does not load source
-repository profiles. Every selected profile defaults to `migrate`; `push` is
-selected only by an explicit `MUXIMO_SCHEMA_MODE=push` value.
-Worktrees do not derive state directories and no snapshot, seeding, or
-base-instance copy is performed.
+The production release is a single `muximo` executable. The CLI lifecycle
+adapter starts the same executable as the private daemon process through the
+bootstrap descriptor; a separate `muximod` executable is not a supported
+artifact.
 
-`apps/web/cli.ts` independently manages one Web process per environment and its
-provider route. It does not import or invoke muximod. Muximod Serve only manages the
-muximod route. The two lifecycle surfaces share only raw profile loading and
-neutral Tailscale provider mechanics; each app interprets its own environment
-values and neither is a combined supervisor.
+The CLI resolves only the bootstrap instance directory before calling that
+lifecycle API. It uses `~/.local/state/muximo` by default and accepts
+`--instance-dir <path>` or `MUXIMOD_INSTANCE_DIR` to select another instance.
+All daemon behavior, including its host, port, schema mode, and log level, is
+read from the instance's validated `config.json` by muximod. Worktrees do not
+derive instance directories and no snapshot, seeding, or base-instance copy is
+performed.
+
+The selected muximod instance also owns a user-editable `config.json`. The
+instance-contract package validates and atomically writes this file, while muximod reads
+and validates it during startup. The bootstrap carries the selected instance
+directory and transient process context, but no durable daemon settings; normal
+CLI commands do not read instance configuration directly. If a CLI command
+needs a daemon-owned value, it uses the API or private control
+contract. Workspace roots, enabled/default agent backends, executable paths,
+Tailscale executable/argv prefixes, and the update policy belong there. The
+default enables no agent backends. Optional agent providers are filtered before their
+daemon-side providers are registered, and their executables are resolved only
+when a session is launched. Executable configuration is argv-based and never
+evaluated by a shell.
+
+The CLI manages the optional Vite development process using normalized Web
+settings returned by muximod's private control contract. The Web app is a
+foreground Vite process and does not read instance configuration, start a
+daemon, or manage a provider route. Muximod Serve remains responsible for the
+muximod route.
 
 ## Web structure
 

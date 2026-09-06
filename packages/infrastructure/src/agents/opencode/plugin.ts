@@ -51,7 +51,7 @@ export function createOpenCodePlugin(options: OpenCodePluginOptions = {}): Agent
   const manager =
     options.serverManager ??
     new OpenCodeServerManager({
-      registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(options.environment),
+      registryFile: options.registryFile ?? defaultOpenCodeRegistryFile(),
       environment: options.environment,
       serverUrl: options.serverUrl,
       executable: options.executable,

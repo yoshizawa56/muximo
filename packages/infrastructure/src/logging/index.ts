@@ -12,8 +12,7 @@ import {
   statSync,
   writeSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 export const logLevels = ["error", "warn", "info", "debug"] as const;
 export type LogLevel = (typeof logLevels)[number];
@@ -106,7 +105,7 @@ export function createDefaultSink(
     return createFileSinkOrFallback(options.logFile, options);
   }
   if (options.mode === "background") {
-    return createFileSinkOrFallback(defaultLogFile(), options);
+    return { write() {} };
   }
   return createStreamSink(
     options.output ?? process.stderr,
@@ -191,12 +190,6 @@ export function createRotatingFileSink(file: string, options: { maxBytes?: numbe
 export function parseLogLevel(value: string | undefined, fallback: LogLevel = "warn"): LogLevel {
   if (value && isLogLevel(value)) return value;
   return fallback;
-}
-
-export function defaultLogFile(environment: NodeJS.ProcessEnv = process.env): string {
-  return resolve(
-    environment.MUXIMO_LOG_FILE ?? join(environment.HOME ?? homedir(), ".local", "state", "muximo", "muximod.log"),
-  );
 }
 
 export * from "./daemon-log.js";

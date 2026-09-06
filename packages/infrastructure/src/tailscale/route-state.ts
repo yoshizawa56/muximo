@@ -4,7 +4,6 @@ import { dirname } from "node:path";
 
 export type ServeRouteState = {
   schemaVersion: 1;
-  environment?: string;
   component: string;
   provider: "tailscale";
   hostname: string;
@@ -71,14 +70,9 @@ export function removeServeRouteState(path: string): void {
 function isServeRouteState(value: unknown): value is ServeRouteState {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value).sort().join(",");
-  const hasEnvironment = typeof value.environment === "string" && value.environment.length > 0;
   return (
-    ((keys ===
-      "component,environment,externalPort,hostname,localTarget,path,provider,publicUrl,routeFingerprint,schemaVersion,updatedAt" &&
-      hasEnvironment) ||
-      (keys ===
-        "component,externalPort,hostname,localTarget,path,provider,publicUrl,routeFingerprint,schemaVersion,updatedAt" &&
-        value.environment === undefined)) &&
+    keys ===
+      "component,externalPort,hostname,localTarget,path,provider,publicUrl,routeFingerprint,schemaVersion,updatedAt" &&
     value.schemaVersion === 1 &&
     typeof value.component === "string" &&
     value.component.length > 0 &&

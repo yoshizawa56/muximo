@@ -11,7 +11,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { errorMessage } from "./logging/index.js";
 
 const startLockTimeoutMs = 15_000;
@@ -34,14 +34,15 @@ export type WebDaemonManager = {
 };
 
 export type WebDaemonManagerOptions = {
-  instanceDirectory: string;
+  pidFile: string;
+  lockDirectory: string;
   host: string;
   port: number;
   cwd: string;
   command: string;
   args: readonly string[];
   environment: NodeJS.ProcessEnv;
-  logFile?: string;
+  logFile: string;
 };
 
 type WebPidRecord = {
@@ -53,12 +54,11 @@ type WebPidRecord = {
   startedAt: string;
 };
 
-/** Manages exactly one host-side Web process for one environment state directory. */
+/** Manages exactly one host-side Web process through explicitly supplied paths. */
 export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDaemonManager {
-  mkdirSync(options.instanceDirectory, { recursive: true, mode: 0o700 });
-  const pidFile = join(options.instanceDirectory, "web.pid");
-  const logFile = options.logFile ?? join(options.instanceDirectory, "web.log");
-  const lockDirectory = join(options.instanceDirectory, "web.start.lock");
+  const pidFile = options.pidFile;
+  const logFile = options.logFile;
+  const lockDirectory = options.lockDirectory;
   const url = `http://${displayHost(options.host)}:${options.port}`;
 
   return {
@@ -87,7 +87,8 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
       throw new Error(`Web port is already in use by an unmanaged process: ${url}`);
     }
 
-    mkdirSync(options.instanceDirectory, { recursive: true, mode: 0o700 });
+    mkdirSync(dirname(pidFile), { recursive: true, mode: 0o700 });
+    mkdirSync(dirname(logFile), { recursive: true, mode: 0o700 });
     const logDescriptor = openSync(logFile, "a", 0o600);
     let child: ChildProcess;
     let childError: unknown;
@@ -132,6 +133,13 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
   async function stop(): Promise<WebDaemonStatus> {
     const current = readPidRecord(pidFile);
     if (!current) return present("stopped");
+    // Never signal a process the record does not describe: after a crash or
+    // PID reuse the recorded PID may belong to an unrelated process owned by
+    // the same account. A foreign record is dropped as stale instead.
+    if (!isOwnedRecord(current)) {
+      removePidRecord(current.pid);
+      return present("stale", current.pid);
+    }
     if (!isProcessAlive(current.pid)) {
       removePidRecord(current.pid);
       return present("stale", current.pid);
@@ -233,9 +241,18 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
     }
     if (!options.command.trim()) throw new Error("Web command is required");
   }
+
+  function isOwnedRecord(record: WebPidRecord): boolean {
+    return (
+      record.command === options.command &&
+      record.args.length === options.args.length &&
+      record.args.every((argument, index) => argument === options.args[index])
+    );
+  }
 }
 
 async function withStartLock<Result>(operation: () => Promise<Result>, lockDirectory: string): Promise<Result> {
+  mkdirSync(dirname(lockDirectory), { recursive: true, mode: 0o700 });
   const deadline = Date.now() + startLockTimeoutMs;
   while (true) {
     let acquired = false;

@@ -11,7 +11,7 @@ if (!existsSync(binary)) {
     `${[
       `muximo: production binary not found: ${binary}`,
       "muximo: install the latest stable release with 'bun run muximo:install' or set MUXIMO_RELEASE_BINARY",
-      "muximo: use 'mise muximo --env <profile>' for source-based profile commands",
+      "muximo: use 'muximo --instance-dir <path>' for instance-specific commands",
     ].join("\n")}\n`,
   );
   process.exitCode = 1;

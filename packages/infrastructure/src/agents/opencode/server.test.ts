@@ -10,7 +10,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   defaultOpenCodeRegistryFile,
   type OpenCodeServerEntry,
@@ -240,17 +240,14 @@ function errorCode(error: unknown): string | undefined {
 
 const cases = [
   {
-    name: "uses the shared registry path override before the selected instance directory",
-    input: {
-      operation: "default-path" as const,
-      environment: { MUXIMO_OPENCODE_REGISTRY_FILE: "/state/opencode.json" },
-    },
+    name: "uses the generic fallback registry path when no path is injected",
+    input: { operation: "default-path" as const },
     assert: [
       returns<ServerResult, ServerResult>({
         entry: undefined,
         entries: [],
         spawned: [],
-        requestRecords: [],
+        requestRecords: [{ url: expect.stringMatching(/\/muximo\/opencode-servers\.json$/), directory: null }],
         unrefPids: [],
         registry: undefined,
         failure: "none",
@@ -471,7 +468,7 @@ const table: OperationTable<ServerFixture, "default", ServerInput, ServerResult,
     const harness = fixture.harness;
     seed(harness, input);
     if (input.operation === "default-path") {
-      const selected = defaultOpenCodeRegistryFile(input.environment);
+      const selected = defaultOpenCodeRegistryFile();
       const result: ServerResult = {
         entry: undefined,
         entries: [],

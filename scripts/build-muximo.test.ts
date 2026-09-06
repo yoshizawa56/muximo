@@ -12,10 +12,8 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 type BuildPlan = {
   repositoryRoot: string;
   outputPath: string;
-  muximodOutputPath: string;
   target: string | undefined;
-  cliEntrypoint: string;
-  muximodEntrypoint: string;
+  productionEntrypoint: string;
   syncEmbeddedMigrationsScript: string;
   embeddedMigrationsDirectory: string;
   embeddedMigrationsJournal: string;
@@ -50,18 +48,14 @@ const cases = [
       succeeds("resolves the canonical infrastructure migration directory", (plan) => {
         assert.equal(plan.repositoryRoot, repositoryRoot);
         assert.equal(plan.outputPath, join(repositoryRoot, "dist", "muximo"));
-        assert.equal(plan.muximodOutputPath, join(repositoryRoot, "dist", "muximod"));
-        assert.equal(plan.cliEntrypoint, join(repositoryRoot, "apps", "muximo-cli", "src", "production-entrypoint.ts"));
-        assert.equal(
-          plan.muximodEntrypoint,
-          join(repositoryRoot, "packages", "muximod", "src", "process-entrypoint.ts"),
-        );
+        assert.equal(plan.productionEntrypoint, join(repositoryRoot, "scripts", "muximo-production-entrypoint.ts"));
         assert.equal(
           plan.syncEmbeddedMigrationsScript,
           join(repositoryRoot, "scripts", "sync-embedded-migrations.mjs"),
         );
         assert.equal(plan.embeddedMigrationsDirectory, join(repositoryRoot, "packages", "infrastructure", "drizzle"));
         assert.doesNotMatch(JSON.stringify(plan), /packages[\\/]persistence[\\/]drizzle/);
+        assert.doesNotMatch(JSON.stringify(plan), /muximod/);
       }),
     ],
   },
@@ -70,8 +64,8 @@ const cases = [
     fixture: "missing-repository",
     input: { output: "dist/muximo" },
     assert: [
-      fails("identifies the missing CLI entrypoint", (error) => {
-        assert.match(String(error), /required muximo CLI entrypoint not found:/);
+      fails("identifies the missing production entrypoint", (error) => {
+        assert.match(String(error), /required muximo production entrypoint not found:/);
       }),
     ],
   },

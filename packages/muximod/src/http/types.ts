@@ -5,6 +5,8 @@ import type {
   MuximodAuthPort,
 } from "@muximo/application";
 import type { MuximodEvent } from "@muximo/contract/api";
+import type { MuximodWebSettings } from "@muximo/contract/control";
+import type { AgentBackend } from "@muximo/domain";
 import type { MuximodSocket, MuximodSocketFactory } from "@muximo/infrastructure/runtime";
 
 export type { MuximodAuthContext, MuximodAuthDevice, MuximodAuthPort } from "@muximo/application";
@@ -21,13 +23,15 @@ export type MuximodHttpLogger = {
 /** Exact browser-origin policy injected by the muximod composition root. */
 export type MuximodOriginPolicy = {
   allows(origin: string | null): boolean;
+  allowsRequest?(request: Request): boolean;
+  /** Replaces the ephemeral origin used by the active external Serve route. */
+  setRuntimeOrigin(origin: string | null): void;
 };
 
 export type MuximodHttpDependencies = {
   auth: MuximodAuthPort;
   application: MuximodApplication;
   isReady?: () => boolean;
-  configurationFingerprint: string;
   originPolicy: MuximodOriginPolicy;
   hookToken: string;
   /** Host-specific adapter construction is supplied by the composition root. */
@@ -35,4 +39,10 @@ export type MuximodHttpDependencies = {
   onTerminalConnection?: (socket: MuximodSocket, context: MuximodAuthContext) => void;
   subscribeEvents?: (signal: AbortSignal) => AsyncIteratorObject<MuximodEvent>;
   logger?: MuximodHttpLogger;
+  agentBackends?: {
+    enabled: readonly AgentBackend[];
+    default: AgentBackend | null;
+  };
+  /** Optional loopback Vite target for the development Web proxy. */
+  webProxy?: MuximodWebSettings["proxy"];
 };

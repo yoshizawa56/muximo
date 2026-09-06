@@ -9,7 +9,13 @@ export type CliCompletionSpec =
   | { kind: "directory" }
   | { kind: "url" }
   | { kind: "integer" }
-  | { kind: "choices"; values: readonly string[] };
+  | { kind: "choices"; values: readonly string[] }
+  | {
+      kind: "dependent";
+      dependsOn: string;
+      values: Readonly<Record<string, CliCompletionSpec>>;
+      fallback?: CliCompletionSpec;
+    };
 
 export type CliEnvironmentBinding = {
   name: string;
@@ -33,6 +39,14 @@ export type CliOptionSpec<T = unknown> = {
   completion?: CliCompletionSpec;
 };
 
+export type CliArgumentSpec = {
+  /** The positional argument name used by Commander and completion output. */
+  key: string;
+  description: string;
+  repeatable?: boolean;
+  completion?: CliCompletionSpec;
+};
+
 export type CliOptionSource = "cli" | "environment" | "default";
 
 export type CliOptionResolution = {
@@ -41,6 +55,7 @@ export type CliOptionResolution = {
 };
 
 const optionSpecsByCommand = new WeakMap<Command, CliOptionSpec[]>();
+const argumentSpecsByCommand = new WeakMap<Command, CliArgumentSpec[]>();
 const environmentHelpByCommand = new WeakSet<Command>();
 
 export function defineOptions<const T extends readonly CliOptionSpec[]>(...specs: T): T {
@@ -77,6 +92,17 @@ export function getAvailableOptionSpecs(specs: readonly CliOptionSpec[], buildMo
 
 export function getRegisteredOptions(command: Command): readonly CliOptionSpec[] {
   return optionSpecsByCommand.get(command) ?? [];
+}
+
+export function registerArguments(command: Command, specs: readonly CliArgumentSpec[]): Command {
+  const registered = argumentSpecsByCommand.get(command) ?? [];
+  registered.push(...specs);
+  argumentSpecsByCommand.set(command, registered);
+  return command;
+}
+
+export function getRegisteredArguments(command: Command): readonly CliArgumentSpec[] {
+  return argumentSpecsByCommand.get(command) ?? [];
 }
 
 /** Reads values for a command's options before Commander is constructed. */

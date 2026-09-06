@@ -77,7 +77,7 @@ export class PushSchemaSynchronizer implements DatabaseSchemaSynchronizer {
     ];
     const environment = {
       ...this.environment,
-      MUXIMOD_DB_FILE: input.databaseFile,
+      MUXIMOD_DATABASE_FILE: input.databaseFile,
     };
 
     try {

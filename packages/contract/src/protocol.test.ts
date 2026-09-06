@@ -299,7 +299,6 @@ const healthCases = [
       service: "muximod",
       protocolVersion: terminalProtocolVersion,
       pid: 1234,
-      configurationFingerprint: "0".repeat(64),
     },
     assert: [isValid()],
   },
@@ -310,7 +309,6 @@ const healthCases = [
       service: "muximod",
       protocolVersion: 99,
       pid: 1234,
-      configurationFingerprint: "0".repeat(64),
     },
     assert: [isInvalid(["protocolVersion"])],
   },
@@ -321,7 +319,6 @@ const healthCases = [
       service: "muximod",
       protocolVersion: terminalProtocolVersion,
       pid: 1234,
-      configurationFingerprint: "0".repeat(64),
       legacy: true,
     },
     assert: [isInvalid()],
@@ -333,6 +330,7 @@ const capabilitiesCases = [
     name: "accepts the current capabilities contract",
     input: {
       protocolVersion: terminalProtocolVersion,
+      agents: { enabled: ["codex"], default: "codex" },
       features: {
         tmuxSessions: true,
         terminalWebSocket: true,
@@ -346,6 +344,7 @@ const capabilitiesCases = [
     name: "rejects capabilities for an unsupported protocol version",
     input: {
       protocolVersion: 99,
+      agents: { enabled: ["codex"], default: "codex" },
       features: {
         tmuxSessions: true,
         terminalWebSocket: true,
@@ -359,6 +358,7 @@ const capabilitiesCases = [
     name: "rejects an unknown capability",
     input: {
       protocolVersion: terminalProtocolVersion,
+      agents: { enabled: ["codex"], default: "codex" },
       features: {
         tmuxSessions: true,
         terminalWebSocket: true,
@@ -511,6 +511,75 @@ const pairingCases = [
     assert: [isValid()],
   },
   {
+    name: "accepts a private host settings request",
+    input: {
+      kind: "request",
+      value: {
+        type: "read_host_settings",
+        requestId: controlRequestId,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a private Web settings request",
+    input: {
+      kind: "request",
+      value: {
+        type: "read_web_settings",
+        requestId: controlRequestId,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a daemon status request",
+    input: {
+      kind: "request",
+      value: {
+        type: "read_daemon_status",
+        requestId: controlRequestId,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts an active Serve origin registration request",
+    input: {
+      kind: "request",
+      value: {
+        type: "set_serve_origin",
+        requestId: controlRequestId,
+        origin: "https://machine.tailnet.ts.net:8444",
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a Serve origin registration clear request",
+    input: {
+      kind: "request",
+      value: {
+        type: "set_serve_origin",
+        requestId: controlRequestId,
+        origin: null,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "rejects a Serve origin with a URL path",
+    input: {
+      kind: "request",
+      value: {
+        type: "set_serve_origin",
+        requestId: controlRequestId,
+        origin: "https://machine.tailnet.ts.net:8444/muximo",
+      },
+    },
+    assert: [isInvalid(["origin"])],
+  },
+  {
     name: "rejects an unbounded daemon log request",
     input: {
       kind: "request",
@@ -575,6 +644,66 @@ const pairingCases = [
         state: "available",
         logFile: "/var/tmp/muximod.log",
         lines: ["muximod started"],
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a private host settings response",
+    input: {
+      kind: "response",
+      value: {
+        type: "host_settings",
+        requestId: controlRequestId,
+        tailscale: {
+          enabled: true,
+          executable: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+          args: ["--socket", "/tmp/tailscaled.sock"],
+          hostname: "machine.example",
+          externalPort: 8444,
+          path: "/muximo",
+        },
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a private Web settings response",
+    input: {
+      kind: "response",
+      value: {
+        type: "web_settings",
+        requestId: controlRequestId,
+        proxy: { enabled: true, host: "127.0.0.1", port: 5227 },
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a daemon status response with configuration diagnostics",
+    input: {
+      kind: "response",
+      value: {
+        type: "daemon_status",
+        requestId: controlRequestId,
+        protocolVersion: terminalProtocolVersion,
+        daemonVersion: "0.1.0",
+        configuration: {
+          state: "restart_recommended",
+          changedKeys: ["daemon.port", "agents.enabled"],
+        },
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a Serve origin registration response",
+    input: {
+      kind: "response",
+      value: {
+        type: "serve_origin_set",
+        requestId: controlRequestId,
+        origin: "https://machine.tailnet.ts.net:8444",
       },
     },
     assert: [isValid()],

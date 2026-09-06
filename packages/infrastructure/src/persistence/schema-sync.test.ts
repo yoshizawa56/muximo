@@ -148,9 +148,7 @@ function createFixture(key: FixtureKey): { fixture: Fixture; cleanup: () => void
     key === "push-existing-receipt"
       ? {
           ...process.env,
-          MUXIMOD_INSTANCE_DIR: join(root, "instance"),
-          MUXIMOD_DB_FILE: undefined,
-          MUXIMO_DATABASE_FILE: undefined,
+          MUXIMOD_DATABASE_FILE: undefined,
         }
       : undefined;
   const pushOptions = {

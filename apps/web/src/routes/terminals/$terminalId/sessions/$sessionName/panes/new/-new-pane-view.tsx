@@ -3,7 +3,6 @@ import { AppIcon } from "../../../../../../../app/components/app-icon";
 import { MuximoLogo } from "../../../../../../../app/components/muximo-logo";
 import { WorkspacePickerView } from "../../../-workspace-picker-view";
 import { workspacePickerState } from "../../../-workspace-picker-viewmodel";
-import { agentOptions } from "./-agent-options";
 import type { NewPaneViewModel } from "./-new-pane-viewmodel";
 
 const placementCardBase =
@@ -30,7 +29,8 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
   const canCreate =
     viewModel.name.trim().length > 0 &&
     (!workspaceRequired || workspacePickerState(viewModel.workspacePicker).canContinue) &&
-    (viewModel.placement === "window" || Boolean(viewModel.targetPaneId));
+    (viewModel.placement === "window" || Boolean(viewModel.targetPaneId)) &&
+    (viewModel.kind !== "agent" || viewModel.agentOptions.length > 0);
 
   return (
     <main className="flex h-[var(--app-viewport-height)] min-h-[var(--app-viewport-height)] flex-col overflow-x-hidden overflow-y-auto bg-flow-grid bg-[length:auto,32px_32px,32px_32px,auto] text-ink">
@@ -178,7 +178,7 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
             <fieldset className="mt-0.5 flex flex-col gap-2 border-0 p-0">
               <legend className="font-mono text-[0.53rem] tracking-[0.1em] text-[#75a97d]">AGENT</legend>
               <div className="grid grid-cols-3 gap-[7px]">
-                {agentOptions.map(({ value, label, monogram, badgeClass }) => {
+                {viewModel.agentOptions.map(({ value, label, monogram, badgeClass }) => {
                   const selected = viewModel.agentId === value;
                   return (
                     <label key={value} className={`${placementCardBase} ${selected ? placementCardSelected : ""}`}>
@@ -199,6 +199,11 @@ export function NewPaneView({ viewModel }: { viewModel: NewPaneViewModel }) {
                     </label>
                   );
                 })}
+                {viewModel.agentOptions.length === 0 ? (
+                  <p className="col-span-3 m-0 rounded-lg border border-[#5c332f] bg-[rgb(74_29_25_/_35%)] p-3 text-[0.62rem] text-[#ffb0a5]">
+                    No agent backends are enabled. Configure one with <code>muximo config init</code>.
+                  </p>
+                ) : null}
               </div>
             </fieldset>
           ) : null}

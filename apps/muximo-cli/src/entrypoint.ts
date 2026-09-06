@@ -1,9 +1,7 @@
-import { dirname, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
-import { fileURLToPath } from "node:url";
 import { DaemonHealthError } from "@muximo/application";
-import { defaultLogFile } from "@muximo/infrastructure/cli-client";
-import { getProfile, resolveProfileName } from "@muximo/profile";
+import { resolveInstancePaths } from "@muximo/instance-contract";
+import type { MuximodProcessCommand } from "@muximo/muximod/client";
 import { createCliApp } from "./cli/app.js";
 import type { CliBuildMode } from "./cli/build-mode.js";
 import { globalOptionSpecs } from "./cli/commands/global.js";
@@ -13,14 +11,13 @@ import { assertAvailableOptions, readOptionValues, scanRootOptions } from "./cli
 import { presentDaemonError } from "./cli/presenters/daemon.js";
 import { resolveMuximoCliRuntimeOptions } from "./cli/runtime.js";
 
-const sourceRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-
 export type CliEntrypointOptions = {
   buildMode?: CliBuildMode;
   env?: NodeJS.ProcessEnv;
   input?: Readable;
   out?: Writable;
   err?: Writable;
+  muximodProcess?: MuximodProcessCommand;
 };
 
 /** Process boundary: argv/env/I/O invocation and exit status only. */
@@ -49,27 +46,21 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
 
     const rootOptions = scanRootOptions(args, globalOptionSpecs, buildMode);
     const rawGlobalOptions = readOptionValues(rootOptions.options, globalOptionSpecs, buildMode);
-    const profile = getProfile({
-      name:
-        buildMode === "development"
-          ? resolveProfileName(rawGlobalOptions.environment ?? inputEnvironment.MUXIMO_ENV)
-          : undefined,
-      repositoryRoot: sourceRepositoryRoot,
-      baseEnvironment: inputEnvironment,
-    });
     const runtimeResolution = resolveMuximoCliRuntimeOptions({
       raw: rawGlobalOptions,
       args: rootOptions.options,
-      environment: profile.environment,
+      environment: inputEnvironment,
       cwd: process.cwd(),
       buildMode,
     });
     environment = runtimeResolution.environment;
     composition = createCliComposition({
+      buildMode,
       environment,
       input: options.input,
       io,
       runtime: runtimeResolution.runtime,
+      muximodProcess: options.muximodProcess,
     });
     return await composition.execute(args);
   } catch (error) {
@@ -105,7 +96,9 @@ function reportEntrypointError(err: Writable, error: unknown, environment?: Node
     return presentDaemonError(
       error,
       { out: err, err },
-      environment === undefined ? undefined : defaultLogFile(environment),
+      environment?.MUXIMOD_INSTANCE_DIR === undefined
+        ? undefined
+        : resolveInstancePaths(environment.MUXIMOD_INSTANCE_DIR).logFile,
     );
   }
   err.write(`[muximo-cli] error: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -129,5 +122,6 @@ function createNoopHandlers(): CliHandlers {
     workspaceAdd: async () => 0,
     workspaceUpdate: async () => 0,
     workspaceDelete: async () => 0,
+    config: async () => 0,
   };
 }

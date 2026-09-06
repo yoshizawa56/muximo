@@ -89,18 +89,14 @@ jobs:
           mkdir -p dist
           bun run build:muximo
           chmod +x "$MUXIMO_BUILD_OUTPUT"
-          chmod +x "dist/muximod-${{ matrix.platform }}"
           test -s "$MUXIMO_BUILD_OUTPUT"
-          test -s "dist/muximod-${{ matrix.platform }}"
           file "$MUXIMO_BUILD_OUTPUT"
 
       - name: Upload standalone muximo executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-muximo-${{ matrix.platform }}
-          path: |
-            dist/${{ matrix.asset }}
-            dist/muximod-${{ matrix.platform }}
+          path: dist/${{ matrix.asset }}
           if-no-files-found: error
           retention-days: 1
 
@@ -158,10 +154,6 @@ jobs:
             muximo-linux-arm64
             muximo-macos-arm64
             muximo-macos-x64
-            muximod-linux-x64
-            muximod-linux-arm64
-            muximod-macos-arm64
-            muximod-macos-x64
           )
           for asset in "${expected_assets[@]}"; do
             test -s "dist/$asset"
@@ -184,11 +176,7 @@ jobs:
               muximo-linux-x64 \
               muximo-linux-arm64 \
               muximo-macos-arm64 \
-              muximo-macos-x64 \
-              muximod-linux-x64 \
-              muximod-linux-arm64 \
-              muximod-macos-arm64 \
-              muximod-macos-x64
+              muximo-macos-x64
           ) > dist/SHA256SUMS.txt
 
       - name: Add shell installer
@@ -275,10 +263,6 @@ jobs:
             muximo-linux-arm64
             muximo-macos-arm64
             muximo-macos-x64
-            muximod-linux-x64
-            muximod-linux-arm64
-            muximod-macos-arm64
-            muximod-macos-x64
           )
           expected_asset_list="$(printf '%s\n' "${expected_assets[@]}" | sort)"
           actual_asset_list="$(gh release view "$RELEASE_TAG" \

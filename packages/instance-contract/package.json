@@ -1,5 +1,5 @@
 {
-  "name": "@muximo/profile",
+  "name": "@muximo/instance-contract",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -14,6 +14,9 @@
     "build": "node node_modules/typescript/bin/tsc -p tsconfig.build.json",
     "test": "bun test src --pass-with-no-tests",
     "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@muximo/test-support": "workspace:*",
