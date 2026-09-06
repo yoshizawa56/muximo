@@ -110,7 +110,7 @@ const readCases = [
 const readTable: OperationTable<ReadFixture, ReadFixtureKey, ReadInput, ReadResult, ReadContext> = {
   defaultFixture: (registerCleanup) => {
     const fixture = createReadFixture(registerCleanup);
-    const seed = [logLine("first.started"), logLine("second.tick"), logLine("third.stopped")].join("\n");
+    const seed = [logLine("first.started"), logLine("second.tick", "warn"), logLine("third.stopped")].join("\n");
     writeFileSync(fixture.logPath, `${seed}\n`);
     return { fixture };
   },
