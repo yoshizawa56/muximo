@@ -192,8 +192,6 @@ export function parseLogLevel(value: string | undefined, fallback: LogLevel = "w
   return fallback;
 }
 
-export * from "./daemon-log.js";
-
 export function errorFields(error: unknown): LogContext {
   let normalized: LogValue = "[UNAVAILABLE]";
   try {

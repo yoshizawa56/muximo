@@ -99,7 +99,7 @@ const cliProviderLifecycleImport = /(?:from\s+|import\s*\(\s*)["'][^"']*\/agents
 const cliProviderLifecycleTerms =
   /\b(?:CodexBackendProvider|ClaudeBackendProvider|OpenCodeBackendProvider|OpenCodeServerManager|manageCodexThread|manageCodexThreadFromEnvironment|ensureCodexRemoteControl|CodexRpcClient|MUXIMO_CODEX_NAME_BIN)\b/;
 const cliDaemonStateTerms =
-  /\b(?:AgentDatabase|createAgentDatabase|Drizzle(?:AgentSession|CodexSessionState|Pane|Workspace)Repository|SqliteTransactionManager|DatabaseSchemaSynchronizer|ensureMuximodSnapshot|readDaemonLog|readDaemonHealthDiagnostics|resolveMuximodPaths|bun:sqlite)\b/;
+  /\b(?:AgentDatabase|createAgentDatabase|Drizzle(?:AgentSession|CodexSessionState|Pane|Workspace)Repository|SqliteTransactionManager|DatabaseSchemaSynchronizer|ensureMuximodSnapshot|readDaemonHealthDiagnostics|resolveMuximodPaths|bun:sqlite)\b/;
 const cliForbiddenInfrastructureRootImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/infrastructure["']/;
 const cliForbiddenInfrastructureRuntimeImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/infrastructure\/runtime["']/;
 const cliForbiddenMuximodRootImport = /(?:from\s+|import\s*\(\s*)["']@muximo\/muximod["']/;

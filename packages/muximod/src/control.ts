@@ -11,7 +11,6 @@ import type {
 import {
   decodeMuximodControlRequest,
   encodeMuximodControlResponse,
-  type MuximodControlLogResult,
   type MuximodControlRequest,
   type MuximodControlResponse,
   type MuximodDaemonStatus,
@@ -65,7 +64,6 @@ export type MuximodControlServerOptions = {
   socketPath: string;
   auth: MuximodAuthControlPort;
   readDaemonStatus?: () => MuximodDaemonStatus | Promise<MuximodDaemonStatus>;
-  readLog?: (lines: number) => Promise<MuximodControlLogResult>;
   readHostSettings?: () => MuximodHostSettings | Promise<MuximodHostSettings>;
   readWebSettings?: () => MuximodWebSettings | Promise<MuximodWebSettings>;
   setServeOrigin?: (origin: string | null) => void | Promise<void>;
@@ -280,12 +278,6 @@ export class MuximodControlServer {
           pairingCode: pairingPayloadCode(payload),
           payload,
         });
-        return;
-      }
-      if (request.type === "read_log") {
-        if (!this.options.readLog) throw controlError("log_read_unavailable", "daemon log reading is unavailable");
-        const result = await this.options.readLog(request.lines);
-        this.send(socket, { type: "daemon_log", requestId: request.requestId, ...result, lines: [...result.lines] });
         return;
       }
       if (request.type === "read_host_settings") {

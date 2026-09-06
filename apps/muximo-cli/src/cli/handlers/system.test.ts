@@ -8,12 +8,17 @@ import type {
   StartDaemonInput,
 } from "@muximo/application";
 import { DaemonHealthError } from "@muximo/application";
-import type { MuximodControlLogResult } from "@muximo/contract/control";
 import { protocolVersion } from "@muximo/contract/shared";
-import type { DoctorReport, ServeRouteState, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
+import type {
+  DoctorReport,
+  MuximodLogFileLine,
+  ServeRouteState,
+  TailscaleServeResult,
+} from "@muximo/infrastructure/cli-client";
 import { type OperationCase, type OperationTable, runOperationTable, type TestRegistrar } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
 import type { CliDaemonInput, CliDoctorInput, CliIo, CliServeInput } from "../commands/types.js";
+import type { DaemonLogRequest, DaemonLogResult } from "./system.js";
 import { createSystemHandlers } from "./system.js";
 
 type SystemInput =
@@ -52,13 +57,22 @@ function includesCall(name: string, expected: string) {
   return { name, check: (context: SystemResult) => expect(context.calls).toContain(expected) };
 }
 
-const daemonInputs: readonly CliDaemonInput[] = [
+const daemonInputs: readonly (CliDaemonInput & { caseSuffix?: string })[] = [
   { command: "start", refreshServers: false },
   { command: "status", refreshServers: false },
   { command: "stop", refreshServers: false },
   { command: "restart", refreshServers: true },
   { command: "ensure", refreshServers: false },
-  { command: "log", refreshServers: false, lines: 20 },
+  { command: "log", refreshServers: false, lines: 20, json: false, follow: false },
+  {
+    command: "log",
+    refreshServers: false,
+    lines: 20,
+    json: true,
+    follow: false,
+    filter: "server.started",
+    caseSuffix: " with json output and a filter",
+  },
 ];
 
 const routeState: ServeRouteState = {
@@ -103,7 +117,7 @@ const cases = [
     ] as const,
   },
   ...daemonInputs.map((input) => ({
-    name: `dispatches daemon ${input.command}`,
+    name: `dispatches daemon ${input.command}${input.caseSuffix ?? ""}`,
     input: { kind: "daemon" as const, input },
     assert: [includesCall(`passes the daemon ${input.command}`, `daemon:${input.command}`)] as const,
   })),
@@ -154,6 +168,43 @@ const cases = [
   },
 ] satisfies readonly OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>[];
 
+const logPresentationCases = [
+  {
+    name: "renders daemon log lines in the human format",
+    input: { kind: "daemon", input: { command: "log", refreshServers: false, lines: 20, json: false, follow: false } },
+    assert: [
+      hasValue("returns a successful status", "status", 0),
+      containsText("renders the log level and service", "out", "INFO [muximod]"),
+      containsText("renders the event and message", "out", "server.started muximod log"),
+      excludesText("does not print raw JSON", "out", '"event":"server.started"'),
+    ],
+  },
+  {
+    name: "renders daemon log lines as raw JSON with --json",
+    input: {
+      kind: "daemon",
+      input: { command: "log", refreshServers: false, lines: 20, json: true, follow: false, filter: "server.started" },
+    },
+    assert: [
+      hasValue("returns a successful status", "status", 0),
+      containsText("prints the raw JSON line", "out", '"event":"server.started"'),
+      excludesText("does not render the human format", "out", "INFO [muximod]"),
+    ],
+  },
+  {
+    name: "streams followed daemon log lines once",
+    input: { kind: "daemon", input: { command: "log", refreshServers: false, lines: 20, json: false, follow: true } },
+    assert: [
+      hasValue("returns a successful status", "status", 0),
+      containsText("streams the log line once", "out", "server.started muximod log"),
+      {
+        name: "does not reprint followed lines through the presenter",
+        check: (context: SystemResult) => expect(context.out.split("server.started muximod log").length - 1).toBe(1),
+      },
+    ],
+  },
+] as const;
+
 const startupFailureCase = {
   name: "presents a daemon startup exit with its log path",
   fixture: "startup-failed" as const,
@@ -201,7 +252,14 @@ const statusUnavailableCase = {
   ] as const,
 } satisfies OperationCase<SystemFixtureKey, SystemInput, SystemResult, SystemResult>;
 
-const allCases = [...cases, startupFailureCase, pidUnhealthyCase, configChangedCase, statusUnavailableCase] as const;
+const allCases = [
+  ...cases,
+  ...logPresentationCases,
+  startupFailureCase,
+  pidUnhealthyCase,
+  configChangedCase,
+  statusUnavailableCase,
+] as const;
 
 const table: OperationTable<SystemFixture, SystemFixtureKey, SystemInput, SystemResult, SystemResult> = {
   defaultFixture: () => ({ fixture: createFixture("default") }),
@@ -319,9 +377,26 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
       },
     },
     log: {
-      execute: async (): Promise<MuximodControlLogResult> => {
+      execute: async (request: DaemonLogRequest): Promise<DaemonLogResult> => {
         calls.push("daemon:log");
-        return { state: "available", logFile: "/tmp/muximod.log", lines: ["muximod log"] };
+        const lines: readonly MuximodLogFileLine[] = [
+          {
+            raw: '{"timestamp":"2026-08-30T00:00:00.000Z","level":"info","service":"muximod","pid":402,"processInstanceId":"instance","mode":"background","event":"server.started","context":{},"fields":{"message":"muximod log"}}',
+            record: {
+              timestamp: "2026-08-30T00:00:00.000Z",
+              level: "info",
+              service: "muximod",
+              pid: 402,
+              processInstanceId: "instance",
+              mode: "background",
+              event: "server.started",
+              context: {},
+              fields: { message: "muximod log" },
+            },
+          },
+        ];
+        request.onLines?.(lines);
+        return { state: "available", logFile: "/tmp/muximod.log", lines, followed: request.follow };
       },
     },
   };

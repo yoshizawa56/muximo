@@ -339,13 +339,6 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
       recentOutput: z.string().max(2_000).optional(),
     })
     .strict(),
-  z
-    .object({
-      type: z.literal("read_log"),
-      requestId: controlRequestIdSchema,
-      lines: z.number().int().min(1).max(10_000),
-    })
-    .strict(),
   z.object({ type: z.literal("read_host_settings"), requestId: controlRequestIdSchema }).strict(),
   z.object({ type: z.literal("read_web_settings"), requestId: controlRequestIdSchema }).strict(),
   z.object({ type: z.literal("read_daemon_status"), requestId: controlRequestIdSchema }).strict(),
@@ -475,15 +468,6 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
-      type: z.literal("daemon_log"),
-      requestId: controlRequestIdSchema,
-      state: z.enum(["available", "empty", "missing"]),
-      logFile: z.string().min(1),
-      lines: z.array(z.string()).max(10_000),
-    })
-    .strict(),
-  z
-    .object({
       type: z.literal("host_settings"),
       requestId: controlRequestIdSchema,
       ...muximodHostSettingsSchema.shape,
@@ -554,11 +538,6 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 export type MuximodControlResponse = z.infer<typeof muximodControlResponseSchema>;
-
-export type MuximodControlLogResult = Pick<
-  Extract<MuximodControlResponse, { type: "daemon_log" }>,
-  "state" | "logFile" | "lines"
->;
 
 export function decodeMuximodControlResponse(data: string | Uint8Array): ControlFrameDecode<MuximodControlResponse> {
   return decodeControlFrame(data, muximodControlResponseSchema);

@@ -13,7 +13,6 @@ import type { AuthSessionResponse } from "@muximo/contract/api";
 import {
   decodeMuximodControlResponse,
   encodeMuximodControlRequest,
-  type MuximodControlLogResult,
   type MuximodControlRequest,
   type MuximodControlResponse,
   type MuximodDaemonStatus,
@@ -117,12 +116,6 @@ export class MuximodPairingControlAdapter implements PairingControlPort {
       throw unexpectedResponse("local_session_created", response.type);
     }
     return response.session;
-  }
-
-  public async readLog(lines: number): Promise<MuximodControlLogResult> {
-    const response = await this.request({ type: "read_log", lines });
-    if (response.type !== "daemon_log") throw unexpectedResponse("daemon_log", response.type);
-    return response;
   }
 
   public async readHostSettings(): Promise<MuximodHostSettings> {

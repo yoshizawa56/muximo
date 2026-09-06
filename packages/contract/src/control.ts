@@ -3,7 +3,6 @@
 export type {
   ControlFrameDecode,
   MuximodConfigurationStatus,
-  MuximodControlLogResult,
   MuximodControlRequest,
   MuximodControlResponse,
   MuximodDaemonStatus,
