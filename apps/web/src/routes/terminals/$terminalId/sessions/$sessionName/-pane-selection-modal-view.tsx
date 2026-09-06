@@ -29,7 +29,7 @@ export function PaneSelectionModal({
 
   return (
     <AppSafeAreaOverlay
-      className="z-40 bg-[#020503] pointer-events-auto"
+      className="pointer-events-auto z-[60] bg-[#020503]"
       onPointerDown={(event) => {
         if (isOutsideModalTarget(event.target, modalRef.current)) onClose();
       }}

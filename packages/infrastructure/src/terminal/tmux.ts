@@ -65,6 +65,23 @@ export type TmuxPane = TmuxPaneRef & {
   isMuximoMobileViewport?: boolean;
 };
 
+export type TmuxPaneLayout = Pick<
+  TmuxPane,
+  | "paneId"
+  | "tmuxServerId"
+  | "windowId"
+  | "sessionName"
+  | "windowName"
+  | "windowIndex"
+  | "paneIndex"
+  | "left"
+  | "top"
+  | "width"
+  | "height"
+  | "windowWidth"
+  | "windowHeight"
+>;
+
 export type TmuxLiveSnapshot = {
   panes: TmuxPane[];
   /** False means the adapter could not obtain an authoritative tmux snapshot. */

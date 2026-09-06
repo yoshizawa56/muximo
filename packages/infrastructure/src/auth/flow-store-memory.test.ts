@@ -122,12 +122,12 @@ const cases = [
     ],
   },
   {
-    name: "rejects a non-positive sweep interval",
-    steps: [{ type: "invalid-interval", value: 0 }],
+    name: "rejects a sub-second sweep interval",
+    steps: [{ type: "invalid-interval", value: 999 }],
     assert: [
       hasObserved<FlowContext, undefined>(
         "invalidIntervalError",
-        "auth flow sweep interval must be a positive integer",
+        "auth flow sweep interval must be an integer >= 1000",
       ),
     ],
   },

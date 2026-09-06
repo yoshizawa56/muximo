@@ -20,6 +20,7 @@ import {
   resolveMuximoCommand,
   type TmuxAdapter,
   type TmuxLiveSnapshot,
+  type TmuxPaneLayout,
   type TmuxPaneRef,
 } from "./tmux.js";
 
@@ -27,6 +28,7 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
   public constructor(
     private readonly adapter: TmuxAdapter,
     private readonly environment: NodeJS.ProcessEnv = process.env,
+    private readonly paneLayoutProvider: () => readonly TmuxPaneLayout[] = () => [],
   ) {}
 
   public newId(): string {
@@ -130,7 +132,8 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
   }
 
   public async listPanesSnapshot(): Promise<TerminalHostSnapshot> {
-    return mapTmuxSnapshotToTerminalHostSnapshot(this.adapter.listPanesSnapshot());
+    const snapshot = this.adapter.listPanesSnapshot();
+    return mapTmuxSnapshotToTerminalHostSnapshot(applyPaneLayoutOverrides(snapshot, this.paneLayoutProvider()));
   }
 
   public async classifyCommand(command: string): Promise<MuximodPaneClassification> {
@@ -183,6 +186,38 @@ export class TmuxMuximodHostAdapter implements MuximodHostPort {
     }
     return buildMuximoCommand(binary, "run", args);
   }
+}
+
+export function applyPaneLayoutOverrides(
+  snapshot: TmuxLiveSnapshot,
+  overrides: readonly TmuxPaneLayout[],
+): TmuxLiveSnapshot {
+  if (overrides.length === 0 || snapshot.panes.length === 0) return snapshot;
+
+  const byPaneIdentity = new Map(overrides.map((pane) => [paneLayoutKey(pane), pane]));
+  return {
+    ...snapshot,
+    panes: snapshot.panes.map((pane) => {
+      const override = byPaneIdentity.get(paneLayoutKey(pane));
+      if (!override || override.sessionName !== pane.sessionName || override.windowId !== pane.windowId) return pane;
+      return {
+        ...pane,
+        windowName: override.windowName,
+        windowIndex: override.windowIndex,
+        paneIndex: override.paneIndex,
+        left: override.left,
+        top: override.top,
+        width: override.width,
+        height: override.height,
+        windowWidth: override.windowWidth,
+        windowHeight: override.windowHeight,
+      };
+    }),
+  };
+}
+
+function paneLayoutKey(pane: Pick<TmuxPaneLayout, "tmuxServerId" | "paneId">): string {
+  return `${pane.tmuxServerId}\u0000${pane.paneId}`;
 }
 
 function toHostPaneReference(pane: TmuxPaneRef): HostPaneReference {

@@ -18,6 +18,7 @@ export type {
 } from "./launch.js";
 export {
   createMuximodLifecycle,
+  minimumMuximodIntervalMs,
   muximodConfigSchema,
   muximodRestartMarkerPath,
   parseMuximodBootstrap,

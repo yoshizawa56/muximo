@@ -239,6 +239,11 @@ const serverCases = [
     assert: [isValid()],
   },
   {
+    name: "describes a desktop handoff after mobile transport loss",
+    input: { type: "viewport", version: terminalProtocolVersion, owner: "desktop", reason: "transport_lost" },
+    assert: [isValid()],
+  },
+  {
     name: "describes a terminal heartbeat response",
     input: { type: "pong", version: terminalProtocolVersion, nonce: "heartbeat-1" },
     assert: [isValid()],

@@ -11,7 +11,14 @@ import type {
   ViewportOwner,
   ViewportReason,
 } from "./contracts.js";
-import { TmuxAdapter, type TmuxClient, type TmuxPaneRef, type TmuxWindowSnapshot } from "./tmux.js";
+import {
+  TmuxAdapter,
+  type TmuxClient,
+  type TmuxPane,
+  type TmuxPaneLayout,
+  type TmuxPaneRef,
+  type TmuxWindowSnapshot,
+} from "./tmux.js";
 
 export type {
   AttachViewportOptions,
@@ -41,6 +48,7 @@ type LeaseRecord = {
   onEvent?: (event: ViewportEvent) => void;
   released: boolean;
   lastSeenLayout?: string;
+  originalPanes: readonly TmuxPaneLayout[];
 };
 
 type TmuxHookEvent = "client-attached" | "client-active" | "client-resized" | "client-focus-in" | "client-detached";
@@ -68,6 +76,17 @@ export class TmuxViewportManager {
 
   public get tmux(): TmuxAdapter {
     return this.adapter;
+  }
+
+  /**
+   * Returns the desktop geometry captured before each active mobile viewport
+   * changed its shared tmux window. The host adapter uses this only for pane
+   * inventory responses; the terminal transport continues to use live tmux.
+   */
+  public paneLayoutOverrides(): readonly TmuxPaneLayout[] {
+    return [...this.leases.values()]
+      .filter((record) => !record.released && record.owner === "mobile")
+      .flatMap((record) => record.originalPanes);
   }
 
   public buildAttachProcess(target: string): TerminalProcessSpec {
@@ -108,6 +127,7 @@ export class TmuxViewportManager {
     }
 
     const snapshot = this.adapter.snapshotWindow(pane);
+    const originalPanes = this.capturePaneLayout(pane);
     const id = createLeaseId();
     const mobileSessionName = `muximo-mobile-${id}`;
     this.adapter.createGroupedSession(pane.sessionName, mobileSessionName);
@@ -123,6 +143,7 @@ export class TmuxViewportManager {
       mobileRows: rows,
       desktopClientFlags: new Map(),
       released: false,
+      originalPanes,
     };
     this.leases.set(pane.windowId, record);
 
@@ -317,6 +338,9 @@ export class TmuxViewportManager {
       claimMobile: async (cols, rows) => {
         this.claimMobile(record, cols, rows);
       },
+      returnToDesktop: async () => {
+        this.returnToDesktop(record);
+      },
       resize: async (cols, rows) => {
         this.resizeMobile(record, cols ?? record.mobileCols, rows ?? record.mobileRows);
       },
@@ -403,6 +427,7 @@ export class TmuxViewportManager {
 
     if (record.owner !== "mobile") {
       record.snapshot = this.adapter.snapshotWindow(record.pane);
+      record.originalPanes = this.capturePaneLayout(record.pane);
       record.owner = "mobile";
       this.protectDesktopClients(record);
       this.reconcileMobileViewport(record, nextCols, nextRows);
@@ -508,6 +533,44 @@ export class TmuxViewportManager {
     this.emit(record, "desktop", reason);
   }
 
+  private returnToDesktop(record: LeaseRecord): void {
+    if (record.released || record.owner !== "mobile") return;
+
+    const desktop = this.findDesktopClient(record);
+    if (desktop && isValidClientSize(desktop)) {
+      try {
+        this.claimDesktop(record, desktop, "transport_lost");
+      } catch {
+        // Fall back to the captured desktop snapshot below. The tmux server may
+        // be between client detach and client publication at this point.
+      }
+      if (isDesktopOwner(record)) return;
+    }
+
+    const clientsToRefresh = new Set(record.desktopClientFlags.keys());
+    if (record.latestDesktop) clientsToRefresh.add(record.latestDesktop.name);
+
+    try {
+      this.adapter.restoreSnapshot(record.snapshot);
+      this.restoreDesktopClientFlags(record);
+      record.owner = "desktop";
+      record.latestDesktop = undefined;
+      this.emit(record, "desktop", "transport_lost");
+    } catch {
+      // The lease expiry path will retry restoration when it releases the
+      // runtime if tmux is temporarily unavailable.
+      return;
+    }
+
+    for (const clientName of clientsToRefresh) {
+      try {
+        this.adapter.refreshClient(clientName);
+      } catch {
+        // The desktop client may have detached already.
+      }
+    }
+  }
+
   private releaseRecord(record: LeaseRecord): void {
     if (record.released) return;
     record.released = true;
@@ -552,6 +615,13 @@ export class TmuxViewportManager {
 
   private emit(record: LeaseRecord, owner: ViewportOwner, reason: ViewportReason): void {
     record.onEvent?.({ owner, reason });
+  }
+
+  private capturePaneLayout(pane: TmuxPaneRef): readonly TmuxPaneLayout[] {
+    return this.adapter
+      .listPanesSnapshot()
+      .panes.filter((candidate) => candidate.sessionName === pane.sessionName && candidate.windowId === pane.windowId)
+      .map(toTmuxPaneLayout);
   }
 
   private startMonitor(): void {
@@ -639,6 +709,21 @@ export class TmuxViewportManager {
     }
   }
 
+  private findDesktopClient(record: LeaseRecord): TmuxClient | undefined {
+    try {
+      return this.adapter
+        .listClients()
+        .find(
+          (client) =>
+            client.name !== record.mobileClient?.name &&
+            client.windowId === record.pane.windowId &&
+            client.sessionName === record.pane.sessionName,
+        );
+    } catch {
+      return undefined;
+    }
+  }
+
   private protectDesktopClients(record: LeaseRecord): void {
     try {
       const clients = this.adapter
@@ -692,6 +777,28 @@ export class TmuxViewportManager {
   private nextHookIndex(): number {
     return randomInt(100_000, 999_999);
   }
+}
+
+function toTmuxPaneLayout(pane: TmuxPane): TmuxPaneLayout {
+  return {
+    paneId: pane.paneId,
+    tmuxServerId: pane.tmuxServerId,
+    windowId: pane.windowId,
+    sessionName: pane.sessionName,
+    windowName: pane.windowName,
+    windowIndex: pane.windowIndex,
+    paneIndex: pane.paneIndex,
+    left: pane.left,
+    top: pane.top,
+    width: pane.width,
+    height: pane.height,
+    windowWidth: pane.windowWidth,
+    windowHeight: pane.windowHeight,
+  };
+}
+
+function isDesktopOwner(record: { owner: ViewportOwner }): boolean {
+  return record.owner === "desktop";
 }
 
 function createLeaseId(): string {

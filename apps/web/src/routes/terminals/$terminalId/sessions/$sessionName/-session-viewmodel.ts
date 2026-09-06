@@ -36,8 +36,11 @@ export function useSessionViewModel(): SessionOverviewViewModel {
     terminal: resources.selectedTerminal ?? fallbackTerminal,
     session: resources.selectedSession ?? fallbackSession,
     panes,
-    status: panesQuery.isPending ? "loading" : panesQuery.isError ? "error" : "ready",
-    errorMessage: panesQuery.isError ? muximodErrorMessage(panesQuery.error, "Unable to load panes") : null,
+    status: panesQuery.isPending ? "loading" : panesQuery.isError && panesQuery.data === undefined ? "error" : "ready",
+    errorMessage:
+      panesQuery.isError && panesQuery.data === undefined
+        ? muximodErrorMessage(panesQuery.error, "Unable to load panes")
+        : null,
     onSelectPane: (pane) => {
       void navigate({
         to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId",

@@ -1,5 +1,6 @@
 import type { TerminalHostSnapshot } from "@muximo/application";
 import {
+  type Assertion,
   noFixture,
   type OperationCase,
   type OperationTable,
@@ -7,9 +8,13 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { describe, it } from "vitest";
-import { mapTmuxSnapshotToTerminalHostSnapshot, TmuxMuximodHostAdapter } from "./muximod-host.js";
-import { TmuxAdapter, type TmuxLiveSnapshot } from "./tmux.js";
+import { describe, expect, it } from "vitest";
+import {
+  applyPaneLayoutOverrides,
+  mapTmuxSnapshotToTerminalHostSnapshot,
+  TmuxMuximodHostAdapter,
+} from "./muximod-host.js";
+import { TmuxAdapter, type TmuxLiveSnapshot, type TmuxPaneLayout } from "./tmux.js";
 
 type EmptyContext = {};
 type MappingInput = { snapshot: TmuxLiveSnapshot };
@@ -116,6 +121,114 @@ const mappingTable: OperationTable<undefined, "default", MappingInput, TerminalH
 describe("tmux host adapter mappings", () => {
   runOperationTable(it as unknown as TestRegistrar, mappingTable);
 });
+
+type LayoutOverrideInput = {
+  snapshot: TmuxLiveSnapshot;
+  overrides: TmuxPaneLayout[];
+};
+
+const appliesLayoutOverrideAssertion: Assertion<EmptyContext, TmuxLiveSnapshot> = {
+  name: "uses the pre-mobile geometry for the matching live pane",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value.panes[0]).toMatchObject({
+      windowName: "restored",
+      windowIndex: 3,
+      paneIndex: 1,
+      left: 40,
+      top: 2,
+      width: 80,
+      height: 20,
+      windowWidth: 120,
+      windowHeight: 40,
+    });
+  },
+};
+
+const ignoresLayoutOverrideAssertion: Assertion<EmptyContext, TmuxLiveSnapshot> = {
+  name: "does not apply geometry from another tmux identity",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value.panes[0]).toMatchObject({
+      windowName: "main",
+      windowIndex: 0,
+      paneIndex: 0,
+      left: 0,
+      top: 0,
+      width: 80,
+      height: 24,
+      windowWidth: 80,
+      windowHeight: 24,
+    });
+  },
+};
+
+const layoutOverrideCases = [
+  {
+    name: "overlays the saved desktop geometry onto a mobile-sized snapshot",
+    input: {
+      snapshot: createSnapshot("desktop"),
+      overrides: [
+        createLayoutOverride({
+          windowName: "restored",
+          windowIndex: 3,
+          paneIndex: 1,
+          left: 40,
+          top: 2,
+          width: 80,
+          height: 20,
+          windowWidth: 120,
+          windowHeight: 40,
+        }),
+      ],
+    },
+    assert: [appliesLayoutOverrideAssertion],
+  },
+  {
+    name: "ignores a saved geometry entry from another tmux server",
+    input: {
+      snapshot: createSnapshot("desktop"),
+      overrides: [createLayoutOverride({ tmuxServerId: "other-server", left: 40 })],
+    },
+    assert: [ignoresLayoutOverrideAssertion],
+  },
+  {
+    name: "ignores a saved geometry entry after the pane moves windows",
+    input: {
+      snapshot: createSnapshot("desktop"),
+      overrides: [createLayoutOverride({ windowId: "@9", left: 40 })],
+    },
+    assert: [ignoresLayoutOverrideAssertion],
+  },
+] satisfies readonly OperationCase<"default", LayoutOverrideInput, TmuxLiveSnapshot, EmptyContext>[];
+
+const layoutOverrideTable: OperationTable<undefined, "default", LayoutOverrideInput, TmuxLiveSnapshot, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: layoutOverrideCases,
+  execute: (_fixture, input) => applyPaneLayoutOverrides(input.snapshot, input.overrides),
+  observe: () => ({}),
+};
+
+function createLayoutOverride(overrides: Partial<TmuxPaneLayout> = {}): TmuxPaneLayout {
+  const pane = createSnapshot("desktop").panes[0];
+  if (!pane) throw new Error("Missing pane snapshot");
+  return {
+    paneId: pane.paneId,
+    tmuxServerId: pane.tmuxServerId,
+    windowId: pane.windowId,
+    sessionName: pane.sessionName,
+    windowName: pane.windowName,
+    windowIndex: pane.windowIndex,
+    paneIndex: pane.paneIndex,
+    left: pane.left,
+    top: pane.top,
+    width: pane.width,
+    height: pane.height,
+    windowWidth: pane.windowWidth,
+    windowHeight: pane.windowHeight,
+    ...overrides,
+  };
+}
 
 type ManagementFixture = {
   adapter: RecordingManagementAdapter;
@@ -243,4 +356,5 @@ class RecordingManagementAdapter extends TmuxAdapter {
 describe("tmux host session management", () => {
   runOperationTable(it as unknown as TestRegistrar, findTable);
   runOperationTable(it as unknown as TestRegistrar, configureTable);
+  runOperationTable(it as unknown as TestRegistrar, layoutOverrideTable);
 });

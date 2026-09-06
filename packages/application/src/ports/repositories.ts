@@ -19,6 +19,7 @@ export interface PaneRepository {
   findById(id: PaneId): Promise<PaneRecord | undefined>;
   findByHostPaneIdentity(hostServerId: string, hostPaneId: string): Promise<PaneRecord | undefined>;
   upsert(record: PaneRecord): Promise<void>;
+  touchLastSeen(hostServerId: string, hostPaneIds: readonly string[], lastSeenAt: string): Promise<void>;
   pruneStalePanes(activePaneIds: readonly PaneId[], olderThan: string, hostServerScope: string): Promise<number>;
 }
 

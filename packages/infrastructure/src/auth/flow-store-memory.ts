@@ -95,6 +95,8 @@ export type AuthFlowLifecycleOptions = {
   scheduler?: AuthFlowSweepScheduler;
 };
 
+export const minimumAuthFlowSweepIntervalMs = 1_000;
+
 /** Composition-owned lifecycle for all in-memory authentication flow state. */
 export class MemoryAuthFlowLifecycle {
   private readonly intervalMs: number;
@@ -103,8 +105,8 @@ export class MemoryAuthFlowLifecycle {
 
   public constructor(private readonly options: AuthFlowLifecycleOptions) {
     const intervalMs = options.intervalMs ?? 30_000;
-    if (!Number.isInteger(intervalMs) || intervalMs <= 0) {
-      throw new Error("auth flow sweep interval must be a positive integer");
+    if (!Number.isInteger(intervalMs) || intervalMs < minimumAuthFlowSweepIntervalMs) {
+      throw new Error(`auth flow sweep interval must be an integer >= ${minimumAuthFlowSweepIntervalMs}`);
     }
     this.intervalMs = intervalMs;
     this.scheduler = options.scheduler ?? {

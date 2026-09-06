@@ -1,6 +1,6 @@
 import type { PaneFilter, PaneRepository } from "@muximo/application";
 import { AgentSessionId, Pane, PaneId, type PaneRecord, WorkspaceId } from "@muximo/domain";
-import { and, eq, like, lt, notInArray } from "drizzle-orm";
+import { and, eq, inArray, like, lt, notInArray } from "drizzle-orm";
 import { type PaneRow, panes } from "../../schema.js";
 import { DrizzleRepositoryBase } from "./base.js";
 
@@ -61,6 +61,15 @@ export class DrizzlePaneRepository extends DrizzleRepositoryBase implements Pane
           updatedAt: row.updatedAt,
         },
       })
+      .run();
+  }
+
+  public async touchLastSeen(hostServerId: string, hostPaneIds: readonly string[], lastSeenAt: string): Promise<void> {
+    if (hostPaneIds.length === 0) return;
+    this.db()
+      .update(panes)
+      .set({ lastSeenAt })
+      .where(and(eq(panes.hostServerId, hostServerId), inArray(panes.hostPaneId, [...hostPaneIds])))
       .run();
   }
 

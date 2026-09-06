@@ -66,6 +66,8 @@ export class MuximodProtocolCompatibilityError extends Error {
     this.name = "MuximodProtocolCompatibilityError";
   }
 }
+/** Resident daemon timers use whole-second resolution to keep the idle agent thin. */
+export const minimumMuximodIntervalMs = 1_000;
 
 const httpUrlSchema = z
   .string()
@@ -123,6 +125,17 @@ export const muximodConfigSchema = z
     defaultAgentBackend: z.enum(["codex", "claude", "opencode"]).nullable(),
     opencodeServerUrl: httpUrlSchema.nullable(),
     webProxy: muximodWebProxySettingsSchema,
+    authSweepIntervalMs: z.number().int().min(minimumMuximodIntervalMs).optional(),
+    tmuxPollIntervalMs: z.number().int().min(minimumMuximodIntervalMs).optional(),
+    paneCleanupIntervalMs: z.number().int().min(minimumMuximodIntervalMs).optional(),
+    paneRetentionMs: z
+      .number()
+      .int()
+      .refine(
+        (value) => value === 0 || value >= minimumMuximodIntervalMs,
+        `duration must be 0 or an integer >= ${minimumMuximodIntervalMs}`,
+      )
+      .optional(),
   })
   .strict();
 
@@ -151,6 +164,10 @@ export type MuximodProcessHandle = {
   wait(): Promise<MuximodProcessResult>;
   terminate(signal?: "SIGINT" | "SIGTERM"): void;
 };
+
+export function muximodProcessSpawnOptions(): { argv0: "muximod" } {
+  return { argv0: "muximod" };
+}
 
 export type MuximodLifecycle = {
   ensure(input: DaemonOptions): Promise<DaemonEnsureResult>;
@@ -191,6 +208,7 @@ export async function spawnMuximod(
   let child: ReturnType<typeof spawn>;
   try {
     child = spawn(processCommand.executable, processCommand.args, {
+      ...muximodProcessSpawnOptions(),
       cwd: options.workingDirectory,
       detached: processOptions.detached ?? false,
       env: childEnvironment,

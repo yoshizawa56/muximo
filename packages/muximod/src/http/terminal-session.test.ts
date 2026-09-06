@@ -59,6 +59,7 @@ type SessionContext = {
   copyModeCalls: number;
   pasteTmuxBufferCalls: number;
   events: readonly string[];
+  leaseReturnToDesktopCalls: number;
   leaseResizeCalls: readonly (readonly [number | undefined, number | undefined])[];
   leaseRefreshCalls: number;
 };
@@ -115,6 +116,7 @@ const cases = [
       hasObserved<SessionContext, undefined>("prepareCalls", 1),
       hasObserved<SessionContext, undefined>("spawnCalls", 1),
       hasObserved<SessionContext, undefined>("releaseCalls", 0),
+      hasObserved<SessionContext, undefined>("leaseReturnToDesktopCalls", 1),
       hasObserved<SessionContext, undefined>("killed", 0),
       hasObserved<SessionContext, undefined>("registrySize", 1),
       hasObserved<SessionContext, undefined>("secondResumed", true),
@@ -131,6 +133,7 @@ const cases = [
     ],
     assert: [
       hasObserved<SessionContext, undefined>("firstClosedReasons", ["detached"]),
+      hasObserved<SessionContext, undefined>("leaseReturnToDesktopCalls", 0),
       hasObserved<SessionContext, undefined>("releaseCalls", 1),
       hasObserved<SessionContext, undefined>("killed", 1),
       hasObserved<SessionContext, undefined>("registrySize", 0),
@@ -503,6 +506,7 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
     copyModeCalls: fixture.lease.enterCopyMode.mock.calls.length,
     pasteTmuxBufferCalls: fixture.lease.pasteTmuxBuffer.mock.calls.length,
     leaseClaimCalls: fixture.lease.claimMobile.mock.calls.length,
+    leaseReturnToDesktopCalls: fixture.lease.returnToDesktop.mock.calls.length,
     leaseResizeCalls: fixture.lease.resize.mock.calls.map(([cols, rows]) => [cols, rows]),
     leaseRefreshCalls: fixture.lease.refresh.mock.calls.length,
     events: [...fixture.events],
@@ -524,6 +528,7 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
     sessionName: "muximod",
     owner: "mobile" as const,
     claimMobile: vi.fn(async () => undefined),
+    returnToDesktop: vi.fn(async () => undefined),
     resize: vi.fn(async (_cols?: number, _rows?: number) => undefined),
     refresh: vi.fn(async () => undefined),
     enterCopyMode: vi.fn(async () => undefined),

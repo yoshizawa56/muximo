@@ -1,17 +1,24 @@
 #!/usr/bin/env bun
-import { runMuximod } from "./entrypoint.js";
-import { readMuximodBootstrap } from "./launch.js";
+// Keep the private daemon identifiable when Bun runs the source entrypoint.
+import type { MuximodLaunchOptions } from "./launch.js";
 
-export async function runMuximodProcess(fd = 3): Promise<number> {
+export async function runMuximodProcess(
+  readBootstrap?: () => MuximodLaunchOptions,
+  run?: (options: MuximodLaunchOptions) => Promise<void>,
+): Promise<void> {
+  process.title = "muximod";
   try {
-    await runMuximod(readMuximodBootstrap(fd));
-    return 0;
+    const bootstrapReader = readBootstrap ?? (await import("./launch.js")).readMuximodBootstrap;
+    const runner = run ?? (await import("./entrypoint.js")).runMuximod;
+    await runner(bootstrapReader());
   } catch {
     // runMuximod records startup and shutdown failures through the daemon
     // logger. Keep the private process failure quiet so its client can present a
     // stable, non-internal error message.
-    return 1;
+    process.exitCode = 1;
   }
 }
 
-if (import.meta.main) process.exitCode = await runMuximodProcess();
+if (import.meta.main) {
+  await runMuximodProcess();
+}

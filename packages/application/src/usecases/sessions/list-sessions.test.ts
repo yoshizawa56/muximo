@@ -87,6 +87,7 @@ function createFixture(): FixtureHandle<ListFixture> {
         record,
       ];
     },
+    touchLastSeen: async () => undefined,
     pruneStalePanes: async () => 0,
   };
   const agentSessionRepository: AgentSessionRepository = {
