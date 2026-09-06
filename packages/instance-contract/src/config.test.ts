@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -22,12 +22,21 @@ import {
   writeMuximoConfig,
 } from "./config.js";
 
-type ConfigOperation = "missing" | "write" | "set" | "empty-agents" | "missing-web" | "invalid";
-type ConfigFixture = { filePath: string };
+type ConfigOperation =
+  | "missing"
+  | "write"
+  | "set"
+  | "empty-agents"
+  | "missing-web"
+  | "invalid"
+  | "unsafe-directory"
+  | "serve-private-host";
+type ConfigFixture = { filePath: string; directory: string };
 type ConfigResult = {
   config: MuximoConfig | null;
   value: unknown;
   mode: number | null;
+  directoryMode: number | null;
   webEnabled: boolean;
   webPort: number;
 };
@@ -35,6 +44,7 @@ type ConfigContext = {
   enabled: string | null;
   defaultBackend: string | null;
   mode: number | null;
+  directoryMode: number | null;
   webEnabled: boolean;
   webPort: number;
 };
@@ -58,6 +68,15 @@ const cases = [
       hasObserved<ConfigContext, ConfigResult>("enabled", "codex,claude"),
       hasObserved<ConfigContext, ConfigResult>("defaultBackend", "claude"),
       hasObserved<ConfigContext, ConfigResult>("mode", 0o600),
+    ],
+  },
+  {
+    name: "rejects an unsafe existing config directory without changing its permissions",
+    fixture: "unsafe-directory" as const,
+    input: "unsafe-directory" as const,
+    assert: [
+      hasError<ConfigContext, ConfigResult>({ message: /must not be accessible by group or other users/ }),
+      hasObserved<ConfigContext, ConfigResult>("directoryMode", 0o755),
     ],
   },
   {
@@ -88,6 +107,12 @@ const cases = [
     ],
   },
   {
+    name: "rejects Tailscale Serve when the daemon does not bind loopback",
+    fixture: "serve-private-host" as const,
+    input: "serve-private-host" as const,
+    assert: [hasError<ConfigContext, ConfigResult>({ message: /127\.0\.0\.1 when Tailscale Serve is enabled/ })],
+  },
+  {
     name: "rejects unsupported configuration shapes",
     fixture: "invalid" as const,
     input: "invalid" as const,
@@ -104,6 +129,8 @@ const table: OperationTable<ConfigFixture, ConfigOperation, ConfigOperation, Con
     "empty-agents": () => createFixture(),
     "missing-web": () => createFixture("missing-web"),
     invalid: () => createFixture("invalid"),
+    "unsafe-directory": () => createFixture("unsafe-directory"),
+    "serve-private-host": () => createFixture("serve-private-host"),
   },
   cases,
   execute: (fixture, operation) => {
@@ -117,14 +144,30 @@ const table: OperationTable<ConfigFixture, ConfigOperation, ConfigOperation, Con
       const config = readMuximoConfig(fixture.filePath);
       return createConfigResult(config, null, null);
     }
-    if (operation === "invalid") return createConfigResult(readMuximoConfig(fixture.filePath), null, null);
+    if (operation === "invalid" || operation === "serve-private-host") {
+      return createConfigResult(readMuximoConfig(fixture.filePath), null, null);
+    }
+    if (operation === "unsafe-directory") {
+      writeMuximoConfig(fixture.filePath, defaultMuximoConfig());
+      return createConfigResult(
+        readMuximoConfig(fixture.filePath),
+        null,
+        statSync(fixture.filePath).mode & 0o777,
+        statSync(fixture.directory).mode & 0o777,
+      );
+    }
     let config = defaultMuximoConfig();
     if (operation === "write") {
       config = setMuximoConfigValue(config, "agents.enabled", ["codex", "claude"]);
       config = setMuximoConfigValue(config, "agents.default", "claude");
       writeMuximoConfig(fixture.filePath, config);
       const saved = readMuximoConfig(fixture.filePath);
-      return createConfigResult(saved, null, statSync(fixture.filePath).mode & 0o777);
+      return createConfigResult(
+        saved,
+        null,
+        statSync(fixture.filePath).mode & 0o777,
+        statSync(fixture.directory).mode & 0o777,
+      );
     }
     if (operation === "empty-agents") {
       config = setMuximoConfigValue(config, "agents.enabled", ["codex"]);
@@ -135,16 +178,24 @@ const table: OperationTable<ConfigFixture, ConfigOperation, ConfigOperation, Con
     config = setMuximoConfigValue(config, "agents.enabled", ["claude"]);
     return createConfigResult(config, getMuximoConfigValue(config, "agents.default"), null);
   },
-  observe: (_fixture, result) =>
+  observe: (fixture, result) =>
     result.ok
       ? {
           enabled: result.value.config?.agents.enabled.join(",") ?? null,
           defaultBackend: result.value.config?.agents.default ?? null,
           mode: result.value.mode,
+          directoryMode: result.value.directoryMode,
           webEnabled: result.value.config?.web.proxy.enabled ?? false,
           webPort: result.value.config?.web.proxy.port ?? 0,
         }
-      : { enabled: null, defaultBackend: null, mode: null, webEnabled: false, webPort: 0 },
+      : {
+          enabled: null,
+          defaultBackend: null,
+          mode: null,
+          directoryMode: statSync(fixture.directory).mode & 0o777,
+          webEnabled: false,
+          webPort: 0,
+        },
 };
 
 type DefaultResult = { executable: string; changedKeys: readonly string[]; agentDefault: string | null };
@@ -182,11 +233,17 @@ describe("muximo instance configuration", () => {
   runOperationTable(it as unknown as TestRegistrar, defaultTable);
 });
 
-function createConfigResult(config: MuximoConfig, value: unknown, mode: number | null): ConfigResult {
+function createConfigResult(
+  config: MuximoConfig,
+  value: unknown,
+  mode: number | null,
+  directoryMode: number | null = null,
+): ConfigResult {
   return {
     config,
     value,
     mode,
+    directoryMode,
     webEnabled: config.web.proxy.enabled,
     webPort: config.web.proxy.port,
   };
@@ -268,14 +325,21 @@ describe("muximo configuration profiles", () => {
   runOperationTable(it as unknown as TestRegistrar, profileTable);
 });
 
-function createFixture(kind?: "invalid" | "missing-web") {
+function createFixture(kind?: "invalid" | "missing-web" | "unsafe-directory" | "serve-private-host") {
   const root = mkdtempSync(join(tmpdir(), "muximo-config-test-"));
   const directory = join(root, "instance");
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, kind === "unsafe-directory" ? 0o755 : 0o700);
   const filePath = join(directory, "config.json");
   if (kind === "invalid") writeFileSync(filePath, `${JSON.stringify({ version: 1, legacy: true })}\n`);
+  if (kind === "serve-private-host") {
+    writeFileSync(
+      filePath,
+      `${JSON.stringify({ version: 1, daemon: { host: "192.168.50.10" }, serve: { tailscale: { enabled: true } } })}\n`,
+    );
+  }
   return {
-    fixture: { filePath },
+    fixture: { filePath, directory },
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }

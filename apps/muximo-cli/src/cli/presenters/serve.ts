@@ -3,9 +3,9 @@ import type { ServeResult } from "../handlers/system.js";
 
 export function presentServeResult(result: ServeResult, io: CliIo): number {
   if (result.command === "tailscale") {
-    if (result.result.stderr) io.err.write(result.result.stderr);
+    if (result.result.stderr) io.err.write(sanitizeProviderOutput(result.result.stderr));
     io.out.write(`[muximo-cli] muximod Tailscale Serve: ${result.result.url} -> ${result.result.localUrl}\n`);
-    if (result.result.stdout) io.out.write(result.result.stdout);
+    if (result.result.stdout) io.out.write(sanitizeProviderOutput(result.result.stdout));
     return 0;
   }
   if (result.command === "status") {
@@ -29,7 +29,7 @@ export function presentServeResult(result: ServeResult, io: CliIo): number {
     io.out.write(
       `  route state: ${result.stateMatchesConfiguration ? "matches active daemon configuration" : "does not match active daemon configuration"}\n`,
     );
-    if (result.providerError) io.err.write(result.providerError);
+    if (result.providerError) io.err.write(sanitizeProviderOutput(result.providerError));
     if (!result.stateMatchesConfiguration) {
       io.err.write("[muximo-cli] saved Serve route does not match the active daemon configuration\n");
     }
@@ -48,4 +48,20 @@ export function presentServeResult(result: ServeResult, io: CliIo): number {
       : "[muximo-cli] muximod Serve route is already stopped\n",
   );
   return 0;
+}
+
+/**
+ * Strips ANSI escape sequences and non-printable control characters from
+ * provider-owned output before it reaches the terminal. URLs constructed by
+ * muximo itself are left untouched.
+ */
+function sanitizeProviderOutput(value: string): string {
+  // The escape character is composed at runtime so this source stays plain ASCII.
+  const esc = String.fromCharCode(27);
+  return value
+    .replace(new RegExp(`${esc}\\][^\\x07${esc}]*?(?:\\x07|${esc}\\\\)`, "g"), "")
+    .replace(new RegExp(`${esc}\\[[0-9;?]*[A-Za-z]`, "g"), "")
+    .replace(new RegExp(`${esc}\\([0-9A-Z]`, "g"), "")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .replace(new RegExp(esc, "g"), "");
 }

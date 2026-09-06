@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -158,7 +158,8 @@ describe("muximo config CLI handler", () => {
 function createFixture(kind?: "import") {
   const root = mkdtempSync(join(tmpdir(), "muximo-cli-config-test-"));
   const directory = join(root, "instance");
-  mkdirSync(directory, { recursive: true });
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
   const sourcePath = join(root, "config.profile.json");
   if (kind === "import") {
     let current = defaultMuximoConfig();

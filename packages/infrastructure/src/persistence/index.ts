@@ -71,7 +71,6 @@ export function createAgentDatabase(file: string | undefined, options: AgentData
   const databasePath = databaseFile === ":memory:" ? databaseFile : resolve(databaseFile);
   if (databasePath !== ":memory:") {
     mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
-    chmodSync(dirname(databasePath), 0o700);
   }
   const busyTimeoutMs = options.busyTimeoutMs ?? defaultSqliteBusyTimeoutMs;
   const sqlite = openConfiguredConnection(databasePath, busyTimeoutMs);

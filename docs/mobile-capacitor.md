@@ -50,6 +50,15 @@ including the case where the reverse proxy rewrites the incoming Host header.
 The origin is not persisted in `config.json`; other remote Web origins still
 require an explicit `daemon.allowedOrigins` entry.
 
+> Security note: the Web proxy is intentionally unauthenticated. Requests
+> without an `Origin` header (curl, non-browser clients, and any peer that
+> simply omits it) bypass the origin policy entirely, so enabling Tailscale
+> Serve together with `web.proxy.enabled` exposes the Vite development server
+> and its HMR WebSocket to the tailnet without authentication. Treat Tailscale
+> ACLs as the only access control on that surface: restrict which devices and
+> users can reach the Serve URL, and disable the Web proxy whenever local
+> development serving is not needed.
+
 ## Release CI and App Store Connect
 
 The `TestFlight` workflow is started manually with `workflow_dispatch`. Select the branch in GitHub Actions and run it against the candidate commit. The run summary records the exact ref and commit uploaded to App Store Connect. It does not create a Git tag or GitHub Release.

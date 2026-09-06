@@ -43,6 +43,11 @@ export async function resolvePairMuximodBaseUrl(
   if (!routeMatchesLiveProvider) {
     throw new Error(`muximod Serve route state does not match the live provider configuration`);
   }
+  // Best-effort freshness check, not a security boundary: the route may
+  // change between this probe and the pairing use. A swapped route cannot
+  // bypass pairing itself, which still requires the QR secret,
+  // proof-of-possession, and host approval; at worst the pairing attempt
+  // fails against an incompatible or unreachable daemon.
   await verifyMuximodRoute(state.publicUrl);
   return state.publicUrl;
 }

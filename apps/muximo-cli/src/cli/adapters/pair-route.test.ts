@@ -100,6 +100,16 @@ const cases = [
     },
     assert: [hasError<PairContext, string>({ message: /protocol version 99 is incompatible/ })],
   },
+  {
+    name: "rejects a served route with an incompatible muximod protocol",
+    input: {
+      withoutServe: false,
+      component: "muximod",
+      liveRoute: "match",
+      protocol: "mismatch",
+    },
+    assert: [hasError<PairContext, string>({ message: /protocol version 99 is incompatible/ })],
+  },
 ] satisfies readonly OperationCase<"default", PairInput, string, PairContext>[];
 
 const table: OperationTable<PairFixture, "default", PairInput, string, PairContext> = {

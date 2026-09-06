@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,19 +14,21 @@ import { describe, expect, it } from "vitest";
 import { createWebDaemonManager, type WebDaemonManager, type WebDaemonStatus } from "./web-daemon.js";
 
 type WebInput = {
-  operation: "lifecycle" | "occupied";
+  operation: "lifecycle" | "occupied" | "foreign-record";
 };
 
 type WebFixture = {
   manager: WebDaemonManager;
   port: number;
   root: string;
+  pidFile: string;
   occupied?: Server;
 };
 
 type WebContext = {
   states: WebDaemonStatus["state"][];
   pids: Array<number | undefined>;
+  recordPresent: boolean;
 };
 
 const cases = [
@@ -50,6 +52,20 @@ const cases = [
     assert: [
       hasError<WebContext, WebDaemonStatus[]>({ message: /already in use by an unmanaged process/ }),
       hasObserved<WebContext, WebDaemonStatus[]>("states", []),
+    ],
+  },
+  {
+    name: "drops a foreign PID record without signaling the process",
+    input: { operation: "foreign-record" },
+    assert: [
+      hasObserved<WebContext, WebDaemonStatus[]>("states", ["stale"]),
+      {
+        name: "reports the foreign PID while leaving the process alive",
+        check: (context: WebContext) => {
+          expect(context.pids).toEqual([process.pid]);
+        },
+      },
+      hasObserved<WebContext, WebDaemonStatus[]>("recordPresent", false),
     ],
   },
 ] satisfies readonly OperationCase<"default", WebInput, WebDaemonStatus[], WebContext>[];
@@ -83,7 +99,7 @@ const table: OperationTable<WebFixture, "default", WebInput, WebDaemonStatus[], 
       environment: { ...process.env, MUXIMO_TEST_WEB_PORT: String(port) },
       logFile: join(root, "state", "web.log"),
     });
-    const fixture: WebFixture = { manager, port, root };
+    const fixture: WebFixture = { manager, port, root, pidFile: join(root, "state", "web.pid") };
     return {
       fixture,
       cleanup: async () => {
@@ -100,14 +116,32 @@ const table: OperationTable<WebFixture, "default", WebInput, WebDaemonStatus[], 
       await fixture.manager.start();
       return [];
     }
+    if (input.operation === "foreign-record") {
+      mkdirSync(join(fixture.root, "state"), { recursive: true });
+      writeFileSync(
+        fixture.pidFile,
+        `${JSON.stringify({
+          pid: process.pid,
+          host: "127.0.0.1",
+          port: fixture.port,
+          command: "/other/proc",
+          args: [],
+          startedAt: new Date().toISOString(),
+        })}\n`,
+        { mode: 0o600 },
+      );
+      const stopped = await fixture.manager.stop();
+      return [stopped];
+    }
     const started = await fixture.manager.start();
     const reused = await fixture.manager.start();
     const stopped = await fixture.manager.stop();
     return [started, reused, stopped];
   },
-  observe: (_fixture, result) => ({
+  observe: (fixture, result) => ({
     states: result.ok ? result.value.map(({ state }) => state) : [],
     pids: result.ok ? result.value.map(({ pid }) => pid) : [],
+    recordPresent: existsSync(fixture.pidFile),
   }),
 };
 

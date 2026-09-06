@@ -29,7 +29,7 @@ type Fixture = {
 
 type Input = { args: readonly string[] };
 type Context = Fixture & { output: string; error: string };
-type FixtureKey = "instance-directory";
+type FixtureKey = "instance-directory" | "no-agent-default";
 
 function contains<ContextType>(key: keyof ContextType, value: string) {
   return {
@@ -45,7 +45,11 @@ const defaultRuntime: MuximoCliRuntimeOptions = {
   verbose: false,
 };
 
-function createFixture(environment: NodeJS.ProcessEnv = {}, runtime: MuximoCliRuntimeOptions = defaultRuntime) {
+function createFixture(
+  environment: NodeJS.ProcessEnv = {},
+  runtime: MuximoCliRuntimeOptions = defaultRuntime,
+  noAgentDefault = false,
+) {
   const out = new CaptureOutput();
   const err = new CaptureOutput();
   const calls: Fixture["calls"] = [];
@@ -73,7 +77,14 @@ function createFixture(environment: NodeJS.ProcessEnv = {}, runtime: MuximoCliRu
       return 7;
     };
   }
-  const app = createCliApp({ io: { out, err }, cwd: "/workspace", environment, runtime, handlers });
+  const app = createCliApp({
+    io: { out, err },
+    cwd: "/workspace",
+    environment,
+    runtime,
+    handlers,
+    resolveAgentCapabilities: noAgentDefault ? async () => ({ enabled: [], default: null }) : undefined,
+  });
   return { fixture: { out, err, calls, app } };
 }
 
@@ -211,6 +222,26 @@ const cases = [
           },
         },
       ]),
+    ],
+  },
+  {
+    name: "reports a clear error when no agent backend is selected",
+    fixture: "no-agent-default" as const,
+    input: { args: ["run"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "No agent backend selected"),
+      contains<Context>("error", "agents.default"),
+      hasObserved<Context, number>("calls", []),
+    ],
+  },
+  {
+    name: "reports a validation error for an unknown agent backend",
+    input: { args: ["run", "notabackend"] },
+    assert: [
+      returns<Context, number>(2),
+      contains<Context>("error", "Invalid arguments for muximo run"),
+      hasObserved<Context, number>("calls", []),
     ],
   },
   {
@@ -420,6 +451,7 @@ const table: OperationTable<AppFixture, FixtureKey, Input, number, Context> = {
   defaultFixture: () => createFixture(),
   fixtures: {
     "instance-directory": () => createFixture({ MUXIMOD_INSTANCE_DIR: "/workspace/.state" }, defaultRuntime),
+    "no-agent-default": () => createFixture({}, defaultRuntime, true),
   },
   cases,
   execute: (fixture, input) => fixture.app.execute(input.args),

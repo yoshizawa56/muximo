@@ -159,6 +159,17 @@ export const Creating: Story = {
   },
 };
 
+export const NoAgentBackends: Story = {
+  args: {
+    viewModel: buildViewModel({ agentOptions: [] }),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText(/No agent backends are enabled/i)).toBeVisible();
+    await expect(canvas.getByRole("button", { name: /open pane/i })).toBeDisabled();
+  },
+};
+
 export const RequestFailed: Story = {
   args: {
     viewModel: buildViewModel({

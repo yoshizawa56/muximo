@@ -118,6 +118,11 @@ async function handleRequest(
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
       return handleWebProxyUpgrade(request, server, deps.webProxy);
     }
+    // Deliberate catch-all: every path not owned above (terminal, health,
+    // tmux-hook, RPC) belongs to the Vite development server, including
+    // unknown paths. A mistyped daemon path therefore returns the Vite
+    // response rather than a daemon 404 while the proxy is enabled; add new
+    // daemon routes above this fallback so they cannot be shadowed.
     return proxyWebRequest(request, deps.webProxy, deps.logger);
   }
 

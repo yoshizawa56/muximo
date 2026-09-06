@@ -11,7 +11,7 @@ import {
   type WorkspacePickerViewModel,
   workspacePickerState,
 } from "../../../-workspace-picker-viewmodel";
-import { agentOptionsForEnabled, type NewPaneAgent, type NewPaneAgentOption } from "./-agent-options";
+import { agentOptions, agentOptionsForEnabled, type NewPaneAgent, type NewPaneAgentOption } from "./-agent-options";
 
 export type NewPaneKind = "agent" | "shell";
 export type { NewPaneAgent } from "./-agent-options";
@@ -60,10 +60,15 @@ export function useNewPaneViewModel(): NewPaneViewModel {
       staleTime: 30_000,
     }),
   );
-  const availableAgentOptions = useMemo(
-    () => agentOptionsForEnabled(connection ? (capabilitiesQuery.data?.agents.enabled ?? []) : []),
-    [capabilitiesQuery.data?.agents.enabled, connection],
-  );
+  const availableAgentOptions = useMemo(() => {
+    // While capabilities are loading, optimistically offer every known
+    // backend instead of flashing the "no backends" empty state. A truly
+    // empty configuration still narrows to [] once the query resolves.
+    if (!connection) return [];
+    const enabled = capabilitiesQuery.data?.agents.enabled;
+    if (enabled === undefined) return [...agentOptions];
+    return [...agentOptionsForEnabled(enabled)];
+  }, [capabilitiesQuery.data?.agents.enabled, connection]);
   const existingPanes = panesQuery.data?.panes ?? [];
   const [name, setName] = useState("");
   const [kind, setKind] = useState<NewPaneKind>("agent");

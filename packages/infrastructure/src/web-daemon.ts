@@ -133,6 +133,13 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
   async function stop(): Promise<WebDaemonStatus> {
     const current = readPidRecord(pidFile);
     if (!current) return present("stopped");
+    // Never signal a process the record does not describe: after a crash or
+    // PID reuse the recorded PID may belong to an unrelated process owned by
+    // the same account. A foreign record is dropped as stale instead.
+    if (!isOwnedRecord(current)) {
+      removePidRecord(current.pid);
+      return present("stale", current.pid);
+    }
     if (!isProcessAlive(current.pid)) {
       removePidRecord(current.pid);
       return present("stale", current.pid);
@@ -233,6 +240,14 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
       throw new Error(`Web port must be between 1 and 65535: ${options.port}`);
     }
     if (!options.command.trim()) throw new Error("Web command is required");
+  }
+
+  function isOwnedRecord(record: WebPidRecord): boolean {
+    return (
+      record.command === options.command &&
+      record.args.length === options.args.length &&
+      record.args.every((argument, index) => argument === options.args[index])
+    );
   }
 }
 

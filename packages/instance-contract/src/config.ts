@@ -1,4 +1,17 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { isLoopbackOrPrivateBindHost } from "./paths.js";
@@ -149,7 +162,16 @@ export const muximoConfigSchema = z
       .strict()
       .prefault({}),
   })
-  .strict();
+  .strict()
+  .superRefine((config, context) => {
+    if (config.serve.tailscale.enabled && config.daemon.host !== "127.0.0.1") {
+      context.addIssue({
+        code: "custom",
+        path: ["daemon", "host"],
+        message: "must be 127.0.0.1 when Tailscale Serve is enabled",
+      });
+    }
+  });
 
 export type MuximoConfig = z.output<typeof muximoConfigSchema>;
 /** A versioned configuration document. Omitted settings use schema defaults. */
@@ -522,20 +544,48 @@ export function writeMuximoConfig(filePath: string, config: MuximoConfig): void 
   const validated = parseMuximoConfig(config);
   const directory = dirname(filePath);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  chmodSync(directory, 0o700);
-  const temporaryPath = `${filePath}.${process.pid}.tmp`;
+  validateConfigDirectory(directory);
+  // Randomize the temporary name so a stale file from a crashed process can
+  // never be mistaken for this write, and fsync before rename so a crash
+  // cannot leave a truncated configuration behind.
+  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  let descriptor: number | undefined;
   try {
-    writeFileSync(temporaryPath, `${JSON.stringify(validated, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    descriptor = openSync(temporaryPath, "wx", 0o600);
+    writeFileSync(descriptor, `${JSON.stringify(validated, null, 2)}\n`, { encoding: "utf8" });
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
     chmodSync(temporaryPath, 0o600);
     renameSync(temporaryPath, filePath);
     chmodSync(filePath, 0o600);
   } catch (error) {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // Preserve the original write failure.
+      }
+    }
     try {
       rmSync(temporaryPath, { force: true });
     } catch {
       // Preserve the original write failure.
     }
     throw new Error(`could not write muximo config ${filePath}`, { cause: error });
+  }
+}
+
+function validateConfigDirectory(directory: string): void {
+  const stats = statSync(directory);
+  if (!stats.isDirectory()) throw new Error(`muximo config parent is not a directory: ${directory}`);
+
+  const currentUid = process.getuid?.();
+  if (currentUid !== undefined && stats.uid !== currentUid) {
+    throw new Error(`muximo config directory must be owned by the current user: ${directory}`);
+  }
+  if ((stats.mode & 0o077) !== 0) {
+    throw new Error(`muximo config directory must not be accessible by group or other users: ${directory}`);
   }
 }
 

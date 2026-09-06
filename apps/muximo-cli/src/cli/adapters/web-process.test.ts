@@ -5,19 +5,20 @@ import type { MuximodWebSettings } from "@muximo/contract/control";
 import {
   type FixtureHandle,
   hasObserved,
-  type OperationCase,
-  type OperationTable,
-  runOperationTable,
+  runScenarioTable,
+  type ScenarioCase,
+  type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
 import { createWebProcessManager, type WebProcessManager, type WebProcessStatus } from "./web-process.js";
 
-type WebOperation = "lifecycle";
+type WebStep = { type: "ensure" } | { type: "move" } | { type: "disable" };
 type WebFixture = {
   manager: WebProcessManager;
   settings: MuximodWebSettings["proxy"];
   root: string;
+  alternatePort: number;
 };
 type WebContext = {
   states: readonly WebProcessStatus["state"][];
@@ -27,7 +28,7 @@ type WebContext = {
 const cases = [
   {
     name: "starts reuses moves and disables the configured Web process",
-    input: "lifecycle" as const,
+    steps: [{ type: "ensure" }, { type: "ensure" }, { type: "move" }, { type: "disable" }],
     assert: [
       hasObserved<WebContext, WebProcessStatus[]>("states", ["running", "running", "running", "disabled"]),
       hasObserved<WebContext, WebProcessStatus[]>("pids", [
@@ -38,19 +39,24 @@ const cases = [
       ]),
     ],
   },
-] satisfies readonly OperationCase<"default", WebOperation, WebProcessStatus[], WebContext>[];
+] satisfies readonly ScenarioCase<"default", WebStep, WebProcessStatus[], WebContext>[];
 
-const table: OperationTable<WebFixture, "default", WebOperation, WebProcessStatus[], WebContext> = {
+const table: ScenarioTable<WebFixture, "default", WebStep, WebProcessStatus[], WebContext> = {
   defaultFixture: async () => createFixture(),
   cases,
-  execute: async (fixture) => {
-    const started = await fixture.manager.ensure();
-    const reused = await fixture.manager.ensure();
-    fixture.settings.port = await findFreePort();
-    const moved = await fixture.manager.start();
-    fixture.settings.enabled = false;
-    const disabled = await fixture.manager.ensure();
-    return [started, reused, moved, disabled];
+  execute: async (fixture, steps) => {
+    const statuses: WebProcessStatus[] = [];
+    for (const step of steps) {
+      if (step.type === "ensure") statuses.push(await fixture.manager.ensure());
+      else if (step.type === "move") {
+        fixture.settings.port = fixture.alternatePort;
+        statuses.push(await fixture.manager.start());
+      } else {
+        fixture.settings.enabled = false;
+        statuses.push(await fixture.manager.ensure());
+      }
+    }
+    return statuses;
   },
   observe: (_fixture, result) => ({
     states: result.ok ? result.value.map(({ state }) => state) : [],
@@ -59,7 +65,7 @@ const table: OperationTable<WebFixture, "default", WebOperation, WebProcessStatu
 };
 
 describe("CLI Web process adapter", () => {
-  runOperationTable(it as unknown as TestRegistrar, table);
+  runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
 async function createFixture(): Promise<FixtureHandle<WebFixture>> {
@@ -80,6 +86,7 @@ async function createFixture(): Promise<FixtureHandle<WebFixture>> {
     { mode: 0o600 },
   );
   const settings: MuximodWebSettings["proxy"] = { enabled: true, host: "127.0.0.1", port: await findFreePort() };
+  const alternatePort = await findFreePort();
   const manager = createWebProcessManager({
     pidFile: join(root, "instance", "web.pid"),
     logFile: join(root, "instance", "web.log"),
@@ -91,7 +98,7 @@ async function createFixture(): Promise<FixtureHandle<WebFixture>> {
     resolveSettings: async () => settings,
   });
   return {
-    fixture: { manager, settings, root },
+    fixture: { manager, settings, root, alternatePort },
     cleanup: async () => {
       await manager.stop().catch(() => undefined);
       rmSync(root, { recursive: true, force: true });
