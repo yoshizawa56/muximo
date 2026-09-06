@@ -438,6 +438,27 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     operation: "run" | "resume",
     hostPaneId?: string,
   ) => {
+    // Anchor the tmux pane cwd on the worktree so later splits spawn shells there.
+    let previousCwd: string | undefined;
+    if (prepared.session.worktreePath) {
+      try {
+        previousCwd = pane.adoptWorkingDirectory(prepared.session.worktreePath);
+      } catch (error) {
+        logger.debug("agent.session_worktree_cwd_failed", { error });
+      }
+    }
+    try {
+      return await runPreparedAgent(prepared, operation, hostPaneId);
+    } finally {
+      pane.restoreWorkingDirectory(previousCwd);
+    }
+  };
+
+  const runPreparedAgent = async (
+    prepared: Awaited<ReturnType<typeof prepareAgentExecution>>,
+    operation: "run" | "resume",
+    hostPaneId?: string,
+  ) => {
     let attachError: unknown;
     let attachmentPromise: Promise<void> | undefined;
     const process = await attachedAgentExecution.execute(prepared.execution, {
