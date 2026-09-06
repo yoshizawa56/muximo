@@ -8,6 +8,9 @@ export type MuximoCliRuntimeOptions = {
   pidFile: InstancePaths["pidFile"];
   controlSocket: InstancePaths["controlSocket"];
   logFile: InstancePaths["logFile"];
+  webPidFile: InstancePaths["webPidFile"];
+  webLogFile: InstancePaths["webLogFile"];
+  webStartLockDirectory: InstancePaths["webStartLockDirectory"];
   serveStateFile: InstancePaths["serveStateFile"];
   opencodeRegistryFile: InstancePaths["opencodeRegistryFile"];
   verbose: boolean;

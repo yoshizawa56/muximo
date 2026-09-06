@@ -22,10 +22,22 @@ import {
   writeMuximoConfig,
 } from "./config.js";
 
-type ConfigOperation = "missing" | "write" | "set" | "empty-agents" | "invalid";
+type ConfigOperation = "missing" | "write" | "set" | "empty-agents" | "missing-web" | "invalid";
 type ConfigFixture = { filePath: string };
-type ConfigResult = { config: MuximoConfig | null; value: unknown; mode: number | null };
-type ConfigContext = { enabled: string | null; defaultBackend: string | null; mode: number | null };
+type ConfigResult = {
+  config: MuximoConfig | null;
+  value: unknown;
+  mode: number | null;
+  webEnabled: boolean;
+  webPort: number;
+};
+type ConfigContext = {
+  enabled: string | null;
+  defaultBackend: string | null;
+  mode: number | null;
+  webEnabled: boolean;
+  webPort: number;
+};
 
 const cases = [
   {
@@ -67,6 +79,15 @@ const cases = [
     ],
   },
   {
+    name: "uses current defaults for omitted instance configuration fields",
+    fixture: "missing-web" as const,
+    input: "missing-web" as const,
+    assert: [
+      hasObserved<ConfigContext, ConfigResult>("webEnabled", false),
+      hasObserved<ConfigContext, ConfigResult>("webPort", 5227),
+    ],
+  },
+  {
     name: "rejects unsupported configuration shapes",
     fixture: "invalid" as const,
     input: "invalid" as const,
@@ -81,31 +102,38 @@ const table: OperationTable<ConfigFixture, ConfigOperation, ConfigOperation, Con
     write: () => createFixture(),
     set: () => createFixture(),
     "empty-agents": () => createFixture(),
+    "missing-web": () => createFixture("missing-web"),
     invalid: () => createFixture("invalid"),
   },
   cases,
   execute: (fixture, operation) => {
     if (operation === "missing") {
       const config = readMuximoConfig(fixture.filePath);
-      return { config, value: null, mode: null };
+      return createConfigResult(config, null, null);
     }
-    if (operation === "invalid") return { config: readMuximoConfig(fixture.filePath), value: null, mode: null };
+    if (operation === "missing-web") {
+      const legacyConfig = Object.fromEntries(Object.entries(defaultMuximoConfig()).filter(([key]) => key !== "web"));
+      writeFileSync(fixture.filePath, `${JSON.stringify(legacyConfig)}\n`);
+      const config = readMuximoConfig(fixture.filePath);
+      return createConfigResult(config, null, null);
+    }
+    if (operation === "invalid") return createConfigResult(readMuximoConfig(fixture.filePath), null, null);
     let config = defaultMuximoConfig();
     if (operation === "write") {
       config = setMuximoConfigValue(config, "agents.enabled", ["codex", "claude"]);
       config = setMuximoConfigValue(config, "agents.default", "claude");
       writeMuximoConfig(fixture.filePath, config);
       const saved = readMuximoConfig(fixture.filePath);
-      return { config: saved, value: null, mode: statSync(fixture.filePath).mode & 0o777 };
+      return createConfigResult(saved, null, statSync(fixture.filePath).mode & 0o777);
     }
     if (operation === "empty-agents") {
       config = setMuximoConfigValue(config, "agents.enabled", ["codex"]);
       config = setMuximoConfigValue(config, "agents.default", "codex");
       config = setMuximoConfigValue(config, "agents.enabled", []);
-      return { config, value: null, mode: null };
+      return createConfigResult(config, null, null);
     }
     config = setMuximoConfigValue(config, "agents.enabled", ["claude"]);
-    return { config, value: getMuximoConfigValue(config, "agents.default"), mode: null };
+    return createConfigResult(config, getMuximoConfigValue(config, "agents.default"), null);
   },
   observe: (_fixture, result) =>
     result.ok
@@ -113,8 +141,10 @@ const table: OperationTable<ConfigFixture, ConfigOperation, ConfigOperation, Con
           enabled: result.value.config?.agents.enabled.join(",") ?? null,
           defaultBackend: result.value.config?.agents.default ?? null,
           mode: result.value.mode,
+          webEnabled: result.value.config?.web.proxy.enabled ?? false,
+          webPort: result.value.config?.web.proxy.port ?? 0,
         }
-      : { enabled: null, defaultBackend: null, mode: null },
+      : { enabled: null, defaultBackend: null, mode: null, webEnabled: false, webPort: 0 },
 };
 
 type DefaultResult = { executable: string; changedKeys: readonly string[]; agentDefault: string | null };
@@ -151,6 +181,16 @@ describe("muximo instance configuration", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
   runOperationTable(it as unknown as TestRegistrar, defaultTable);
 });
+
+function createConfigResult(config: MuximoConfig, value: unknown, mode: number | null): ConfigResult {
+  return {
+    config,
+    value,
+    mode,
+    webEnabled: config.web.proxy.enabled,
+    webPort: config.web.proxy.port,
+  };
+}
 
 type ProfileOperation = "partial" | "full" | "unknown" | "invalid";
 type ProfileFixture = { filePath: string };
@@ -228,7 +268,7 @@ describe("muximo configuration profiles", () => {
   runOperationTable(it as unknown as TestRegistrar, profileTable);
 });
 
-function createFixture(kind?: "invalid") {
+function createFixture(kind?: "invalid" | "missing-web") {
   const root = mkdtempSync(join(tmpdir(), "muximo-config-test-"));
   const directory = join(root, "instance");
   mkdirSync(directory, { recursive: true });

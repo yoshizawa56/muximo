@@ -109,7 +109,7 @@ Create or inspect it with:
 muximo config init
 muximo config path
 muximo config show
-muximo config import config.dev.json
+muximo config import config.stg.json
 ```
 
 The interactive editor uses the `@inquirer/prompts` keyboard interface. It
@@ -160,9 +160,9 @@ settings that differ from the product defaults, for example:
 `muximo config import <file>` validates the profile, applies it to the
 defaults, and completely replaces the current instance configuration. Omitted
 values do not survive from the previous configuration. The committed
-`config.dev.json` and `config.local.json` profiles provide standard and
-alternate local development ports; import one explicitly because there is no
-implicit profile precedence. These profiles do not store machine-specific
+`config.stg.json` and `config.local.json` profiles provide staging and local
+development settings; the staging profile keeps the Web proxy disabled. Import
+one explicitly because there is no implicit profile precedence. These profiles do not store machine-specific
 hostnames or absolute executable paths. Use `muximo config show >
 muximo-config.backup.json` for a normalized backup.
 
@@ -180,16 +180,17 @@ permissions.
 
 Starting `muximod` does not create a tmux session. Create a new managed session with `muximo tmux new-session`, adopt an existing session with `muximo tmux manage-session --name <name>`, or let the Web connection flow adopt an unmanaged session automatically.
 
-To configure a muximod-only Tailscale Serve route:
+To configure a Tailscale Serve route for the local muximo daemon:
 
 ```sh
 muximo config set serve.tailscale.enabled true
 muximo serve tailscale
 ```
 
-The command discovers the current Tailscale hostname, configures the fixed
-instance route, and records its public URL in the instance state. It
-does not start or supervise `muximod`.
+The command ensures the local daemon is running, starts the configured Vite
+development proxy when enabled, discovers the current Tailscale hostname,
+configures the fixed instance route, and records its public URL in the instance
+state.
 
 ## Pair a device
 
@@ -256,21 +257,25 @@ bun install --frozen-lockfile
 
 # Configure the local muximo instance and start its daemon.
 mise muximo config init
+mise muximo config import config.local.json
+# The daemon starts the Vite Web process automatically when web.proxy.enabled is true.
 mise muximo daemon restart
-
-# Start the independent Web development process when needed.
-mise web daemon restart
 mise muximo serve tailscale
-mise web serve tailscale
 ```
 
-The Web process uses one fixed local port and keeps HMR available after `web
-daemon start`; the two processes have independent lifecycle commands. To inspect
-the Web UI without a running muximod:
+The Vite process is managed by the local `muximo` CLI and proxied through
+`muximod`, so the browser uses one origin and Vite HMR remains available. To
+make that route work even when the reverse proxy rewrites the incoming Host
+header, `muximo serve tailscale` registers the exact HTTPS Serve origin in the
+daemon's in-memory origin policy when both Tailscale Serve and the Web proxy
+are enabled. The origin is cleared by `muximo serve stop` and is never written
+to `config.json`; production configurations with the Web proxy disabled do not
+receive this additional origin.
+
+To inspect the Web UI without a running muximod:
 
 ```sh
-cd apps/web
-VITE_MUXIMOD_MOCK_MODE=true bun node_modules/vite/bin/vite.js
+VITE_MUXIMOD_MOCK_MODE=true bun --cwd apps/web run dev
 ```
 
 For the Capacitor iOS workflow, use `mise ios` to build, sync, and open the native project. To run the local CLI through the repository's toolchain, use `mise muximo <option>`, for example `mise muximo --help`.

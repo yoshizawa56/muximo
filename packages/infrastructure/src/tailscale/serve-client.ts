@@ -36,6 +36,17 @@ export type TailscaleServeRouteIdentity = Pick<
   "hostname" | "localTarget" | "externalPort" | "path" | "routeFingerprint"
 >;
 
+export type TailscaleServeRouteExpectation = Pick<
+  TailscaleServeRoute,
+  "hostname" | "localTarget" | "externalPort" | "path"
+>;
+
+export type TailscaleServeRouteStatus = {
+  endpointAvailable: boolean;
+  pathAvailable: boolean;
+  proxyTargetMatches: boolean;
+};
+
 export type TailscaleServeClient = {
   resolveHostname(): Promise<string>;
   applyRoute(input: {
@@ -141,21 +152,41 @@ function readCommandArgs(value: string | undefined): string[] {
 }
 
 /** Checks the provider's live JSON before a route is removed or recorded. */
-export function hasTailscaleServeRoute(statusJson: string, expected: TailscaleServeRouteIdentity): boolean {
+export function hasTailscaleServeRoute(statusJson: string, expected: TailscaleServeRouteExpectation): boolean {
+  return inspectTailscaleServeRoute(statusJson, expected).proxyTargetMatches;
+}
+
+/** Extracts only the expected route's live status from the provider response. */
+export function inspectTailscaleServeRoute(
+  statusJson: string,
+  expected: TailscaleServeRouteExpectation,
+): TailscaleServeRouteStatus {
   let value: unknown;
   try {
     value = JSON.parse(statusJson);
   } catch {
-    return false;
+    return { endpointAvailable: false, pathAvailable: false, proxyTargetMatches: false };
   }
-  return findWebConfigurations(value).some((web) => webConfigurationMatches(web, expected));
+  let endpointAvailable = false;
+  let pathAvailable = false;
+  for (const web of findWebConfigurations(value)) {
+    const status = inspectWebConfiguration(web, expected);
+    endpointAvailable ||= status.endpointAvailable;
+    pathAvailable ||= status.pathAvailable;
+    if (status.proxyTargetMatches) {
+      return { endpointAvailable: true, pathAvailable: true, proxyTargetMatches: true };
+    }
+  }
+  return { endpointAvailable, pathAvailable, proxyTargetMatches: false };
 }
 
 export function buildServeStopArgs(
   input: Pick<TailscaleServeRoute, "localTarget" | "externalPort" | "path">,
 ): string[] {
   const args = ["serve", `--https=${input.externalPort}`, "--yes"];
-  if (input.path && normalizeServePath(input.path) !== "/") args.push(`--set-path=${normalizeServePath(input.path)}`);
+  if (input.path && normalizeTailscaleServePath(input.path) !== "/") {
+    args.push(`--set-path=${normalizeTailscaleServePath(input.path)}`);
+  }
   args.push(input.localTarget, "off");
   return args;
 }
@@ -172,7 +203,7 @@ export function fingerprintRoute(input: {
         hostname: input.hostname,
         localTarget: input.localTarget,
         externalPort: input.externalPort,
-        path: normalizeServePath(input.path),
+        path: normalizeTailscaleServePath(input.path),
       }),
       "utf8",
     )
@@ -197,7 +228,7 @@ async function runTailscaleCommand(
   }
 }
 
-function normalizeServePath(path: string | undefined): string {
+export function normalizeTailscaleServePath(path: string | undefined): string {
   const normalized = path?.trim();
   if (!normalized || normalized === "/") return "/";
   return normalized.startsWith("/") ? normalized : `/${normalized}`;
@@ -213,31 +244,41 @@ function findWebConfigurations(value: unknown): Array<Record<string, unknown>> {
   return configurations;
 }
 
-function webConfigurationMatches(web: Record<string, unknown>, expected: TailscaleServeRouteIdentity): boolean {
-  const expectedHostname = normalizeHostname(expected.hostname);
-  const expectedPath = normalizeServePath(expected.path);
-  const expectedTarget = normalizeTarget(expected.localTarget);
+function inspectWebConfiguration(
+  web: Record<string, unknown>,
+  expected: TailscaleServeRouteExpectation,
+): TailscaleServeRouteStatus {
+  const expectedHostname = normalizeTailscaleServeHostname(expected.hostname);
+  const expectedPath = normalizeTailscaleServePath(expected.path);
+  const expectedTarget = normalizeTailscaleServeTarget(expected.localTarget);
+  let endpointAvailable = false;
+  let pathAvailable = false;
   for (const [hostPort, configuration] of Object.entries(web)) {
     const endpoint = parseHostPort(hostPort);
     if (!endpoint || endpoint.hostname !== expectedHostname || endpoint.port !== expected.externalPort) continue;
+    endpointAvailable = true;
     if (!isRecord(configuration) || !isRecord(configuration.Handlers)) continue;
     const handler = configuration.Handlers[expectedPath];
-    if (!isRecord(handler) || typeof handler.Proxy !== "string") continue;
-    if (normalizeTarget(handler.Proxy) === expectedTarget) return true;
+    if (!isRecord(handler)) continue;
+    pathAvailable = true;
+    if (typeof handler.Proxy !== "string") continue;
+    if (normalizeTailscaleServeTarget(handler.Proxy) === expectedTarget) {
+      return { endpointAvailable: true, pathAvailable: true, proxyTargetMatches: true };
+    }
   }
-  return false;
+  return { endpointAvailable, pathAvailable, proxyTargetMatches: false };
 }
 
 function parseHostPort(value: string): { hostname: string; port: number } | undefined {
   try {
     const url = new URL(value.includes("://") ? value : `https://${value}`);
-    return { hostname: normalizeHostname(url.hostname), port: Number(url.port || 443) };
+    return { hostname: normalizeTailscaleServeHostname(url.hostname), port: Number(url.port || 443) };
   } catch {
     return undefined;
   }
 }
 
-function normalizeHostname(value: string): string {
+export function normalizeTailscaleServeHostname(value: string): string {
   return value
     .trim()
     .replace(/^https?:\/\//u, "")
@@ -245,7 +286,7 @@ function normalizeHostname(value: string): string {
     .toLowerCase();
 }
 
-function normalizeTarget(value: string): string {
+export function normalizeTailscaleServeTarget(value: string): string {
   try {
     const url = new URL(value);
     url.hash = "";

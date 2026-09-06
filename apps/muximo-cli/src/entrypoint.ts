@@ -55,6 +55,7 @@ export async function runMuximoCli(args: readonly string[], options: CliEntrypoi
     });
     environment = runtimeResolution.environment;
     composition = createCliComposition({
+      buildMode,
       environment,
       input: options.input,
       io,

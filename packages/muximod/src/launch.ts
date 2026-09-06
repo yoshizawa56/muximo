@@ -35,6 +35,7 @@ import {
   StopDaemon,
 } from "@muximo/application";
 import { muximodHealthProbeSchema, muximodHealthSchema } from "@muximo/contract/api";
+import { muximodWebProxySettingsSchema } from "@muximo/contract/control";
 import { protocolVersion } from "@muximo/contract/shared";
 import { sanitizeProcessDiagnostic } from "@muximo/infrastructure/runtime";
 import { isLoopbackOrPrivateBindHost } from "@muximo/instance-contract";
@@ -121,6 +122,7 @@ export const muximodConfigSchema = z
     enabledAgentBackends: z.array(z.enum(["codex", "claude", "opencode"])),
     defaultAgentBackend: z.enum(["codex", "claude", "opencode"]).nullable(),
     opencodeServerUrl: httpUrlSchema.nullable(),
+    webProxy: muximodWebProxySettingsSchema,
   })
   .strict();
 

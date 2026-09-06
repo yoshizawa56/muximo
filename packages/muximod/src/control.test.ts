@@ -31,7 +31,9 @@ type ControlStep =
   | { type: "adopt" | "observe" | "release" }
   | { type: "read-log"; lines: number }
   | { type: "read-host-settings" }
+  | { type: "read-web-settings" }
   | { type: "read-daemon-status" }
+  | { type: "set-serve-origin"; origin: string | null }
   | { type: "prepare-execution" | "attach-execution" | "complete-execution" }
   | { type: "cancel-prepare" };
 type ControlFixture = {
@@ -44,6 +46,7 @@ type ControlFixture = {
   applicationRequests: unknown[];
   observations: string[];
   logReads: number[];
+  serveOrigins: Array<string | null>;
   socket: ControlTestSocket;
   database: ReturnType<typeof createAgentDatabase>;
   prepareCancelled: boolean;
@@ -55,6 +58,7 @@ type ControlContext = {
   applicationRequests: readonly unknown[];
   observations: readonly string[];
   logReads: readonly number[];
+  serveOrigins: readonly (string | null)[];
   prepareCancelled: boolean;
 };
 
@@ -138,6 +142,7 @@ const fixture = (
   const applicationRequests: unknown[] = [];
   const observations: string[] = [];
   const logReads: number[] = [];
+  const serveOrigins: Array<string | null> = [];
   const responses: string[] = [];
   let prepareCancelled = false;
   const server = new MuximodControlServer({
@@ -165,6 +170,12 @@ const fixture = (
         path: "/muximo",
       },
     }),
+    readWebSettings: () => ({
+      proxy: { enabled: true, host: "127.0.0.1", port: 5227 },
+    }),
+    setServeOrigin: (origin) => {
+      serveOrigins.push(origin);
+    },
     adoptAgentSession: async (input) => {
       applicationRequests.push({ operation: "adopt", ...input });
       calls.push(`adopt:${input.agentSessionId}:${input.hostPaneId}:${input.executionId}`);
@@ -247,6 +258,7 @@ const fixture = (
       applicationRequests,
       observations,
       logReads,
+      serveOrigins,
       socket,
       database,
       get prepareCancelled() {
@@ -339,6 +351,19 @@ const cases = [
     ],
   },
   {
+    name: "returns daemon-owned Web settings through the private control contract",
+    steps: [{ type: "read-web-settings" }],
+    assert: [
+      hasObserved<ControlContext, undefined>("responses", [
+        {
+          type: "web_settings",
+          proxy: { enabled: true, host: "127.0.0.1", port: 5227 },
+        },
+      ]),
+      hasObserved<ControlContext, undefined>("requestIds", ["control-request-1"]),
+    ],
+  },
+  {
     name: "returns configuration status and daemon version through the private control contract",
     steps: [{ type: "read-daemon-status" }],
     assert: [
@@ -352,6 +377,17 @@ const cases = [
       ]),
       hasObserved<ControlContext, undefined>("requestIds", ["control-request-1"]),
       hasObserved<ControlContext, undefined>("calls", ["status"]),
+    ],
+  },
+  {
+    name: "updates the ephemeral Serve origin through the private control contract",
+    steps: [{ type: "set-serve-origin", origin: "https://machine.example:8444" }],
+    assert: [
+      hasObserved<ControlContext, undefined>("responses", [
+        { type: "serve_origin_set", origin: "https://machine.example:8444" },
+      ]),
+      hasObserved<ControlContext, undefined>("requestIds", ["control-request-1"]),
+      hasObserved<ControlContext, undefined>("serveOrigins", ["https://machine.example:8444"]),
     ],
   },
   {
@@ -441,13 +477,17 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
                 ? "read_log"
                 : step.type === "read-host-settings"
                   ? "read_host_settings"
-                  : step.type === "read-daemon-status"
-                    ? "read_daemon_status"
-                    : step.type === "prepare-execution"
-                      ? "prepare_agent_execution"
-                      : step.type === "attach-execution"
-                        ? "attach_agent_execution"
-                        : "complete_agent_execution";
+                  : step.type === "read-web-settings"
+                    ? "read_web_settings"
+                    : step.type === "read-daemon-status"
+                      ? "read_daemon_status"
+                      : step.type === "set-serve-origin"
+                        ? "set_serve_origin"
+                        : step.type === "prepare-execution"
+                          ? "prepare_agent_execution"
+                          : step.type === "attach-execution"
+                            ? "attach_agent_execution"
+                            : "complete_agent_execution";
       const expectedCount = testFixture.responses.length + 1;
       testFixture.handleRequest(
         JSON.stringify({
@@ -457,29 +497,35 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
             ? { lines: step.lines }
             : step.type === "read-host-settings"
               ? {}
-              : step.type === "read-daemon-status"
+              : step.type === "read-web-settings"
                 ? {}
-                : step.type === "prepare-execution"
-                  ? {
-                      operation: "run",
-                      input: {
-                        backend: "codex",
-                        hostPaneId: request.hostPaneId,
-                        cwd: execution.cwd,
-                        useWorktree: false,
-                        setupHookExplicit: false,
-                        cleanupHookExplicit: false,
-                        backendArgs: [],
-                      },
-                    }
-                  : step.type === "attach-execution"
-                    ? { ...testFixture.request, executionPid: 456, executionStartedAt }
-                    : step.type === "complete-execution"
-                      ? { ...testFixture.request, operation: "run", result: executionProcess }
-                      : {
-                          ...testFixture.request,
-                          ...(step.type === "observe" ? { state: "waiting_input", recentOutput: "recent output" } : {}),
-                        }),
+                : step.type === "read-daemon-status"
+                  ? {}
+                  : step.type === "set-serve-origin"
+                    ? { origin: step.origin }
+                    : step.type === "prepare-execution"
+                      ? {
+                          operation: "run",
+                          input: {
+                            backend: "codex",
+                            hostPaneId: request.hostPaneId,
+                            cwd: execution.cwd,
+                            useWorktree: false,
+                            setupHookExplicit: false,
+                            cleanupHookExplicit: false,
+                            backendArgs: [],
+                          },
+                        }
+                      : step.type === "attach-execution"
+                        ? { ...testFixture.request, executionPid: 456, executionStartedAt }
+                        : step.type === "complete-execution"
+                          ? { ...testFixture.request, operation: "run", result: executionProcess }
+                          : {
+                              ...testFixture.request,
+                              ...(step.type === "observe"
+                                ? { state: "waiting_input", recentOutput: "recent output" }
+                                : {}),
+                            }),
         }),
       );
       await waitFor(() => testFixture.responses.length === expectedCount);
@@ -496,6 +542,7 @@ const table: ScenarioTable<ControlFixture, "cancel", ControlStep, undefined, Con
     applicationRequests: [...testFixture.applicationRequests],
     observations: [...testFixture.observations],
     logReads: [...testFixture.logReads],
+    serveOrigins: [...testFixture.serveOrigins],
     prepareCancelled: testFixture.prepareCancelled,
   }),
 };

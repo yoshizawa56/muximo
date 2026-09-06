@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "daemon": {
+    "port": 4317
+  },
+  "serve": {
+    "tailscale": {
+      "enabled": true,
+      "externalPort": 8444
+    }
+  }
+}

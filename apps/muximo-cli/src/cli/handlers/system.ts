@@ -9,7 +9,12 @@ import type {
 } from "@muximo/application";
 import { DaemonHealthError } from "@muximo/application";
 import type { MuximodControlLogResult, MuximodDaemonStatus } from "@muximo/contract/control";
-import type { DoctorReport, ServeRouteState, TailscaleServeResult } from "@muximo/infrastructure/cli-client";
+import type {
+  DoctorReport,
+  ServeRouteState,
+  TailscaleServeResult,
+  TailscaleServeRouteStatus,
+} from "@muximo/infrastructure/cli-client";
 import type { CliDaemonInput, CliDoctorInput, CliHandlers, CliIo, CliServeInput } from "../commands/types.js";
 import {
   presentDaemonError,
@@ -31,8 +36,12 @@ export type ServeResult =
   | {
       command: "status";
       state?: ServeRouteState;
-      routeAvailable?: boolean;
-      providerOutput?: string;
+      expectedExternalPort: number;
+      expectedLocalTarget: string;
+      expectedPath: string;
+      expectedPublicUrl?: string;
+      stateMatchesConfiguration: boolean;
+      liveRoute: TailscaleServeRouteStatus;
       providerError?: string;
     }
   | { command: "stop"; state: "stopped" | "already-stopped"; publicUrl?: string };

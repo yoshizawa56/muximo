@@ -94,6 +94,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function createOriginPolicy(input: {
   allowedOrigins: readonly string[];
   allowNoOrigin: boolean;
+  allowSameOrigin?: boolean;
 }): MuximodOriginPolicy {
   if (input.allowedOrigins.some((origin) => origin === "*")) {
     throw new Error("wildcard origins are not allowed for authenticated routes");
@@ -101,9 +102,20 @@ export function createOriginPolicy(input: {
   const allowedOrigins = new Set(
     [muximoCapacitorOrigin, ...input.allowedOrigins].map((origin) => normalizeOrigin(origin)),
   );
+  let runtimeOrigin: string | undefined;
   return {
     allows(origin) {
-      return origin === null ? input.allowNoOrigin : allowedOrigins.has(origin);
+      return origin === null ? input.allowNoOrigin : allowedOrigins.has(origin) || runtimeOrigin === origin;
+    },
+    allowsRequest(request) {
+      const origin = request.headers.get("origin");
+      if (origin === null) return input.allowNoOrigin;
+      if (allowedOrigins.has(origin) || runtimeOrigin === origin) return true;
+      if (!input.allowSameOrigin) return false;
+      return isSameOrigin(request, origin);
+    },
+    setRuntimeOrigin(origin) {
+      runtimeOrigin = origin === null ? undefined : normalizeOrigin(origin);
     },
   };
 }
@@ -147,7 +159,7 @@ export function jsonResponse(body: unknown, status = 200): Response {
 
 export function withCors(response: Response, request: Request, originPolicy: MuximodOriginPolicy): Response {
   const origin = request.headers.get("origin");
-  if (!origin || !originPolicy.allows(origin)) return response;
+  if (!origin || !allowsOrigin(request, originPolicy)) return response;
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", origin);
   headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
@@ -157,6 +169,10 @@ export function withCors(response: Response, request: Request, originPolicy: Mux
   );
   headers.set("vary", "Origin");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+export function allowsOrigin(request: Request, originPolicy: MuximodOriginPolicy): boolean {
+  return originPolicy.allowsRequest?.(request) ?? originPolicy.allows(request.headers.get("origin"));
 }
 
 export function originDeniedResponse(): Response {
@@ -179,4 +195,12 @@ function normalizeOrigin(origin: string): string {
     throw new Error(`allowed origin must be an exact supported origin: ${origin}`);
   }
   return origin;
+}
+
+function isSameOrigin(request: Request, origin: string): boolean {
+  try {
+    return new URL(request.url).origin === origin;
+  } catch {
+    return false;
+  }
 }

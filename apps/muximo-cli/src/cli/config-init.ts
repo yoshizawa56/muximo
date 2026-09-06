@@ -43,6 +43,7 @@ type AdditionalArea =
   | "database"
   | "agent-connection"
   | "agent-executables"
+  | "web"
   | "updates";
 type ReviewAction = "save" | "agents" | "tailscale" | "additional" | "cancel";
 
@@ -53,6 +54,7 @@ const additionalAreaLabels: Readonly<Record<AdditionalArea, string>> = {
   database: "Database schema",
   "agent-connection": "Agent connection behavior",
   "agent-executables": "Agent executable paths",
+  web: "Web development proxy",
   updates: "Update behavior",
 };
 
@@ -384,7 +386,7 @@ async function reviewConfiguration(
 }
 
 function getAvailableAdditionalAreas(config: MuximoConfig): readonly AdditionalArea[] {
-  const areas: AdditionalArea[] = ["workspace", "daemon", "logging", "database"];
+  const areas: AdditionalArea[] = ["workspace", "daemon", "logging", "database", "web"];
   if (config.agents.enabled.includes("codex") || config.agents.enabled.includes("opencode")) {
     areas.push("agent-connection");
   }
@@ -409,6 +411,8 @@ function getAdditionalSettings(config: MuximoConfig, area: AdditionalArea): read
       );
     case "agent-executables":
       return muximoConfigSettingsForGroup(config, "agents").filter((setting) => setting.valueKind === "executable");
+    case "web":
+      return muximoConfigSettingsForGroup(config, "web");
     case "updates":
       return muximoConfigSettingsForGroup(config, "updates");
   }
@@ -423,6 +427,7 @@ function getAllAdditionalSettings(config: MuximoConfig): readonly MuximoConfigSe
       muximoConfigSettingsForGroup(config, "workspace"),
       muximoConfigSettingsForGroup(config, "agents"),
       muximoConfigSettingsForGroup(config, "serve"),
+      muximoConfigSettingsForGroup(config, "web"),
       muximoConfigSettingsForGroup(config, "updates"),
     )
     .filter((setting) => !keys.has(setting.key as MuximoConfigKey));
@@ -492,10 +497,12 @@ function writeConfigurationSummary(
   const enabledAgents = config.agents.enabled.length === 0 ? "disabled" : config.agents.enabled.join(", ");
   const defaultAgent = config.agents.default ?? "none";
   const tailscale = config.serve.tailscale.enabled ? "enabled" : "disabled";
+  const web = config.web.proxy.enabled ? `enabled at ${config.web.proxy.host}:${config.web.proxy.port}` : "disabled";
   output.write("\nConfiguration summary\n\n");
   output.write(`Agent backends: ${enabledAgents}\n`);
   output.write(`Default agent: ${defaultAgent}\n`);
   output.write(`Tailscale Serve: ${tailscale}\n`);
+  output.write(`Web development proxy: ${web}\n`);
   output.write(`Workspace roots: ${formatMuximoConfigValue("workspace.roots", config.workspace.roots) || "default"}\n`);
   output.write(`Logging level: ${config.logging.level}\n`);
   output.write(`Update policy: ${config.updates.policy}\n`);

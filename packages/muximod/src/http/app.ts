@@ -1,10 +1,19 @@
 import { RPCHandler } from "@orpc/server/fetch";
 import type { WebSocketHandler } from "bun";
 import { presentMuximodHealth } from "./health.js";
-import { corsResponse, errorResponse, jsonResponse, notFound, originDeniedResponse, withCors } from "./middleware.js";
+import {
+  allowsOrigin,
+  corsResponse,
+  errorResponse,
+  jsonResponse,
+  notFound,
+  originDeniedResponse,
+  withCors,
+} from "./middleware.js";
 import { contextForRequest, createMuximodRouter, type MuximodRpcContext } from "./rpc-handlers.js";
 import { handleTmuxHook } from "./tmux-hook.js";
 import type { MuximodHttpDependencies } from "./types.js";
+import { handleWebProxyUpgrade, proxyWebRequest } from "./web-proxy.js";
 import {
   createWebSocketHandler,
   handleTerminalUpgrade,
@@ -78,7 +87,7 @@ async function handleRequest(
   const url = new URL(request.url);
 
   if (url.pathname === "/terminal") {
-    if (!deps.originPolicy.allows(request.headers.get("origin"))) return originDeniedResponse();
+    if (!allowsOrigin(request, deps.originPolicy)) return originDeniedResponse();
     return handleTerminalUpgrade(request, server, deps);
   }
 
@@ -93,7 +102,7 @@ async function handleRequest(
   }
 
   if (url.pathname === "/rpc" || url.pathname.startsWith("/rpc/")) {
-    if (!deps.originPolicy.allows(request.headers.get("origin"))) return originDeniedResponse();
+    if (!allowsOrigin(request, deps.originPolicy)) return originDeniedResponse();
     if (request.method === "OPTIONS") return corsResponse(undefined, request, deps.originPolicy, 204);
     const result = await handler.handle(request, {
       prefix: "/rpc",
@@ -102,6 +111,14 @@ async function handleRequest(
     return result.matched
       ? withCors(result.response, request, deps.originPolicy)
       : notFound(request, deps.originPolicy);
+  }
+
+  if (deps.webProxy?.enabled) {
+    if (!allowsOrigin(request, deps.originPolicy)) return originDeniedResponse();
+    if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      return handleWebProxyUpgrade(request, server, deps.webProxy);
+    }
+    return proxyWebRequest(request, deps.webProxy, deps.logger);
   }
 
   return notFound(request, deps.originPolicy);

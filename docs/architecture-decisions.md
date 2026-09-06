@@ -241,7 +241,7 @@ adapters, but no CLI handler is exported by `infrastructure`.
 ## Composition roots and CLI
 
 `apps/muximo-cli/src/entrypoint.ts`, `apps/muximo-cli/src/cli/compose.ts`,
-`apps/web/cli.ts`, and `packages/muximod/src/server.ts` are composition roots for
+and `packages/muximod/src/server.ts` are composition roots for
 their respective boundaries. These
 composition roots may:
 
@@ -312,11 +312,11 @@ daemon-side providers are registered, and their executables are resolved only
 when a session is launched. Executable configuration is argv-based and never
 evaluated by a shell.
 
-`apps/web/cli.ts` independently manages one Web process and its provider route.
-It does not import or invoke muximod. Muximod Serve only manages the muximod
-route. The two lifecycle surfaces share only neutral Tailscale provider
-mechanics; each app interprets its own runtime options and neither is a
-combined supervisor.
+The CLI manages the optional Vite development process using normalized Web
+settings returned by muximod's private control contract. The Web app is a
+foreground Vite process and does not read instance configuration, start a
+daemon, or manage a provider route. Muximod Serve remains responsible for the
+muximod route.
 
 ## Web structure
 

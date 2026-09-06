@@ -5,6 +5,7 @@ import type {
   MuximodAuthPort,
 } from "@muximo/application";
 import type { MuximodEvent } from "@muximo/contract/api";
+import type { MuximodWebSettings } from "@muximo/contract/control";
 import type { AgentBackend } from "@muximo/domain";
 import type { MuximodSocket, MuximodSocketFactory } from "@muximo/infrastructure/runtime";
 
@@ -22,6 +23,9 @@ export type MuximodHttpLogger = {
 /** Exact browser-origin policy injected by the muximod composition root. */
 export type MuximodOriginPolicy = {
   allows(origin: string | null): boolean;
+  allowsRequest?(request: Request): boolean;
+  /** Replaces the ephemeral origin used by the active external Serve route. */
+  setRuntimeOrigin(origin: string | null): void;
 };
 
 export type MuximodHttpDependencies = {
@@ -39,4 +43,6 @@ export type MuximodHttpDependencies = {
     enabled: readonly AgentBackend[];
     default: AgentBackend | null;
   };
+  /** Optional loopback Vite target for the development Web proxy. */
+  webProxy?: MuximodWebSettings["proxy"];
 };

@@ -7,6 +7,9 @@ export const muximodDatabaseFileName = "muximod.sqlite";
 export const muximodPidFileName = "muximod.pid";
 export const muximodControlSocketFileName = "muximod.sock";
 export const muximodLogFileName = "muximod.log";
+export const muximoWebPidFileName = "web.pid";
+export const muximoWebLogFileName = "web.log";
+export const muximoWebStartLockDirectoryName = "web.start.lock";
 export const muximodServeStateFileName = "serve.json";
 export const muximodHookDirectoryName = "hooks";
 
@@ -18,6 +21,9 @@ export type InstancePaths = {
   pidFile: string;
   controlSocket: string;
   logFile: string;
+  webPidFile: string;
+  webLogFile: string;
+  webStartLockDirectory: string;
   serveStateFile: string;
   opencodeRegistryFile: string;
 };
@@ -33,6 +39,9 @@ export function resolveInstancePaths(instanceDirectory: string): InstancePaths {
     pidFile: join(directory, muximodPidFileName),
     controlSocket: join(directory, muximodControlSocketFileName),
     logFile: join(directory, muximodLogFileName),
+    webPidFile: join(directory, muximoWebPidFileName),
+    webLogFile: join(directory, muximoWebLogFileName),
+    webStartLockDirectory: join(directory, muximoWebStartLockDirectoryName),
     serveStateFile: join(directory, muximodServeStateFileName),
     opencodeRegistryFile: join(directory, "opencode-servers.json"),
   };

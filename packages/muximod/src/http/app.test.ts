@@ -34,8 +34,15 @@ const authContext = {
     approvedAt: "2026-08-15T00:00:00.000Z",
   },
 };
+const serveOrigin = "https://machine.tailnet.ts.net:8444";
 
-type SocketInput = { kind: "plain" } | { kind: "websocket"; ticket: string; payload?: readonly number[] };
+type SocketInput =
+  | { kind: "plain" }
+  | { kind: "proxy" }
+  | { kind: "proxy-denied" }
+  | { kind: "proxy-runtime" }
+  | { kind: "proxy-websocket" }
+  | { kind: "websocket"; ticket: string; payload?: readonly number[] };
 
 type SocketResult =
   | { kind: "response"; status: number; body: unknown }
@@ -47,12 +54,14 @@ type SocketFixture = {
   consumedTickets: string[];
   terminalConnections: number;
   socketFactoryCalls: number;
+  upstreamRequests: number;
 };
 
 type SocketContext = {
   consumedTickets: readonly string[];
   terminalConnections: number;
   socketFactoryCalls: number;
+  upstreamRequests: number;
   idleTimeout: number;
 };
 
@@ -70,11 +79,12 @@ const websocketIs = (expected: { opened: boolean; received: number[] }): Asserti
   },
 });
 
-const fixture = (): FixtureHandle<SocketFixture> => {
+const fixture = async (): Promise<FixtureHandle<SocketFixture>> => {
   const consumedTickets: string[] = [];
   const validTickets = new Set(["ticket-terminal"]);
   let terminalConnections = 0;
   let socketFactoryCalls = 0;
+  let upstreamRequests = 0;
   const auth: MuximodAuthPort = {
     serverId: authContext.serverId,
     authenticateAccessToken: async () => authContext,
@@ -167,10 +177,30 @@ const fixture = (): FixtureHandle<SocketFixture> => {
       if (isBinary) socket.send(data);
     });
   };
+  const upstream = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request, server) => {
+      if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        server.upgrade(request);
+        return undefined;
+      }
+      upstreamRequests += 1;
+      return new Response("proxied Web");
+    },
+    websocket: {
+      message: (socket, message) => {
+        socket.send(message);
+      },
+    },
+  });
+  if (upstream.port === undefined) throw new Error("Web proxy test server did not expose a port");
+  const originPolicy = createOriginPolicy({ allowedOrigins: ["http://client.test"], allowNoOrigin: true });
+  originPolicy.setRuntimeOrigin(serveOrigin);
   const app = createMuximodApp({
     auth,
     application,
-    originPolicy: createOriginPolicy({ allowedOrigins: ["http://client.test"], allowNoOrigin: true }),
+    originPolicy,
     hookToken: "hook",
     socketFactory: (transport) => {
       socketFactoryCalls += 1;
@@ -180,6 +210,7 @@ const fixture = (): FixtureHandle<SocketFixture> => {
       terminalConnections += 1;
       echo(socket);
     },
+    webProxy: { enabled: true, host: "127.0.0.1", port: upstream.port },
   });
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -198,8 +229,14 @@ const fixture = (): FixtureHandle<SocketFixture> => {
       get socketFactoryCalls() {
         return socketFactoryCalls;
       },
+      get upstreamRequests() {
+        return upstreamRequests;
+      },
     },
-    cleanup: () => server.stop(true),
+    cleanup: () => {
+      server.stop(true);
+      upstream.stop(true);
+    },
   };
 };
 
@@ -212,6 +249,29 @@ const cases = [
       hasObserved<SocketContext, SocketResult>("consumedTickets", []),
       hasObserved<SocketContext, SocketResult>("idleTimeout", 0),
     ],
+  },
+  {
+    name: "proxies the unreserved Web path to the Vite target",
+    input: { kind: "proxy" },
+    assert: [responseIs(200, "proxied Web"), hasObserved<SocketContext, SocketResult>("upstreamRequests", 1)],
+  },
+  {
+    name: "rejects a cross-origin Web proxy request before reaching Vite",
+    input: { kind: "proxy-denied" },
+    assert: [
+      responseIs(403, { error: "origin_not_allowed", message: "Request origin is not allowed" }),
+      hasObserved<SocketContext, SocketResult>("upstreamRequests", 0),
+    ],
+  },
+  {
+    name: "proxies a request from the registered Serve origin",
+    input: { kind: "proxy-runtime" },
+    assert: [responseIs(200, "proxied Web"), hasObserved<SocketContext, SocketResult>("upstreamRequests", 1)],
+  },
+  {
+    name: "bridges the WebSocket upgrade used by Vite HMR",
+    input: { kind: "proxy-websocket" },
+    assert: [websocketIs({ opened: true, received: [0, 1, 255] })],
   },
   {
     name: "rejects an invalid ticket without opening an application connection",
@@ -239,6 +299,25 @@ const table: OperationTable<SocketFixture, "default", SocketInput, SocketResult,
   cases,
   execute: async (world, input) => {
     const url = `http://127.0.0.1:${world.server.port}/terminal`;
+    if (input.kind === "proxy") {
+      const response = await fetch(`http://127.0.0.1:${world.server.port}/`);
+      return { kind: "response", status: response.status, body: await response.text() };
+    }
+    if (input.kind === "proxy-denied") {
+      const response = await fetch(`http://127.0.0.1:${world.server.port}/`, {
+        headers: { origin: "http://evil.example" },
+      });
+      return { kind: "response", status: response.status, body: await response.json() };
+    }
+    if (input.kind === "proxy-runtime") {
+      const response = await fetch(`http://127.0.0.1:${world.server.port}/`, {
+        headers: { origin: serveOrigin },
+      });
+      return { kind: "response", status: response.status, body: await response.text() };
+    }
+    if (input.kind === "proxy-websocket") {
+      return { kind: "websocket", ...(await openWebSocket(`ws://127.0.0.1:${world.server.port}/hmr`, [0, 1, 255])) };
+    }
     if (input.kind === "plain") {
       const response = await fetch(url);
       return { kind: "response", status: response.status, body: await response.json() };
@@ -250,6 +329,7 @@ const table: OperationTable<SocketFixture, "default", SocketInput, SocketResult,
     consumedTickets: [...world.consumedTickets],
     terminalConnections: world.terminalConnections,
     socketFactoryCalls: world.socketFactoryCalls,
+    upstreamRequests: world.upstreamRequests,
     idleTimeout: world.app.websocket.idleTimeout,
   }),
 };

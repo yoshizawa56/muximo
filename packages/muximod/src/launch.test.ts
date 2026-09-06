@@ -62,6 +62,7 @@ const serverConfig: MuximodConfig = {
   enabledAgentBackends: ["codex"],
   defaultAgentBackend: "codex",
   opencodeServerUrl: null,
+  webProxy: { enabled: false, host: "127.0.0.1", port: 5227 },
 };
 
 type BootstrapReadFixture = { path: string };

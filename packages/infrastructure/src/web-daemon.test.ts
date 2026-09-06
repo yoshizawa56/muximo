@@ -73,13 +73,15 @@ const table: OperationTable<WebFixture, "default", WebInput, WebDaemonStatus[], 
       { mode: 0o600 },
     );
     const manager = createWebDaemonManager({
-      instanceDirectory: join(root, "state"),
+      pidFile: join(root, "state", "web.pid"),
+      lockDirectory: join(root, "state", "web.start.lock"),
       host: "127.0.0.1",
       port,
       cwd: root,
       command: process.execPath,
       args: [script],
       environment: { ...process.env, MUXIMO_TEST_WEB_PORT: String(port) },
+      logFile: join(root, "state", "web.log"),
     });
     const fixture: WebFixture = { manager, port, root };
     return {

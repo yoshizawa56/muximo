@@ -16,6 +16,7 @@ import {
   type MuximodControlResponse,
   type MuximodDaemonStatus,
   type MuximodHostSettings,
+  type MuximodWebSettings,
   muximodControlMaxBufferedResponseBytes,
   muximodControlMaxPendingRequests,
   muximodControlMaxRequestBytes,
@@ -66,6 +67,8 @@ export type MuximodControlServerOptions = {
   readDaemonStatus?: () => MuximodDaemonStatus | Promise<MuximodDaemonStatus>;
   readLog?: (lines: number) => Promise<MuximodControlLogResult>;
   readHostSettings?: () => MuximodHostSettings | Promise<MuximodHostSettings>;
+  readWebSettings?: () => MuximodWebSettings | Promise<MuximodWebSettings>;
+  setServeOrigin?: (origin: string | null) => void | Promise<void>;
   adoptAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
   observeAgentSession?: (request: AgentSessionObservationRequest) => Promise<void>;
   releaseAgentSession?: (request: AgentSessionControlRequest) => Promise<void>;
@@ -292,11 +295,26 @@ export class MuximodControlServer {
         this.send(socket, { type: "host_settings", requestId: request.requestId, ...settings });
         return;
       }
+      if (request.type === "read_web_settings") {
+        if (!this.options.readWebSettings)
+          throw controlError("web_settings_unavailable", "web settings are unavailable");
+        const settings = await this.options.readWebSettings();
+        this.send(socket, { type: "web_settings", requestId: request.requestId, ...settings });
+        return;
+      }
       if (request.type === "read_daemon_status") {
         if (!this.options.readDaemonStatus)
           throw controlError("daemon_status_unavailable", "daemon status is unavailable");
         const status = await this.options.readDaemonStatus();
         this.send(socket, { type: "daemon_status", requestId: request.requestId, ...status });
+        return;
+      }
+      if (request.type === "set_serve_origin") {
+        if (!this.options.setServeOrigin) {
+          throw controlError("serve_origin_unavailable", "Serve origin registration is unavailable");
+        }
+        await this.options.setServeOrigin(request.origin);
+        this.send(socket, { type: "serve_origin_set", requestId: request.requestId, origin: request.origin });
         return;
       }
       if (request.type === "prepare_agent_execution") {

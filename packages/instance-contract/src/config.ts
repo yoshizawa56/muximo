@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 import { isLoopbackOrPrivateBindHost } from "./paths.js";
 
 export const muximoConfigFileName = "config.json";
@@ -10,70 +11,150 @@ export const muximoUpdateChannels = ["stable"] as const;
 export const muximoLogLevels = ["error", "warn", "info", "debug"] as const;
 export const muximoSchemaModes = ["migrate", "push"] as const;
 
-export type MuximoConfig = {
-  version: typeof muximoConfigVersion;
-  daemon: {
-    host: string;
-    port: number;
-    allowedOrigins: string[];
-  };
-  logging: {
-    level: MuximoLogLevel;
-  };
-  database: {
-    schemaMode: MuximoSchemaMode;
-  };
-  workspace: { roots: string[] };
-  agents: {
-    enabled: MuximoAgentBackend[];
-    default: MuximoAgentBackend | null;
-    executables: Partial<Record<MuximoAgentBackend, string>>;
-    codexRemote: string;
-    opencode: { serverUrl: string | null };
-  };
-  serve: {
-    tailscale: {
-      enabled: boolean;
-      executable: string;
-      args: string[];
-      hostname: string | null;
-      externalPort: number;
-      path: string;
-    };
-  };
-  updates: {
-    policy: MuximoUpdatePolicy;
-    channel: (typeof muximoUpdateChannels)[number];
-  };
-};
-/**
- * A versioned, importable configuration profile. Omitted values are populated
- * from the product defaults; importing a profile never preserves the current
- * instance configuration.
- */
-export type MuximoConfigProfile = {
-  version: typeof muximoConfigVersion;
-  daemon?: Partial<MuximoConfig["daemon"]>;
-  logging?: Partial<MuximoConfig["logging"]>;
-  database?: Partial<MuximoConfig["database"]>;
-  workspace?: Partial<MuximoConfig["workspace"]>;
-  agents?: {
-    enabled?: MuximoAgentBackend[];
-    default?: MuximoAgentBackend | null;
-    executables?: Partial<Record<MuximoAgentBackend, string | null>>;
-    codexRemote?: string;
-    opencode?: Partial<MuximoConfig["agents"]["opencode"]>;
-  };
-  serve?: {
-    tailscale?: Partial<MuximoConfig["serve"]["tailscale"]>;
-  };
-  updates?: Partial<MuximoConfig["updates"]>;
-};
 export type MuximoAgentBackend = (typeof muximoAgentBackends)[number];
 export type MuximoUpdatePolicy = (typeof muximoUpdatePolicies)[number];
 export type MuximoLogLevel = (typeof muximoLogLevels)[number];
 export type MuximoSchemaMode = (typeof muximoSchemaModes)[number];
 export type MuximoConfigValue = string | number | boolean | null | readonly string[];
+
+const nonEmptyStringSchema = z.string().trim().min(1);
+const portSchema = z.number().int().min(1).max(65_535);
+const agentBackendSchema = z.enum(muximoAgentBackends);
+const updatePolicySchema = z.enum(muximoUpdatePolicies);
+const updateChannelSchema = z.enum(muximoUpdateChannels);
+const logLevelSchema = z.enum(muximoLogLevels);
+const schemaModeSchema = z.enum(muximoSchemaModes);
+
+const daemonConfigSchema = z
+  .object({
+    host: nonEmptyStringSchema
+      .refine(isLoopbackOrPrivateBindHost, "host must be localhost, a loopback address, or a private IP address")
+      .default("127.0.0.1"),
+    port: portSchema.default(4317),
+    allowedOrigins: z
+      .array(nonEmptyStringSchema.refine(isAllowedOrigin, "must be an exact HTTP(S) origin without credentials"))
+      .default([]),
+  })
+  .strict()
+  .prefault({});
+
+const agentExecutablesSchema = z
+  .object({
+    codex: nonEmptyStringSchema.nullable().optional(),
+    claude: nonEmptyStringSchema.nullable().optional(),
+    opencode: nonEmptyStringSchema.nullable().optional(),
+  })
+  .strict()
+  .prefault({})
+  .transform((executables) => {
+    const normalized: Partial<Record<MuximoAgentBackend, string>> = {};
+    for (const backend of muximoAgentBackends) {
+      const executable = executables[backend];
+      if (executable !== undefined && executable !== null) normalized[backend] = executable;
+    }
+    return normalized;
+  });
+
+const agentsConfigSchema = z
+  .object({
+    enabled: z
+      .array(agentBackendSchema)
+      .superRefine((enabled, context) => {
+        if (new Set(enabled).size !== enabled.length) {
+          context.addIssue({ code: "custom", message: "must not contain duplicate agent backends" });
+        }
+      })
+      .default([]),
+    default: agentBackendSchema.nullable().default(null),
+    executables: agentExecutablesSchema,
+    codexRemote: nonEmptyStringSchema.default("unix://"),
+    opencode: z
+      .object({
+        serverUrl: z
+          .union([
+            z.null(),
+            nonEmptyStringSchema.refine(
+              isOpenCodeServerUrl,
+              "must use an unauthenticated http://127.0.0.1 URL with a port and no path or query",
+            ),
+          ])
+          .default(null),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict()
+  .superRefine((agents, context) => {
+    if (agents.default !== null && !agents.enabled.includes(agents.default)) {
+      context.addIssue({ code: "custom", path: ["default"], message: "must be enabled" });
+    }
+  })
+  .prefault({});
+
+const tailscaleConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    executable: nonEmptyStringSchema.default("tailscale"),
+    args: z.array(nonEmptyStringSchema).default([]),
+    hostname: z
+      .union([
+        z.null(),
+        nonEmptyStringSchema.refine(isTailscaleHostname, "must be a hostname without credentials, a port, or a path"),
+      ])
+      .default(null),
+    externalPort: portSchema.default(8444),
+    path: nonEmptyStringSchema.default("/"),
+  })
+  .strict()
+  .prefault({});
+
+export const muximoConfigSchema = z
+  .object({
+    version: z.literal(muximoConfigVersion),
+    daemon: daemonConfigSchema,
+    logging: z
+      .object({ level: logLevelSchema.default("info") })
+      .strict()
+      .prefault({}),
+    database: z
+      .object({ schemaMode: schemaModeSchema.default("migrate") })
+      .strict()
+      .prefault({}),
+    workspace: z
+      .object({ roots: z.array(nonEmptyStringSchema).default([]) })
+      .strict()
+      .prefault({}),
+    agents: agentsConfigSchema,
+    serve: z.object({ tailscale: tailscaleConfigSchema }).strict().prefault({}),
+    web: z
+      .object({
+        proxy: z
+          .object({
+            enabled: z.boolean().default(false),
+            host: nonEmptyStringSchema
+              .refine(isLoopbackHost, "host must be localhost, 127.0.0.1, or ::1")
+              .default("127.0.0.1"),
+            port: portSchema.default(5227),
+          })
+          .strict()
+          .prefault({}),
+      })
+      .strict()
+      .prefault({}),
+    updates: z
+      .object({
+        policy: updatePolicySchema.default("manual"),
+        channel: updateChannelSchema.default("stable"),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict();
+
+export type MuximoConfig = z.output<typeof muximoConfigSchema>;
+/** A versioned configuration document. Omitted settings use schema defaults. */
+export type MuximoConfigProfile = z.input<typeof muximoConfigSchema>;
+
 export type MuximoConfigChange = {
   key: MuximoConfigKey;
   before: MuximoConfigValue;
@@ -103,7 +184,15 @@ export type MuximoConfigSetting = {
   choices?: readonly string[];
   example?: string;
 };
-export type MuximoConfigSettingGroup = "daemon" | "logging" | "database" | "workspace" | "agents" | "serve" | "updates";
+export type MuximoConfigSettingGroup =
+  | "daemon"
+  | "logging"
+  | "database"
+  | "workspace"
+  | "agents"
+  | "serve"
+  | "web"
+  | "updates";
 export type MuximoConfigSettingGroupMode = "optional" | "required" | "toggle";
 export type MuximoConfigSettingCondition =
   | { key: string; operator: "equals"; value: boolean | number | string | null }
@@ -127,6 +216,7 @@ export const muximoConfigSettingGroups = [
     mode: "toggle",
     activationKey: "serve.tailscale.enabled",
   },
+  { key: "web", description: "Web development proxy", mode: "toggle", activationKey: "web.proxy.enabled" },
   { key: "updates", description: "Update behavior", mode: "optional" },
 ] as const satisfies readonly MuximoConfigSettingGroupDefinition[];
 
@@ -154,7 +244,7 @@ export const muximoConfigSettings = [
     description: "Browser origins allowed to call muximod.",
     valueDescription: "comma-separated HTTP(S) origins or a JSON array of origins",
     valueKind: "string-list",
-    example: "https://example.ts.net:8449,http://127.0.0.1:5227",
+    example: "https://example.ts.net:8449,http://127.0.0.1:4317",
   },
   {
     key: "logging.level",
@@ -300,6 +390,32 @@ export const muximoConfigSettings = [
     example: "/",
   },
   {
+    key: "web.proxy.enabled",
+    group: "web",
+    description: "Start a Vite Web server and proxy it through muximod.",
+    valueDescription: "true or false",
+    valueKind: "boolean",
+    example: "true",
+  },
+  {
+    key: "web.proxy.host",
+    group: "web",
+    condition: { key: "web.proxy.enabled", operator: "equals", value: true },
+    description: "Loopback host where the Vite Web server listens.",
+    valueDescription: "localhost, 127.0.0.1, or ::1",
+    valueKind: "string",
+    example: "127.0.0.1",
+  },
+  {
+    key: "web.proxy.port",
+    group: "web",
+    condition: { key: "web.proxy.enabled", operator: "equals", value: true },
+    description: "Local port where the Vite Web server listens.",
+    valueDescription: "an integer from 1 to 65535",
+    valueKind: "integer",
+    example: "5227",
+  },
+  {
     key: "updates.policy",
     group: "updates",
     description: "How muximo should handle available releases.",
@@ -354,38 +470,7 @@ export function isMuximoConfigSettingApplicable(config: MuximoConfig, setting: M
 }
 
 export function defaultMuximoConfig(): MuximoConfig {
-  return {
-    version: muximoConfigVersion,
-    daemon: {
-      host: "127.0.0.1",
-      port: 4317,
-      allowedOrigins: [],
-    },
-    logging: { level: "info" },
-    database: { schemaMode: "migrate" },
-    workspace: { roots: [] },
-    agents: {
-      enabled: [],
-      default: null,
-      executables: {},
-      codexRemote: "unix://",
-      opencode: { serverUrl: null },
-    },
-    serve: {
-      tailscale: {
-        enabled: false,
-        executable: "tailscale",
-        args: [],
-        hostname: null,
-        externalPort: 8444,
-        path: "/",
-      },
-    },
-    updates: {
-      policy: "manual",
-      channel: "stable",
-    },
-  };
+  return parseMuximoConfig({ version: muximoConfigVersion });
 }
 
 export function diffMuximoConfig(before: MuximoConfig, after: MuximoConfig): MuximoConfigChange[] {
@@ -411,7 +496,7 @@ export function readMuximoConfig(filePath: string): MuximoConfig {
     throw new Error(`could not read muximo config ${filePath}`, { cause: error });
   }
   try {
-    return validateMuximoConfig(parsed);
+    return parseMuximoConfig(parsed);
   } catch (error) {
     throw new Error(`invalid muximo config ${filePath}: ${errorMessage(error)}`, { cause: error });
   }
@@ -426,7 +511,7 @@ export function readMuximoConfigProfile(filePath: string): MuximoConfig {
     throw new Error(`could not read muximo config profile ${filePath}`, { cause: error });
   }
   try {
-    return normalizeMuximoConfigProfile(parsed);
+    return parseMuximoConfig(parsed);
   } catch (error) {
     throw new Error(`invalid muximo config profile ${filePath}: ${errorMessage(error)}`, { cause: error });
   }
@@ -434,7 +519,7 @@ export function readMuximoConfigProfile(filePath: string): MuximoConfig {
 
 /** Writes the instance configuration with permissions suitable for local user settings. */
 export function writeMuximoConfig(filePath: string, config: MuximoConfig): void {
-  const validated = validateMuximoConfig(config);
+  const validated = parseMuximoConfig(config);
   const directory = dirname(filePath);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
@@ -495,6 +580,12 @@ export function getMuximoConfigValue(config: MuximoConfig, key: string): MuximoC
       return config.serve.tailscale.externalPort;
     case "serve.tailscale.path":
       return config.serve.tailscale.path;
+    case "web.proxy.enabled":
+      return config.web.proxy.enabled;
+    case "web.proxy.host":
+      return config.web.proxy.host;
+    case "web.proxy.port":
+      return config.web.proxy.port;
     case "updates.policy":
       return config.updates.policy;
     case "updates.channel":
@@ -542,33 +633,37 @@ export function setMuximoConfigValue(config: MuximoConfig, key: string, value: M
   const next = structuredClone(config);
   switch (key) {
     case "daemon.host":
-      next.daemon.host = requireHost(key, value);
+      next.daemon.host = value as string;
       break;
     case "daemon.port":
-      next.daemon.port = requirePort(key, value);
+      next.daemon.port = value as number;
       break;
     case "daemon.allowedOrigins":
-      next.daemon.allowedOrigins = requireOriginArray(key, value);
+      next.daemon.allowedOrigins = value as string[];
       break;
     case "logging.level":
-      next.logging.level = requireChoice(key, value, muximoLogLevels);
+      next.logging.level = value as MuximoLogLevel;
       break;
     case "database.schemaMode":
-      next.database.schemaMode = requireChoice(key, value, muximoSchemaModes);
+      next.database.schemaMode = value as MuximoSchemaMode;
       break;
     case "workspace.roots":
-      next.workspace.roots = requireStringArray(key, value, true);
+      next.workspace.roots = value as string[];
       break;
     case "agents.enabled":
-      next.agents.enabled = requireAgentArray(key, value);
-      if (next.agents.default !== null && !next.agents.enabled.includes(next.agents.default))
+      next.agents.enabled = value as MuximoAgentBackend[];
+      if (
+        Array.isArray(next.agents.enabled) &&
+        next.agents.default !== null &&
+        !next.agents.enabled.includes(next.agents.default)
+      )
         next.agents.default = null;
       break;
     case "agents.default":
-      next.agents.default = requireAgentOrNull(key, value);
+      next.agents.default = value as MuximoAgentBackend | null;
       break;
     case "agents.codexRemote":
-      next.agents.codexRemote = requireString(key, value);
+      next.agents.codexRemote = value as string;
       break;
     case "agents.executables.codex":
       setExecutable(next, "codex", value);
@@ -580,309 +675,50 @@ export function setMuximoConfigValue(config: MuximoConfig, key: string, value: M
       setExecutable(next, "opencode", value);
       break;
     case "agents.opencode.serverUrl":
-      next.agents.opencode.serverUrl = value === null ? null : requireString(key, value);
+      next.agents.opencode.serverUrl = value as string | null;
       break;
     case "serve.tailscale.enabled":
-      next.serve.tailscale.enabled = requireBoolean(key, value);
+      next.serve.tailscale.enabled = value as boolean;
       break;
     case "serve.tailscale.executable":
-      next.serve.tailscale.executable = requireString(key, value);
+      next.serve.tailscale.executable = value as string;
       break;
     case "serve.tailscale.args":
-      next.serve.tailscale.args = requireStringArray(key, value, true);
+      next.serve.tailscale.args = value as string[];
       break;
     case "serve.tailscale.hostname":
-      next.serve.tailscale.hostname = value === null ? null : requireString(key, value);
+      next.serve.tailscale.hostname = value as string | null;
       break;
     case "serve.tailscale.externalPort":
-      next.serve.tailscale.externalPort = requirePort(key, value);
+      next.serve.tailscale.externalPort = value as number;
       break;
     case "serve.tailscale.path":
-      next.serve.tailscale.path = requireString(key, value);
+      next.serve.tailscale.path = value as string;
+      break;
+    case "web.proxy.enabled":
+      next.web.proxy.enabled = value as boolean;
+      break;
+    case "web.proxy.host":
+      next.web.proxy.host = value as string;
+      break;
+    case "web.proxy.port":
+      next.web.proxy.port = value as number;
       break;
     case "updates.policy":
-      next.updates.policy = requireChoice(key, value, muximoUpdatePolicies);
+      next.updates.policy = value as MuximoUpdatePolicy;
       break;
     case "updates.channel":
-      next.updates.channel = requireChoice(key, value, muximoUpdateChannels);
+      next.updates.channel = value as (typeof muximoUpdateChannels)[number];
       break;
     default:
       throw new Error(`unsupported muximo config key: ${key}`);
   }
-  return validateMuximoConfig(next);
+  return parseMuximoConfig(next);
 }
 
 function setExecutable(config: MuximoConfig, backend: MuximoAgentBackend, value: MuximoConfigValue): void {
   if (value === null) delete config.agents.executables[backend];
-  else config.agents.executables[backend] = requireString(`agents.executables.${backend}`, value);
-}
-
-function requireStringArray(key: string, value: unknown, allowEmpty = false): string[] {
-  if (
-    !Array.isArray(value) ||
-    (!allowEmpty && value.length === 0) ||
-    value.some((item) => typeof item !== "string" || (allowEmpty && item.length === 0) || item.trim().length === 0)
-  ) {
-    throw new Error(`${key} must be a string array`);
-  }
-  return value.map((item) => item.trim());
-}
-
-function requireAgentArray(key: string, value: unknown): MuximoAgentBackend[] {
-  const values = requireStringArray(key, value, true);
-  if (values.some((item) => !(muximoAgentBackends as readonly string[]).includes(item))) {
-    throw new Error(`${key} contains an unsupported agent backend`);
-  }
-  if (new Set(values).size !== values.length) throw new Error(`${key} must not contain duplicate agent backends`);
-  return values as MuximoAgentBackend[];
-}
-
-function requireString(key: string, value: unknown): string {
-  if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${key} must be a non-empty string`);
-  return value.trim();
-}
-
-function requireBoolean(key: string, value: unknown): boolean {
-  if (typeof value !== "boolean") throw new Error(`${key} must be true or false`);
-  return value;
-}
-
-function requireNumber(key: string, value: unknown): number {
-  if (typeof value !== "number" || !Number.isInteger(value)) throw new Error(`${key} must be an integer`);
-  return value;
-}
-
-function requirePort(key: string, value: unknown): number {
-  const port = requireNumber(key, value);
-  if (port < 1 || port > 65_535) throw new Error(`${key} must be between 1 and 65535`);
-  return port;
-}
-
-function requireHost(key: string, value: unknown): string {
-  const host = requireString(key, value);
-  if (!isLoopbackOrPrivateBindHost(host)) {
-    throw new Error(`${key} must be localhost, a loopback address, or a private IP address`);
-  }
-  return host;
-}
-
-function requireOriginArray(key: string, value: unknown): string[] {
-  const origins = requireStringArray(key, value, true);
-  for (const origin of origins) {
-    let parsed: URL;
-    try {
-      parsed = new URL(origin);
-    } catch {
-      throw new Error(`${key} contains an invalid URL`);
-    }
-    if (
-      parsed.origin !== origin ||
-      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
-      parsed.username ||
-      parsed.password
-    ) {
-      throw new Error(`${key} must contain HTTP(S) origins without credentials`);
-    }
-  }
-  return origins;
-}
-
-function requireOpenCodeServerUrl(key: string, value: unknown): string {
-  const serverUrl = requireString(key, value);
-  let parsed: URL;
-  try {
-    parsed = new URL(serverUrl);
-  } catch {
-    throw new Error(`${key} must be a valid URL`);
-  }
-  if (
-    parsed.protocol !== "http:" ||
-    parsed.hostname !== "127.0.0.1" ||
-    parsed.username ||
-    parsed.password ||
-    !parsed.port ||
-    parsed.pathname !== "/" ||
-    parsed.search ||
-    parsed.hash
-  ) {
-    throw new Error(`${key} must use an unauthenticated http://127.0.0.1 URL with a port and no path or query`);
-  }
-  const port = Number.parseInt(parsed.port, 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`${key} has an invalid port`);
-  return serverUrl;
-}
-
-function requireTailscaleHostname(key: string, value: unknown): string {
-  const hostname = requireString(key, value);
-  const normalized = hostname.replace(/^https?:\/\//u, "").replace(/\/+$/u, "");
-  if (!normalized) throw new Error(`${key} must be a hostname`);
-  let parsed: URL;
-  try {
-    parsed = new URL(`https://${normalized}`);
-  } catch {
-    throw new Error(`${key} must be a valid hostname`);
-  }
-  if (parsed.username || parsed.password || parsed.port || parsed.pathname !== "/" || parsed.search || parsed.hash) {
-    throw new Error(`${key} must be a hostname without credentials, a port, or a path`);
-  }
-  return hostname;
-}
-
-function requireAgentOrNull(key: string, value: unknown): MuximoAgentBackend | null {
-  if (value === null) return null;
-  if (typeof value !== "string" || !(muximoAgentBackends as readonly string[]).includes(value)) {
-    throw new Error(`${key} must be an agent backend or null`);
-  }
-  return value as MuximoAgentBackend;
-}
-
-function requireChoice<T extends string>(key: string, value: unknown, choices: readonly T[]): T {
-  if (typeof value !== "string" || !choices.includes(value as T)) throw new Error(`${key} has an unsupported value`);
-  return value as T;
-}
-
-function validateMuximoConfig(value: unknown): MuximoConfig {
-  if (!isRecord(value)) throw new Error("configuration must be an object");
-  assertKeys(
-    value,
-    ["version", "daemon", "logging", "database", "workspace", "agents", "serve", "updates"],
-    "configuration",
-  );
-  if (value.version !== muximoConfigVersion) throw new Error(`version must be ${muximoConfigVersion}`);
-  const daemon = requireRecord(value.daemon, "daemon");
-  const logging = requireRecord(value.logging, "logging");
-  const database = requireRecord(value.database, "database");
-  const workspace = requireRecord(value.workspace, "workspace");
-  const agents = requireRecord(value.agents, "agents");
-  const executables = requireRecord(agents.executables, "agents.executables");
-  const opencode = requireRecord(agents.opencode, "agents.opencode");
-  const serve = requireRecord(value.serve, "serve");
-  const tailscale = requireRecord(serve.tailscale, "serve.tailscale");
-  const updates = requireRecord(value.updates, "updates");
-  assertKeys(daemon, ["host", "port", "allowedOrigins"], "daemon");
-  assertKeys(logging, ["level"], "logging");
-  assertKeys(database, ["schemaMode"], "database");
-  assertKeys(workspace, ["roots"], "workspace");
-  assertKeys(agents, ["enabled", "default", "executables", "codexRemote", "opencode"], "agents");
-  assertKeys(executables, muximoAgentBackends, "agents.executables");
-  assertKeys(opencode, ["serverUrl"], "agents.opencode");
-  assertKeys(serve, ["tailscale"], "serve");
-  assertKeys(tailscale, ["enabled", "executable", "args", "hostname", "externalPort", "path"], "serve.tailscale");
-  assertKeys(updates, ["policy", "channel"], "updates");
-  const enabled = requireAgentArray("agents.enabled", agents.enabled);
-  const defaultBackend = agents.default === null ? null : requireAgentOrNull("agents.default", agents.default);
-  if (defaultBackend !== null && !enabled.includes(defaultBackend)) {
-    throw new Error("agents.default must be enabled");
-  }
-  const validatedExecutables: Partial<Record<MuximoAgentBackend, string>> = {};
-  for (const backend of muximoAgentBackends) {
-    const executable = executables[backend];
-    if (executable !== undefined)
-      validatedExecutables[backend] = requireString(`agents.executables.${backend}`, executable);
-  }
-  const opencodeServerUrl =
-    opencode.serverUrl === null ? null : requireOpenCodeServerUrl("agents.opencode.serverUrl", opencode.serverUrl);
-  const args = requireStringArray("serve.tailscale.args", tailscale.args, true);
-  const hostname =
-    tailscale.hostname === null ? null : requireTailscaleHostname("serve.tailscale.hostname", tailscale.hostname);
-  const externalPort = requirePort("serve.tailscale.externalPort", tailscale.externalPort);
-  return {
-    version: muximoConfigVersion,
-    daemon: {
-      host: requireHost("daemon.host", daemon.host),
-      port: requirePort("daemon.port", daemon.port),
-      allowedOrigins: requireOriginArray("daemon.allowedOrigins", daemon.allowedOrigins),
-    },
-    logging: {
-      level: requireChoice("logging.level", logging.level, muximoLogLevels),
-    },
-    database: {
-      schemaMode: requireChoice("database.schemaMode", database.schemaMode, muximoSchemaModes),
-    },
-    workspace: { roots: requireStringArray("workspace.roots", workspace.roots, true) },
-    agents: {
-      enabled,
-      default: defaultBackend,
-      executables: validatedExecutables,
-      codexRemote: requireString("agents.codexRemote", agents.codexRemote),
-      opencode: { serverUrl: opencodeServerUrl },
-    },
-    serve: {
-      tailscale: {
-        enabled: requireBoolean("serve.tailscale.enabled", tailscale.enabled),
-        executable: requireString("serve.tailscale.executable", tailscale.executable),
-        args,
-        hostname,
-        externalPort,
-        path: requireString("serve.tailscale.path", tailscale.path),
-      },
-    },
-    updates: {
-      policy: requireChoice("updates.policy", updates.policy, muximoUpdatePolicies),
-      channel: requireChoice("updates.channel", updates.channel, muximoUpdateChannels),
-    },
-  };
-}
-
-function normalizeMuximoConfigProfile(value: unknown): MuximoConfig {
-  const profile = requireRecord(value, "configuration profile");
-  assertKeys(
-    profile,
-    ["version", "daemon", "logging", "database", "workspace", "agents", "serve", "updates"],
-    "configuration profile",
-  );
-  if (profile.version !== muximoConfigVersion) throw new Error(`version must be ${muximoConfigVersion}`);
-  assertOptionalRecordKeys(profile, "daemon", ["host", "port", "allowedOrigins"]);
-  assertOptionalRecordKeys(profile, "logging", ["level"]);
-  assertOptionalRecordKeys(profile, "database", ["schemaMode"]);
-  assertOptionalRecordKeys(profile, "workspace", ["roots"]);
-  assertOptionalRecordKeys(profile, "agents", ["enabled", "default", "executables", "codexRemote", "opencode"]);
-  if (isRecord(profile.agents)) {
-    assertOptionalRecordKeys(profile.agents, "executables", muximoAgentBackends);
-    assertOptionalRecordKeys(profile.agents, "opencode", ["serverUrl"]);
-  }
-  assertOptionalRecordKeys(profile, "serve", ["tailscale"]);
-  if (isRecord(profile.serve)) {
-    assertOptionalRecordKeys(profile.serve, "tailscale", [
-      "enabled",
-      "executable",
-      "args",
-      "hostname",
-      "externalPort",
-      "path",
-    ]);
-  }
-  assertOptionalRecordKeys(profile, "updates", ["policy", "channel"]);
-
-  let config = defaultMuximoConfig();
-  for (const setting of muximoConfigSettings) {
-    const valueAtKey = readProfileValue(profile, setting.key);
-    if (valueAtKey.present) {
-      config = setMuximoConfigValue(config, setting.key, valueAtKey.value as MuximoConfigValue);
-    }
-  }
-  return config;
-}
-
-function assertOptionalRecordKeys(parent: Record<string, unknown>, key: string, allowed: readonly string[]): void {
-  if (!Object.hasOwn(parent, key)) return;
-  const value = parent[key];
-  if (!isRecord(value)) throw new Error(`${key} must be an object`);
-  assertKeys(value, allowed, key);
-}
-
-function readProfileValue(value: Record<string, unknown>, key: string): { present: boolean; value?: unknown } {
-  let current: unknown = value;
-  for (const segment of key.split(".")) {
-    if (!isRecord(current) || !Object.hasOwn(current, segment)) return { present: false };
-    current = current[segment];
-  }
-  return { present: true, value: current };
-}
-
-function requireRecord(value: unknown, key: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`${key} must be an object`);
-  return value;
+  else config.agents.executables[backend] = value as string;
 }
 
 function requireMuximoConfigSetting(key: string): MuximoConfigSetting {
@@ -899,16 +735,82 @@ function configValuesEqual(left: MuximoConfigValue, right: MuximoConfigValue): b
   return left === right;
 }
 
-function assertKeys(value: Record<string, unknown>, allowed: readonly string[], key: string): void {
-  const allowedKeys = new Set(allowed);
-  const unknown = Object.keys(value).find((candidate) => !allowedKeys.has(candidate));
-  if (unknown !== undefined) throw new Error(`${key}.${unknown} is not supported`);
+function parseMuximoConfig(value: unknown): MuximoConfig {
+  try {
+    return muximoConfigSchema.parse(value);
+  } catch (error) {
+    throw new Error(errorMessage(error), { cause: error });
+  }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isAllowedOrigin(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.origin === value &&
+    (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    parsed.username.length === 0 &&
+    parsed.password.length === 0
+  );
+}
+
+function isOpenCodeServerUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.hostname !== "127.0.0.1" ||
+    parsed.username.length > 0 ||
+    parsed.password.length > 0 ||
+    parsed.port.length === 0 ||
+    parsed.pathname !== "/" ||
+    parsed.search.length > 0 ||
+    parsed.hash.length > 0
+  ) {
+    return false;
+  }
+  const port = Number.parseInt(parsed.port, 10);
+  return Number.isInteger(port) && port >= 1 && port <= 65_535;
+}
+
+function isTailscaleHostname(value: string): boolean {
+  const normalized = value.replace(/^https?:\/\//u, "").replace(/\/+$/u, "");
+  if (normalized.length === 0) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(`https://${normalized}`);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.username.length === 0 &&
+    parsed.password.length === 0 &&
+    parsed.port.length === 0 &&
+    parsed.pathname === "/" &&
+    parsed.search.length === 0 &&
+    parsed.hash.length === 0
+  );
+}
+
+function isLoopbackHost(value: string): boolean {
+  return value === "localhost" || value === "127.0.0.1" || value === "::1";
 }
 
 function errorMessage(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    const issue = error.issues[0];
+    if (issue !== undefined) {
+      const path = issue.path.length > 0 ? issue.path.join(".") : "configuration";
+      return `${path} ${issue.message}`;
+    }
+  }
   return error instanceof Error ? error.message : String(error);
 }

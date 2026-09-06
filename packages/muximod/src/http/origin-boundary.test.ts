@@ -37,7 +37,7 @@ const authContext = {
 
 type OriginInput = {
   route: "rpc" | "events" | "terminal";
-  origin: "allowed" | "capacitor" | "custom" | "denied" | "none";
+  origin: "allowed" | "same-origin" | "capacitor" | "custom" | "denied" | "none";
 };
 type OriginResult = { status: number; body: unknown };
 type OriginFixture = {
@@ -98,8 +98,8 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
   };
   const application = createApplication(state);
   const originPolicy = allowNoOrigin
-    ? createOriginPolicy({ allowedOrigins: [allowedOrigin], allowNoOrigin: true })
-    : createOriginPolicy({ allowedOrigins: [allowedOrigin], allowNoOrigin: false });
+    ? createOriginPolicy({ allowedOrigins: [allowedOrigin], allowNoOrigin: true, allowSameOrigin: true })
+    : createOriginPolicy({ allowedOrigins: [allowedOrigin], allowNoOrigin: false, allowSameOrigin: true });
   const app = createMuximodApp({
     auth,
     application,
@@ -110,6 +110,7 @@ const fixture = (allowNoOrigin: boolean): FixtureHandle<OriginFixture> => {
       state.subscriptions += 1;
       return events();
     },
+    webProxy: { enabled: true, host: "127.0.0.1", port: 5227 },
   });
   const server = {
     upgrade: (_request: Request, _options: unknown) => {
@@ -158,6 +159,15 @@ const cases = [
   {
     name: "dispatches protected RPC from an allowlisted browser origin",
     input: { route: "rpc", origin: "allowed" },
+    assert: [
+      hasObserved<OriginContext, OriginResult>("status", 200),
+      hasObserved<OriginContext, OriginResult>("sessionsCalls", 1),
+      hasObserved<OriginContext, OriginResult>("authCalls", 1),
+    ],
+  },
+  {
+    name: "dispatches protected RPC from the muximod same origin when Web proxying is enabled",
+    input: { route: "rpc", origin: "same-origin" },
     assert: [
       hasObserved<OriginContext, OriginResult>("status", 200),
       hasObserved<OriginContext, OriginResult>("sessionsCalls", 1),
@@ -293,11 +303,13 @@ const table: OperationTable<OriginFixture, "default" | "no-origin-denied", Origi
         ? undefined
         : input.origin === "allowed"
           ? allowedOrigin
-          : input.origin === "capacitor"
-            ? muximoCapacitorOrigin
-            : input.origin === "custom"
-              ? customOrigin
-              : deniedOrigin;
+          : input.origin === "same-origin"
+            ? "http://muximod.local"
+            : input.origin === "capacitor"
+              ? muximoCapacitorOrigin
+              : input.origin === "custom"
+                ? customOrigin
+                : deniedOrigin;
     if (input.route === "terminal") {
       const headers = new Headers({ upgrade: "websocket" });
       if (origin) headers.set("origin", origin);

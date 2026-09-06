@@ -44,6 +44,10 @@ export {
   createTailscaleServeClient,
   fingerprintRoute,
   hasTailscaleServeRoute,
+  inspectTailscaleServeRoute,
+  normalizeTailscaleServeHostname,
+  normalizeTailscaleServePath,
+  normalizeTailscaleServeTarget,
   parseTailscaleHostname,
   readServeRouteState,
   removeServeRouteState,
@@ -53,7 +57,9 @@ export {
   type TailscaleServeClient,
   type TailscaleServeClientOptions,
   type TailscaleServeRoute,
+  type TailscaleServeRouteExpectation,
   type TailscaleServeRouteIdentity,
+  type TailscaleServeRouteStatus,
   writeServeRouteState,
 } from "./tailscale/index.js";
 export {
@@ -62,4 +68,10 @@ export {
   resolveMuximoCommand,
   TmuxAdapter,
 } from "./terminal/tmux.js";
+export {
+  createWebDaemonManager,
+  type WebDaemonManager,
+  type WebDaemonManagerOptions,
+  type WebDaemonStatus,
+} from "./web-daemon.js";
 export { workspaceIdForPath } from "./workspace/selection.js";

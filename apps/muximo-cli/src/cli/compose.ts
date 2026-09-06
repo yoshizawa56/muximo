@@ -3,6 +3,7 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import {
   type DaemonOptions,
   PairDevice,
@@ -11,19 +12,23 @@ import {
   type StartAgentSessionInput,
 } from "@muximo/application";
 import type { ResumeAgentSessionResponse, RunAgentSessionResponse } from "@muximo/contract/api";
-import type { MuximodDaemonStatus, MuximodHostSettings } from "@muximo/contract/control";
+import type { MuximodDaemonStatus, MuximodHostSettings, MuximodWebSettings } from "@muximo/contract/control";
 import { AgentSession } from "@muximo/domain";
 import {
   AttachedAgentExecutionAdapter,
+  buildServeHttpUrl,
   createLogger,
   createTailscaleServeClient,
   ensureTailscaleServe,
   GitShellWorktreeAdapter,
   GitWorktreeAdapter,
-  hasTailscaleServeRoute,
+  inspectTailscaleServeRoute,
   type Logger,
   type LogLevel,
   localMuximodUrl,
+  normalizeTailscaleServeHostname,
+  normalizeTailscaleServePath,
+  normalizeTailscaleServeTarget,
   readServeRouteState,
   removeServeRouteState,
   runDoctor,
@@ -51,7 +56,9 @@ import {
 } from "./adapters/muximod-pairing-control-adapter.js";
 import { MuximodShellSessionWorktreeLookup, MuximodShellWorkspaceResolver } from "./adapters/muximod-shell-context.js";
 import { resolvePairMuximodBaseUrl } from "./adapters/pair-route.js";
+import { createWebProcessManager, type WebProcessManager } from "./adapters/web-process.js";
 import { type CliApp, createCliApp } from "./app.js";
+import type { CliBuildMode } from "./build-mode.js";
 import type { CliHandlers, CliIo, CliRunInput } from "./commands/types.js";
 import { createConfigHandler } from "./handlers/config.js";
 import { createInteractiveHandlers } from "./handlers/interactive.js";
@@ -63,6 +70,7 @@ import { createMuximodRuntimeEnvironment } from "./muximod-config.js";
 import type { MuximoCliRuntimeOptions } from "./runtime-types.js";
 
 export type CliCompositionOptions = {
+  buildMode?: CliBuildMode;
   cwd?: string;
   environment: NodeJS.ProcessEnv;
   runtime: MuximoCliRuntimeOptions;
@@ -73,6 +81,7 @@ export type CliCompositionOptions = {
   tmux?: TmuxAdapter;
   muximod?: MuximodLifecycle;
   muximodProcess?: MuximodProcessCommand;
+  webProcess?: WebProcessManager;
 };
 
 export type CliComposition = {
@@ -87,6 +96,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
   const environment = options.environment;
   const runtime = options.runtime;
   const cwd = options.cwd ?? process.cwd();
+  const buildMode = options.buildMode ?? "development";
   const hostPaneId = currentTmuxPane(environment);
   const logger =
     options.logger ??
@@ -114,6 +124,55 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     };
   };
   type LocalDaemon = ReturnType<typeof localDaemon> & { host: string; port: number; baseUrl: string };
+  const serveStatePath = runtime.serveStateFile;
+  const readWebSettings = async (): Promise<MuximodWebSettings["proxy"]> => {
+    const control = await MuximodPairingControlAdapter.connect(runtime.controlSocket, {
+      requestTimeoutMs: muximodControlRequestTimeoutMs,
+    });
+    try {
+      return (await control.readWebSettings()).proxy;
+    } finally {
+      control.close();
+    }
+  };
+  const webProcess =
+    options.webProcess ??
+    createWebProcessManager({
+      pidFile: runtime.webPidFile,
+      logFile: runtime.webLogFile,
+      lockDirectory: runtime.webStartLockDirectory,
+      webRoot: fileURLToPath(new URL("../../../web/", import.meta.url)),
+      environment,
+      available: buildMode === "development",
+      resolveSettings: readWebSettings,
+    });
+  const reportWebFailure = (operation: string, error: unknown): void => {
+    logger.warn(`web.${operation}_failed`, { error });
+    io.err.write(
+      `[muximo-cli] Web development proxy unavailable: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  };
+  const ensureWeb = async (): Promise<void> => {
+    try {
+      await webProcess.ensure();
+    } catch (error) {
+      reportWebFailure("ensure", error);
+    }
+  };
+  const startWeb = async (): Promise<void> => {
+    try {
+      await webProcess.start();
+    } catch (error) {
+      reportWebFailure("start", error);
+    }
+  };
+  const stopWeb = async (): Promise<void> => {
+    try {
+      await webProcess.stop();
+    } catch (error) {
+      reportWebFailure("stop", error);
+    }
+  };
   let ensurePromise: Promise<LocalDaemon> | undefined;
   const ensureLocalDaemon = async (): Promise<LocalDaemon> => {
     let currentPromise = ensurePromise;
@@ -124,12 +183,15 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         if (result.host === undefined || result.port === undefined) {
           throw new Error("muximod became healthy without publishing its endpoint");
         }
-        return {
+        await ensureWeb();
+        const daemonEndpoint = {
           ...daemon,
           host: result.host,
           port: result.port,
           baseUrl: localMuximodUrl(result.host, result.port),
         };
+        await restoreServeOrigin(daemonEndpoint);
+        return daemonEndpoint;
       })();
       ensurePromise = currentPromise;
     }
@@ -201,7 +263,6 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     controlSocket: runtime.controlSocket,
     logFile: runtime.logFile,
   };
-  const serveStatePath = runtime.serveStateFile;
   const attachedAgentExecution = new AttachedAgentExecutionAdapter(logger);
   const agentExecutionPrepareTimeoutMs = muximodControlRequestTimeoutMs * 2;
   const agentExecutionAttachTimeoutMs = 5_000;
@@ -217,6 +278,86 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         control.close();
       }
     }, ensureLocalDaemon);
+  const setServeOriginOnDaemon = async (daemon: LocalDaemon, origin: string | null): Promise<void> => {
+    const control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+      requestTimeoutMs: agentExecutionPrepareTimeoutMs,
+    });
+    try {
+      await control.setServeOrigin(origin);
+    } finally {
+      control.close();
+    }
+  };
+  const setServeOrigin = (origin: string | null): Promise<void> =>
+    withControlRecovery(async () => {
+      await setServeOriginOnDaemon(await ensureLocalDaemon(), origin);
+    }, ensureLocalDaemon);
+  const restoreServeOrigin = async (daemon: LocalDaemon): Promise<void> => {
+    let state: ReturnType<typeof readServeRouteState>;
+    try {
+      state = readServeRouteState(serveStatePath);
+    } catch (error) {
+      logger.warn("serve.origin_restore_failed", { error });
+      return;
+    }
+    if (!state || state.component !== "muximod" || state.provider !== "tailscale") return;
+
+    let control: MuximodPairingControlAdapter | undefined;
+    try {
+      control = await MuximodPairingControlAdapter.connect(daemon.controlSocket, {
+        requestTimeoutMs: agentExecutionPrepareTimeoutMs,
+      });
+      const [hostSettings, webSettings] = await Promise.all([control.readHostSettings(), control.readWebSettings()]);
+      if (!hostSettings.tailscale.enabled || !webSettings.proxy.enabled) return;
+
+      const expectedHostname = hostSettings.tailscale.hostname ?? state.hostname;
+      const expectedExternalPort = hostSettings.tailscale.externalPort;
+      const expectedPath = normalizeTailscaleServePath(hostSettings.tailscale.path);
+      const expectedLocalTarget = localMuximodUrl("127.0.0.1", daemon.port);
+      const provider = await createTailscaleServeClient({
+        environment: createTailscaleEnvironment(environment, hostSettings),
+      }).status();
+      const liveRoute = inspectTailscaleServeRoute(provider.stdout, {
+        hostname: expectedHostname,
+        localTarget: expectedLocalTarget,
+        externalPort: expectedExternalPort,
+        path: expectedPath,
+      });
+      if (!liveRoute.proxyTargetMatches) {
+        logger.warn("serve.origin_restore_skipped", {
+          hostname: expectedHostname,
+          externalPort: expectedExternalPort,
+          path: expectedPath,
+          localTarget: expectedLocalTarget,
+        });
+        return;
+      }
+
+      await control.setServeOrigin(
+        new URL(buildServeHttpUrl(expectedHostname, expectedExternalPort, expectedPath)).origin,
+      );
+    } catch (error) {
+      logger.warn("serve.origin_restore_failed", { error });
+    } finally {
+      control?.close();
+    }
+  };
+  const restoreServeOriginIfAvailable = async (host: string | undefined, port: number | undefined): Promise<void> => {
+    if (host === undefined || port === undefined) return;
+    await restoreServeOrigin({
+      ...localDaemon(),
+      host,
+      port,
+      baseUrl: localMuximodUrl(host, port),
+    });
+  };
+  const clearServeOrigin = async (): Promise<void> => {
+    try {
+      await setServeOrigin(null);
+    } catch (error) {
+      logger.warn("serve.origin_clear_failed", { error });
+    }
+  };
   const readDaemonStatus = async (): Promise<MuximodDaemonStatus> => {
     const control = await MuximodPairingControlAdapter.connect(runtime.controlSocket, {
       requestTimeoutMs: agentExecutionPrepareTimeoutMs,
@@ -425,12 +566,39 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
     },
     daemon: {
       defaults: daemonDefaults,
-      start: { execute: async (input) => withApiInvalidation(() => muximod.start(input), invalidateApi) },
+      start: {
+        execute: async (input) => {
+          const result = await withApiInvalidation(() => muximod.start(input), invalidateApi);
+          await startWeb();
+          await restoreServeOriginIfAvailable(result.result.host, result.result.port);
+          return result;
+        },
+      },
       status: { execute: muximod.status },
       readStatus: { execute: readDaemonStatus },
-      stop: { execute: async (input) => withApiInvalidation(() => muximod.stop(input), invalidateApi) },
-      restart: { execute: async (input) => withApiInvalidation(() => muximod.restart(input), invalidateApi) },
-      ensure: { execute: async (input) => withApiInvalidation(() => muximod.ensure(input), invalidateApi) },
+      stop: {
+        execute: async (input) => {
+          await stopWeb();
+          return withApiInvalidation(() => muximod.stop(input), invalidateApi);
+        },
+      },
+      restart: {
+        execute: async (input) => {
+          await stopWeb();
+          const result = await withApiInvalidation(() => muximod.restart(input), invalidateApi);
+          await startWeb();
+          await restoreServeOriginIfAvailable(result.host, result.port);
+          return result;
+        },
+      },
+      ensure: {
+        execute: async (input) => {
+          const result = await withApiInvalidation(() => muximod.ensure(input), invalidateApi);
+          await ensureWeb();
+          await restoreServeOriginIfAvailable(result.host, result.port);
+          return result;
+        },
+      },
       log: {
         execute: (value) =>
           readMuximodDaemonLog({
@@ -451,6 +619,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
               'Tailscale Serve is disabled; enable it with "muximo config set serve.tailscale.enabled true"',
             );
           }
+          const webProxy = (await readWebSettings()).enabled;
           const result = await ensureTailscaleServe(
             {
               ...value,
@@ -461,6 +630,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
             { logger },
             tailscaleEnvironment,
           );
+          if (webProxy) await setServeOrigin(new URL(result.route.publicUrl).origin);
           writeServeRouteState(serveStatePath, {
             schemaVersion: 1,
             component: "muximod",
@@ -483,17 +653,53 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         }
         const tailscale = createTailscaleServeClient({ environment: tailscaleEnvironment });
         if (value.command === "status") {
-          const provider = state ? await tailscale.status() : undefined;
+          const expectedExternalPort = hostSettings.tailscale.externalPort;
+          const expectedPath = normalizeTailscaleServePath(hostSettings.tailscale.path);
+          const expectedLocalTarget = localMuximodUrl("127.0.0.1", daemon.port);
+          if (!state) {
+            return {
+              command: "status",
+              expectedExternalPort,
+              expectedLocalTarget,
+              expectedPath,
+              stateMatchesConfiguration: false,
+              liveRoute: { endpointAvailable: false, pathAvailable: false, proxyTargetMatches: false },
+            };
+          }
+          const expectedHostname = hostSettings.tailscale.hostname ?? state.hostname;
+          const provider = await tailscale.status();
+          const liveRoute = inspectTailscaleServeRoute(provider.stdout, {
+            hostname: expectedHostname,
+            localTarget: expectedLocalTarget,
+            externalPort: expectedExternalPort,
+            path: expectedPath,
+          });
           return {
             command: "status",
             state,
-            ...(state && provider ? { routeAvailable: hasTailscaleServeRoute(provider.stdout, state) } : {}),
-            ...(provider === undefined ? {} : { providerOutput: provider.stdout, providerError: provider.stderr }),
+            expectedExternalPort,
+            expectedLocalTarget,
+            expectedPath,
+            expectedPublicUrl: tryBuildServeHttpUrl(expectedHostname, expectedExternalPort, expectedPath),
+            stateMatchesConfiguration:
+              hostSettings.tailscale.enabled &&
+              state.externalPort === expectedExternalPort &&
+              normalizeTailscaleServePath(state.path) === expectedPath &&
+              normalizeTailscaleServeTarget(state.localTarget) === normalizeTailscaleServeTarget(expectedLocalTarget) &&
+              (hostSettings.tailscale.hostname === null ||
+                normalizeTailscaleServeHostname(state.hostname) ===
+                  normalizeTailscaleServeHostname(hostSettings.tailscale.hostname)),
+            liveRoute,
+            ...(provider.stderr ? { providerError: provider.stderr } : {}),
           };
         }
-        if (!state) return { command: "stop", state: "already-stopped" };
+        if (!state) {
+          await clearServeOrigin();
+          return { command: "stop", state: "already-stopped" };
+        }
         await tailscale.removeRoute(state);
         removeServeRouteState(serveStatePath);
+        await clearServeOrigin();
         return { command: "stop", state: "stopped", publicUrl: state.publicUrl };
       },
     },
@@ -618,6 +824,14 @@ function normalizeSessionName(value: string): string {
 function currentTmuxPane(environment: NodeJS.ProcessEnv): string | undefined {
   const pane = environment.TMUX && environment.TMUX_PANE ? environment.TMUX_PANE.trim() : "";
   return /^%[0-9]+$/u.test(pane) ? pane : undefined;
+}
+
+function tryBuildServeHttpUrl(hostname: string, externalPort: number, path: string): string | undefined {
+  try {
+    return buildServeHttpUrl(hostname, externalPort, path);
+  } catch {
+    return undefined;
+  }
 }
 
 function createTailscaleEnvironment(environment: NodeJS.ProcessEnv, settings: MuximodHostSettings): NodeJS.ProcessEnv {

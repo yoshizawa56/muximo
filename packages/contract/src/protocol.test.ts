@@ -517,6 +517,17 @@ const pairingCases = [
     assert: [isValid()],
   },
   {
+    name: "accepts a private Web settings request",
+    input: {
+      kind: "request",
+      value: {
+        type: "read_web_settings",
+        requestId: controlRequestId,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
     name: "accepts a daemon status request",
     input: {
       kind: "request",
@@ -526,6 +537,42 @@ const pairingCases = [
       },
     },
     assert: [isValid()],
+  },
+  {
+    name: "accepts an active Serve origin registration request",
+    input: {
+      kind: "request",
+      value: {
+        type: "set_serve_origin",
+        requestId: controlRequestId,
+        origin: "https://machine.tailnet.ts.net:8444",
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a Serve origin registration clear request",
+    input: {
+      kind: "request",
+      value: {
+        type: "set_serve_origin",
+        requestId: controlRequestId,
+        origin: null,
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "rejects a Serve origin with a URL path",
+    input: {
+      kind: "request",
+      value: {
+        type: "set_serve_origin",
+        requestId: controlRequestId,
+        origin: "https://machine.tailnet.ts.net:8444/muximo",
+      },
+    },
+    assert: [isInvalid(["origin"])],
   },
   {
     name: "rejects an unbounded daemon log request",
@@ -616,6 +663,18 @@ const pairingCases = [
     assert: [isValid()],
   },
   {
+    name: "accepts a private Web settings response",
+    input: {
+      kind: "response",
+      value: {
+        type: "web_settings",
+        requestId: controlRequestId,
+        proxy: { enabled: true, host: "127.0.0.1", port: 5227 },
+      },
+    },
+    assert: [isValid()],
+  },
+  {
     name: "accepts a daemon status response with configuration diagnostics",
     input: {
       kind: "response",
@@ -628,6 +687,18 @@ const pairingCases = [
           state: "restart_recommended",
           changedKeys: ["daemon.port", "agents.enabled"],
         },
+      },
+    },
+    assert: [isValid()],
+  },
+  {
+    name: "accepts a Serve origin registration response",
+    input: {
+      kind: "response",
+      value: {
+        type: "serve_origin_set",
+        requestId: controlRequestId,
+        origin: "https://machine.tailnet.ts.net:8444",
       },
     },
     assert: [isValid()],

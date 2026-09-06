@@ -22,7 +22,13 @@ type SystemInput =
   | { kind: "serve"; input: CliServeInput };
 
 type SystemResult = { status: number; out: string; err: string; calls: readonly string[] };
-type SystemFixtureKey = "default" | "startup-failed" | "pid-unhealthy" | "config-changed" | "status-unavailable";
+type SystemFixtureKey =
+  | "default"
+  | "startup-failed"
+  | "pid-unhealthy"
+  | "config-changed"
+  | "status-unavailable"
+  | "serve-mismatch";
 type SystemFixture = {
   out: string[];
   err: string[];
@@ -36,6 +42,10 @@ function hasValue<Key extends keyof SystemResult>(name: string, key: Key, expect
 
 function containsText(name: string, key: "out" | "err", expected: string) {
   return { name, check: (context: SystemResult) => expect(context[key]).toContain(expected) };
+}
+
+function excludesText(name: string, key: "out" | "err", expected: string) {
+  return { name, check: (context: SystemResult) => expect(context[key]).not.toContain(expected) };
 }
 
 function includesCall(name: string, expected: string) {
@@ -114,7 +124,24 @@ const cases = [
     input: { kind: "serve", input: { provider: "tailscale", command: "status" } },
     assert: [
       includesCall("passes serve status", "serve:status"),
-      containsText("presents route status", "out", routeState.publicUrl),
+      containsText("presents route status", "out", `public URL: ${routeState.publicUrl}`),
+      containsText("presents the configured proxy target", "out", `proxy target: ${routeState.localTarget} (matches)`),
+      excludesText("does not dump provider JSON", "out", "unrelated-provider-route"),
+    ] as const,
+  },
+  {
+    name: "reports when the live route does not match the active configuration",
+    fixture: "serve-mismatch" as const,
+    input: { kind: "serve", input: { provider: "tailscale", command: "status" } },
+    assert: [
+      hasValue("returns a failure status", "status", 1),
+      containsText("presents the configured external port", "out", "external port: 8445 (not found)"),
+      containsText(
+        "presents the configured proxy target",
+        "out",
+        "proxy target: http://127.0.0.1:4317 (does not match)",
+      ),
+      containsText("reports the route mismatch", "err", "live Tailscale Serve route does not match"),
     ] as const,
   },
   {
@@ -184,6 +211,7 @@ const table: OperationTable<SystemFixture, SystemFixtureKey, SystemInput, System
     "pid-unhealthy": () => ({ fixture: createFixture("pid-unhealthy") }),
     "config-changed": () => ({ fixture: createFixture("config-changed") }),
     "status-unavailable": () => ({ fixture: createFixture("status-unavailable") }),
+    "serve-mismatch": () => ({ fixture: createFixture("serve-mismatch") }),
   },
   cases: allCases,
   execute: async (fixture, input) => {
@@ -310,8 +338,21 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
       execute: async (input) => {
         calls.push(`serve:${input.command}`);
         if (input.command === "tailscale") return { command: "tailscale", result: serveResult, state: routeState };
-        if (input.command === "status")
-          return { command: "status", state: routeState, providerOutput: "route status\n" };
+        if (input.command === "status") {
+          const mismatch = key === "serve-mismatch";
+          return {
+            command: "status",
+            state: routeState,
+            expectedExternalPort: mismatch ? 8445 : routeState.externalPort,
+            expectedLocalTarget: routeState.localTarget,
+            expectedPath: routeState.path,
+            expectedPublicUrl: mismatch ? "https://tail.example:8445/" : routeState.publicUrl,
+            stateMatchesConfiguration: !mismatch,
+            liveRoute: mismatch
+              ? { endpointAvailable: false, pathAvailable: false, proxyTargetMatches: false }
+              : { endpointAvailable: true, pathAvailable: true, proxyTargetMatches: true },
+          };
+        }
         return { command: "stop", state: "stopped", publicUrl: routeState.publicUrl };
       },
     },

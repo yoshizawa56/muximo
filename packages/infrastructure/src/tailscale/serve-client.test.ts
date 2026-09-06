@@ -7,7 +7,14 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { createTailscaleServeClient, fingerprintRoute, type TailscaleServeRoute } from "./serve-client.js";
+import {
+  createTailscaleServeClient,
+  fingerprintRoute,
+  inspectTailscaleServeRoute,
+  type TailscaleServeRoute,
+  type TailscaleServeRouteExpectation,
+  type TailscaleServeRouteStatus,
+} from "./serve-client.js";
 
 type CleanupInput = {
   kind: "exact" | "invalid-fingerprint" | "changed-route" | "configured-prefix";
@@ -129,4 +136,127 @@ const table: OperationTable<CleanupFixture, "default", CleanupInput, string, Cle
 
 describe("Tailscale Serve route ownership", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
+});
+
+type InspectionInput = {
+  kind: "exact" | "unrelated" | "wrong-target" | "missing-path" | "invalid-json";
+};
+
+type InspectionFixture = {
+  expected: TailscaleServeRouteExpectation;
+  statusJson: Record<InspectionInput["kind"], string>;
+};
+
+type InspectionContext = {
+  status: TailscaleServeRouteStatus;
+};
+
+const inspectionExpected: TailscaleServeRouteExpectation = {
+  hostname: "machine.tailnet.ts.net",
+  localTarget: "http://127.0.0.1:4317",
+  externalPort: 8444,
+  path: "/",
+};
+
+const inspectionStatus = {
+  exact: liveStatus,
+  unrelated: JSON.stringify({
+    Web: {
+      "other.tailnet.ts.net:8444": {
+        Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } },
+      },
+    },
+  }),
+  "wrong-target": JSON.stringify({
+    Web: {
+      "machine.tailnet.ts.net:8444": {
+        Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } },
+      },
+    },
+  }),
+  "missing-path": JSON.stringify({
+    Web: {
+      "machine.tailnet.ts.net:8444": {
+        Handlers: { "/other": { Proxy: "http://127.0.0.1:4317" } },
+      },
+    },
+  }),
+  "invalid-json": "not json",
+} satisfies Record<InspectionInput["kind"], string>;
+
+const inspectionCases = [
+  {
+    name: "reports only the expected live endpoint",
+    input: { kind: "exact" },
+    assert: [
+      hasObserved<InspectionContext, TailscaleServeRouteStatus>("status", {
+        endpointAvailable: true,
+        pathAvailable: true,
+        proxyTargetMatches: true,
+      }),
+    ],
+  },
+  {
+    name: "ignores unrelated provider routes",
+    input: { kind: "unrelated" },
+    assert: [
+      hasObserved<InspectionContext, TailscaleServeRouteStatus>("status", {
+        endpointAvailable: false,
+        pathAvailable: false,
+        proxyTargetMatches: false,
+      }),
+    ],
+  },
+  {
+    name: "reports a matching endpoint with a wrong proxy target",
+    input: { kind: "wrong-target" },
+    assert: [
+      hasObserved<InspectionContext, TailscaleServeRouteStatus>("status", {
+        endpointAvailable: true,
+        pathAvailable: true,
+        proxyTargetMatches: false,
+      }),
+    ],
+  },
+  {
+    name: "reports a missing expected path",
+    input: { kind: "missing-path" },
+    assert: [
+      hasObserved<InspectionContext, TailscaleServeRouteStatus>("status", {
+        endpointAvailable: true,
+        pathAvailable: false,
+        proxyTargetMatches: false,
+      }),
+    ],
+  },
+  {
+    name: "treats invalid provider JSON as unavailable",
+    input: { kind: "invalid-json" },
+    assert: [
+      hasObserved<InspectionContext, TailscaleServeRouteStatus>("status", {
+        endpointAvailable: false,
+        pathAvailable: false,
+        proxyTargetMatches: false,
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", InspectionInput, TailscaleServeRouteStatus, InspectionContext>[];
+
+const inspectionTable: OperationTable<
+  InspectionFixture,
+  "default",
+  InspectionInput,
+  TailscaleServeRouteStatus,
+  InspectionContext
+> = {
+  defaultFixture: () => ({ fixture: { expected: inspectionExpected, statusJson: inspectionStatus } }),
+  cases: inspectionCases,
+  execute: (fixture, input) => inspectTailscaleServeRoute(fixture.statusJson[input.kind], fixture.expected),
+  observe: (_fixture, result) => ({
+    status: result.ok ? result.value : { endpointAvailable: false, pathAvailable: false, proxyTargetMatches: false },
+  }),
+};
+
+describe("Tailscale Serve route inspection", () => {
+  runOperationTable(it as unknown as TestRegistrar, inspectionTable);
 });

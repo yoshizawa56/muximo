@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import type { MuximodConfigurationStatus, MuximodHostSettings } from "@muximo/contract/control";
+import type { MuximodConfigurationStatus, MuximodHostSettings, MuximodWebSettings } from "@muximo/contract/control";
 import {
   createLogger,
   createMigrationSchemaSynchronizer,
@@ -24,6 +24,7 @@ export type MuximodStartupConfiguration = {
   config: MuximodConfig;
   environment: NodeJS.ProcessEnv;
   hostSettings: MuximodHostSettings;
+  webSettings: MuximodWebSettings;
   configurationStatus: () => MuximodConfigurationStatus;
 };
 
@@ -67,6 +68,7 @@ export function resolveMuximodStartupConfiguration(
     enabledAgentBackends: [...instanceConfig.agents.enabled],
     defaultAgentBackend: instanceConfig.agents.default,
     opencodeServerUrl: instanceConfig.agents.opencode.serverUrl,
+    webProxy: { ...instanceConfig.web.proxy },
     runtimeEnvironment,
   };
   const resolvedEnvironment = resolveMuximodEnvironment(environment, runtimeEnvironment);
@@ -81,10 +83,14 @@ export function resolveMuximodStartupConfiguration(
       path: tailscale.path,
     },
   };
+  const webSettings: MuximodWebSettings = {
+    proxy: { ...instanceConfig.web.proxy },
+  };
   return {
     config,
     environment: resolvedEnvironment,
     hostSettings,
+    webSettings,
     configurationStatus: createMuximodConfigurationStatusReader({
       configFile: paths.configFile,
       startupConfig: instanceConfig,
@@ -111,6 +117,7 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
   let config: MuximodConfig | undefined;
   let environment = resolveMuximodEnvironment(process.env, options.runtimeEnvironment);
   let hostSettings: MuximodHostSettings | undefined;
+  let webSettings: MuximodWebSettings | undefined;
   let server: ReturnType<typeof createMuximodServer> | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let signalRequested = false;
@@ -156,6 +163,7 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
     config = startup.config;
     environment = startup.environment;
     hostSettings = startup.hostSettings;
+    webSettings = startup.webSettings;
     const schemaSynchronizer =
       instanceConfig.database.schemaMode === "push"
         ? createPushSchemaSynchronizer({ environment, force: true })
@@ -167,6 +175,7 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
       environment,
       configurationStatus: startup.configurationStatus,
       hostSettings,
+      webSettings,
       schemaSynchronizer,
       logger,
     });

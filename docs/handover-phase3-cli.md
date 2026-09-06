@@ -47,9 +47,11 @@ the daemon database or reads daemon-owned files. Muximod reads the instance's
 validated `config.json` for daemon behavior, and there is no `.env` profile,
 worktree snapshot, or base-instance copy.
 
-`apps/web/cli.ts` independently manages the Web process and its Tailscale route. It does
-not import or invoke muximod. Muximod Serve is route-only, and there is no combined
-development supervisor or Portless dependency.
+The local `muximo` CLI manages the optional Vite development process using the
+normalized Web settings returned by muximod. Muximod proxies the Web paths and
+Vite HMR through its own HTTP server. The Web app is only a foreground Vite
+process; it does not read instance configuration, start a daemon, or manage a
+Tailscale route.
 
 ## Verification contract
 

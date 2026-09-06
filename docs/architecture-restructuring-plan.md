@@ -168,9 +168,10 @@ settings, and immediate validation with in-place retry;
 access. Configuration changes are summarized as before-and-after values. The
 default agent set is empty, and the daemon does not register disabled
 providers.
-`apps/web/cli.ts` independently manages one Vite process
-and its Web Serve route; it does not import or invoke muximod. Muximod Serve is a separate
-route-only command, and no combined development supervisor is part of the runtime.
+The CLI manages the optional Vite development process from the daemon-owned Web
+configuration and muximod proxies the unreserved Web paths to it. The Web app
+itself remains a foreground Vite application and does not interpret muximo
+configuration or manage a daemon or provider route.
 
 ## Verification per phase
 

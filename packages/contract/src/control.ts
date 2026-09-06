@@ -8,6 +8,7 @@ export type {
   MuximodControlResponse,
   MuximodDaemonStatus,
   MuximodHostSettings,
+  MuximodWebSettings,
 } from "./protocol.js";
 export {
   decodeMuximodControlRequest,
@@ -20,4 +21,6 @@ export {
   muximodControlMaxResponseBytes,
   muximodControlRequestSchema,
   muximodControlResponseSchema,
+  muximodWebProxySettingsSchema,
+  muximodWebSettingsSchema,
 } from "./protocol.js";

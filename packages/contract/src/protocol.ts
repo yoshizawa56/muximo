@@ -190,6 +190,11 @@ const httpUrlSchema = z
     return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
   }, "URL must use http or https without credentials");
 
+const httpsOriginSchema = httpUrlSchema.refine((value) => {
+  const url = new URL(value);
+  return url.protocol === "https:" && url.origin === value;
+}, "URL must be an exact HTTPS origin");
+
 export const publicKeyJwkSchema = z
   .object({
     kty: z.literal("EC"),
@@ -262,6 +267,26 @@ export const muximodHostSettingsSchema = z
   .strict();
 export type MuximodHostSettings = z.infer<typeof muximodHostSettingsSchema>;
 
+export const muximodWebProxySettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    host: z
+      .string()
+      .min(1)
+      .refine(
+        (value): boolean => value === "localhost" || value === "127.0.0.1" || value === "::1",
+        "host must be loopback",
+      ),
+    port: z.number().int().min(1).max(65_535),
+  })
+  .strict();
+export const muximodWebSettingsSchema = z
+  .object({
+    proxy: muximodWebProxySettingsSchema,
+  })
+  .strict();
+export type MuximodWebSettings = z.infer<typeof muximodWebSettingsSchema>;
+
 export const muximodControlRequestSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("create_local_session"), requestId: controlRequestIdSchema }).strict(),
   z
@@ -322,7 +347,15 @@ export const muximodControlRequestSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("read_host_settings"), requestId: controlRequestIdSchema }).strict(),
+  z.object({ type: z.literal("read_web_settings"), requestId: controlRequestIdSchema }).strict(),
   z.object({ type: z.literal("read_daemon_status"), requestId: controlRequestIdSchema }).strict(),
+  z
+    .object({
+      type: z.literal("set_serve_origin"),
+      requestId: controlRequestIdSchema,
+      origin: httpsOriginSchema.nullable(),
+    })
+    .strict(),
   z.discriminatedUnion("operation", [
     z
       .object({
@@ -458,9 +491,23 @@ export const muximodControlResponseSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("web_settings"),
+      requestId: controlRequestIdSchema,
+      ...muximodWebSettingsSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("daemon_status"),
       requestId: controlRequestIdSchema,
       ...muximodDaemonStatusSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("serve_origin_set"),
+      requestId: controlRequestIdSchema,
+      origin: httpsOriginSchema.nullable(),
     })
     .strict(),
   z

@@ -9,17 +9,37 @@ export function presentServeResult(result: ServeResult, io: CliIo): number {
     return 0;
   }
   if (result.command === "status") {
+    const liveRoute = result.liveRoute;
+    io.out.write("[muximo-cli] muximod Serve status:\n");
+    io.out.write(`  local daemon: ${result.expectedLocalTarget} (running)\n`);
+    io.out.write(
+      `  external port: ${result.expectedExternalPort} (${result.state ? (liveRoute.endpointAvailable ? "available" : "not found") : "not configured"})\n`,
+    );
+    io.out.write(
+      `  path: ${result.expectedPath} (${result.state ? (liveRoute.pathAvailable ? "available" : "not found") : "not configured"})\n`,
+    );
+    io.out.write(
+      `  proxy target: ${result.expectedLocalTarget} (${liveRoute.proxyTargetMatches ? "matches" : "does not match"})\n`,
+    );
+    if (result.expectedPublicUrl) io.out.write(`  public URL: ${result.expectedPublicUrl}\n`);
     if (!result.state) {
-      io.out.write("[muximo-cli] muximod Serve route is not configured\n");
+      io.out.write("  route state: not configured\n");
       return 1;
     }
-    io.out.write(`[muximo-cli] muximod Serve route: ${result.state.publicUrl}\n`);
-    if (result.providerOutput) io.out.write(result.providerOutput);
+    io.out.write(
+      `  route state: ${result.stateMatchesConfiguration ? "matches active daemon configuration" : "does not match active daemon configuration"}\n`,
+    );
     if (result.providerError) io.err.write(result.providerError);
-    if (result.routeAvailable === false) {
-      io.err.write("[muximo-cli] muximod Serve route state does not match the live provider configuration\n");
+    if (!result.stateMatchesConfiguration) {
+      io.err.write("[muximo-cli] saved Serve route does not match the active daemon configuration\n");
+    }
+    if (!liveRoute.proxyTargetMatches) {
+      io.err.write(
+        "[muximo-cli] live Tailscale Serve route does not match the configured external port, path, or proxy target\n",
+      );
       return 1;
     }
+    if (!result.stateMatchesConfiguration) return 1;
     return 0;
   }
   io.out.write(

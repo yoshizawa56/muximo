@@ -20,7 +20,7 @@ import {
   type WorkspaceAuditPort,
   WorkspaceRecordFactory,
 } from "@muximo/application";
-import type { MuximodConfigurationStatus, MuximodHostSettings } from "@muximo/contract/control";
+import type { MuximodConfigurationStatus, MuximodHostSettings, MuximodWebSettings } from "@muximo/contract/control";
 import { protocolVersion } from "@muximo/contract/shared";
 import type { AgentBackend, AgentSessionRecord } from "@muximo/domain";
 import {
@@ -121,6 +121,7 @@ export type MuximodOptions = {
   defaultAgentBackend: AgentBackend | null;
   opencodeServerUrl: string | null;
   hostSettings?: MuximodHostSettings;
+  webSettings?: MuximodWebSettings;
   daemonVersion?: string;
   configurationStatus?: () => MuximodConfigurationStatus | Promise<MuximodConfigurationStatus>;
 };
@@ -358,6 +359,13 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     wsTickets: authWsTickets,
     connections: authenticatedConnections,
   });
+  const originPolicy =
+    options.originPolicy ??
+    createOriginPolicy({
+      allowedOrigins: options.allowedOrigins,
+      allowNoOrigin: true,
+      allowSameOrigin: options.webSettings?.proxy.enabled === true,
+    });
   controlServer = new MuximodControlServer({
     socketPath: options.controlSocket,
     auth,
@@ -374,6 +382,16 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       return { ...result, lines: [...result.lines] };
     },
     readHostSettings: () => options.hostSettings ?? { tailscale: defaultTailscaleSettings() },
+    readWebSettings: () => options.webSettings ?? { proxy: defaultWebProxySettings() },
+    setServeOrigin: (origin) => {
+      if (
+        origin !== null &&
+        (options.hostSettings?.tailscale.enabled !== true || options.webSettings?.proxy.enabled !== true)
+      ) {
+        throw new Error("Serve origin registration requires both Tailscale Serve and the Web proxy");
+      }
+      originPolicy.setRuntimeOrigin(origin);
+    },
     adoptAgentSession: (request) => applicationForAgentPane().adoptAgentSession(request),
     observeAgentSession: (request) => applicationForAgentPane().observeAgentSession(request),
     releaseAgentSession: (request) => applicationForAgentPane().releaseAgentSession(request),
@@ -491,12 +509,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
     auth,
     application,
     isReady: () => controlReady,
-    originPolicy:
-      options.originPolicy ??
-      createOriginPolicy({
-        allowedOrigins: options.allowedOrigins,
-        allowNoOrigin: true,
-      }),
+    originPolicy,
     hookToken,
     socketFactory: (transport) => new BunSocketAdapter(transport),
     onTerminalConnection: (socket: MuximodSocket, context) => {
@@ -523,6 +536,7 @@ export function createMuximodServer(options: MuximodOptions): MuximodServer {
       enabled: enabledAgentBackends,
       default: defaultAgentBackend,
     },
+    webProxy: options.webSettings?.proxy,
     logger,
   });
   let httpServer: ReturnType<typeof Bun.serve> | undefined;
@@ -703,6 +717,14 @@ function defaultTailscaleSettings(): MuximodHostSettings["tailscale"] {
     hostname: null,
     externalPort: 8444,
     path: "/",
+  };
+}
+
+function defaultWebProxySettings(): MuximodWebSettings["proxy"] {
+  return {
+    enabled: false,
+    host: "127.0.0.1",
+    port: 5227,
   };
 }
 
