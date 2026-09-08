@@ -1,4 +1,5 @@
 import {
+  type Assertion,
   hasError,
   noFixture,
   type OperationCase,
@@ -6,7 +7,7 @@ import {
   returns,
   runOperationTable,
 } from "@muximo/test-support";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { defineKey, defineKeys } from "./definitions";
 import {
   applyCustomKeyboardDrop,
@@ -37,6 +38,7 @@ import {
   defaultCustomKeyboardLayout,
   deleteCustomKeyboardProfile,
   duplicateCustomKeyboardProfile,
+  hydrateCustomKeyboardState,
   isCustomKeyboardProfileNameValid,
   parseCustomKeyboardState,
   resolveActiveProfileId,
@@ -638,6 +640,57 @@ const parsedStateTable: OperationTable<undefined, "default", { raw: string }, Pa
   observe: () => ({}),
 };
 
+type HydrationInput = { raw: string; hasLocalChanges: boolean };
+type HydrationObservation = { profileIds: readonly string[]; activeProfileId: string };
+
+const hydrationAssertion: Assertion<EmptyContext, HydrationObservation> = {
+  name: "keeps stored profiles while replaying an edit made during the read",
+  check: (_context, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value).toEqual({
+      profileIds: ["default", "agent", "custom-keyboard-profile-3"],
+      activeProfileId: "custom-keyboard-profile-3",
+    });
+  },
+};
+
+const hydrationCases = [
+  {
+    name: "applies stored state when no local edit happened during the read",
+    input: { raw: validState, hasLocalChanges: false },
+    assert: [
+      returns<EmptyContext, HydrationObservation>({
+        profileIds: ["default", "agent"],
+        activeProfileId: "agent",
+      }),
+    ],
+  },
+  {
+    name: "does not overwrite an edit made before the storage read completed",
+    input: { raw: validState, hasLocalChanges: true },
+    assert: [hydrationAssertion],
+  },
+] satisfies readonly OperationCase<"default", HydrationInput, HydrationObservation, EmptyContext>[];
+
+const hydrationTable: OperationTable<undefined, "default", HydrationInput, HydrationObservation, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: hydrationCases,
+  execute: (_fixture, input) => {
+    const pendingUpdates = input.hasLocalChanges
+      ? [
+          (state: CustomKeyboardState) =>
+            createCustomKeyboardProfile(state, "workspace-1", { name: "Local", icon: "spark" }),
+        ]
+      : [];
+    const hydrated = hydrateCustomKeyboardState(input.raw, pendingUpdates);
+    return {
+      profileIds: hydrated.profiles.map((profile) => profile.id),
+      activeProfileId: resolveActiveProfileId(hydrated, "workspace-1"),
+    };
+  },
+  observe: () => ({}),
+};
+
 function profileStateWithAgent(): CustomKeyboardState {
   const state = parseCustomKeyboardState(null);
   const defaultProfile = state.profiles[0];
@@ -824,6 +877,7 @@ describe("custom keyboard unified key model", () => {
   runOperationTable(it, terminalActionTable);
   runOperationTable(it, shortcutDraftTable);
   runOperationTable(it, parsedStateTable);
+  runOperationTable(it, hydrationTable);
   runOperationTable(it, profileTable);
   runOperationTable(it, profileNameTable);
 });

@@ -33,10 +33,12 @@ type SessionStep =
   | { type: "backpressure"; socket: "first" | "second" }
   | { type: "emit-output"; value: string }
   | { type: "refresh-output"; value: string }
-  | { type: "send-input"; value: string }
+  | { type: "send-input"; socket?: "first" | "second"; value: string }
   | { type: "enter-copy-mode" }
   | { type: "paste-tmux-buffer" }
   | { type: "paste-image"; image?: string }
+  | { type: "send-malformed"; socket: "first" | "second" }
+  | { type: "reject-pending-claim" }
   | { type: "advance"; milliseconds: number };
 type SessionContext = {
   prepareCalls: number;
@@ -58,12 +60,13 @@ type SessionContext = {
   pasteTargets: readonly string[];
   copyModeCalls: number;
   pasteTmuxBufferCalls: number;
+  leaseClaimCalls: number;
   events: readonly string[];
   leaseReturnToDesktopCalls: number;
   leaseResizeCalls: readonly (readonly [number | undefined, number | undefined])[];
   leaseRefreshCalls: number;
 };
-type SessionFixtureKey = "pasteFailure" | "sameDevice";
+type SessionFixtureKey = "pasteFailure" | "sameDevice" | "staleOperation";
 type SessionFixture = ReturnType<typeof createHarness> & { sockets: Partial<Record<"first" | "second", FakeSocket>> };
 
 const sessionFixture = (): FixtureHandle<SessionFixture> => {
@@ -93,6 +96,18 @@ const pasteFailureFixture = (): FixtureHandle<SessionFixture> => {
 const sameDeviceFixture = (): FixtureHandle<SessionFixture> => {
   vi.useFakeTimers();
   const harness = createHarness({ resumeGraceMs: 100, authDeviceId: "device-1" });
+  return {
+    fixture: { ...harness, sockets: {} },
+    cleanup: () => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    },
+  };
+};
+
+const staleOperationFixture = (): FixtureHandle<SessionFixture> => {
+  vi.useFakeTimers();
+  const harness = createHarness({ resumeGraceMs: 100 }, false, true);
   return {
     fixture: { ...harness, sockets: {} },
     cleanup: () => {
@@ -373,11 +388,29 @@ const cases = [
       hasObserved<SessionContext, undefined>("leaseClaimCalls", 1),
     ],
   },
+  {
+    name: "does not deliver a stale operation error to a resumed socket",
+    fixture: "staleOperation",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "send-input", socket: "first", value: "ls" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+      { type: "send-malformed", socket: "first" },
+      { type: "send-input", socket: "first", value: "stale input" },
+      { type: "reject-pending-claim" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondResumed", true),
+      hasObserved<SessionContext, undefined>("secondErrors", []),
+      hasObserved<SessionContext, undefined>("writes", []),
+    ],
+  },
 ] satisfies readonly ScenarioCase<SessionFixtureKey, SessionStep, undefined, SessionContext>[];
 
 const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undefined, SessionContext> = {
   defaultFixture: sessionFixture,
-  fixtures: { pasteFailure: pasteFailureFixture, sameDevice: sameDeviceFixture },
+  fixtures: { pasteFailure: pasteFailureFixture, sameDevice: sameDeviceFixture, staleOperation: staleOperationFixture },
   cases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
@@ -435,7 +468,7 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
         });
       }
       if (step.type === "send-input") {
-        fixture.sockets.second?.receive(Buffer.from(step.value), true);
+        fixture.sockets[step.socket ?? "second"]?.receive(Buffer.from(step.value), true);
         await flush();
       }
       if (step.type === "enter-copy-mode") {
@@ -456,6 +489,14 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
             data: step.image ?? "AAEC",
           }),
         );
+        await flush();
+      }
+      if (step.type === "send-malformed") {
+        fixture.sockets[step.socket]?.receive("not a terminal control frame");
+        await flush();
+      }
+      if (step.type === "reject-pending-claim") {
+        fixture.rejectClaim(new Error("stale claim failed"));
         await flush();
       }
       if (step.type === "advance") {
@@ -517,9 +558,15 @@ describe("terminal session lifecycle", () => {
   runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
-function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFails = false) {
+function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFails = false, claimPending = false) {
   const pty = new FakePty(401);
   const events: string[] = [];
+  let rejectClaim: (error: Error) => void = () => undefined;
+  const pendingClaim = claimPending
+    ? new Promise<void>((_resolve, reject) => {
+        rejectClaim = reject;
+      })
+    : undefined;
   const lease = {
     id: "lease-1",
     target: "%0",
@@ -527,7 +574,9 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
     windowId: "@0",
     sessionName: "muximod",
     owner: "mobile" as const,
-    claimMobile: vi.fn(async () => undefined),
+    claimMobile: vi.fn(async () => {
+      await pendingClaim;
+    }),
     returnToDesktop: vi.fn(async () => undefined),
     resize: vi.fn(async (_cols?: number, _rows?: number) => undefined),
     refresh: vi.fn(async () => undefined),
@@ -575,7 +624,7 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
     imagePaster: paster,
     ...overrides,
   };
-  return { manager, prepared, lease, pty, spawn, registry, paster, options, events };
+  return { manager, prepared, lease, pty, spawn, registry, paster, options, events, rejectClaim };
 }
 
 function attachFrame(target: string, credentials: { sessionId?: string; resumeToken?: string } = {}): string {

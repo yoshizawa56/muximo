@@ -104,6 +104,25 @@ const invalidGeometryAssertion: Assertion<Context, PaneLayoutWindow[]> = {
   },
 };
 
+const transientDimensionAssertion: Assertion<Context, PaneLayoutWindow[]> = {
+  name: "keeps a geometric layout across a one-column resize boundary",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value[0]?.hasGeometry).toBe(true);
+    expect(result.value[0]?.windowWidth).toBe(160);
+  },
+};
+
+const containingDimensionAssertion: Assertion<Context, PaneLayoutWindow[]> = {
+  name: "prefers a reported viewport that contains every pane during a resize",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value[0]?.hasGeometry).toBe(true);
+    expect(result.value[0]?.windowWidth).toBe(160);
+    expect(result.value[0]?.panes).toHaveLength(3);
+  },
+};
+
 const sessionScopedWindowAssertion: Assertion<Context, PaneLayoutWindow[]> = {
   name: "keeps identical window ids separate across tmux sessions",
   check: (_ctx, result) => {
@@ -223,7 +242,7 @@ const windowCases = [
     assert: [invalidGeometryAssertion],
   },
   {
-    name: "falls back when panes disagree about the live window size",
+    name: "keeps geometry when panes straddle a live resize boundary",
     input: {
       panes: [
         paneSummary({
@@ -254,7 +273,54 @@ const windowCases = [
         }),
       ],
     },
-    assert: [invalidGeometryAssertion],
+    assert: [transientDimensionAssertion],
+  },
+  {
+    name: "uses the containing viewport when a new pane reports the smaller transient size",
+    input: {
+      panes: [
+        paneSummary({
+          id: "pane-top-left",
+          hostPaneId: "%1",
+          windowId: "@0",
+          windowIndex: 0,
+          paneIndex: 0,
+          left: 0,
+          top: 0,
+          width: 80,
+          height: 24,
+          windowWidth: 160,
+          windowHeight: 48,
+        }),
+        paneSummary({
+          id: "pane-bottom-left",
+          hostPaneId: "%2",
+          windowId: "@0",
+          windowIndex: 0,
+          paneIndex: 1,
+          left: 0,
+          top: 24,
+          width: 80,
+          height: 24,
+          windowWidth: 160,
+          windowHeight: 48,
+        }),
+        paneSummary({
+          id: "pane-right",
+          hostPaneId: "%3",
+          windowId: "@0",
+          windowIndex: 0,
+          paneIndex: 2,
+          left: 80,
+          top: 0,
+          width: 80,
+          height: 48,
+          windowWidth: 80,
+          windowHeight: 24,
+        }),
+      ],
+    },
+    assert: [containingDimensionAssertion],
   },
   {
     name: "scopes windows by session before sorting them",

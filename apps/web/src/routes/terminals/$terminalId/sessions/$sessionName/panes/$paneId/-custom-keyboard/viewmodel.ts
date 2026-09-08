@@ -17,7 +17,11 @@ import {
   resolveCustomKeyboardLayout,
   toggleCustomKeyboardModifier,
 } from "./policy";
-import { type CustomKeyboardStorage, createCustomKeyboardStorage } from "./storage";
+import {
+  type CustomKeyboardStorage,
+  createCustomKeyboardStorage,
+  createSerializedCustomKeyboardStorage,
+} from "./storage";
 import type { CustomKeyboardTerminalAction } from "./terminal-actions";
 import { isCustomKeyboardTerminalAction } from "./terminal-actions";
 
@@ -267,15 +271,25 @@ export type CustomKeyboardState = {
   globalActiveProfileId: string;
 };
 
+type CustomKeyboardStateUpdater = (current: CustomKeyboardState) => CustomKeyboardState;
+
 const CUSTOM_KEYBOARD_PROFILE_NAME_MAX_LENGTH = 40;
 
 export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOptions): CustomKeyboardController {
   const [state, setState] = useState<CustomKeyboardState>(() => createDefaultCustomKeyboardState());
   const [storage] = useState<CustomKeyboardStorage>(() => createCustomKeyboardStorage());
+  const [serializedStorage] = useState<CustomKeyboardStorage>(() => createSerializedCustomKeyboardStorage(storage));
   const [isHydrated, setIsHydrated] = useState(false);
+  const hydratedRef = useRef(false);
+  const pendingStateUpdatesRef = useRef<CustomKeyboardStateUpdater[]>([]);
   const [localActiveModifiers, setLocalActiveModifiers] = useState<CustomKeyboardModifier[]>([]);
   const activeModifiers = options.activeModifiers ?? localActiveModifiers;
   const activeModifiersRef = useRef<CustomKeyboardModifier[]>([...activeModifiers]);
+
+  const updateState = useCallback((updater: CustomKeyboardStateUpdater) => {
+    if (!hydratedRef.current) pendingStateUpdatesRef.current.push(updater);
+    setState(updater);
+  }, []);
 
   const activeProfileId = useMemo(
     () => resolveActiveProfileId(state, options.workspaceId),
@@ -332,11 +346,17 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
       .read()
       .then((raw) => {
         if (disposed) return;
-        setState(parseCustomKeyboardState(raw));
+        const pendingUpdates = pendingStateUpdatesRef.current;
+        pendingStateUpdatesRef.current = [];
+        setState(() => hydrateCustomKeyboardState(raw, pendingUpdates));
+        hydratedRef.current = true;
         setIsHydrated(true);
       })
       .catch(() => {
-        if (!disposed) setIsHydrated(true);
+        if (!disposed) {
+          hydratedRef.current = true;
+          setIsHydrated(true);
+        }
       });
     return () => {
       disposed = true;
@@ -345,58 +365,64 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
 
   useEffect(() => {
     if (!isHydrated) return;
-    void storage.write(JSON.stringify(state));
-  }, [isHydrated, state, storage]);
+    void serializedStorage.write(JSON.stringify(state));
+  }, [isHydrated, serializedStorage, state]);
 
   const onSelectProfile = useCallback(
     (profileId: string) => {
-      setState((current) => selectCustomKeyboardProfile(current, options.workspaceId, profileId));
+      updateState((current) => selectCustomKeyboardProfile(current, options.workspaceId, profileId));
       updateActiveModifiers([]);
     },
-    [options.workspaceId, updateActiveModifiers],
+    [options.workspaceId, updateActiveModifiers, updateState],
   );
 
   const onCreateProfile = useCallback(
     (input: { name: string; icon: CustomKeyboardIcon }) => {
-      setState((current) => createCustomKeyboardProfile(current, options.workspaceId, input));
+      updateState((current) => createCustomKeyboardProfile(current, options.workspaceId, input));
       updateActiveModifiers([]);
     },
-    [options.workspaceId, updateActiveModifiers],
+    [options.workspaceId, updateActiveModifiers, updateState],
   );
 
   const onDuplicateProfile = useCallback(
     (profileId: string) => {
-      setState((current) => duplicateCustomKeyboardProfile(current, options.workspaceId, profileId));
+      updateState((current) => duplicateCustomKeyboardProfile(current, options.workspaceId, profileId));
       updateActiveModifiers([]);
     },
-    [options.workspaceId, updateActiveModifiers],
+    [options.workspaceId, updateActiveModifiers, updateState],
   );
 
-  const onRenameProfile = useCallback((profileId: string, name: string) => {
-    if (!isCustomKeyboardProfileNameValid(name)) return;
-    setState((current) =>
-      updateCustomKeyboardProfile(current, profileId, (profile) => ({ ...profile, name: name.trim() })),
-    );
-  }, []);
+  const onRenameProfile = useCallback(
+    (profileId: string, name: string) => {
+      if (!isCustomKeyboardProfileNameValid(name)) return;
+      updateState((current) =>
+        updateCustomKeyboardProfile(current, profileId, (profile) => ({ ...profile, name: name.trim() })),
+      );
+    },
+    [updateState],
+  );
 
   const onDeleteProfile = useCallback(
     (profileId: string) => {
-      setState((current) => deleteCustomKeyboardProfile(current, profileId));
+      updateState((current) => deleteCustomKeyboardProfile(current, profileId));
       updateActiveModifiers([]);
     },
-    [updateActiveModifiers],
+    [updateActiveModifiers, updateState],
   );
 
-  const onSetProfileIcon = useCallback((profileId: string, icon: CustomKeyboardIcon) => {
-    setState((current) => updateCustomKeyboardProfile(current, profileId, (profile) => ({ ...profile, icon })));
-  }, []);
+  const onSetProfileIcon = useCallback(
+    (profileId: string, icon: CustomKeyboardIcon) => {
+      updateState((current) => updateCustomKeyboardProfile(current, profileId, (profile) => ({ ...profile, icon })));
+    },
+    [updateState],
+  );
 
   const onToggleProfileLink = useCallback(
     (profileId: string) => {
-      setState((current) => toggleCustomKeyboardProfileLink(current, options.workspaceId, profileId));
+      updateState((current) => toggleCustomKeyboardProfileLink(current, options.workspaceId, profileId));
       updateActiveModifiers([]);
     },
-    [options.workspaceId, updateActiveModifiers],
+    [options.workspaceId, updateActiveModifiers, updateState],
   );
 
   const onToggleNativeKeyboard = useCallback(() => {
@@ -456,7 +482,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
 
   const onDrop = useCallback(
     (source: CustomKeyboardDragSource, target: CustomKeyboardDropTarget) => {
-      setState((current) => {
+      updateState((current) => {
         const currentProfile = current.profiles.find(
           (profile) => profile.id === resolveActiveProfileId(current, options.workspaceId),
         );
@@ -478,25 +504,25 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
         });
       });
     },
-    [options.workspaceId],
+    [options.workspaceId, updateState],
   );
 
   const onRemoveKey = useCallback(
     (keyId: string) => {
-      setState((current) =>
+      updateState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
           layout: removeKeyFromLayout(profile.layout, keyId),
         })),
       );
     },
-    [options.workspaceId],
+    [options.workspaceId, updateState],
   );
 
   const onRegisterShortcut = useCallback(
     (draft: CustomKeyboardShortcutDraft) => {
       if (!isCustomKeyboardShortcutDraftValid(draft)) return;
-      setState((current) =>
+      updateState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => {
           const id = nextShortcutId(profile.libraryKeys);
           const iconLabel = customKeyboardIconOptions.find((option) => option.value === draft.icon)?.label ?? "Custom";
@@ -515,7 +541,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
         }),
       );
     },
-    [options.workspaceId],
+    [options.workspaceId, updateState],
   );
 
   const onUpdateShortcut = useCallback(
@@ -532,20 +558,20 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
               activation: { type: "sequence", sequence: draft.sequence },
             }
           : key;
-      setState((current) =>
+      updateState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
           libraryKeys: profile.libraryKeys.map(update),
         })),
       );
     },
-    [options.workspaceId],
+    [options.workspaceId, updateState],
   );
 
   const onDeleteShortcut = useCallback(
     (keyId: string) => {
       if (customKeyboardFixedKeyIds.includes(keyId)) return;
-      setState((current) =>
+      updateState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
           layout: removeKeyFromLayout(profile.layout, keyId),
@@ -554,7 +580,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
         })),
       );
     },
-    [options.workspaceId],
+    [options.workspaceId, updateState],
   );
 
   const editableRows = useMemo(
@@ -628,14 +654,14 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     onUpdateShortcut,
     onDeleteShortcut,
     onRepeatStartDelayChange: (repeatStartDelayMs) =>
-      setState((current) =>
+      updateState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
           repeatStartDelayMs,
         })),
       ),
     onRepeatIntervalChange: (repeatIntervalMs) =>
-      setState((current) =>
+      updateState((current) =>
         updateActiveCustomKeyboardProfile(current, options.workspaceId, (profile) => ({
           ...profile,
           repeatIntervalMs,
@@ -726,6 +752,13 @@ export function parseCustomKeyboardState(raw: string | null): CustomKeyboardStat
   } catch {
     return fallback;
   }
+}
+
+export function hydrateCustomKeyboardState(
+  raw: string | null,
+  pendingUpdates: readonly CustomKeyboardStateUpdater[],
+): CustomKeyboardState {
+  return pendingUpdates.reduce((next, update) => update(next), parseCustomKeyboardState(raw));
 }
 
 function parseStoredCustomKeyboardState(

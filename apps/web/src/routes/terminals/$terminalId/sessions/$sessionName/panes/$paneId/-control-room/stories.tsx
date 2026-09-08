@@ -163,7 +163,7 @@ const controlRoomScenarios = {
     }),
   desktopOwnsViewport: () =>
     buildViewModel({
-      terminal: createTerminal({ viewportOwner: "desktop", viewportReason: "desktop activity detected" }),
+      terminal: createTerminal({ viewportOwner: "desktop", viewportReason: "desktop_activity" }),
     }),
   connectionError: () =>
     buildViewModel({

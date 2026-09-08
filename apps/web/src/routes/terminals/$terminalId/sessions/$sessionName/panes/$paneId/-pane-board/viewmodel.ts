@@ -16,6 +16,48 @@ export function selectedTargetFromPaneId(
   return panes.find((pane) => pane.id === selectedPaneId)?.hostPaneId ?? lastKnownTarget;
 }
 
+const MAX_MISSING_INVENTORY_SNAPSHOTS = 2;
+
+export type SelectedTargetMemory = {
+  target: string;
+  missingInventorySnapshots: number;
+};
+
+export type SelectedTargetMemoryInput = {
+  panes: readonly PaneSummary[];
+  selectedPaneId?: string;
+  memory: SelectedTargetMemory;
+  inventoryAuthoritative: boolean;
+  inventorySnapshotChanged: boolean;
+};
+
+export type SelectedTargetMemoryResult = SelectedTargetMemory;
+
+/**
+ * Retains a missing pane target only for transient inventory gaps. A
+ * successful inventory that assigns the remembered target to another pane is
+ * authoritative evidence that the tmux target was reused and must invalidate
+ * the memory immediately.
+ */
+export function resolveSelectedTargetMemory(input: SelectedTargetMemoryInput): SelectedTargetMemoryResult {
+  const selectedPane = input.panes.find((pane) => pane.id === input.selectedPaneId);
+  if (selectedPane) return { target: selectedPane.hostPaneId, missingInventorySnapshots: 0 };
+
+  if (!input.memory.target) return { target: "", missingInventorySnapshots: input.memory.missingInventorySnapshots };
+
+  const targetReused =
+    input.inventoryAuthoritative &&
+    input.panes.some((pane) => pane.id !== input.selectedPaneId && pane.hostPaneId === input.memory.target);
+  const missingInventorySnapshots =
+    input.inventoryAuthoritative && input.inventorySnapshotChanged
+      ? input.memory.missingInventorySnapshots + 1
+      : input.memory.missingInventorySnapshots;
+  if (targetReused || (input.inventoryAuthoritative && missingInventorySnapshots > MAX_MISSING_INVENTORY_SNAPSHOTS)) {
+    return { target: "", missingInventorySnapshots };
+  }
+  return { target: input.memory.target, missingInventorySnapshots };
+}
+
 export type PaneBoardViewModel = {
   selectedTarget: string;
   panes: PaneSummary[];
@@ -69,19 +111,45 @@ export function usePaneBoardViewModel({
     sessionName?: string;
     selectedPaneId?: string;
     target: string;
-  }>({ connection, sessionName, selectedPaneId, target: "" });
+    missingInventorySnapshots: number;
+    inventorySnapshot?: readonly PaneSummary[];
+  }>({
+    connection,
+    sessionName,
+    selectedPaneId,
+    target: "",
+    missingInventorySnapshots: 0,
+    inventorySnapshot: undefined,
+  });
   const sameSelection =
     selectedTargetMemoryRef.current.connection === connection &&
     selectedTargetMemoryRef.current.sessionName === sessionName &&
     selectedTargetMemoryRef.current.selectedPaneId === selectedPaneId;
-  const selectedTarget = selectedTargetFromPaneId(
+  const selectedTargetMemory = resolveSelectedTargetMemory({
     panes,
     selectedPaneId,
-    sameSelection ? selectedTargetMemoryRef.current.target : "",
-  );
+    memory: sameSelection ? selectedTargetMemoryRef.current : { target: "", missingInventorySnapshots: 0 },
+    inventoryAuthoritative: query.data !== undefined && !query.isError,
+    inventorySnapshotChanged: query.data?.panes !== selectedTargetMemoryRef.current.inventorySnapshot,
+  });
+  const selectedTarget = selectedTargetMemory.target;
   useLayoutEffect(() => {
-    selectedTargetMemoryRef.current = { connection, sessionName, selectedPaneId, target: selectedTarget };
-  }, [connection, selectedPaneId, selectedTarget, sessionName]);
+    selectedTargetMemoryRef.current = {
+      connection,
+      sessionName,
+      selectedPaneId,
+      target: selectedTargetMemory.target,
+      missingInventorySnapshots: selectedTargetMemory.missingInventorySnapshots,
+      inventorySnapshot: query.data?.panes,
+    };
+  }, [
+    connection,
+    selectedPaneId,
+    selectedTargetMemory.missingInventorySnapshots,
+    selectedTargetMemory.target,
+    query.data?.panes,
+    sessionName,
+  ]);
   const select = useCallback((pane: PaneSummary) => onSelect(pane.id), [onSelect]);
   const refresh = useCallback(() => {
     void query.refetch();

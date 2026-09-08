@@ -362,12 +362,35 @@ function compareOptionalNumbers(left: number | undefined, right: number | undefi
 }
 
 function sharedWindowDimensions(panes: readonly PaneSummary[]): { width: number; height: number } | undefined {
-  const first = panes[0];
-  if (!first || !isPositiveInteger(first.windowWidth) || !isPositiveInteger(first.windowHeight)) return undefined;
-  if (panes.some((pane) => pane.windowWidth !== first.windowWidth || pane.windowHeight !== first.windowHeight)) {
-    return undefined;
+  const dimensions = panes
+    .filter(
+      (pane): pane is PaneSummary & { windowWidth: number; windowHeight: number } =>
+        isPositiveInteger(pane.windowWidth) && isPositiveInteger(pane.windowHeight),
+    )
+    .map(({ windowWidth, windowHeight }) => ({ width: windowWidth, height: windowHeight }));
+  if (dimensions.length === 0) return undefined;
+
+  // tmux can publish pane rows across a resize boundary. Prefer a reported
+  // window size that contains every coordinate instead of discarding the
+  // layout; among equally supported candidates, choose the smallest one.
+  const counts = new Map<string, { dimensions: { width: number; height: number }; count: number }>();
+  for (const current of dimensions) {
+    const key = `${current.width}x${current.height}`;
+    const entry = counts.get(key);
+    if (entry) entry.count += 1;
+    else counts.set(key, { dimensions: current, count: 1 });
   }
-  return { width: first.windowWidth, height: first.windowHeight };
+  const containing = [...counts.values()].filter(({ dimensions: current }) =>
+    panes.every((pane) => hasPaneGeometryInWindow(pane, current.width, current.height)),
+  );
+  if (containing.length === 0) return undefined;
+  return containing.reduce((best, current) => {
+    if (current.count > best.count) return current;
+    if (current.count < best.count) return best;
+    return current.dimensions.width * current.dimensions.height < best.dimensions.width * best.dimensions.height
+      ? current
+      : best;
+  }).dimensions;
 }
 
 function firstPositiveDimension(
@@ -382,22 +405,33 @@ function isPositiveInteger(value: number | undefined): value is number {
 }
 
 function hasPaneGeometryInWindow(pane: PaneSummary, windowWidth: number, windowHeight: number): boolean {
+  return hasPaneCoordinates(pane) && pane.left + pane.width <= windowWidth && pane.top + pane.height <= windowHeight;
+}
+
+function hasPaneCoordinates(pane: Pick<PaneSummary, "left" | "top" | "width" | "height">): pane is Pick<
+  PaneSummary,
+  "left" | "top" | "width" | "height"
+> & {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+} {
   return (
-    hasPaneGeometry(pane) &&
-    pane.windowWidth === windowWidth &&
-    pane.windowHeight === windowHeight &&
-    pane.left + pane.width <= windowWidth &&
-    pane.top + pane.height <= windowHeight
+    isNonNegativeInteger(pane.left) &&
+    isNonNegativeInteger(pane.top) &&
+    isPositiveInteger(pane.width) &&
+    isPositiveInteger(pane.height)
   );
 }
 
 function hasOverlappingPanes(panes: readonly PaneSummary[]): boolean {
   for (let index = 0; index < panes.length; index += 1) {
     const left = panes[index];
-    if (!left || !hasPaneGeometry(left)) continue;
+    if (!left || !hasPaneCoordinates(left)) continue;
     for (let otherIndex = index + 1; otherIndex < panes.length; otherIndex += 1) {
       const right = panes[otherIndex];
-      if (!right || !hasPaneGeometry(right)) continue;
+      if (!right || !hasPaneCoordinates(right)) continue;
       const overlapsHorizontally = left.left < right.left + right.width && right.left < left.left + left.width;
       const overlapsVertically = left.top < right.top + right.height && right.top < left.top + left.height;
       if (overlapsHorizontally && overlapsVertically) return true;
@@ -435,13 +469,7 @@ function paneGeometryStyle(
 ): CSSProperties | undefined {
   const { windowWidth, windowHeight } = window;
   if (!isPositiveInteger(windowWidth) || !isPositiveInteger(windowHeight)) return undefined;
-  if (
-    !hasPaneGeometry(pane) ||
-    pane.windowWidth !== windowWidth ||
-    pane.windowHeight !== windowHeight ||
-    pane.left + pane.width > windowWidth ||
-    pane.top + pane.height > windowHeight
-  ) {
+  if (!hasPaneCoordinates(pane) || pane.left + pane.width > windowWidth || pane.top + pane.height > windowHeight) {
     return undefined;
   }
   const clamp = (value: number) => Math.max(0, Math.min(100, value));

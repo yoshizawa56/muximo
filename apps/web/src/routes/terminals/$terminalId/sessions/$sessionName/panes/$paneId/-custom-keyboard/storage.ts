@@ -10,6 +10,18 @@ export type CustomKeyboardStorage = {
   write(value: string): Promise<void>;
 };
 
+/** Serializes persistence writes so an older asynchronous write cannot finish last. */
+export function createSerializedCustomKeyboardStorage(storage: CustomKeyboardStorage): CustomKeyboardStorage {
+  let pending = Promise.resolve();
+  return {
+    read: () => storage.read(),
+    write(value) {
+      pending = pending.catch(() => undefined).then(() => storage.write(value));
+      return pending;
+    },
+  };
+}
+
 export function createCustomKeyboardStorage(
   preferences: PreferencesStore = Preferences,
   browserStorage: BrowserStorage | undefined = getBrowserStorage(),

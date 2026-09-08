@@ -29,6 +29,22 @@ export type ControlRoomViewModel = {
   onNewPane: () => void;
 };
 
+export type DesktopActivityNoticeInput = {
+  status: "connecting" | "connected" | "closed" | "error";
+  viewportOwner: "mobile" | "desktop";
+  viewportReason: string | null;
+};
+
+export function shouldShowDesktopActivityNotice(input: DesktopActivityNoticeInput): boolean {
+  return (
+    input.status === "connected" &&
+    input.viewportOwner === "desktop" &&
+    (input.viewportReason === "desktop_activity" ||
+      input.viewportReason === "desktop_resize" ||
+      input.viewportReason === "desktop_focus")
+  );
+}
+
 export function useControlRoomViewModel(): ControlRoomViewModel {
   const navigate = useNavigate();
   const { terminalId, sessionName, paneId } = useParams({

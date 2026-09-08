@@ -42,11 +42,13 @@ type ViewportStep =
   | { type: "desktop-layout" }
   | { type: "reassert" }
   | { type: "poll" }
-  | { type: "unfocus" };
+  | { type: "unfocus" }
+  | { type: "advance-clock"; milliseconds: number };
 type ViewportFixtureKey = "default" | "missing";
 type ViewportFixture = {
   adapter: FakeTmuxAdapter;
   manager: TmuxViewportManager;
+  clock: TestClock;
   events: ViewportEvent[];
   prepared?: PreparedViewport;
   lease?: ViewportLease;
@@ -71,11 +73,16 @@ type ViewportContext = {
   killedSessionCount: number;
   originalLayout: readonly [string, number, number, number, number, number, number][];
 };
+type TestClock = {
+  now: number;
+  advance: (milliseconds: number) => void;
+};
 
 const viewportFixture = (): FixtureHandle<ViewportFixture> => {
   const adapter = new FakeTmuxAdapter();
-  const manager = new TmuxViewportManager(adapter);
-  const fixture: ViewportFixture = { adapter, manager, events: [] };
+  const clock: TestClock = { now: 0, advance: (milliseconds) => (clock.now += milliseconds) };
+  const manager = new TmuxViewportManager(adapter, () => clock.now);
+  const fixture: ViewportFixture = { adapter, manager, clock, events: [] };
   return { fixture, cleanup: () => manager.dispose() };
 };
 
@@ -139,6 +146,37 @@ const cases = [
     ],
   },
   {
+    name: "ignores a synthetic focused client-active hook without desktop activity",
+    steps: [prepare, attach, { type: "hook", event: "client-active" }],
+    assert: [hasObserved<ViewportContext, undefined>("zoomed", true)],
+  },
+  {
+    name: "uses the deterministic suppression boundary for unchanged client activity",
+    steps: [
+      prepare,
+      attach,
+      { type: "advance-clock", milliseconds: 249 },
+      { type: "hook", event: "client-active" },
+      { type: "advance-clock", milliseconds: 1 },
+      { type: "hook", event: "client-active" },
+    ],
+    assert: [
+      hasObserved<ViewportContext, undefined>("zoomed", false),
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "desktop_activity" },
+      ]),
+    ],
+  },
+  {
+    name: "ignores synthetic focus and resize hooks during viewport setup",
+    steps: [prepare, attach, { type: "hook", event: "client-focus-in" }, { type: "hook", event: "client-resized" }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("zoomed", true),
+      hasObserved<ViewportContext, undefined>("events", [{ owner: "mobile", reason: "attached" }]),
+    ],
+  },
+  {
     name: "returns to the desktop viewport when the mobile transport is lost",
     steps: [prepare, attach, { type: "return-to-desktop" }],
     assert: [
@@ -178,6 +216,7 @@ const cases = [
     steps: [
       prepare,
       attach,
+      { type: "advance-clock", milliseconds: 250 },
       { type: "desktop-size", width: 100, height: 30 },
       { type: "hook", event: "client-resized" },
       { type: "release" },
@@ -216,6 +255,7 @@ const cases = [
     steps: [
       prepare,
       attach,
+      { type: "advance-clock", milliseconds: 250 },
       { type: "hook", event: "client-resized" },
       { type: "hook", event: "client-focus-in" },
       { type: "hook", event: "client-active" },
@@ -281,7 +321,7 @@ const cases = [
   },
   {
     name: "reclaims the viewport from a desktop takeover with a bare claim",
-    steps: [prepare, attach, { type: "hook", event: "client-active" }, { type: "claim" }],
+    steps: [prepare, attach, { type: "desktop-activity" }, { type: "hook", event: "client-active" }, { type: "claim" }],
     assert: [
       hasObserved<ViewportContext, undefined>("width", 80),
       hasObserved<ViewportContext, undefined>("height", 24),
@@ -297,7 +337,13 @@ const cases = [
   },
   {
     name: "records mobile geometry without reclaiming a desktop-owned viewport",
-    steps: [prepare, attach, { type: "hook", event: "client-active" }, { type: "resize", cols: 90, rows: 30 }],
+    steps: [
+      prepare,
+      attach,
+      { type: "desktop-activity" },
+      { type: "hook", event: "client-active" },
+      { type: "resize", cols: 90, rows: 30 },
+    ],
     assert: [
       hasObserved<ViewportContext, undefined>("width", 120),
       hasObserved<ViewportContext, undefined>("height", 40),
@@ -313,6 +359,7 @@ const cases = [
     steps: [
       prepare,
       attach,
+      { type: "desktop-activity" },
       { type: "hook", event: "client-active" },
       { type: "resize", cols: 90, rows: 30 },
       { type: "claim" },
@@ -329,7 +376,14 @@ const cases = [
   },
   {
     name: "captures the latest desktop split before reclaiming the mobile viewport",
-    steps: [prepare, attach, { type: "hook", event: "client-active" }, { type: "desktop-layout" }, { type: "claim" }],
+    steps: [
+      prepare,
+      attach,
+      { type: "desktop-activity" },
+      { type: "hook", event: "client-active" },
+      { type: "desktop-layout" },
+      { type: "claim" },
+    ],
     assert: [
       hasObserved<ViewportContext, undefined>("originalLayout", [
         ["%0", 0, 0, 40, 40, 160, 40],
@@ -376,6 +430,7 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
         await (fixture.manager as unknown as { pollDesktopClients: () => Promise<void> }).pollDesktopClients();
       if (step.type === "unfocus")
         fixture.adapter.desktop.flags = fixture.adapter.desktop.flags.replace(",focused", "");
+      if (step.type === "advance-clock") fixture.clock.advance(step.milliseconds);
     }
   },
   observe: (fixture) => ({
@@ -545,10 +600,10 @@ class FakeTmuxAdapter extends TmuxAdapter {
     return pid === this.mobile.pid ? this.mobile : undefined;
   }
   public override listClients(): TmuxClient[] {
-    return [this.mobile, this.desktop];
+    return [{ ...this.mobile }, { ...this.desktop }];
   }
   public override clientView(clientName: string): TmuxClient {
-    return clientName === this.mobile.name ? this.mobile : this.desktop;
+    return clientName === this.mobile.name ? { ...this.mobile } : { ...this.desktop };
   }
   public override setWindowSize(_windowId: string, value: TmuxWindowSize): void {
     this.state.windowSize = value;

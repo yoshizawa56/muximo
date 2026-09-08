@@ -12,7 +12,7 @@ import { paneStateLabel } from "../../../-pane-state";
 import type { PaneBoardQueryPolicy, PaneBoardQueryPolicyInput } from "./policy";
 import { paneBoardQueryPolicy } from "./policy";
 import type { PaneSummary } from "./viewmodel";
-import { selectedTargetFromPaneId } from "./viewmodel";
+import { resolveSelectedTargetMemory, selectedTargetFromPaneId } from "./viewmodel";
 
 type Input = { state: "waiting_input" | "waiting_approval" | "running" | "failed" };
 type Context = {};
@@ -75,6 +75,103 @@ const selectionTable: OperationTable<undefined, "default", SelectionInput, strin
   observe: () => ({}),
 };
 
+type MemoryInput = {
+  panes: readonly PaneSummary[];
+  selectedPaneId: string;
+  memory: { target: string; missingInventorySnapshots: number };
+  inventoryAuthoritative: boolean;
+  inventorySnapshotChanged: boolean;
+};
+
+type MemoryResult = { target: string; missingInventorySnapshots: number };
+
+const memoryCases = [
+  {
+    name: "retains a target through the first authoritative omission",
+    input: {
+      panes: [storyPanes[0]],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 0 },
+      inventoryAuthoritative: true,
+      inventorySnapshotChanged: true,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 1 })],
+  },
+  {
+    name: "retains a target through the second authoritative omission",
+    input: {
+      panes: [storyPanes[0]],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 1 },
+      inventoryAuthoritative: true,
+      inventorySnapshotChanged: true,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 2 })],
+  },
+  {
+    name: "expires a target after the bounded omission grace period",
+    input: {
+      panes: [storyPanes[0]],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 2 },
+      inventoryAuthoritative: true,
+      inventorySnapshotChanged: true,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "", missingInventorySnapshots: 3 })],
+  },
+  {
+    name: "invalidates a target reused by another pane in authoritative inventory",
+    input: {
+      panes: [{ ...storyPanes[0], hostPaneId: "%1" }],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 0 },
+      inventoryAuthoritative: true,
+      inventorySnapshotChanged: true,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "", missingInventorySnapshots: 1 })],
+  },
+  {
+    name: "retains a target while inventory is not authoritative",
+    input: {
+      panes: [],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 9 },
+      inventoryAuthoritative: false,
+      inventorySnapshotChanged: true,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 9 })],
+  },
+  {
+    name: "does not count a rerender as another inventory omission",
+    input: {
+      panes: [storyPanes[0]],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 1 },
+      inventoryAuthoritative: true,
+      inventorySnapshotChanged: false,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 1 })],
+  },
+  {
+    name: "replaces memory with the current target when the pane returns",
+    input: {
+      panes: [{ ...storyPanes[1], hostPaneId: "%4" }],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 2 },
+      inventoryAuthoritative: true,
+      inventorySnapshotChanged: true,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "%4", missingInventorySnapshots: 0 })],
+  },
+] satisfies readonly OperationCase<"default", MemoryInput, MemoryResult, Context>[];
+
+const memoryTable: OperationTable<undefined, "default", MemoryInput, MemoryResult, Context> = {
+  defaultFixture: noFixture(),
+  cases: memoryCases,
+  execute: (_fixture, input) => resolveSelectedTargetMemory(input),
+  observe: () => ({}),
+};
+
 const queryPolicyCases = [
   {
     name: "disables the query without a connection",
@@ -114,5 +211,6 @@ const queryPolicyTable: OperationTable<undefined, "default", PaneBoardQueryPolic
 describe("pane board view model helpers", () => {
   runOperationTable(it as unknown as TestRegistrar, table);
   runOperationTable(it as unknown as TestRegistrar, selectionTable);
+  runOperationTable(it as unknown as TestRegistrar, memoryTable);
   runOperationTable(it as unknown as TestRegistrar, queryPolicyTable);
 });

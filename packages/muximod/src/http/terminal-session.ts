@@ -170,11 +170,17 @@ export class TerminalSession {
     const generation = ++this.transportGeneration;
     const onMessage = (data: MuximodSocketData, isBinary: boolean) => {
       if (this.socket !== socket || this.socketBinding?.generation !== generation || this.disposed) return;
-      void this.handleMessage(data, isBinary).catch((error) => this.handleAsyncFailure(error));
+      void this.handleMessage(data, isBinary, socket, generation).catch((error) => {
+        if (this.socket === socket && this.socketBinding?.generation === generation && !this.disposed) {
+          this.handleAsyncFailure(error);
+        }
+      });
     };
     const onClose = () => {
       if (this.socket !== socket || this.socketBinding?.generation !== generation) return;
-      void this.handleTransportClosed().catch((error) => this.handleAsyncFailure(error));
+      void this.handleTransportClosed(socket, generation).catch((error) => {
+        if (this.transportGeneration === generation && !this.disposed) this.handleAsyncFailure(error);
+      });
     };
     const onError = (error: Error) => {
       // ws normally follows an error with close. If a test double or adapter
@@ -182,7 +188,9 @@ export class TerminalSession {
       // transition here. An open socket is left alone so transient errors do
       // not release a healthy PTY.
       if (socket.readyState === muximodSocketReadyState.closed) {
-        void this.handleTransportClosed().catch((error) => this.handleAsyncFailure(error));
+        void this.handleTransportClosed(socket, generation).catch((error) => {
+          if (this.transportGeneration === generation && !this.disposed) this.handleAsyncFailure(error);
+        });
       }
       void error;
     };
@@ -208,34 +216,43 @@ export class TerminalSession {
     this.socketBinding = undefined;
   }
 
-  private async handleMessage(data: MuximodSocketData, isBinary: boolean): Promise<void> {
+  private async handleMessage(
+    data: MuximodSocketData,
+    isBinary: boolean,
+    socket: MuximodSocket,
+    generation: number,
+  ): Promise<void> {
     if (this.disposed) return;
+    const isCurrentSocket = () =>
+      !this.disposed && this.socket === socket && this.socketBinding?.generation === generation;
 
     if (isBinary) {
       if (!this.isAttached()) {
-        this.sendError("not_attached", "Attach before sending terminal input");
+        if (isCurrentSocket()) this.sendError("not_attached", "Attach before sending terminal input");
         return;
       }
 
       try {
         await this.claimMobileForInput(this.cols, this.rows);
+        if (!isCurrentSocket()) return;
         await this.pty?.write(rawDataToBuffer(data).toString("utf8"));
       } catch (error) {
-        this.sendError("mobile_claim_failed", error);
+        if (isCurrentSocket()) this.sendError("mobile_claim_failed", error);
       }
       return;
     }
 
     const decoded = decodeClientControlFrame(rawDataToBuffer(data));
     if (!decoded.ok) {
-      this.sendError(decoded.code, decoded.message);
+      if (isCurrentSocket()) this.sendError(decoded.code, decoded.message);
       return;
     }
 
-    await this.handleControlMessage(decoded.message);
+    if (!isCurrentSocket()) return;
+    await this.handleControlMessage(decoded.message, isCurrentSocket);
   }
 
-  private async handleControlMessage(message: ClientControlMessage): Promise<void> {
+  private async handleControlMessage(message: ClientControlMessage, isCurrentSocket: () => boolean): Promise<void> {
     switch (message.type) {
       case "attach":
         await this.handleAttach(message);
@@ -247,10 +264,11 @@ export class TerminalSession {
         }
         try {
           await this.claimMobileForInput(message.cols, message.rows);
+          if (!isCurrentSocket()) return;
           this.cols = message.cols;
           this.rows = message.rows;
         } catch (error) {
-          this.sendError("mobile_claim_failed", error);
+          if (isCurrentSocket()) this.sendError("mobile_claim_failed", error);
         }
         return;
       case "enter_copy_mode":
@@ -260,9 +278,10 @@ export class TerminalSession {
         }
         try {
           await this.claimMobileForInput(this.cols, this.rows);
+          if (!isCurrentSocket()) return;
           await this.lease.enterCopyMode();
         } catch (error) {
-          this.sendError("copy_mode_failed", error);
+          if (isCurrentSocket()) this.sendError("copy_mode_failed", error);
         }
         return;
       case "paste_tmux_buffer":
@@ -272,13 +291,14 @@ export class TerminalSession {
         }
         try {
           await this.claimMobileForInput(this.cols, this.rows);
+          if (!isCurrentSocket()) return;
           await this.lease.pasteTmuxBuffer();
         } catch (error) {
-          this.sendError("paste_tmux_buffer_failed", error);
+          if (isCurrentSocket()) this.sendError("paste_tmux_buffer_failed", error);
         }
         return;
       case "paste_image":
-        await this.handlePasteImage(message);
+        await this.handlePasteImage(message, isCurrentSocket);
         return;
       case "resize":
         if (!this.isAttached()) {
@@ -286,14 +306,17 @@ export class TerminalSession {
           return;
         }
         try {
+          if (!isCurrentSocket()) return;
           await this.lease?.resize(message.cols, message.rows);
+          if (!isCurrentSocket()) return;
           await this.pty?.resize(message.cols, message.rows);
+          if (!isCurrentSocket()) return;
           this.ptyCols = message.cols;
           this.ptyRows = message.rows;
           this.cols = message.cols;
           this.rows = message.rows;
         } catch (error) {
-          this.sendError("resize_failed", error);
+          if (isCurrentSocket()) this.sendError("resize_failed", error);
         }
         return;
       case "redraw":
@@ -302,15 +325,18 @@ export class TerminalSession {
           return;
         }
         try {
+          if (!isCurrentSocket()) return;
           await this.lease.refresh();
         } catch (error) {
-          this.sendError("redraw_failed", error);
+          if (isCurrentSocket()) this.sendError("redraw_failed", error);
         }
         return;
       case "ping":
+        if (!isCurrentSocket()) return;
         this.send({ type: "pong", version: terminalProtocolVersion, nonce: message.nonce });
         return;
       case "detach":
+        if (!isCurrentSocket()) return;
         await this.detachIntentionally();
         return;
     }
@@ -531,7 +557,11 @@ export class TerminalSession {
     }
   }
 
-  private async handlePasteImage(message: Extract<ClientControlMessage, { type: "paste_image" }>): Promise<void> {
+  private async handlePasteImage(
+    message: Extract<ClientControlMessage, { type: "paste_image" }>,
+    isCurrentSocket: () => boolean,
+  ): Promise<void> {
+    if (!isCurrentSocket()) return;
     if (!this.isAttached() || !this.lease) {
       this.sendError("not_attached", "Attach before pasting an image");
       return;
@@ -548,6 +578,7 @@ export class TerminalSession {
     }
     try {
       await this.claimMobileForInput(this.cols, this.rows);
+      if (!isCurrentSocket()) return;
       await imagePaster({
         paneId: this.lease.paneId,
         name: message.name,
@@ -555,7 +586,7 @@ export class TerminalSession {
         bytes,
       });
     } catch (error) {
-      this.sendError("paste_image_failed", error);
+      if (isCurrentSocket()) this.sendError("paste_image_failed", error);
     }
   }
 
@@ -686,8 +717,8 @@ export class TerminalSession {
     await this.finalizeTransport(1000, "detached");
   }
 
-  private async handleTransportClosed(): Promise<void> {
-    if (this.disposed) return;
+  private async handleTransportClosed(socket: MuximodSocket, generation: number): Promise<void> {
+    if (!this.isCurrentTransport(socket, generation)) return;
     this.detachSocketListeners();
 
     if (this.state === "awaiting_attach") {
@@ -696,11 +727,13 @@ export class TerminalSession {
     }
 
     this.state = "parked";
-    await this.returnViewportToDesktop();
+    await this.returnViewportToDesktop(generation);
+    if (!this.isCurrentTransportGeneration(generation) || this.state !== "parked") return;
     this.scheduleResumeExpiry();
   }
 
-  private async returnViewportToDesktop(): Promise<void> {
+  private async returnViewportToDesktop(expectedGeneration?: number): Promise<void> {
+    if (expectedGeneration !== undefined && !this.isCurrentTransportGeneration(expectedGeneration)) return;
     try {
       await this.lease?.returnToDesktop();
     } catch {
@@ -802,6 +835,14 @@ export class TerminalSession {
 
   private isAttachedOrParked(): boolean {
     return (this.state === "attached" || this.state === "parked") && Boolean(this.pty && this.lease);
+  }
+
+  private isCurrentTransport(socket: MuximodSocket, generation: number): boolean {
+    return !this.disposed && this.socket === socket && this.socketBinding?.generation === generation;
+  }
+
+  private isCurrentTransportGeneration(generation: number): boolean {
+    return !this.disposed && this.transportGeneration === generation;
   }
 }
 

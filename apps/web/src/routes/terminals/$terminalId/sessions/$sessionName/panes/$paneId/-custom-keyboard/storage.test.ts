@@ -6,10 +6,18 @@ import {
   type OperationTable,
   returns,
   runOperationTable,
+  runScenarioTable,
+  type ScenarioCase,
+  type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { CUSTOM_KEYBOARD_STORAGE_KEY, type CustomKeyboardStorage, createCustomKeyboardStorage } from "./storage";
+import {
+  CUSTOM_KEYBOARD_STORAGE_KEY,
+  type CustomKeyboardStorage,
+  createCustomKeyboardStorage,
+  createSerializedCustomKeyboardStorage,
+} from "./storage";
 
 type BrowserStorage = {
   values: Map<string, string>;
@@ -177,8 +185,83 @@ const writeTable: OperationTable<StorageFixture, WriteFixtureKey, { value: strin
   }),
 };
 
+type SerializedWriteFixture = {
+  storage: CustomKeyboardStorage;
+  writes: string[];
+  pending: Array<() => void>;
+  completions: Promise<void>[];
+};
+
+function createSerializedWriteFixture(): FixtureHandle<SerializedWriteFixture> {
+  const writes: string[] = [];
+  const pending: Array<() => void> = [];
+  const baseStorage: CustomKeyboardStorage = {
+    read: async () => null,
+    write: async (value) => {
+      writes.push(value);
+      await new Promise<void>((resolve) => pending.push(resolve));
+    },
+  };
+  return {
+    fixture: {
+      storage: createSerializedCustomKeyboardStorage(baseStorage),
+      writes,
+      pending,
+      completions: [],
+    },
+  };
+}
+
+type SerializedWriteStep = { type: "write"; value: string } | { type: "resolve" };
+type SerializedWriteContext = { writes: readonly string[] };
+
+async function resolvePendingWrite(fixture: SerializedWriteFixture): Promise<void> {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const resolver = fixture.pending.shift();
+    if (resolver) {
+      resolver();
+      return;
+    }
+    await Promise.resolve();
+  }
+  throw new Error("Timed out waiting for serialized storage write");
+}
+
+const serializedWriteCases = [
+  {
+    name: "persists consecutive states in invocation order despite delayed completions",
+    steps: [
+      { type: "write", value: "first" },
+      { type: "write", value: "second" },
+      { type: "resolve" },
+      { type: "resolve" },
+    ],
+    assert: [hasObserved<SerializedWriteContext, undefined>("writes", ["first", "second"])],
+  },
+] satisfies readonly ScenarioCase<"default", SerializedWriteStep, undefined, SerializedWriteContext>[];
+
+const serializedWriteTable: ScenarioTable<
+  SerializedWriteFixture,
+  "default",
+  SerializedWriteStep,
+  undefined,
+  SerializedWriteContext
+> = {
+  defaultFixture: createSerializedWriteFixture,
+  cases: serializedWriteCases,
+  execute: async (fixture, steps) => {
+    for (const step of steps) {
+      if (step.type === "write") fixture.completions.push(fixture.storage.write(step.value));
+      else await resolvePendingWrite(fixture);
+    }
+    await Promise.all(fixture.completions);
+  },
+  observe: (fixture) => ({ writes: fixture.writes }),
+};
+
 describe("custom keyboard storage", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, readTable);
   runOperationTable(register, writeTable);
+  runScenarioTable(register, serializedWriteTable);
 });

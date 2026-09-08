@@ -17,6 +17,7 @@ import {
   type ScenarioTable,
   type TestRegistrar,
 } from "@muximo/test-support";
+import type { Terminal } from "@xterm/xterm";
 import { describe, it } from "vitest";
 import {
   createPasteImageMessage,
@@ -29,7 +30,14 @@ import {
   terminalControlErrorDisposition,
   terminalSessionCleanupMode,
 } from "./policy";
-import { createTerminalResumeStore, type TerminalResumeStore } from "./viewmodel";
+import {
+  createTerminalResumeStore,
+  isPasteLifecycleCurrent,
+  isPasteOperationCurrent,
+  type PasteLifecycleBinding,
+  type PasteLifecycleSnapshot,
+  type TerminalResumeStore,
+} from "./viewmodel";
 
 type EmptyContext = {};
 type AttachResult = Extract<ClientControlMessage, { type: "attach" }>;
@@ -231,6 +239,135 @@ const nativeKeyboardToggleTable: OperationTable<
   observe: () => ({}),
 };
 
+const pasteTerminal = {} as Terminal;
+const pasteSocket = { readyState: 1 } as WebSocket;
+const closedPasteSocket = { readyState: 3 } as WebSocket;
+const pasteBinding: PasteLifecycleBinding = {
+  target: "%3",
+  terminal: pasteTerminal,
+  socket: pasteSocket,
+  paneGeneration: 2,
+  socketGeneration: 5,
+};
+
+type PasteLifecycleInput = { binding: PasteLifecycleBinding; snapshot: PasteLifecycleSnapshot };
+
+const pasteLifecycleCases = [
+  {
+    name: "accepts a paste while the pane and socket lifecycle are unchanged",
+    input: {
+      binding: pasteBinding,
+      snapshot: {
+        target: "%3",
+        terminal: pasteTerminal,
+        socket: pasteSocket,
+        paneGeneration: 2,
+        socketGeneration: 5,
+        terminalReady: true,
+        terminalClosed: false,
+        appActive: true,
+      },
+    },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "rejects clipboard data after switching to another pane",
+    input: {
+      binding: pasteBinding,
+      snapshot: {
+        target: "%4",
+        terminal: {} as Terminal,
+        socket: { readyState: 1 } as WebSocket,
+        paneGeneration: 3,
+        socketGeneration: 6,
+        terminalReady: true,
+        terminalClosed: false,
+        appActive: true,
+      },
+    },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+  {
+    name: "rejects image data after the socket generation changes",
+    input: {
+      binding: pasteBinding,
+      snapshot: {
+        target: "%3",
+        terminal: pasteTerminal,
+        socket: { readyState: 1 } as WebSocket,
+        paneGeneration: 2,
+        socketGeneration: 6,
+        terminalReady: true,
+        terminalClosed: false,
+        appActive: true,
+      },
+    },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+  {
+    name: "rejects a paste when the original socket is no longer open",
+    input: {
+      binding: pasteBinding,
+      snapshot: {
+        target: "%3",
+        terminal: pasteTerminal,
+        socket: closedPasteSocket,
+        paneGeneration: 2,
+        socketGeneration: 5,
+        terminalReady: true,
+        terminalClosed: false,
+        appActive: true,
+      },
+    },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+  {
+    name: "rejects a paste after the app enters the background",
+    input: {
+      binding: pasteBinding,
+      snapshot: {
+        target: "%3",
+        terminal: pasteTerminal,
+        socket: pasteSocket,
+        paneGeneration: 2,
+        socketGeneration: 5,
+        terminalReady: true,
+        terminalClosed: false,
+        appActive: false,
+      },
+    },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+] satisfies readonly OperationCase<"default", PasteLifecycleInput, boolean, EmptyContext>[];
+
+const pasteLifecycleTable: OperationTable<undefined, "default", PasteLifecycleInput, boolean, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: pasteLifecycleCases,
+  execute: (_fixture, input) => isPasteLifecycleCurrent(input.binding, input.snapshot),
+  observe: () => ({}),
+};
+
+type PasteOperationInput = { operationGeneration: number; currentGeneration: number };
+const pasteOperationCases = [
+  {
+    name: "keeps the latest image paste operation eligible to update state",
+    input: { operationGeneration: 7, currentGeneration: 7 },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "ignores an older image paste operation after a newer one starts",
+    input: { operationGeneration: 7, currentGeneration: 8 },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+] satisfies readonly OperationCase<"default", PasteOperationInput, boolean, EmptyContext>[];
+
+const pasteOperationTable: OperationTable<undefined, "default", PasteOperationInput, boolean, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: pasteOperationCases,
+  execute: (_fixture, input) => isPasteOperationCurrent(input.operationGeneration, input.currentGeneration),
+  observe: () => ({}),
+};
+
 type TerminalControlErrorInput = { code: string; retryable: boolean };
 type TerminalControlErrorResult = "action" | "connection";
 
@@ -401,6 +538,8 @@ describe("terminal pane handshake helpers", () => {
   runOperationTable(register, resumeTable);
   runOperationTable(register, cleanupTable);
   runOperationTable(register, nativeKeyboardToggleTable);
+  runOperationTable(register, pasteLifecycleTable);
+  runOperationTable(register, pasteOperationTable);
   runOperationTable(register, terminalControlErrorTable);
   runOperationTable(register, controlTable);
   runScenarioTable(register, resumeStoreTable);
