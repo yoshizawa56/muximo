@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { storyPanes, storyPanesWithGeometry, storySession, storyTerminal } from "../../../-story-fixtures";
+import { storyPanes, storySession, storyTerminal } from "../../../-story-fixtures";
 import { SessionView } from "./-session-view";
 import type { SessionOverviewViewModel } from "./-session-viewmodel";
 
@@ -30,7 +30,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const PanesReady: Story = {
-  args: { viewModel: buildViewModel() },
+  args: { viewModel: buildViewModel({ panes: storyPanes }) },
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: /select pane 0/i }));
@@ -43,7 +43,7 @@ export const PanesReady: Story = {
 };
 
 export const GeometryReady: Story = {
-  args: { viewModel: buildViewModel({ panes: storyPanesWithGeometry }) },
+  args: { viewModel: buildViewModel({ panes: storyPanes }) },
 };
 
 export const EmptySession: Story = {

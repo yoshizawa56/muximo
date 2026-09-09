@@ -17,6 +17,7 @@ const stableAgentExecutionMetadataKey = "@muximod.agent_execution_id";
 const stableMobileViewportMetadataKey = "@muximod.mobile_viewport";
 const mobileViewportSessionPrefix = "muximo-mobile-";
 const tmuxFormatSeparator = "\u001f";
+const maxPaneSnapshotAttempts = 3;
 
 type TmuxSessionOption = {
   name: string;
@@ -524,6 +525,20 @@ export class TmuxAdapter {
   }
 
   public listPanesSnapshot(): TmuxLiveSnapshot {
+    let lastError: unknown = new Error("Could not obtain a complete tmux pane geometry snapshot");
+    for (let attempt = 0; attempt < maxPaneSnapshotAttempts; attempt += 1) {
+      try {
+        const snapshot = this.readPanesSnapshot();
+        if (hasCompleteTmuxPaneGeometry(snapshot.panes)) return snapshot;
+        lastError = new Error("tmux returned an incomplete or inconsistent pane geometry snapshot");
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
+  private readPanesSnapshot(): TmuxLiveSnapshot {
     const separator = tmuxFormatSeparator;
     const args = [
       "list-panes",
@@ -936,8 +951,53 @@ function sanitizeMetadataNamespace(value: string): string {
   return value.replaceAll(/[^A-Za-z0-9_-]/g, "_");
 }
 
+function hasCompleteTmuxPaneGeometry(panes: readonly TmuxPane[]): boolean {
+  const windows = new Map<string, { width: number; height: number; panes: TmuxPane[] }>();
+  for (const pane of panes) {
+    if (
+      !Number.isInteger(pane.left) ||
+      pane.left < 0 ||
+      !Number.isInteger(pane.top) ||
+      pane.top < 0 ||
+      !Number.isInteger(pane.width) ||
+      pane.width <= 0 ||
+      !Number.isInteger(pane.height) ||
+      pane.height <= 0 ||
+      !Number.isInteger(pane.windowWidth) ||
+      pane.windowWidth <= 0 ||
+      !Number.isInteger(pane.windowHeight) ||
+      pane.windowHeight <= 0 ||
+      pane.left + pane.width > pane.windowWidth ||
+      pane.top + pane.height > pane.windowHeight
+    ) {
+      return false;
+    }
+
+    const key = `${pane.sessionName}\u0000${pane.windowId}`;
+    const window = windows.get(key);
+    if (!window) {
+      windows.set(key, { width: pane.windowWidth, height: pane.windowHeight, panes: [pane] });
+      continue;
+    }
+    if (window.width !== pane.windowWidth || window.height !== pane.windowHeight) return false;
+    if (window.panes.some((other) => panesOverlap(other, pane))) return false;
+    window.panes.push(pane);
+  }
+  return true;
+}
+
+function panesOverlap(left: TmuxPane, right: TmuxPane): boolean {
+  return (
+    left.left < right.left + right.width &&
+    right.left < left.left + left.width &&
+    left.top < right.top + right.height &&
+    right.top < left.top + left.height
+  );
+}
+
 function parseDimension(value: string | undefined, name: string): number {
-  const parsed = Number(value);
+  const normalized = value?.trim();
+  const parsed = normalized === undefined || normalized === "" ? Number.NaN : Number(normalized);
   if (!Number.isInteger(parsed) || parsed < 0) {
     throw new Error(`Invalid ${name}: ${value ?? ""}`);
   }

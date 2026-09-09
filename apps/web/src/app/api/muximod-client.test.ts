@@ -57,6 +57,15 @@ const pane = {
   state: "running" as const,
   title: null,
   lastSeenAt: "2026-08-15T00:00:00.000Z",
+  windowName: "main",
+  windowIndex: 0,
+  paneIndex: 0,
+  left: 0,
+  top: 0,
+  width: 80,
+  height: 24,
+  windowWidth: 80,
+  windowHeight: 24,
 };
 
 type RpcOperation =
