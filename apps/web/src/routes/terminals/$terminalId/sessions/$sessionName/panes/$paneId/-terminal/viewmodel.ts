@@ -81,7 +81,6 @@ export function isMockPasteLifecycleCurrent(
     binding.target === snapshot.target &&
     binding.terminal === snapshot.terminal &&
     binding.paneGeneration === snapshot.paneGeneration &&
-    snapshot.terminalReady &&
     !snapshot.terminalClosed &&
     snapshot.appActive
   );

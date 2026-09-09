@@ -91,6 +91,7 @@ function createKeyboardSettings(
   const assignedKeyIds = rows.flatMap((row) => row.items.map((item) => item.key.id));
   const assigned = new Set(assignedKeyIds);
   return {
+    hydrated: true,
     rows,
     availableKeys: customKeyboardKeyLibrary.filter(
       (key) => !assigned.has(key.id) && !customKeyboardFixedKeyIds.includes(key.id),

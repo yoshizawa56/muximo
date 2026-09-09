@@ -241,11 +241,10 @@ export class TmuxViewportManager {
       }
       const activityChanged = client.activity > previous.activity;
       const clientChanged = client.name !== previous.name;
-      // tmux can advance client_activity while muximod is changing the shared
-      // viewport. Treat every client-active hook during the bounded synthetic
-      // window as command fallout; a genuine later activity advance is still
-      // accepted after the baseline has been refreshed.
-      if ((!activityChanged && !clientChanged) || this.now() < candidate.syntheticClientActiveUntil) return;
+      // The post-command desktop baseline makes unchanged events synthetic.
+      // A client identity/activity transition is still genuine input even if
+      // it arrives during the short command-settling window.
+      if (!activityChanged && !clientChanged) return;
     }
     if (
       (event === "client-focus-in" || event === "client-resized") &&

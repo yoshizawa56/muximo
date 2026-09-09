@@ -711,7 +711,7 @@ const mutationGateCases = [
     ],
   },
   {
-    name: "applies profile actions after hydration uses the hydrated profile count",
+    name: "applies profile actions after hydration using the hydrated profile count",
     input: { state: parseCustomKeyboardState(null), hydrated: true, operations: ["create", "rename", "delete"] },
     assert: [
       returns<EmptyContext, ProfileObservation>({

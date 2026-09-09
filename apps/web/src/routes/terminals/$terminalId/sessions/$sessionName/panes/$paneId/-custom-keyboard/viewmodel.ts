@@ -205,6 +205,7 @@ export type CustomKeyboardViewModel = {
 };
 
 export type CustomKeyboardSettingsViewModel = {
+  hydrated: boolean;
   rows: readonly CustomKeyboardResolvedLayoutRow[];
   availableKeys: readonly CustomKeyboardKey[];
   shortcutKeys: readonly CustomKeyboardKey[];
@@ -634,6 +635,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
   };
 
   const settings: CustomKeyboardSettingsViewModel = {
+    hydrated: isHydrated,
     rows: editableRows,
     availableKeys,
     shortcutKeys,

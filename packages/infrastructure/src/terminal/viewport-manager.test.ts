@@ -193,6 +193,17 @@ const cases = [
     ],
   },
   {
+    name: "accepts genuine desktop activity during the synthetic settling window",
+    steps: [prepare, attach, { type: "desktop-activity" }, { type: "hook", event: "client-active" }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("zoomed", false),
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "desktop_activity" },
+      ]),
+    ],
+  },
+  {
     name: "ignores synthetic activity from internal viewport commands but accepts later desktop input",
     steps: [
       prepare,

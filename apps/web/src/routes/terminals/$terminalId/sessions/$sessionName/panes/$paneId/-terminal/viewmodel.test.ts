@@ -355,7 +355,7 @@ type MockPasteLifecycleInput = {
 const mockPasteBinding = { target: "%3", terminal: pasteTerminal, paneGeneration: 2 };
 const mockPasteLifecycleCases = [
   {
-    name: "allows mock clipboard paste without a websocket",
+    name: "allows mock clipboard paste without websocket readiness",
     input: {
       binding: mockPasteBinding,
       snapshot: {
@@ -364,7 +364,7 @@ const mockPasteLifecycleCases = [
         socket: null,
         paneGeneration: 2,
         socketGeneration: 0,
-        terminalReady: true,
+        terminalReady: false,
         terminalClosed: false,
         appActive: true,
       },
