@@ -35,7 +35,8 @@ type ViewportStep =
   | { type: "resize"; cols: number; rows: number }
   | { type: "desktop-activity" }
   | { type: "desktop-size"; width: number; height: number }
-  | { type: "hook"; event: "client-active" | "client-resized" | "client-focus-in" }
+  | { type: "desktop-order" }
+  | { type: "hook"; event: "client-active" | "client-resized" | "client-focus-in"; client?: "desktop" | "secondary" }
   | { type: "release" }
   | { type: "return-to-desktop" }
   | { type: "clear-mobile-zoom" }
@@ -44,7 +45,7 @@ type ViewportStep =
   | { type: "poll" }
   | { type: "unfocus" }
   | { type: "advance-clock"; milliseconds: number };
-type ViewportFixtureKey = "default" | "missing";
+type ViewportFixtureKey = "default" | "missing" | "missing-client";
 type ViewportFixture = {
   adapter: FakeTmuxAdapter;
   manager: TmuxViewportManager;
@@ -81,7 +82,11 @@ type TestClock = {
 const viewportFixture = (): FixtureHandle<ViewportFixture> => {
   const adapter = new FakeTmuxAdapter();
   const clock: TestClock = { now: 0, advance: (milliseconds) => (clock.now += milliseconds) };
-  const manager = new TmuxViewportManager(adapter, () => clock.now);
+  const manager = new TmuxViewportManager(
+    adapter,
+    () => clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
   const fixture: ViewportFixture = { adapter, manager, clock, events: [] };
   return { fixture, cleanup: () => manager.dispose() };
 };
@@ -89,6 +94,12 @@ const viewportFixture = (): FixtureHandle<ViewportFixture> => {
 const missingViewportFixture = (): FixtureHandle<ViewportFixture> => {
   const result = viewportFixture();
   result.fixture.adapter.missingTarget = true;
+  return result;
+};
+
+const missingClientViewportFixture = (): FixtureHandle<ViewportFixture> => {
+  const result = viewportFixture();
+  result.fixture.adapter.missingClient = true;
   return result;
 };
 
@@ -103,6 +114,12 @@ const cases = [
       hasError<ViewportContext, undefined>({ message: "Could not resolve tmux pane: muximod" }),
       hasObserved<ViewportContext, undefined>("ensureSessionCalls", []),
     ],
+  },
+  {
+    name: "fails after a finite retry window when the mobile client is missing",
+    fixture: "missing-client",
+    steps: [prepare, attach],
+    assert: [hasError<ViewportContext, undefined>({ message: "Could not identify tmux client for PTY process 200" })],
   },
   {
     name: "enters a phone-sized zoomed viewport without changing desktop state",
@@ -300,6 +317,39 @@ const cases = [
     assert: [hasObserved<ViewportContext, undefined>("zoomed", true)],
   },
   {
+    name: "keeps synthetic client identity changes suppressed",
+    steps: [prepare, attach, { type: "desktop-order" }, { type: "poll" }],
+    assert: [hasObserved<ViewportContext, undefined>("zoomed", true)],
+  },
+  {
+    name: "treats a later desktop client identity change as activity",
+    steps: [prepare, attach, { type: "advance-clock", milliseconds: 250 }, { type: "desktop-order" }, { type: "poll" }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("zoomed", false),
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "desktop_focus" },
+      ]),
+    ],
+  },
+  {
+    name: "treats an equal activity hook from a different desktop client as activity",
+    steps: [
+      prepare,
+      attach,
+      { type: "advance-clock", milliseconds: 250 },
+      { type: "desktop-order" },
+      { type: "hook", event: "client-active", client: "secondary" },
+    ],
+    assert: [
+      hasObserved<ViewportContext, undefined>("zoomed", false),
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "desktop_activity" },
+      ]),
+    ],
+  },
+  {
     name: "ignores an unfocused client-active hook from viewport commands",
     steps: [prepare, attach, { type: "unfocus" }, { type: "hook", event: "client-active" }],
     assert: [hasObserved<ViewportContext, undefined>("zoomed", true)],
@@ -432,7 +482,11 @@ const cases = [
 
 const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, undefined, ViewportContext> = {
   defaultFixture: viewportFixture,
-  fixtures: { default: viewportFixture, missing: missingViewportFixture },
+  fixtures: {
+    default: viewportFixture,
+    missing: missingViewportFixture,
+    "missing-client": missingClientViewportFixture,
+  },
   cases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
@@ -455,7 +509,12 @@ const table: ScenarioTable<ViewportFixture, ViewportFixtureKey, ViewportStep, un
         fixture.adapter.desktop.width = step.width;
         fixture.adapter.desktop.height = step.height;
       }
-      if (step.type === "hook") await fixture.manager.handleTmuxHook(step.event, fixture.adapter.desktop.name);
+      if (step.type === "hook")
+        await fixture.manager.handleTmuxHook(
+          step.event,
+          step.client === "secondary" ? fixture.adapter.secondaryDesktop.name : fixture.adapter.desktop.name,
+        );
+      if (step.type === "desktop-order") fixture.adapter.reverseDesktopClients = true;
       if (step.type === "release") await fixture.lease?.release();
       if (step.type === "clear-mobile-zoom") {
         fixture.adapter.state.zoomed = false;
@@ -513,6 +572,8 @@ describe("tmux viewport manager", () => {
 
 class FakeTmuxAdapter extends TmuxAdapter {
   public missingTarget = false;
+  public missingClient = false;
+  public reverseDesktopClients = false;
   public paneLayoutVariant: "initial" | "updated" = "initial";
   public readonly ensureSessionCalls: Array<{ target: string; cwd: string }> = [];
   public readonly groupedSessions: Array<[string, string]> = [];
@@ -536,6 +597,18 @@ class FakeTmuxAdapter extends TmuxAdapter {
     name: "/dev/desktop",
     pid: 100,
     tty: "/dev/desktop",
+    sessionName: "muximod",
+    windowId: "@0",
+    paneId: "%1",
+    width: 120,
+    height: 40,
+    flags: "attached,focused",
+    activity: 1,
+  };
+  public readonly secondaryDesktop: TmuxClient = {
+    name: "/dev/desktop-secondary",
+    pid: 101,
+    tty: "/dev/desktop-secondary",
     sessionName: "muximod",
     windowId: "@0",
     paneId: "%1",
@@ -634,13 +707,19 @@ class FakeTmuxAdapter extends TmuxAdapter {
     };
   }
   public override findClientByPid(pid: number): TmuxClient | undefined {
+    if (this.missingClient) return undefined;
     return pid === this.mobile.pid ? this.mobile : undefined;
   }
   public override listClients(): TmuxClient[] {
-    return [{ ...this.mobile }, { ...this.desktop }];
+    const desktops = this.reverseDesktopClients
+      ? [this.secondaryDesktop, this.desktop]
+      : [this.desktop, this.secondaryDesktop];
+    return [{ ...this.mobile }, ...desktops.map((client) => ({ ...client }))];
   }
   public override clientView(clientName: string): TmuxClient {
-    return clientName === this.mobile.name ? { ...this.mobile } : { ...this.desktop };
+    if (clientName === this.mobile.name) return { ...this.mobile };
+    if (clientName === this.secondaryDesktop.name) return { ...this.secondaryDesktop };
+    return { ...this.desktop };
   }
   public override setWindowSize(_windowId: string, value: TmuxWindowSize): void {
     this.state.windowSize = value;

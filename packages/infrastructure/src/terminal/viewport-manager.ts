@@ -75,6 +75,7 @@ export class TmuxViewportManager {
   public constructor(
     adapter = new TmuxAdapter(),
     private readonly now: () => number = () => Date.now(),
+    private readonly wait: (milliseconds: number) => Promise<void> = delay,
   ) {
     this.adapter = adapter;
   }
@@ -239,11 +240,12 @@ export class TmuxViewportManager {
         return;
       }
       const activityChanged = client.activity > previous.activity;
+      const clientChanged = client.name !== previous.name;
       // tmux can advance client_activity while muximod is changing the shared
       // viewport. Treat every client-active hook during the bounded synthetic
       // window as command fallout; a genuine later activity advance is still
       // accepted after the baseline has been refreshed.
-      if (!activityChanged || this.now() < candidate.syntheticClientActiveUntil) return;
+      if ((!activityChanged && !clientChanged) || this.now() < candidate.syntheticClientActiveUntil) return;
     }
     if (
       (event === "client-focus-in" || event === "client-resized") &&
@@ -693,6 +695,7 @@ export class TmuxViewportManager {
           const focusChanged =
             !record.latestDesktop ||
             hasTmuxClientFlag(record.latestDesktop, "focused") !== hasTmuxClientFlag(desktop, "focused");
+          const clientChanged = record.latestDesktop?.name !== desktop.name;
           const sizeChanged =
             !record.latestDesktop ||
             record.latestDesktop.width !== desktop.width ||
@@ -706,7 +709,7 @@ export class TmuxViewportManager {
               layoutChanged = false;
             }
           }
-          if (focusChanged || sizeChanged || layoutChanged) {
+          if (clientChanged || focusChanged || sizeChanged || layoutChanged) {
             this.claimDesktop(
               record,
               desktop,
@@ -807,7 +810,7 @@ export class TmuxViewportManager {
       } catch {
         // The tmux server may need one tick to publish the newly attached client.
       }
-      await delay(50);
+      await this.wait(50);
     }
     throw new Error(`Could not identify tmux client for PTY process ${pid}`);
   }

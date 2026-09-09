@@ -281,14 +281,19 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
   const [serializedStorage] = useState<CustomKeyboardStorage>(() => createSerializedCustomKeyboardStorage(storage));
   const [isHydrated, setIsHydrated] = useState(false);
   const hydratedRef = useRef(false);
-  const pendingStateUpdatesRef = useRef<CustomKeyboardStateUpdater[]>([]);
   const [localActiveModifiers, setLocalActiveModifiers] = useState<CustomKeyboardModifier[]>([]);
   const activeModifiers = options.activeModifiers ?? localActiveModifiers;
   const activeModifiersRef = useRef<CustomKeyboardModifier[]>([...activeModifiers]);
 
   const updateState = useCallback((updater: CustomKeyboardStateUpdater) => {
-    if (!hydratedRef.current) pendingStateUpdatesRef.current.push(updater);
-    setState(updater);
+    // Do not evaluate state-dependent operations against the default state
+    // while storage hydration is pending. A create operation could otherwise
+    // reserve an id from the default profile count, while the hydrated state
+    // has a different count; a subsequent rename/delete would then target an
+    // id that was never created. The UI remains read-only until the authoritative
+    // persisted state is available.
+    const hydratedAtAction = hydratedRef.current;
+    setState((current) => applyCustomKeyboardStateUpdate(current, hydratedAtAction, updater));
   }, []);
 
   const activeProfileId = useMemo(
@@ -346,9 +351,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
       .read()
       .then((raw) => {
         if (disposed) return;
-        const pendingUpdates = pendingStateUpdatesRef.current;
-        pendingStateUpdatesRef.current = [];
-        setState(() => hydrateCustomKeyboardState(raw, pendingUpdates));
+        setState(() => hydrateCustomKeyboardState(raw));
         hydratedRef.current = true;
         setIsHydrated(true);
       })
@@ -754,11 +757,16 @@ export function parseCustomKeyboardState(raw: string | null): CustomKeyboardStat
   }
 }
 
-export function hydrateCustomKeyboardState(
-  raw: string | null,
-  pendingUpdates: readonly CustomKeyboardStateUpdater[],
+export function hydrateCustomKeyboardState(raw: string | null): CustomKeyboardState {
+  return parseCustomKeyboardState(raw);
+}
+
+export function applyCustomKeyboardStateUpdate(
+  state: CustomKeyboardState,
+  hydrated: boolean,
+  updater: CustomKeyboardStateUpdater,
 ): CustomKeyboardState {
-  return pendingUpdates.reduce((next, update) => update(next), parseCustomKeyboardState(raw));
+  return hydrated ? updater(state) : state;
 }
 
 function parseStoredCustomKeyboardState(

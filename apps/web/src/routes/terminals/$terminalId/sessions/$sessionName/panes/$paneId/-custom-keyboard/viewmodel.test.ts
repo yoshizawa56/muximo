@@ -1,5 +1,4 @@
 import {
-  type Assertion,
   hasError,
   noFixture,
   type OperationCase,
@@ -7,7 +6,7 @@ import {
   returns,
   runOperationTable,
 } from "@muximo/test-support";
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
 import { defineKey, defineKeys } from "./definitions";
 import {
   applyCustomKeyboardDrop,
@@ -18,6 +17,7 @@ import {
   toggleCustomKeyboardModifier,
 } from "./policy";
 import {
+  applyCustomKeyboardStateUpdate,
   CUSTOM_KEYBOARD_FIXED_ROW_ID,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
@@ -640,24 +640,13 @@ const parsedStateTable: OperationTable<undefined, "default", { raw: string }, Pa
   observe: () => ({}),
 };
 
-type HydrationInput = { raw: string; hasLocalChanges: boolean };
+type HydrationInput = { raw: string };
 type HydrationObservation = { profileIds: readonly string[]; activeProfileId: string };
-
-const hydrationAssertion: Assertion<EmptyContext, HydrationObservation> = {
-  name: "keeps stored profiles while replaying an edit made during the read",
-  check: (_context, result) => {
-    if (!result.ok) throw result.error;
-    expect(result.value).toEqual({
-      profileIds: ["default", "agent", "custom-keyboard-profile-3"],
-      activeProfileId: "custom-keyboard-profile-3",
-    });
-  },
-};
 
 const hydrationCases = [
   {
-    name: "applies stored state when no local edit happened during the read",
-    input: { raw: validState, hasLocalChanges: false },
+    name: "applies stored state after hydration",
+    input: { raw: validState },
     assert: [
       returns<EmptyContext, HydrationObservation>({
         profileIds: ["default", "agent"],
@@ -665,24 +654,13 @@ const hydrationCases = [
       }),
     ],
   },
-  {
-    name: "does not overwrite an edit made before the storage read completed",
-    input: { raw: validState, hasLocalChanges: true },
-    assert: [hydrationAssertion],
-  },
 ] satisfies readonly OperationCase<"default", HydrationInput, HydrationObservation, EmptyContext>[];
 
 const hydrationTable: OperationTable<undefined, "default", HydrationInput, HydrationObservation, EmptyContext> = {
   defaultFixture: noFixture(),
   cases: hydrationCases,
   execute: (_fixture, input) => {
-    const pendingUpdates = input.hasLocalChanges
-      ? [
-          (state: CustomKeyboardState) =>
-            createCustomKeyboardProfile(state, "workspace-1", { name: "Local", icon: "spark" }),
-        ]
-      : [];
-    const hydrated = hydrateCustomKeyboardState(input.raw, pendingUpdates);
+    const hydrated = hydrateCustomKeyboardState(input.raw);
     return {
       profileIds: hydrated.profiles.map((profile) => profile.id),
       activeProfileId: resolveActiveProfileId(hydrated, "workspace-1"),
@@ -711,6 +689,67 @@ function profileStateWithAgent(): CustomKeyboardState {
   };
   return { ...state, profiles: [...state.profiles, agent] };
 }
+
+type HydrationMutation = "create" | "rename" | "delete";
+type MutationGateInput = {
+  state: CustomKeyboardState;
+  hydrated: boolean;
+  operations: readonly HydrationMutation[];
+};
+
+const mutationGateCases = [
+  {
+    name: "ignores create rename and delete actions issued before hydration",
+    input: { state: profileStateWithAgent(), hydrated: false, operations: ["create", "rename", "delete"] },
+    assert: [
+      returns<EmptyContext, ProfileObservation>({
+        profileIds: ["default", "agent"],
+        profileNames: ["Default", "Agent"],
+        activeProfileId: "default",
+        linkedProfileIds: [],
+      }),
+    ],
+  },
+  {
+    name: "applies profile actions after hydration uses the hydrated profile count",
+    input: { state: parseCustomKeyboardState(null), hydrated: true, operations: ["create", "rename", "delete"] },
+    assert: [
+      returns<EmptyContext, ProfileObservation>({
+        profileIds: ["default"],
+        profileNames: ["Default"],
+        activeProfileId: "default",
+        linkedProfileIds: [],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", MutationGateInput, ProfileObservation, EmptyContext>[];
+
+const mutationGateTable: OperationTable<undefined, "default", MutationGateInput, ProfileObservation, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: mutationGateCases,
+  execute: (_fixture, input) => {
+    const next = input.operations.reduce(
+      (state, operation) =>
+        applyCustomKeyboardStateUpdate(state, input.hydrated, (current) => {
+          if (operation === "create") {
+            return createCustomKeyboardProfile(current, "workspace-1", { name: "Local", icon: "spark" });
+          }
+          if (operation === "rename") {
+            return {
+              ...current,
+              profiles: current.profiles.map((profile) =>
+                profile.id === "custom-keyboard-profile-2" ? { ...profile, name: "Renamed" } : profile,
+              ),
+            };
+          }
+          return deleteCustomKeyboardProfile(current, "custom-keyboard-profile-2");
+        }),
+      input.state,
+    );
+    return observeProfileState(next);
+  },
+  observe: () => ({}),
+};
 
 type ProfileOperation =
   | { type: "select"; profileId: string }
@@ -878,6 +917,7 @@ describe("custom keyboard unified key model", () => {
   runOperationTable(it, shortcutDraftTable);
   runOperationTable(it, parsedStateTable);
   runOperationTable(it, hydrationTable);
+  runOperationTable(it, mutationGateTable);
   runOperationTable(it, profileTable);
   runOperationTable(it, profileNameTable);
 });

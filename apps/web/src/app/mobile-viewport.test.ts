@@ -8,6 +8,7 @@ import {
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
 import {
+  isMobileViewportTextEntryElement,
   type MobileViewportHeightInput,
   resolveMobileViewportHeight,
   resolveStaleResizeGuard,
@@ -92,8 +93,59 @@ const staleResizeGuardTable: OperationTable<
   observe: () => ({}),
 };
 
+type FocusOutTarget = { tagName: string; contenteditable?: string } | null;
+const focusOutCases = [
+  {
+    name: "recovers after an input loses focus",
+    input: { tagName: "INPUT" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "recovers after a select loses focus",
+    input: { tagName: "SELECT" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "recovers after a textarea loses focus",
+    input: { tagName: "TEXTAREA" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "recovers after a contenteditable element loses focus",
+    input: { tagName: "DIV", contenteditable: "true" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "does not recover after a button loses focus",
+    input: { tagName: "BUTTON" },
+    assert: [returns<Context, boolean>(false)],
+  },
+  {
+    name: "does not recover after a link loses focus",
+    input: { tagName: "A" },
+    assert: [returns<Context, boolean>(false)],
+  },
+  { name: "does not recover after focus leaves the document", input: null, assert: [returns<Context, boolean>(false)] },
+] satisfies readonly OperationCase<"default", FocusOutTarget, boolean, Context>[];
+
+const focusOutTable: OperationTable<undefined, "default", FocusOutTarget, boolean, Context> = {
+  defaultFixture: noFixture(),
+  cases: focusOutCases,
+  execute: (_fixture, input) =>
+    isMobileViewportTextEntryElement(
+      input === null
+        ? null
+        : ({
+            tagName: input.tagName,
+            getAttribute: (name: string) => (name === "contenteditable" ? (input.contenteditable ?? null) : null),
+          } as unknown as Element),
+    ),
+  observe: () => ({}),
+};
+
 describe("mobile viewport height resolution", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, table);
   runOperationTable(register, staleResizeGuardTable);
+  runOperationTable(register, focusOutTable);
 });

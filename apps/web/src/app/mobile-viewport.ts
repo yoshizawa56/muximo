@@ -17,6 +17,22 @@ export type StaleResizeGuardState = {
   minimumHeight?: number;
 };
 
+/**
+ * Returns whether a focus transition came from an element that can open the
+ * software keyboard. Buttons and links also emit focusout, but their blur is
+ * not evidence that the keyboard was dismissed.
+ */
+export function isMobileViewportTextEntryElement(element: Element | null): boolean {
+  if (!element) return false;
+  return (
+    (typeof HTMLInputElement !== "undefined" && element instanceof HTMLInputElement) ||
+    (typeof HTMLSelectElement !== "undefined" && element instanceof HTMLSelectElement) ||
+    (typeof HTMLTextAreaElement !== "undefined" && element instanceof HTMLTextAreaElement) ||
+    ["input", "select", "textarea"].includes(element.tagName.toLowerCase()) ||
+    element.getAttribute("contenteditable") === "true"
+  );
+}
+
 export function resolveStaleResizeGuard(
   now: number,
   guardUntil: number,
@@ -89,14 +105,7 @@ export function useMobileViewportHeight(): void {
       staleResizeExpiryTimerRef.current = null;
     };
     const layoutHeight = () => Math.max(window.innerHeight, document.documentElement.clientHeight);
-    const isTextEntryElement = (element: Element | null) =>
-      element instanceof HTMLInputElement ||
-      element instanceof HTMLSelectElement ||
-      element instanceof HTMLTextAreaElement ||
-      element?.getAttribute("contenteditable") === "true";
-    const isTextEntryActive = () => {
-      return isTextEntryElement(document.activeElement);
-    };
+    const isTextEntryActive = () => isMobileViewportTextEntryElement(document.activeElement);
     const update = () => {
       const layout = layoutHeight();
       const staleResizeGuard = resolveStaleResizeGuard(
@@ -199,14 +208,17 @@ export function useMobileViewportHeight(): void {
       recoveryFrameRef.current = window.requestAnimationFrame(sample);
     };
     const handleFocusIn = (event: FocusEvent) => {
-      if (!isTextEntryElement(event.target instanceof Element ? event.target : null)) return;
+      if (!isMobileViewportTextEntryElement(event.target instanceof Element ? event.target : null)) return;
       recoveringFromKeyboardRef.current = false;
       cancelStaleResizeExpiry();
       staleResizeGuardUntilRef.current = 0;
       recoveryFloorRef.current = null;
       update();
     };
-    const handleFocusOut = () => settleAfterViewportTransition(true);
+    const handleFocusOut = (event: FocusEvent) => {
+      if (!isMobileViewportTextEntryElement(event.target instanceof Element ? event.target : null)) return;
+      settleAfterViewportTransition(true);
+    };
     const handleVisibilityChange = () => settleAfterViewportTransition();
     const handlePageshow = () => settleAfterViewportTransition();
     const handleOrientationChange = () => settleAfterViewportTransition();
