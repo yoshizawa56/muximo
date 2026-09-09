@@ -233,7 +233,7 @@ type SerializedWriteContext = {
   persisted: string | null;
 };
 
-async function resolvePendingWrite(fixture: SerializedWriteFixture, latest: boolean): Promise<void> {
+async function resolvePendingWrite(fixture: { pending: Array<() => void> }, latest: boolean): Promise<void> {
   for (let attempt = 0; attempt < 16; attempt += 1) {
     const resolver = latest ? fixture.pending.pop() : fixture.pending.shift();
     if (resolver) {
@@ -283,9 +283,95 @@ const serializedWriteTable: ScenarioTable<
   observe: (fixture) => ({ started: fixture.started, completed: fixture.completed, persisted: fixture.persisted }),
 };
 
+type SerializedHydrationFixture = {
+  firstStorage: CustomKeyboardStorage;
+  secondStorage: CustomKeyboardStorage;
+  persisted: string;
+  pending: Array<() => void>;
+  reads: string[];
+  operations: Promise<void>[];
+};
+
+function createSerializedHydrationFixture(): FixtureHandle<SerializedHydrationFixture> {
+  let fixture: SerializedHydrationFixture;
+  const pending: Array<() => void> = [];
+  const baseStorage: CustomKeyboardStorage = {
+    read: async () => fixture.persisted,
+    write: async (value) => {
+      await new Promise<void>((resolve) => pending.push(resolve));
+      fixture.persisted = value;
+    },
+  };
+  fixture = {
+    firstStorage: createSerializedCustomKeyboardStorage(baseStorage),
+    secondStorage: createSerializedCustomKeyboardStorage(baseStorage),
+    persisted: "baseline",
+    pending,
+    reads: [],
+    operations: [],
+  };
+  return { fixture };
+}
+
+type SerializedHydrationStep =
+  | { type: "write"; mount: "first" | "second"; value: string }
+  | { type: "read"; mount: "first" | "second" }
+  | { type: "resolve-latest" }
+  | { type: "resolve-next" };
+type SerializedHydrationContext = { reads: readonly string[]; persisted: string };
+
+const serializedHydrationCases = [
+  {
+    name: "waits for queued writes before hydrating a remounted storage reader",
+    steps: [
+      { type: "write", mount: "first", value: "old" },
+      { type: "read", mount: "second" },
+      { type: "write", mount: "second", value: "new" },
+      { type: "resolve-latest" },
+      { type: "resolve-next" },
+    ],
+    assert: [
+      hasObserved<SerializedHydrationContext, undefined>("reads", ["new"]),
+      hasObserved<SerializedHydrationContext, undefined>("persisted", "new"),
+    ],
+  },
+] satisfies readonly ScenarioCase<"default", SerializedHydrationStep, undefined, SerializedHydrationContext>[];
+
+const serializedHydrationTable: ScenarioTable<
+  SerializedHydrationFixture,
+  "default",
+  SerializedHydrationStep,
+  undefined,
+  SerializedHydrationContext
+> = {
+  defaultFixture: createSerializedHydrationFixture,
+  cases: serializedHydrationCases,
+  execute: async (fixture, steps) => {
+    for (const step of steps) {
+      if (step.type === "write") {
+        const storage = step.mount === "first" ? fixture.firstStorage : fixture.secondStorage;
+        fixture.operations.push(storage.write(step.value));
+      }
+      if (step.type === "read") {
+        const storage = step.mount === "first" ? fixture.firstStorage : fixture.secondStorage;
+        fixture.operations.push(
+          storage.read().then((value) => {
+            fixture.reads.push(value ?? "");
+          }),
+        );
+      }
+      if (step.type === "resolve-latest") await resolvePendingWrite(fixture, true);
+      if (step.type === "resolve-next") await resolvePendingWrite(fixture, false);
+    }
+    await Promise.all(fixture.operations);
+  },
+  observe: (fixture) => ({ reads: fixture.reads, persisted: fixture.persisted }),
+};
+
 describe("custom keyboard storage", () => {
   const register = it as unknown as TestRegistrar;
   runOperationTable(register, readTable);
   runOperationTable(register, writeTable);
   runScenarioTable(register, serializedWriteTable);
+  runScenarioTable(register, serializedHydrationTable);
 });

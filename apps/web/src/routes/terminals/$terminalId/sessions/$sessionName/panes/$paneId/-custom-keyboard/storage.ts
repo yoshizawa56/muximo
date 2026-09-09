@@ -18,7 +18,10 @@ export function createSerializedCustomKeyboardStorage(
   key = CUSTOM_KEYBOARD_STORAGE_KEY,
 ): CustomKeyboardStorage {
   return {
-    read: () => storage.read(),
+    async read() {
+      await waitForSerializedWrites(key);
+      return storage.read();
+    },
     write(value) {
       const previous = serializedWriteQueues.get(key) ?? Promise.resolve();
       const next = previous.catch(() => undefined).then(() => storage.write(value));
@@ -28,6 +31,15 @@ export function createSerializedCustomKeyboardStorage(
       });
     },
   };
+}
+
+async function waitForSerializedWrites(key: string): Promise<void> {
+  while (true) {
+    const pending = serializedWriteQueues.get(key);
+    if (!pending) return;
+    await pending.catch(() => undefined);
+    if (serializedWriteQueues.get(key) === pending) return;
+  }
 }
 
 export function createCustomKeyboardStorage(

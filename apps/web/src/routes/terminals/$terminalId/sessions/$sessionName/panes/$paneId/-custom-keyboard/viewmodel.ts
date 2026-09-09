@@ -342,7 +342,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
 
   useEffect(() => {
     let disposed = false;
-    void storage
+    void serializedStorage
       .read()
       .then((raw) => {
         if (disposed) return;
@@ -361,7 +361,7 @@ export function useCustomKeyboardViewModel(options: CustomKeyboardControllerOpti
     return () => {
       disposed = true;
     };
-  }, [storage]);
+  }, [serializedStorage]);
 
   useEffect(() => {
     if (!isHydrated) return;

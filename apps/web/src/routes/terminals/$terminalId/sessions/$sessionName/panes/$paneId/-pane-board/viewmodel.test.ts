@@ -80,7 +80,8 @@ type MemoryInput = {
   selectedPaneId: string;
   memory: { target: string; missingInventorySnapshots: number };
   inventoryAuthoritative: boolean;
-  inventorySnapshotChanged: boolean;
+  inventorySnapshotMarker?: number;
+  memorySnapshotMarker?: number;
 };
 
 type MemoryResult = { target: string; missingInventorySnapshots: number };
@@ -89,11 +90,12 @@ const memoryCases = [
   {
     name: "retains a target through the first authoritative omission",
     input: {
-      panes: [storyPanes[0]],
+      panes: [],
       selectedPaneId: "pane-build",
       memory: { target: "%1", missingInventorySnapshots: 0 },
       inventoryAuthoritative: true,
-      inventorySnapshotChanged: true,
+      inventorySnapshotMarker: 2,
+      memorySnapshotMarker: 1,
     },
     assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 1 })],
   },
@@ -104,7 +106,8 @@ const memoryCases = [
       selectedPaneId: "pane-build",
       memory: { target: "%1", missingInventorySnapshots: 1 },
       inventoryAuthoritative: true,
-      inventorySnapshotChanged: true,
+      inventorySnapshotMarker: 3,
+      memorySnapshotMarker: 2,
     },
     assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 2 })],
   },
@@ -115,7 +118,8 @@ const memoryCases = [
       selectedPaneId: "pane-build",
       memory: { target: "%1", missingInventorySnapshots: 2 },
       inventoryAuthoritative: true,
-      inventorySnapshotChanged: true,
+      inventorySnapshotMarker: 4,
+      memorySnapshotMarker: 3,
     },
     assert: [returns<Context, MemoryResult>({ target: "", missingInventorySnapshots: 3 })],
   },
@@ -126,7 +130,8 @@ const memoryCases = [
       selectedPaneId: "pane-build",
       memory: { target: "%1", missingInventorySnapshots: 0 },
       inventoryAuthoritative: true,
-      inventorySnapshotChanged: true,
+      inventorySnapshotMarker: 2,
+      memorySnapshotMarker: 1,
     },
     assert: [returns<Context, MemoryResult>({ target: "", missingInventorySnapshots: 1 })],
   },
@@ -137,9 +142,46 @@ const memoryCases = [
       selectedPaneId: "pane-build",
       memory: { target: "%1", missingInventorySnapshots: 9 },
       inventoryAuthoritative: false,
-      inventorySnapshotChanged: true,
+      inventorySnapshotMarker: 2,
+      memorySnapshotMarker: 1,
     },
     assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 9 })],
+  },
+  {
+    name: "does not count a loading snapshot with a changed marker",
+    input: {
+      panes: [],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 1 },
+      inventoryAuthoritative: false,
+      inventorySnapshotMarker: 3,
+      memorySnapshotMarker: 2,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 1 })],
+  },
+  {
+    name: "does not count an errored snapshot with a changed marker",
+    input: {
+      panes: [],
+      selectedPaneId: "pane-build",
+      memory: { target: "%1", missingInventorySnapshots: 1 },
+      inventoryAuthoritative: false,
+      inventorySnapshotMarker: 4,
+      memorySnapshotMarker: 3,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 1 })],
+  },
+  {
+    name: "counts a successful structural-shared snapshot by fetch marker",
+    input: {
+      panes: [],
+      selectedPaneId: "missing-pane",
+      memory: { target: "%1", missingInventorySnapshots: 0 },
+      inventoryAuthoritative: true,
+      inventorySnapshotMarker: 5,
+      memorySnapshotMarker: 4,
+    },
+    assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 1 })],
   },
   {
     name: "does not count a rerender as another inventory omission",
@@ -148,7 +190,8 @@ const memoryCases = [
       selectedPaneId: "pane-build",
       memory: { target: "%1", missingInventorySnapshots: 1 },
       inventoryAuthoritative: true,
-      inventorySnapshotChanged: false,
+      inventorySnapshotMarker: 2,
+      memorySnapshotMarker: 2,
     },
     assert: [returns<Context, MemoryResult>({ target: "%1", missingInventorySnapshots: 1 })],
   },
@@ -159,7 +202,8 @@ const memoryCases = [
       selectedPaneId: "pane-build",
       memory: { target: "%1", missingInventorySnapshots: 2 },
       inventoryAuthoritative: true,
-      inventorySnapshotChanged: true,
+      inventorySnapshotMarker: 4,
+      memorySnapshotMarker: 3,
     },
     assert: [returns<Context, MemoryResult>({ target: "%4", missingInventorySnapshots: 0 })],
   },

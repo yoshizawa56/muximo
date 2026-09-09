@@ -28,7 +28,8 @@ export type SelectedTargetMemoryInput = {
   selectedPaneId?: string;
   memory: SelectedTargetMemory;
   inventoryAuthoritative: boolean;
-  inventorySnapshotChanged: boolean;
+  inventorySnapshotMarker?: number;
+  memorySnapshotMarker?: number;
 };
 
 export type SelectedTargetMemoryResult = SelectedTargetMemory;
@@ -48,8 +49,10 @@ export function resolveSelectedTargetMemory(input: SelectedTargetMemoryInput): S
   const targetReused =
     input.inventoryAuthoritative &&
     input.panes.some((pane) => pane.id !== input.selectedPaneId && pane.hostPaneId === input.memory.target);
+  const snapshotChanged =
+    input.inventorySnapshotMarker !== undefined && input.inventorySnapshotMarker !== input.memorySnapshotMarker;
   const missingInventorySnapshots =
-    input.inventoryAuthoritative && input.inventorySnapshotChanged
+    input.inventoryAuthoritative && snapshotChanged
       ? input.memory.missingInventorySnapshots + 1
       : input.memory.missingInventorySnapshots;
   if (targetReused || (input.inventoryAuthoritative && missingInventorySnapshots > MAX_MISSING_INVENTORY_SNAPSHOTS)) {
@@ -112,14 +115,13 @@ export function usePaneBoardViewModel({
     selectedPaneId?: string;
     target: string;
     missingInventorySnapshots: number;
-    inventorySnapshot?: readonly PaneSummary[];
+    inventorySnapshotMarker?: number;
   }>({
     connection,
     sessionName,
     selectedPaneId,
     target: "",
     missingInventorySnapshots: 0,
-    inventorySnapshot: undefined,
   });
   const sameSelection =
     selectedTargetMemoryRef.current.connection === connection &&
@@ -129,8 +131,9 @@ export function usePaneBoardViewModel({
     panes,
     selectedPaneId,
     memory: sameSelection ? selectedTargetMemoryRef.current : { target: "", missingInventorySnapshots: 0 },
-    inventoryAuthoritative: query.data !== undefined && !query.isError,
-    inventorySnapshotChanged: query.data?.panes !== selectedTargetMemoryRef.current.inventorySnapshot,
+    inventoryAuthoritative: query.isSuccess,
+    inventorySnapshotMarker: query.dataUpdatedAt,
+    memorySnapshotMarker: sameSelection ? selectedTargetMemoryRef.current.inventorySnapshotMarker : undefined,
   });
   const selectedTarget = selectedTargetMemory.target;
   useLayoutEffect(() => {
@@ -140,15 +143,15 @@ export function usePaneBoardViewModel({
       selectedPaneId,
       target: selectedTargetMemory.target,
       missingInventorySnapshots: selectedTargetMemory.missingInventorySnapshots,
-      inventorySnapshot: query.data?.panes,
+      inventorySnapshotMarker: query.dataUpdatedAt,
     };
   }, [
     connection,
     selectedPaneId,
     selectedTargetMemory.missingInventorySnapshots,
     selectedTargetMemory.target,
-    query.data?.panes,
     sessionName,
+    query.dataUpdatedAt,
   ]);
   const select = useCallback((pane: PaneSummary) => onSelect(pane.id), [onSelect]);
   const refresh = useCallback(() => {

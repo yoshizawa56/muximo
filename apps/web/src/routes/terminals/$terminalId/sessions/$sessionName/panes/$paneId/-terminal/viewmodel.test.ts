@@ -308,7 +308,7 @@ const pasteLifecycleCases = [
   {
     name: "rejects a paste when the original socket is no longer open",
     input: {
-      binding: pasteBinding,
+      binding: { ...pasteBinding, socket: closedPasteSocket },
       snapshot: {
         target: "%3",
         terminal: pasteTerminal,
