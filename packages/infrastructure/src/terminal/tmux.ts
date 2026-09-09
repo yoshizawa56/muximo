@@ -57,6 +57,8 @@ export type TmuxPane = TmuxPaneRef & {
   height: number;
   windowWidth: number;
   windowHeight: number;
+  /** True when tmux is intentionally presenting the window as one zoomed pane. */
+  windowZoomed?: boolean;
   muximodPaneId?: string;
   muximodName?: string;
   muximodKind?: string;
@@ -561,6 +563,7 @@ export class TmuxAdapter {
         "#{pane_height}",
         "#{window_width}",
         "#{window_height}",
+        "#{window_zoomed_flag}",
         this.metadataFormat("pane_id"),
         this.metadataFormat("pane_name"),
         this.metadataFormat("kind"),
@@ -608,6 +611,7 @@ export class TmuxAdapter {
           height,
           windowWidth,
           windowHeight,
+          windowZoomed,
           muximodPaneId,
           muximodName,
           muximodKind,
@@ -654,6 +658,7 @@ export class TmuxAdapter {
           height: parseDimension(height, "pane height"),
           windowWidth: parseDimension(windowWidth, "window width"),
           windowHeight: parseDimension(windowHeight, "window height"),
+          ...(windowZoomed === "1" ? { windowZoomed: true } : {}),
           muximodPaneId: nonEmpty(muximodPaneId),
           muximodName: nonEmpty(muximodName),
           muximodKind: nonEmpty(muximodKind),
@@ -980,8 +985,21 @@ function hasCompleteTmuxPaneGeometry(panes: readonly TmuxPane[]): boolean {
       continue;
     }
     if (window.width !== pane.windowWidth || window.height !== pane.windowHeight) return false;
-    if (window.panes.some((other) => panesOverlap(other, pane))) return false;
     window.panes.push(pane);
+  }
+  for (const window of windows.values()) {
+    // A zoomed tmux window intentionally reports the selected pane's visible
+    // rectangle for every pane in the shared window. Those coordinates are
+    // authoritative, but they must not be mistaken for a corrupt desktop
+    // layout. The web layout policy still rejects overlapping panes for map
+    // rendering and uses the saved desktop geometry while a mobile lease is
+    // active.
+    if (window.panes.every((pane) => pane.windowZoomed === true)) continue;
+    for (let index = 0; index < window.panes.length; index += 1) {
+      const pane = window.panes[index];
+      if (!pane) continue;
+      if (window.panes.slice(index + 1).some((other) => panesOverlap(other, pane))) return false;
+    }
   }
   return true;
 }
