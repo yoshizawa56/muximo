@@ -53,6 +53,12 @@ export type PasteLifecycleSnapshot = {
   appActive: boolean;
 };
 
+export type MockPasteLifecycleBinding = {
+  target: string;
+  terminal: Terminal;
+  paneGeneration: number;
+};
+
 export function isPasteLifecycleCurrent(binding: PasteLifecycleBinding, snapshot: PasteLifecycleSnapshot): boolean {
   return (
     binding.target === snapshot.target &&
@@ -64,6 +70,20 @@ export function isPasteLifecycleCurrent(binding: PasteLifecycleBinding, snapshot
     !snapshot.terminalClosed &&
     snapshot.appActive &&
     snapshot.socket?.readyState === 1
+  );
+}
+
+export function isMockPasteLifecycleCurrent(
+  binding: MockPasteLifecycleBinding,
+  snapshot: PasteLifecycleSnapshot,
+): boolean {
+  return (
+    binding.target === snapshot.target &&
+    binding.terminal === snapshot.terminal &&
+    binding.paneGeneration === snapshot.paneGeneration &&
+    snapshot.terminalReady &&
+    !snapshot.terminalClosed &&
+    snapshot.appActive
   );
 }
 
@@ -341,7 +361,7 @@ export function usePaneViewModel({
     [],
   );
   const isCurrentPaneForPaste = useCallback(
-    (binding: PasteLifecycleBinding) =>
+    (binding: Pick<MockPasteLifecycleBinding, "target" | "terminal" | "paneGeneration">) =>
       binding.target === currentTargetRef.current &&
       binding.terminal === terminalRef.current &&
       binding.paneGeneration === paneGenerationRef.current,
@@ -355,6 +375,26 @@ export function usePaneViewModel({
       return;
     }
     const terminal = terminalRef.current;
+    const mockBinding = terminal ? { target, terminal, paneGeneration: paneGenerationRef.current } : null;
+    if (isMockMode()) {
+      if (!mockBinding || !isMockPasteLifecycleCurrent(mockBinding, createPasteLifecycleSnapshot())) {
+        reportActionError("Terminal is not connected");
+        return;
+      }
+      try {
+        const data = await navigator.clipboard.readText();
+        if (!data) return;
+        if (!isMockPasteLifecycleCurrent(mockBinding, createPasteLifecycleSnapshot())) {
+          if (isCurrentPaneForPaste(mockBinding))
+            reportActionError("Terminal connection changed while reading clipboard");
+          return;
+        }
+        mockBinding.terminal.paste(data);
+      } catch {
+        if (isCurrentPaneForPaste(mockBinding)) reportActionError("Clipboard access was denied or failed");
+      }
+      return;
+    }
     const socket = socketRef.current;
     const binding =
       terminal && socket

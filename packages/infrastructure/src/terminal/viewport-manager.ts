@@ -239,10 +239,11 @@ export class TmuxViewportManager {
         return;
       }
       const activityChanged = client.activity > previous.activity;
-      // tmux reports client_activity with second precision. Accept an
-      // activity advance immediately, even during the suppression window, so
-      // a real desktop input in the same second as attach is not lost.
-      if (!activityChanged && this.now() < candidate.syntheticClientActiveUntil) return;
+      // tmux can advance client_activity while muximod is changing the shared
+      // viewport. Treat every client-active hook during the bounded synthetic
+      // window as command fallout; a genuine later activity advance is still
+      // accepted after the baseline has been refreshed.
+      if (!activityChanged || this.now() < candidate.syntheticClientActiveUntil) return;
     }
     if (
       (event === "client-focus-in" || event === "client-resized") &&
@@ -449,6 +450,10 @@ export class TmuxViewportManager {
         this.adapter.refreshClient(record.mobileClient.name);
       }
     }
+    // Internal tmux commands can advance the desktop client's activity
+    // timestamp. Capture the post-command baseline so a follow-up hook for
+    // that command cannot be mistaken for user input.
+    this.rememberLatestDesktop(record);
   }
 
   private claimMobile(record: LeaseRecord, cols?: number, rows?: number): void {

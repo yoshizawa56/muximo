@@ -32,6 +32,7 @@ import {
 } from "./policy";
 import {
   createTerminalResumeStore,
+  isMockPasteLifecycleCurrent,
   isPasteLifecycleCurrent,
   isPasteOperationCurrent,
   type PasteLifecycleBinding,
@@ -347,6 +348,55 @@ const pasteLifecycleTable: OperationTable<undefined, "default", PasteLifecycleIn
   observe: () => ({}),
 };
 
+type MockPasteLifecycleInput = {
+  binding: { target: string; terminal: Terminal; paneGeneration: number };
+  snapshot: PasteLifecycleSnapshot;
+};
+const mockPasteBinding = { target: "%3", terminal: pasteTerminal, paneGeneration: 2 };
+const mockPasteLifecycleCases = [
+  {
+    name: "allows mock clipboard paste without a websocket",
+    input: {
+      binding: mockPasteBinding,
+      snapshot: {
+        target: "%3",
+        terminal: pasteTerminal,
+        socket: null,
+        paneGeneration: 2,
+        socketGeneration: 0,
+        terminalReady: true,
+        terminalClosed: false,
+        appActive: true,
+      },
+    },
+    assert: [returns<EmptyContext, boolean>(true)],
+  },
+  {
+    name: "rejects mock clipboard paste after the terminal closes",
+    input: {
+      binding: mockPasteBinding,
+      snapshot: {
+        target: "%3",
+        terminal: pasteTerminal,
+        socket: null,
+        paneGeneration: 2,
+        socketGeneration: 0,
+        terminalReady: true,
+        terminalClosed: true,
+        appActive: true,
+      },
+    },
+    assert: [returns<EmptyContext, boolean>(false)],
+  },
+] satisfies readonly OperationCase<"default", MockPasteLifecycleInput, boolean, EmptyContext>[];
+
+const mockPasteLifecycleTable: OperationTable<undefined, "default", MockPasteLifecycleInput, boolean, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: mockPasteLifecycleCases,
+  execute: (_fixture, input) => isMockPasteLifecycleCurrent(input.binding, input.snapshot),
+  observe: () => ({}),
+};
+
 type PasteOperationInput = { operationGeneration: number; currentGeneration: number };
 const pasteOperationCases = [
   {
@@ -539,6 +589,7 @@ describe("terminal pane handshake helpers", () => {
   runOperationTable(register, cleanupTable);
   runOperationTable(register, nativeKeyboardToggleTable);
   runOperationTable(register, pasteLifecycleTable);
+  runOperationTable(register, mockPasteLifecycleTable);
   runOperationTable(register, pasteOperationTable);
   runOperationTable(register, terminalControlErrorTable);
   runOperationTable(register, controlTable);

@@ -224,7 +224,10 @@ export class TerminalSession {
   ): Promise<void> {
     if (this.disposed) return;
     const isCurrentSocket = () =>
-      !this.disposed && this.socket === socket && this.socketBinding?.generation === generation;
+      !this.disposed &&
+      socket.readyState === muximodSocketReadyState.open &&
+      this.socket === socket &&
+      this.socketBinding?.generation === generation;
 
     if (isBinary) {
       if (!this.isAttached()) {
@@ -255,7 +258,7 @@ export class TerminalSession {
   private async handleControlMessage(message: ClientControlMessage, isCurrentSocket: () => boolean): Promise<void> {
     switch (message.type) {
       case "attach":
-        await this.handleAttach(message);
+        await this.handleAttach(message, isCurrentSocket);
         return;
       case "claim":
         if (!this.isAttached()) {
@@ -342,7 +345,8 @@ export class TerminalSession {
     }
   }
 
-  private async handleAttach(message: AttachMessage): Promise<void> {
+  private async handleAttach(message: AttachMessage, isCurrentSocket: () => boolean): Promise<void> {
+    if (!isCurrentSocket()) return;
     if (this.state !== "awaiting_attach") {
       this.sendError("already_attached", "This WebSocket already has a terminal session");
       return;
@@ -360,16 +364,19 @@ export class TerminalSession {
       }
 
       const socket = this.socket;
-      if (!socket) return;
+      if (!socket || !isCurrentSocket()) return;
       // The new connection's temporary TerminalSession is currently handling
       // this message. Bind the replacement listener after that EventEmitter
       // dispatch completes, otherwise the same attach frame can be observed
       // twice by the resumed session.
       await Promise.resolve();
-      if (!(await existing.resumeSocket(socket, message))) {
+      if (!isCurrentSocket()) return;
+      if (!(await existing.resumeSocket(socket, message, isCurrentSocket))) {
+        if (!isCurrentSocket()) return;
         this.sendError("resume_unavailable", "The terminal session is no longer available", true);
         return;
       }
+      if (!isCurrentSocket()) return;
       this.detachSocketListeners();
       this.disposed = true;
       this.state = "closed";
@@ -383,15 +390,30 @@ export class TerminalSession {
     return this.target === target && this.isAttachedOrParked();
   }
 
-  private async resumeSocket(socket: MuximodSocket, message: AttachMessage): Promise<boolean> {
-    if (this.disposed || !this.isAttachedOrParked() || !this.canResumeTarget(message.target)) return false;
+  private async resumeSocket(
+    socket: MuximodSocket,
+    message: AttachMessage,
+    isIncomingSocketCurrent: () => boolean,
+  ): Promise<boolean> {
+    if (
+      !isIncomingSocketCurrent() ||
+      this.disposed ||
+      !this.isAttachedOrParked() ||
+      !this.canResumeTarget(message.target)
+    )
+      return false;
 
     const previousSocket = this.socket;
+    if (!isIncomingSocketCurrent()) return false;
     this.detachSocketListeners();
     if (previousSocket && previousSocket !== socket) closeSocket(previousSocket, 1000, "replaced");
 
     this.clearResumeTimer();
     this.bindSocket(socket);
+    const generation = this.socketBinding?.generation;
+    const isCurrentResume = () =>
+      isIncomingSocketCurrent() && generation !== undefined && this.isCurrentTransport(socket, generation);
+    if (!isCurrentResume()) return true;
     this.transportBackpressured = false;
     this.state = "synchronizing";
     this.cols = message.cols;
@@ -404,15 +426,21 @@ export class TerminalSession {
       // WebView may reconnect after a desktop takeover; its dimensions are
       // only a measurement until the user explicitly claims control.
       await this.lease?.resize(message.cols, message.rows);
+      if (!isCurrentResume()) return true;
       await this.pty?.resize(message.cols, message.rows);
+      if (!isCurrentResume()) return true;
       this.ptyCols = message.cols;
       this.ptyRows = message.rows;
       shouldRedraw = this.parkedOutputOverflowed;
-      if (shouldRedraw) await this.lease?.refresh();
+      if (shouldRedraw) {
+        await this.lease?.refresh();
+        if (!isCurrentResume()) return true;
+      }
       replay = this.takeParkedOutput();
       this.clearParkedOutput();
       this.state = "attached";
     } catch (error) {
+      if (!isCurrentResume()) return true;
       this.sendError("resume_failed", error, true);
       // The replacement transport is already bound at this point. Keep the
       // runtime resumable, close the failed transport, and let the client run

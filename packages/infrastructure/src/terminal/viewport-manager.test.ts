@@ -132,7 +132,13 @@ const cases = [
   },
   {
     name: "returns to the desktop viewport when desktop becomes active",
-    steps: [prepare, attach, { type: "desktop-activity" }, { type: "hook", event: "client-active" }],
+    steps: [
+      prepare,
+      attach,
+      { type: "advance-clock", milliseconds: 250 },
+      { type: "desktop-activity" },
+      { type: "hook", event: "client-active" },
+    ],
     assert: [
       hasObserved<ViewportContext, undefined>("activePaneId", "%1"),
       hasObserved<ViewportContext, undefined>("desktopFlags", "attached,focused"),
@@ -158,6 +164,7 @@ const cases = [
       { type: "advance-clock", milliseconds: 249 },
       { type: "hook", event: "client-active" },
       { type: "advance-clock", milliseconds: 1 },
+      { type: "desktop-activity" },
       { type: "hook", event: "client-active" },
     ],
     assert: [
@@ -166,6 +173,26 @@ const cases = [
         { owner: "mobile", reason: "attached" },
         { owner: "desktop", reason: "desktop_activity" },
       ]),
+    ],
+  },
+  {
+    name: "ignores synthetic activity from internal viewport commands but accepts later desktop input",
+    steps: [
+      prepare,
+      attach,
+      { type: "advance-clock", milliseconds: 250 },
+      { type: "resize", cols: 90, rows: 30 },
+      { type: "advance-clock", milliseconds: 250 },
+      { type: "hook", event: "client-active" },
+      { type: "desktop-activity" },
+      { type: "hook", event: "client-active" },
+    ],
+    assert: [
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "desktop_activity" },
+      ]),
+      hasObserved<ViewportContext, undefined>("zoomed", false),
     ],
   },
   {
@@ -321,7 +348,14 @@ const cases = [
   },
   {
     name: "reclaims the viewport from a desktop takeover with a bare claim",
-    steps: [prepare, attach, { type: "desktop-activity" }, { type: "hook", event: "client-active" }, { type: "claim" }],
+    steps: [
+      prepare,
+      attach,
+      { type: "advance-clock", milliseconds: 250 },
+      { type: "desktop-activity" },
+      { type: "hook", event: "client-active" },
+      { type: "claim" },
+    ],
     assert: [
       hasObserved<ViewportContext, undefined>("width", 80),
       hasObserved<ViewportContext, undefined>("height", 24),
@@ -340,6 +374,7 @@ const cases = [
     steps: [
       prepare,
       attach,
+      { type: "advance-clock", milliseconds: 250 },
       { type: "desktop-activity" },
       { type: "hook", event: "client-active" },
       { type: "resize", cols: 90, rows: 30 },
@@ -359,6 +394,7 @@ const cases = [
     steps: [
       prepare,
       attach,
+      { type: "advance-clock", milliseconds: 250 },
       { type: "desktop-activity" },
       { type: "hook", event: "client-active" },
       { type: "resize", cols: 90, rows: 30 },
@@ -379,6 +415,7 @@ const cases = [
     steps: [
       prepare,
       attach,
+      { type: "advance-clock", milliseconds: 250 },
       { type: "desktop-activity" },
       { type: "hook", event: "client-active" },
       { type: "desktop-layout" },
@@ -622,6 +659,7 @@ class FakeTmuxAdapter extends TmuxAdapter {
     this.resizeCalls.push([width, height]);
     this.state.width = width;
     this.state.height = height;
+    this.desktop.activity += 1;
   }
   public override switchClient(_clientName: string, targetPane: string): void {
     this.state.activePaneId = targetPane;

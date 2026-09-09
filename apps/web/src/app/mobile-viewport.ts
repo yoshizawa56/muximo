@@ -12,6 +12,20 @@ export type MobileViewportHeightInput = {
   minimumHeight?: number;
 };
 
+export type StaleResizeGuardState = {
+  active: boolean;
+  minimumHeight?: number;
+};
+
+export function resolveStaleResizeGuard(
+  now: number,
+  guardUntil: number,
+  recoveryFloor: number | null,
+): StaleResizeGuardState {
+  const active = now < guardUntil;
+  return { active, minimumHeight: active ? (recoveryFloor ?? undefined) : undefined };
+}
+
 /**
  * Resolves the CSS app height from the two browser viewport measurements.
  * During a keyboard dismissal WebKit can deliver a late, stale visual
@@ -55,6 +69,7 @@ export function useMobileViewportHeight(): void {
   const recoveringFromKeyboardRef = useRef(false);
   const recoveryFloorRef = useRef<number | null>(null);
   const staleResizeGuardUntilRef = useRef(0);
+  const staleResizeExpiryTimerRef = useRef<number | null>(null);
   const lastLayoutHeightRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -68,6 +83,11 @@ export function useMobileViewportHeight(): void {
     const setHeight = (height: number) => {
       root.style.setProperty("--app-viewport-height", `${Math.max(1, Math.round(height))}px`);
     };
+    const cancelStaleResizeExpiry = () => {
+      if (staleResizeExpiryTimerRef.current === null) return;
+      window.clearTimeout(staleResizeExpiryTimerRef.current);
+      staleResizeExpiryTimerRef.current = null;
+    };
     const layoutHeight = () => Math.max(window.innerHeight, document.documentElement.clientHeight);
     const isTextEntryElement = (element: Element | null) =>
       element instanceof HTMLInputElement ||
@@ -79,20 +99,44 @@ export function useMobileViewportHeight(): void {
     };
     const update = () => {
       const layout = layoutHeight();
-      const staleResizeGuardActive = performance.now() < staleResizeGuardUntilRef.current;
+      const staleResizeGuard = resolveStaleResizeGuard(
+        performance.now(),
+        staleResizeGuardUntilRef.current,
+        recoveryFloorRef.current,
+      );
       const height = resolveMobileViewportHeight({
         visualViewportHeight: visualViewport?.height,
         layoutViewportHeight: layout,
-        recoveringFromKeyboard: recoveringFromKeyboardRef.current || staleResizeGuardActive,
-        minimumHeight: staleResizeGuardActive ? (recoveryFloorRef.current ?? undefined) : undefined,
+        recoveringFromKeyboard: recoveringFromKeyboardRef.current || staleResizeGuard.active,
+        minimumHeight: staleResizeGuard.minimumHeight,
       });
       setHeight(height);
-      if (!recoveringFromKeyboardRef.current && !staleResizeGuardActive && !isTextEntryActive()) {
+      if (!recoveringFromKeyboardRef.current && !staleResizeGuard.active && !isTextEntryActive()) {
         lastLayoutHeightRef.current = layout;
       }
     };
+    const scheduleStaleResizeExpiry = () => {
+      cancelStaleResizeExpiry();
+      const delay = Math.max(0, staleResizeGuardUntilRef.current - performance.now());
+      staleResizeExpiryTimerRef.current = window.setTimeout(() => {
+        staleResizeExpiryTimerRef.current = null;
+        const guard = resolveStaleResizeGuard(
+          performance.now(),
+          staleResizeGuardUntilRef.current,
+          recoveryFloorRef.current,
+        );
+        if (guard.active) {
+          scheduleStaleResizeExpiry();
+          return;
+        }
+        staleResizeGuardUntilRef.current = 0;
+        recoveryFloorRef.current = null;
+        update();
+      }, delay);
+    };
     const settleAfterViewportTransition = (recoverFromKeyboard = false) => {
       cancelSettle();
+      cancelStaleResizeExpiry();
       recoveringFromKeyboardRef.current = recoverFromKeyboard;
       staleResizeGuardUntilRef.current = 0;
       if (recoverFromKeyboard) {
@@ -109,16 +153,17 @@ export function useMobileViewportHeight(): void {
         if (document.visibilityState !== "visible") return;
         const height = visualViewport?.height ?? window.innerHeight;
         const floor = layoutHeight();
+        const staleResizeGuard = resolveStaleResizeGuard(
+          performance.now(),
+          staleResizeGuardUntilRef.current,
+          recoveryFloorRef.current,
+        );
         setHeight(
           resolveMobileViewportHeight({
             visualViewportHeight: height,
             layoutViewportHeight: floor,
-            recoveringFromKeyboard:
-              recoveringFromKeyboardRef.current || performance.now() < staleResizeGuardUntilRef.current,
-            minimumHeight:
-              performance.now() < staleResizeGuardUntilRef.current
-                ? (recoveryFloorRef.current ?? undefined)
-                : undefined,
+            recoveringFromKeyboard: recoveringFromKeyboardRef.current || staleResizeGuard.active,
+            minimumHeight: staleResizeGuard.minimumHeight,
           }),
         );
 
@@ -146,6 +191,7 @@ export function useMobileViewportHeight(): void {
           recoveringFromKeyboardRef.current = false;
           staleResizeGuardUntilRef.current =
             recoveryFloorRef.current === null ? 0 : performance.now() + VIEWPORT_STALE_RESIZE_GUARD_MS;
+          if (staleResizeGuardUntilRef.current !== 0) scheduleStaleResizeExpiry();
           return;
         }
         recoveryFrameRef.current = window.requestAnimationFrame(sample);
@@ -155,6 +201,7 @@ export function useMobileViewportHeight(): void {
     const handleFocusIn = (event: FocusEvent) => {
       if (!isTextEntryElement(event.target instanceof Element ? event.target : null)) return;
       recoveringFromKeyboardRef.current = false;
+      cancelStaleResizeExpiry();
       staleResizeGuardUntilRef.current = 0;
       recoveryFloorRef.current = null;
       update();
@@ -180,6 +227,7 @@ export function useMobileViewportHeight(): void {
 
     return () => {
       cancelSettle();
+      cancelStaleResizeExpiry();
       recoveringFromKeyboardRef.current = false;
       recoveryFloorRef.current = null;
       staleResizeGuardUntilRef.current = 0;

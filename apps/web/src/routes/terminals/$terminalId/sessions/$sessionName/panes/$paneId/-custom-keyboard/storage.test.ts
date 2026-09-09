@@ -186,38 +186,56 @@ const writeTable: OperationTable<StorageFixture, WriteFixtureKey, { value: strin
 };
 
 type SerializedWriteFixture = {
-  storage: CustomKeyboardStorage;
-  writes: string[];
+  firstStorage: CustomKeyboardStorage;
+  secondStorage: CustomKeyboardStorage;
+  started: string[];
+  completed: string[];
+  persisted: string | null;
   pending: Array<() => void>;
   completions: Promise<void>[];
 };
 
 function createSerializedWriteFixture(): FixtureHandle<SerializedWriteFixture> {
-  const writes: string[] = [];
+  const started: string[] = [];
+  const completed: string[] = [];
+  let fixture: SerializedWriteFixture;
   const pending: Array<() => void> = [];
   const baseStorage: CustomKeyboardStorage = {
     read: async () => null,
     write: async (value) => {
-      writes.push(value);
+      started.push(value);
       await new Promise<void>((resolve) => pending.push(resolve));
+      fixture.persisted = value;
+      completed.push(value);
     },
   };
+  fixture = {
+    firstStorage: createSerializedCustomKeyboardStorage(baseStorage),
+    secondStorage: createSerializedCustomKeyboardStorage(baseStorage),
+    started,
+    completed,
+    persisted: null,
+    pending,
+    completions: [],
+  };
   return {
-    fixture: {
-      storage: createSerializedCustomKeyboardStorage(baseStorage),
-      writes,
-      pending,
-      completions: [],
-    },
+    fixture,
   };
 }
 
-type SerializedWriteStep = { type: "write"; value: string } | { type: "resolve" };
-type SerializedWriteContext = { writes: readonly string[] };
+type SerializedWriteStep =
+  | { type: "write"; mount: "first" | "second"; value: string }
+  | { type: "resolve-latest" }
+  | { type: "resolve-next" };
+type SerializedWriteContext = {
+  started: readonly string[];
+  completed: readonly string[];
+  persisted: string | null;
+};
 
-async function resolvePendingWrite(fixture: SerializedWriteFixture): Promise<void> {
+async function resolvePendingWrite(fixture: SerializedWriteFixture, latest: boolean): Promise<void> {
   for (let attempt = 0; attempt < 16; attempt += 1) {
-    const resolver = fixture.pending.shift();
+    const resolver = latest ? fixture.pending.pop() : fixture.pending.shift();
     if (resolver) {
       resolver();
       return;
@@ -229,14 +247,18 @@ async function resolvePendingWrite(fixture: SerializedWriteFixture): Promise<voi
 
 const serializedWriteCases = [
   {
-    name: "persists consecutive states in invocation order despite delayed completions",
+    name: "serializes writes from separate mounts through one shared queue",
     steps: [
-      { type: "write", value: "first" },
-      { type: "write", value: "second" },
-      { type: "resolve" },
-      { type: "resolve" },
+      { type: "write", mount: "first", value: "first" },
+      { type: "write", mount: "second", value: "second" },
+      { type: "resolve-latest" },
+      { type: "resolve-next" },
     ],
-    assert: [hasObserved<SerializedWriteContext, undefined>("writes", ["first", "second"])],
+    assert: [
+      hasObserved<SerializedWriteContext, undefined>("started", ["first", "second"]),
+      hasObserved<SerializedWriteContext, undefined>("completed", ["first", "second"]),
+      hasObserved<SerializedWriteContext, undefined>("persisted", "second"),
+    ],
   },
 ] satisfies readonly ScenarioCase<"default", SerializedWriteStep, undefined, SerializedWriteContext>[];
 
@@ -251,12 +273,14 @@ const serializedWriteTable: ScenarioTable<
   cases: serializedWriteCases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
-      if (step.type === "write") fixture.completions.push(fixture.storage.write(step.value));
-      else await resolvePendingWrite(fixture);
+      if (step.type === "write") {
+        const storage = step.mount === "first" ? fixture.firstStorage : fixture.secondStorage;
+        fixture.completions.push(storage.write(step.value));
+      } else await resolvePendingWrite(fixture, step.type === "resolve-latest");
     }
     await Promise.all(fixture.completions);
   },
-  observe: (fixture) => ({ writes: fixture.writes }),
+  observe: (fixture) => ({ started: fixture.started, completed: fixture.completed, persisted: fixture.persisted }),
 };
 
 describe("custom keyboard storage", () => {
