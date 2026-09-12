@@ -117,6 +117,8 @@ export class TerminalSession {
   private socketBinding: SocketBinding | undefined;
   private pty: PtyProcess | undefined;
   private lease: ViewportLease | undefined;
+  private leaseMutationGeneration = 0;
+  private leaseOwnerIntent: "mobile" | "desktop" | undefined;
   private state: TerminalSessionState = "awaiting_attach";
   private disposed = false;
   private registered = false;
@@ -410,6 +412,7 @@ export class TerminalSession {
 
     this.clearResumeTimer();
     this.bindSocket(socket);
+    this.markLeaseOwnerIntent(this.leaseOwnerIntent === "desktop" ? "desktop" : (this.lease?.owner ?? "mobile"));
     const generation = this.socketBinding?.generation;
     const isCurrentResume = () =>
       isIncomingSocketCurrent() && generation !== undefined && this.isCurrentTransport(socket, generation);
@@ -675,15 +678,41 @@ export class TerminalSession {
   private async claimMobileForInput(cols: number, rows: number, isCurrentSocket: () => boolean): Promise<void> {
     const lease = this.lease;
     if (!lease || !isCurrentSocket()) return;
+    const mutationGeneration = this.markLeaseOwnerIntent("mobile");
     const shouldResizePty = lease.owner !== "mobile" || this.ptyCols !== cols || this.ptyRows !== rows;
-    await lease.claimMobile(cols, rows);
-    if (!isCurrentSocket() || !shouldResizePty) return;
+    try {
+      await lease.claimMobile(cols, rows);
+    } catch (error) {
+      await this.restoreDesktopAfterStaleClaim(lease, mutationGeneration, isCurrentSocket);
+      throw error;
+    }
+    if (!isCurrentSocket()) {
+      await this.restoreDesktopAfterStaleClaim(lease, mutationGeneration, isCurrentSocket);
+      return;
+    }
+    if (this.leaseMutationGeneration !== mutationGeneration || !shouldResizePty) return;
     const pty = this.pty;
     if (!pty || !isCurrentSocket()) return;
     await pty.resize(cols, rows);
-    if (!isCurrentSocket()) return;
+    if (!isCurrentSocket() || this.leaseMutationGeneration !== mutationGeneration) return;
     this.ptyCols = cols;
     this.ptyRows = rows;
+  }
+
+  private async restoreDesktopAfterStaleClaim(
+    lease: ViewportLease,
+    mutationGeneration: number,
+    isCurrentSocket: () => boolean,
+  ): Promise<void> {
+    if (isCurrentSocket()) return;
+    if (this.leaseMutationGeneration === mutationGeneration) this.markLeaseOwnerIntent("desktop");
+    if (this.leaseOwnerIntent !== "desktop") return;
+    try {
+      await lease.returnToDesktop();
+    } catch {
+      // The transport is already stale; the normal disconnect/release path
+      // remains responsible for the final best-effort viewport restoration.
+    }
   }
 
   private handlePtyOutput(data: Buffer): void {
@@ -758,6 +787,7 @@ export class TerminalSession {
     }
 
     this.state = "parked";
+    this.markLeaseOwnerIntent("desktop");
     await this.returnViewportToDesktop(generation);
     if (!this.isCurrentTransportGeneration(generation) || this.state !== "parked") return;
     this.scheduleResumeExpiry();
@@ -765,8 +795,11 @@ export class TerminalSession {
 
   private async returnViewportToDesktop(expectedGeneration?: number): Promise<void> {
     if (expectedGeneration !== undefined && !this.isCurrentTransportGeneration(expectedGeneration)) return;
+    const lease = this.lease;
+    if (!lease) return;
+    this.markLeaseOwnerIntent("desktop");
     try {
-      await this.lease?.returnToDesktop();
+      await lease.returnToDesktop();
     } catch {
       // The lease expiry path still releases the viewport if tmux is
       // temporarily unavailable during transport loss.
@@ -874,6 +907,12 @@ export class TerminalSession {
 
   private isCurrentTransportGeneration(generation: number): boolean {
     return !this.disposed && this.transportGeneration === generation;
+  }
+
+  private markLeaseOwnerIntent(owner: "mobile" | "desktop"): number {
+    this.leaseMutationGeneration += 1;
+    this.leaseOwnerIntent = owner;
+    return this.leaseMutationGeneration;
   }
 }
 

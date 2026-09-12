@@ -65,6 +65,7 @@ type SessionContext = {
   copyModeCalls: number;
   pasteTmuxBufferCalls: number;
   leaseClaimCalls: number;
+  leaseOwner: "mobile" | "desktop";
   ptyResizeCalls: readonly (readonly [number, number])[];
   events: readonly string[];
   leaseReturnToDesktopCalls: number;
@@ -440,6 +441,7 @@ const cases = [
       hasObserved<SessionContext, undefined>("secondResumed", true),
       hasObserved<SessionContext, undefined>("secondErrors", []),
       hasObserved<SessionContext, undefined>("writes", []),
+      hasObserved<SessionContext, undefined>("leaseOwner", "desktop"),
       hasObserved<SessionContext, undefined>("ptyResizeCalls", [[80, 24]]),
     ],
   },
@@ -636,6 +638,7 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
     copyModeCalls: fixture.lease.enterCopyMode.mock.calls.length,
     pasteTmuxBufferCalls: fixture.lease.pasteTmuxBuffer.mock.calls.length,
     leaseClaimCalls: fixture.lease.claimMobile.mock.calls.length,
+    leaseOwner: fixture.lease.owner,
     ptyResizeCalls: fixture.pty.resizeCalls.map(([cols, rows]) => [cols, rows]),
     leaseReturnToDesktopCalls: fixture.lease.returnToDesktop.mock.calls.length,
     leaseResizeCalls: fixture.lease.resize.mock.calls.map(([cols, rows]) => [cols, rows]),
@@ -682,8 +685,11 @@ function createHarness(
     },
     claimMobile: vi.fn(async () => {
       await pendingClaim;
+      leaseOwner = "mobile";
     }),
-    returnToDesktop: vi.fn(async () => undefined),
+    returnToDesktop: vi.fn(async () => {
+      leaseOwner = "desktop";
+    }),
     resize: vi.fn(async (_cols?: number, _rows?: number) => {
       await pendingResumeResize;
     }),
