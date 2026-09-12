@@ -522,7 +522,7 @@ const attachTable: OperationTable<RecordingFixture, "default", AttachInput, stri
   observe: () => ({}),
 };
 
-type TmuxAction = "copy-mode" | "paste-buffer";
+type TmuxAction = "copy-mode" | "paste-buffer" | "paste-named-buffer";
 const tmuxActionCases = [
   {
     name: "enters copy mode in the requested pane",
@@ -534,13 +534,19 @@ const tmuxActionCases = [
     input: "paste-buffer",
     assert: [returns<EmptyContext, string[]>(["paste-buffer", "-t", "%1"])],
   },
+  {
+    name: "lets tmux delete a named buffer after the queued paste completes",
+    input: "paste-named-buffer",
+    assert: [returns<EmptyContext, string[]>(["paste-buffer", "-d", "-b", "muximod-paste-test", "-t", "%1"])],
+  },
 ] satisfies readonly OperationCase<"default", TmuxAction, string[], EmptyContext>[];
 const tmuxActionTable: OperationTable<RecordingFixture, "default", TmuxAction, string[], EmptyContext> = {
   defaultFixture: recordingFixture,
   cases: tmuxActionCases,
   execute: (fixture, input) => {
     if (input === "copy-mode") fixture.adapter.enterCopyMode("%1");
-    else fixture.adapter.pasteCurrentBuffer("%1");
+    else if (input === "paste-buffer") fixture.adapter.pasteCurrentBuffer("%1");
+    else fixture.adapter.pasteBuffer("muximod-paste-test", "%1");
     return fixture.adapter.lastArgs;
   },
   observe: () => ({}),

@@ -29,7 +29,7 @@ const cases = [
     assert: [returns<Context, number>(844)],
   },
   {
-    name: "holds the recovered baseline during the finite stale resize guard",
+    name: "holds the recovered baseline while the visual viewport is stale",
     input: {
       visualViewportHeight: 430,
       layoutViewportHeight: 430,
@@ -43,7 +43,7 @@ const cases = [
     assert: [returns<Context, number>(780)],
   },
   {
-    name: "returns to a smaller visual viewport after the recovery floor expires",
+    name: "returns to a smaller visual viewport after the recovery floor is released",
     input: { visualViewportHeight: 430, layoutViewportHeight: 430, recoveringFromKeyboard: false },
     assert: [returns<Context, number>(430)],
   },
@@ -61,21 +61,26 @@ const table: OperationTable<undefined, "default", MobileViewportHeightInput, num
   observe: () => ({}),
 };
 
-type StaleResizeGuardInput = { now: number; guardUntil: number; recoveryFloor: number | null };
+type StaleResizeGuardInput = { observedViewportHeight?: number; recoveryFloor: number | null };
 const staleResizeGuardCases = [
   {
-    name: "keeps the recovery floor before expiry",
-    input: { now: 1_999, guardUntil: 2_000, recoveryFloor: 844 },
+    name: "keeps the recovery floor while the visual viewport is stale",
+    input: { observedViewportHeight: 430, recoveryFloor: 844 },
     assert: [returns<Context, StaleResizeGuardState>({ active: true, minimumHeight: 844 })],
   },
   {
-    name: "expires the recovery floor at the boundary",
-    input: { now: 2_000, guardUntil: 2_000, recoveryFloor: 844 },
+    name: "releases the recovery floor when the visual viewport reaches it",
+    input: { observedViewportHeight: 844, recoveryFloor: 844 },
     assert: [returns<Context, StaleResizeGuardState>({ active: false, minimumHeight: undefined })],
   },
   {
-    name: "allows a smaller viewport after expiry",
-    input: { now: 2_001, guardUntil: 2_000, recoveryFloor: 844 },
+    name: "keeps the recovery floor when the viewport measurement is unavailable",
+    input: { observedViewportHeight: undefined, recoveryFloor: 844 },
+    assert: [returns<Context, StaleResizeGuardState>({ active: true, minimumHeight: 844 })],
+  },
+  {
+    name: "does not enable a guard without a recovery floor",
+    input: { observedViewportHeight: 430, recoveryFloor: null },
     assert: [returns<Context, StaleResizeGuardState>({ active: false, minimumHeight: undefined })],
   },
 ] satisfies readonly OperationCase<"default", StaleResizeGuardInput, StaleResizeGuardState, Context>[];
@@ -89,7 +94,7 @@ const staleResizeGuardTable: OperationTable<
 > = {
   defaultFixture: noFixture(),
   cases: staleResizeGuardCases,
-  execute: (_fixture, input) => resolveStaleResizeGuard(input.now, input.guardUntil, input.recoveryFloor),
+  execute: (_fixture, input) => resolveStaleResizeGuard(input.observedViewportHeight, input.recoveryFloor),
   observe: () => ({}),
 };
 

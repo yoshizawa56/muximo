@@ -471,7 +471,8 @@ export class TmuxAdapter {
    * Stores raw bytes in a named tmux buffer. `pasteBuffer` later writes the
    * bytes straight into the pane's PTY without tmux interpreting them as
    * input, which is how terminal-emulator paste semantics are reproduced for
-   * sequences such as iTerm2 inline images.
+   * sequences such as iTerm2 inline images. Named image buffers are deleted
+   * by `paste-buffer -d` only after the queued PTY write completes.
    */
   public setBuffer(name: string, data: Buffer): void {
     const fullArgs = [...this.commandPrefix, "set-buffer", "-b", name, "-n", name];
@@ -491,7 +492,10 @@ export class TmuxAdapter {
   }
 
   public pasteBuffer(name: string, targetPaneId: string): void {
-    this.require(["paste-buffer", "-b", name, "-t", targetPaneId]);
+    // Let tmux delete the buffer after its queued paste completes. Deleting
+    // it from the caller immediately after this command can race with tmux's
+    // PTY write and make the paste fail with "unknown buffer".
+    this.require(["paste-buffer", "-d", "-b", name, "-t", targetPaneId]);
   }
 
   public enterCopyMode(paneId: string): void {
