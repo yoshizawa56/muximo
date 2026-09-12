@@ -10,7 +10,7 @@ import {
 } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
 import { storyPanes } from "../../../-story-fixtures";
-import { buildPaneWindows, hasPaneGeometry, type PaneLayoutWindow } from "./-pane-layout-overlay-view";
+import { buildPaneWindows, hasCompletePaneLayout, hasPaneGeometry, type PaneLayoutWindow } from "./-pane-layout-policy";
 
 type Geometry = {
   left: number;
@@ -104,6 +104,41 @@ const invalidGeometryAssertion: Assertion<Context, PaneLayoutWindow[]> = {
   },
 };
 
+const transientDimensionAssertion: Assertion<Context, PaneLayoutWindow[]> = {
+  name: "rejects panes that disagree about the live window size",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value[0]?.hasGeometry).toBe(false);
+    expect(result.value[0]?.windowWidth).toBeUndefined();
+  },
+};
+
+const containingDimensionAssertion: Assertion<Context, PaneLayoutWindow[]> = {
+  name: "rejects a mixed resize snapshot instead of selecting a containing viewport",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value[0]?.hasGeometry).toBe(false);
+    expect(result.value[0]?.windowWidth).toBeUndefined();
+    expect(result.value[0]?.panes).toHaveLength(3);
+  },
+};
+
+const completeLayoutAssertion: Assertion<Context, boolean> = {
+  name: "accepts only a complete self-consistent layout snapshot",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value).toBe(true);
+  },
+};
+
+const incompleteLayoutAssertion: Assertion<Context, boolean> = {
+  name: "requires a fresh tmux snapshot",
+  check: (_ctx, result) => {
+    if (!result.ok) throw result.error;
+    expect(result.value).toBe(false);
+  },
+};
+
 const sessionScopedWindowAssertion: Assertion<Context, PaneLayoutWindow[]> = {
   name: "keeps identical window ids separate across tmux sessions",
   check: (_ctx, result) => {
@@ -193,7 +228,7 @@ const windowCases = [
     assert: [narrowGeometryAssertion],
   },
   {
-    name: "falls back from overlapping panes instead of hiding one pane",
+    name: "marks overlapping panes as requiring a fresh snapshot",
     input: {
       panes: [
         paneSummary({
@@ -223,7 +258,7 @@ const windowCases = [
     assert: [invalidGeometryAssertion],
   },
   {
-    name: "falls back when panes disagree about the live window size",
+    name: "does not synthesize geometry across a live resize boundary",
     input: {
       panes: [
         paneSummary({
@@ -254,7 +289,54 @@ const windowCases = [
         }),
       ],
     },
-    assert: [invalidGeometryAssertion],
+    assert: [transientDimensionAssertion],
+  },
+  {
+    name: "does not choose a containing viewport for a mixed resize snapshot",
+    input: {
+      panes: [
+        paneSummary({
+          id: "pane-top-left",
+          hostPaneId: "%1",
+          windowId: "@0",
+          windowIndex: 0,
+          paneIndex: 0,
+          left: 0,
+          top: 0,
+          width: 80,
+          height: 24,
+          windowWidth: 160,
+          windowHeight: 48,
+        }),
+        paneSummary({
+          id: "pane-bottom-left",
+          hostPaneId: "%2",
+          windowId: "@0",
+          windowIndex: 0,
+          paneIndex: 1,
+          left: 0,
+          top: 24,
+          width: 80,
+          height: 24,
+          windowWidth: 160,
+          windowHeight: 48,
+        }),
+        paneSummary({
+          id: "pane-right",
+          hostPaneId: "%3",
+          windowId: "@0",
+          windowIndex: 0,
+          paneIndex: 2,
+          left: 80,
+          top: 0,
+          width: 80,
+          height: 48,
+          windowWidth: 80,
+          windowHeight: 24,
+        }),
+      ],
+    },
+    assert: [containingDimensionAssertion],
   },
   {
     name: "scopes windows by session before sorting them",
@@ -319,7 +401,54 @@ const windowTable: OperationTable<undefined, "default", WindowInput, PaneLayoutW
   observe: () => ({}),
 };
 
+type CompleteLayoutInput = { panes: PaneSummary[] };
+const completeLayoutCases = [
+  {
+    name: "accepts panes that share complete geometry",
+    input: {
+      panes: [
+        paneSummary({
+          id: "pane-left",
+          hostPaneId: "%1",
+          windowId: "@0",
+          windowIndex: 0,
+          paneIndex: 0,
+          left: 0,
+          top: 0,
+          width: 80,
+          height: 48,
+        }),
+        paneSummary({
+          id: "pane-right",
+          hostPaneId: "%2",
+          windowId: "@0",
+          windowIndex: 0,
+          paneIndex: 1,
+          left: 80,
+          top: 0,
+          width: 80,
+          height: 48,
+        }),
+      ],
+    },
+    assert: [completeLayoutAssertion],
+  },
+  {
+    name: "rejects panes with missing geometry",
+    input: { panes: [paneSummary({ left: undefined, width: undefined })] },
+    assert: [incompleteLayoutAssertion],
+  },
+] satisfies readonly OperationCase<"default", CompleteLayoutInput, boolean, Context>[];
+
+const completeLayoutTable: OperationTable<undefined, "default", CompleteLayoutInput, boolean, Context> = {
+  defaultFixture: noFixture(),
+  cases: completeLayoutCases,
+  execute: (_fixture, input) => hasCompletePaneLayout(input.panes),
+  observe: () => ({}),
+};
+
 describe("pane layout geometry", () => {
   runOperationTable(it as unknown as TestRegistrar, geometryTable);
   runOperationTable(it as unknown as TestRegistrar, windowTable);
+  runOperationTable(it as unknown as TestRegistrar, completeLayoutTable);
 });

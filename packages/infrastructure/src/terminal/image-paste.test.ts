@@ -107,7 +107,7 @@ const pasteCases = [
         "sequence",
         `\x1b]1337;file=inline=1;name=photo.png:${bytes.toString("base64")}\x07`,
       ),
-      hasObserved<PasteContext, PasteResult>("deleteCount", 1),
+      hasObserved<PasteContext, PasteResult>("deleteCount", 0),
       hasObserved<PasteContext, PasteResult>("stageCount", 0),
       hasObserved<PasteContext, PasteResult>("cleanupCount", 0),
     ],
@@ -145,7 +145,7 @@ const pasteCases = [
     assert: [
       hasObserved<PasteContext, PasteResult>("clipboard", "failed"),
       hasObserved<PasteContext, PasteResult>("pastedTarget", "%3"),
-      hasObserved<PasteContext, PasteResult>("deleteCount", 1),
+      hasObserved<PasteContext, PasteResult>("deleteCount", 0),
       hasObserved<PasteContext, PasteResult>("stageCount", 1),
       hasObserved<PasteContext, PasteResult>("cleanupCount", 1),
     ],

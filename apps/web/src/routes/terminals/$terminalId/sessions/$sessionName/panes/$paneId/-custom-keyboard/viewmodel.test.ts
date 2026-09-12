@@ -17,6 +17,7 @@ import {
   toggleCustomKeyboardModifier,
 } from "./policy";
 import {
+  applyCustomKeyboardStateUpdate,
   CUSTOM_KEYBOARD_FIXED_ROW_ID,
   type CustomKeyboardDragSource,
   type CustomKeyboardDropTarget,
@@ -37,6 +38,7 @@ import {
   defaultCustomKeyboardLayout,
   deleteCustomKeyboardProfile,
   duplicateCustomKeyboardProfile,
+  hydrateCustomKeyboardState,
   isCustomKeyboardProfileNameValid,
   parseCustomKeyboardState,
   resolveActiveProfileId,
@@ -638,6 +640,35 @@ const parsedStateTable: OperationTable<undefined, "default", { raw: string }, Pa
   observe: () => ({}),
 };
 
+type HydrationInput = { raw: string };
+type HydrationObservation = { profileIds: readonly string[]; activeProfileId: string };
+
+const hydrationCases = [
+  {
+    name: "applies stored state after hydration",
+    input: { raw: validState },
+    assert: [
+      returns<EmptyContext, HydrationObservation>({
+        profileIds: ["default", "agent"],
+        activeProfileId: "agent",
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", HydrationInput, HydrationObservation, EmptyContext>[];
+
+const hydrationTable: OperationTable<undefined, "default", HydrationInput, HydrationObservation, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: hydrationCases,
+  execute: (_fixture, input) => {
+    const hydrated = hydrateCustomKeyboardState(input.raw);
+    return {
+      profileIds: hydrated.profiles.map((profile) => profile.id),
+      activeProfileId: resolveActiveProfileId(hydrated, "workspace-1"),
+    };
+  },
+  observe: () => ({}),
+};
+
 function profileStateWithAgent(): CustomKeyboardState {
   const state = parseCustomKeyboardState(null);
   const defaultProfile = state.profiles[0];
@@ -658,6 +689,67 @@ function profileStateWithAgent(): CustomKeyboardState {
   };
   return { ...state, profiles: [...state.profiles, agent] };
 }
+
+type HydrationMutation = "create" | "rename" | "delete";
+type MutationGateInput = {
+  state: CustomKeyboardState;
+  hydrated: boolean;
+  operations: readonly HydrationMutation[];
+};
+
+const mutationGateCases = [
+  {
+    name: "ignores create rename and delete actions issued before hydration",
+    input: { state: profileStateWithAgent(), hydrated: false, operations: ["create", "rename", "delete"] },
+    assert: [
+      returns<EmptyContext, ProfileObservation>({
+        profileIds: ["default", "agent"],
+        profileNames: ["Default", "Agent"],
+        activeProfileId: "default",
+        linkedProfileIds: [],
+      }),
+    ],
+  },
+  {
+    name: "applies profile actions after hydration using the hydrated profile count",
+    input: { state: parseCustomKeyboardState(null), hydrated: true, operations: ["create", "rename", "delete"] },
+    assert: [
+      returns<EmptyContext, ProfileObservation>({
+        profileIds: ["default"],
+        profileNames: ["Default"],
+        activeProfileId: "default",
+        linkedProfileIds: [],
+      }),
+    ],
+  },
+] satisfies readonly OperationCase<"default", MutationGateInput, ProfileObservation, EmptyContext>[];
+
+const mutationGateTable: OperationTable<undefined, "default", MutationGateInput, ProfileObservation, EmptyContext> = {
+  defaultFixture: noFixture(),
+  cases: mutationGateCases,
+  execute: (_fixture, input) => {
+    const next = input.operations.reduce(
+      (state, operation) =>
+        applyCustomKeyboardStateUpdate(state, input.hydrated, (current) => {
+          if (operation === "create") {
+            return createCustomKeyboardProfile(current, "workspace-1", { name: "Local", icon: "spark" });
+          }
+          if (operation === "rename") {
+            return {
+              ...current,
+              profiles: current.profiles.map((profile) =>
+                profile.id === "custom-keyboard-profile-2" ? { ...profile, name: "Renamed" } : profile,
+              ),
+            };
+          }
+          return deleteCustomKeyboardProfile(current, "custom-keyboard-profile-2");
+        }),
+      input.state,
+    );
+    return observeProfileState(next);
+  },
+  observe: () => ({}),
+};
 
 type ProfileOperation =
   | { type: "select"; profileId: string }
@@ -824,6 +916,8 @@ describe("custom keyboard unified key model", () => {
   runOperationTable(it, terminalActionTable);
   runOperationTable(it, shortcutDraftTable);
   runOperationTable(it, parsedStateTable);
+  runOperationTable(it, hydrationTable);
+  runOperationTable(it, mutationGateTable);
   runOperationTable(it, profileTable);
   runOperationTable(it, profileNameTable);
 });

@@ -1067,6 +1067,7 @@ export function CustomKeyboardSettingsView({
   const [newProfileName, setNewProfileName] = useState("New profile");
   const [newProfileIcon, setNewProfileIcon] = useState<CustomKeyboardIcon>("terminal");
   const activeProfile = viewModel.activeProfile;
+  const ready = viewModel.hydrated;
   const sensors = useSensors(
     useSensor(MouseSensor, {
       activationConstraint: { distance: CUSTOM_KEYBOARD_MOUSE_DRAG_DISTANCE_PX },
@@ -1087,12 +1088,13 @@ export function CustomKeyboardSettingsView({
 
   const addButton = useCallback(
     (button: CustomKeyboardKey) => {
+      if (!ready) return;
       viewModel.onDrop(
         { keyId: button.id, collection: "library" },
         { type: "keyboard", rowId: viewModel.rows[0]?.id ?? "main", targetKeyId: null },
       );
     },
-    [viewModel],
+    [ready, viewModel],
   );
 
   const addButtonFromClick = addButton;
@@ -1114,6 +1116,10 @@ export function CustomKeyboardSettingsView({
       targetIndex: number | null,
       overPreview: boolean,
     ) => {
+      if (!ready) {
+        resetDrag();
+        return;
+      }
       if (shortcutEditMode && (overPreview || targetIndex === null)) {
         resetDrag();
         return;
@@ -1133,7 +1139,7 @@ export function CustomKeyboardSettingsView({
       viewModel.onDrop(source, target);
       resetDrag();
     },
-    [activeTab, resetDrag, shortcutEditMode, viewModel],
+    [activeTab, ready, resetDrag, shortcutEditMode, viewModel],
   );
 
   const updateDndDropTarget = useCallback(
@@ -1163,6 +1169,7 @@ export function CustomKeyboardSettingsView({
 
   const handleDndDragStart = useCallback(
     (event: DragStartEvent) => {
+      if (!ready) return;
       const source = readCustomKeyboardDragSource(event.active);
       if (!source) return;
 
@@ -1181,7 +1188,7 @@ export function CustomKeyboardSettingsView({
       setShortcutDropIndicator(null);
       setPreviewDropActive(false);
     },
-    [resetDrag],
+    [ready, resetDrag],
   );
 
   const handleDndDragMove = useCallback((event: DragMoveEvent) => {
@@ -1222,6 +1229,7 @@ export function CustomKeyboardSettingsView({
   }, [resetDrag]);
 
   const openShortcutModal = (button?: CustomKeyboardKey) => {
+    if (!ready) return;
     setEditingShortcutId(button?.id ?? null);
     setShortcutDraft(
       button && button.activation.type === "sequence"
@@ -1237,6 +1245,7 @@ export function CustomKeyboardSettingsView({
   };
 
   const saveShortcut = () => {
+    if (!ready) return;
     if (!isCustomKeyboardShortcutDraftValid(shortcutDraft)) return;
     if (editingShortcutId) {
       viewModel.onUpdateShortcut(editingShortcutId, shortcutDraft);
@@ -1249,12 +1258,14 @@ export function CustomKeyboardSettingsView({
   };
 
   const openProfileCreateModal = () => {
+    if (!ready) return;
     setNewProfileName("New profile");
     setNewProfileIcon("terminal");
     setProfileModal("create");
   };
 
   const openProfileEditModal = () => {
+    if (!ready) return;
     setProfileNameDraft(activeProfile.name);
     setProfileIconDraft(activeProfile.icon);
     setProfileModal("edit");
@@ -1265,6 +1276,7 @@ export function CustomKeyboardSettingsView({
   };
 
   const saveProfile = () => {
+    if (!ready) return;
     if (profileModal === "create") {
       if (!isCustomKeyboardProfileNameValid(newProfileName)) return;
       viewModel.onCreateProfile({ name: newProfileName, icon: newProfileIcon });
@@ -1281,11 +1293,13 @@ export function CustomKeyboardSettingsView({
   };
 
   const duplicateActiveProfile = () => {
+    if (!ready) return;
     viewModel.onDuplicateProfile(activeProfile.id);
     closeProfileModal();
   };
 
   const deleteActiveProfile = () => {
+    if (!ready) return;
     if (activeProfile.id === DEFAULT_CUSTOM_KEYBOARD_PROFILE_ID) return;
     if (!window.confirm(`Delete profile "${activeProfile.name}"?`)) return;
     viewModel.onDeleteProfile(activeProfile.id);
@@ -1334,6 +1348,7 @@ export function CustomKeyboardSettingsView({
             className="rounded-[8px] bg-[#8bff9a] px-2.5 py-1.5 font-mono text-[0.56rem] font-bold uppercase tracking-[0.08em] text-[#061008]"
             type="button"
             onClick={onSave}
+            disabled={!ready}
           >
             Save
           </button>
@@ -1352,7 +1367,10 @@ export function CustomKeyboardSettingsView({
               <select
                 className="min-h-9 w-full min-w-0 rounded-[7px] border border-[#315f3a] bg-[#0b2411] px-2 font-mono text-[0.58rem] font-bold text-[#d9ffdd] outline-none focus:border-[#8bff9a]"
                 value={activeProfile.id}
-                onChange={(event) => viewModel.onSelectProfile(event.target.value)}
+                onChange={(event) => {
+                  if (ready) viewModel.onSelectProfile(event.target.value);
+                }}
+                disabled={!ready}
                 aria-label="Keyboard profile"
               >
                 {viewModel.profiles.map((profile) => (
@@ -1366,6 +1384,7 @@ export function CustomKeyboardSettingsView({
               className="grid size-9 shrink-0 place-items-center rounded-[7px] border border-[#315f3a] bg-[#0b2411] text-[#a9e8b1] hover:border-[#8bff9a]"
               type="button"
               onClick={openProfileEditModal}
+              disabled={!ready}
               aria-label="Edit keyboard profile"
               title="Edit keyboard profile"
             >
@@ -1375,6 +1394,7 @@ export function CustomKeyboardSettingsView({
               className="grid size-9 shrink-0 place-items-center rounded-[7px] border border-[#315f3a] bg-[#0b2411] text-[#a9e8b1] hover:border-[#8bff9a]"
               type="button"
               onClick={openProfileCreateModal}
+              disabled={!ready}
               aria-label="Add keyboard profile"
               title="Add keyboard profile"
             >
@@ -1388,7 +1408,10 @@ export function CustomKeyboardSettingsView({
                     : "border-[#315f3a] bg-[#071509] text-[#719176]"
                 }`}
                 type="button"
-                onClick={() => viewModel.onToggleProfileLink(activeProfile.id)}
+                onClick={() => {
+                  if (ready) viewModel.onToggleProfileLink(activeProfile.id);
+                }}
+                disabled={!ready}
                 aria-pressed={activeProfile.linked}
                 title={activeProfile.linked ? "Remove profile from workspace" : "Add profile to workspace"}
               >
@@ -1445,7 +1468,9 @@ export function CustomKeyboardSettingsView({
                   dropTargetRowId={dropTargetRowId}
                   previewDropActive={previewDropActive}
                   dragEnabled={!shortcutEditMode}
-                  onRemove={(keyId) => viewModel.onRemoveKey(keyId)}
+                  onRemove={(keyId) => {
+                    if (ready) viewModel.onRemoveKey(keyId);
+                  }}
                 />
               ))}
             </div>
@@ -1471,6 +1496,7 @@ export function CustomKeyboardSettingsView({
                     step={20}
                     value={viewModel.repeatStartDelayMs}
                     onChange={(event) => viewModel.onRepeatStartDelayChange(Number(event.target.value))}
+                    disabled={!ready}
                     aria-label="Flick repeat start delay"
                   />
                 </label>
@@ -1489,6 +1515,7 @@ export function CustomKeyboardSettingsView({
                     step={20}
                     value={viewModel.repeatIntervalMs}
                     onChange={(event) => viewModel.onRepeatIntervalChange(Number(event.target.value))}
+                    disabled={!ready}
                     aria-label="Flick repeat interval"
                   />
                 </label>
@@ -2220,6 +2247,7 @@ function CustomKeyboardShortcutLibrary({
             }`}
             type="button"
             onClick={onToggleEditMode}
+            disabled={!viewModel.hydrated}
             aria-label={editMode ? "Finish editing shortcuts" : "Edit shortcuts"}
             aria-pressed={editMode}
           >
@@ -2229,6 +2257,7 @@ function CustomKeyboardShortcutLibrary({
             className="rounded-[7px] bg-[#8bff9a] px-2 py-1.5 font-mono text-[0.52rem] font-bold uppercase tracking-[0.06em] text-[#061008]"
             type="button"
             onClick={onRegisterShortcut}
+            disabled={!viewModel.hydrated}
             aria-label="Register shortcut"
           >
             + Register
@@ -2252,7 +2281,9 @@ function CustomKeyboardShortcutLibrary({
                 editMode={editMode}
                 dragged={draggedButtonId === button.id}
                 onEditShortcut={onEditShortcut}
-                onDeleteShortcut={() => viewModel.onDeleteShortcut(button.id)}
+                onDeleteShortcut={() => {
+                  if (viewModel.hydrated) viewModel.onDeleteShortcut(button.id);
+                }}
               />
             </Fragment>
           );

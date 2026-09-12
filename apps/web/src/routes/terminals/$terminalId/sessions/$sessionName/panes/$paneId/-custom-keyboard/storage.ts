@@ -5,10 +5,42 @@ export const CUSTOM_KEYBOARD_STORAGE_KEY = "muximo.custom-keyboard";
 type BrowserStorage = Pick<Storage, "getItem" | "setItem">;
 type PreferencesStore = Pick<PreferencesPlugin, "get" | "set">;
 
+const serializedWriteQueues = new Map<string, Promise<void>>();
+
 export type CustomKeyboardStorage = {
   read(): Promise<string | null>;
   write(value: string): Promise<void>;
 };
+
+/** Serializes persistence writes so an older asynchronous write cannot finish last. */
+export function createSerializedCustomKeyboardStorage(
+  storage: CustomKeyboardStorage,
+  key = CUSTOM_KEYBOARD_STORAGE_KEY,
+): CustomKeyboardStorage {
+  return {
+    async read() {
+      await waitForSerializedWrites(key);
+      return storage.read();
+    },
+    write(value) {
+      const previous = serializedWriteQueues.get(key) ?? Promise.resolve();
+      const next = previous.catch(() => undefined).then(() => storage.write(value));
+      serializedWriteQueues.set(key, next);
+      return next.finally(() => {
+        if (serializedWriteQueues.get(key) === next) serializedWriteQueues.delete(key);
+      });
+    },
+  };
+}
+
+async function waitForSerializedWrites(key: string): Promise<void> {
+  while (true) {
+    const pending = serializedWriteQueues.get(key);
+    if (!pending) return;
+    await pending.catch(() => undefined);
+    if (serializedWriteQueues.get(key) === pending) return;
+  }
+}
 
 export function createCustomKeyboardStorage(
   preferences: PreferencesStore = Preferences,

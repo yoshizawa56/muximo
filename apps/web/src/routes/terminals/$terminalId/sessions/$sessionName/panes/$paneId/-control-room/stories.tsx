@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { storyPanes, storyPanesWithGeometry } from "../../../../../../-story-fixtures";
+import { storyPanes } from "../../../../../../-story-fixtures";
 import { keysFromIds, resolveCustomKeyboardLayout } from "../-custom-keyboard/policy";
 import {
   type CustomKeyboardSettingsViewModel,
@@ -91,6 +91,7 @@ function createKeyboardSettings(
   const assignedKeyIds = rows.flatMap((row) => row.items.map((item) => item.key.id));
   const assigned = new Set(assignedKeyIds);
   return {
+    hydrated: true,
     rows,
     availableKeys: customKeyboardKeyLibrary.filter(
       (key) => !assigned.has(key.id) && !customKeyboardFixedKeyIds.includes(key.id),
@@ -148,7 +149,7 @@ const controlRoomScenarios = {
   waitingPanes: () => buildViewModel(),
   geometryPanes: () =>
     buildViewModel({
-      paneBoard: createPaneBoard({ panes: storyPanesWithGeometry }),
+      paneBoard: createPaneBoard({ panes: storyPanes }),
     }),
   connectingTerminal: () =>
     buildViewModel({ terminal: createTerminal({ status: "connecting", viewportReason: null }) }),
@@ -163,7 +164,7 @@ const controlRoomScenarios = {
     }),
   desktopOwnsViewport: () =>
     buildViewModel({
-      terminal: createTerminal({ viewportOwner: "desktop", viewportReason: "desktop activity detected" }),
+      terminal: createTerminal({ viewportOwner: "desktop", viewportReason: "desktop_activity" }),
     }),
   connectionError: () =>
     buildViewModel({

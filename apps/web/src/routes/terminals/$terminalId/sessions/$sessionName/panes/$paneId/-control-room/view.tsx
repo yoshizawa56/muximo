@@ -8,7 +8,7 @@ import type { PaneBoardViewModel } from "../-pane-board/viewmodel";
 import type { PaneViewModel } from "../-terminal/viewmodel";
 import { toToastAgent, useWaitingNotices } from "../-waiting-notification/controller";
 import { ToastPattern } from "../-waiting-notification/patterns";
-import type { ControlRoomViewModel } from "./viewmodel";
+import { type ControlRoomViewModel, shouldShowDesktopActivityNotice } from "./viewmodel";
 
 export function ControlRoomView({
   viewModel: controlRoomViewModel,
@@ -257,7 +257,7 @@ export function ControlRoomView({
                   }}
                 />
               ) : null}
-              {viewModel.viewportOwner === "desktop" && viewModel.status === "connected" ? (
+              {shouldShowDesktopActivityNotice(viewModel) ? (
                 <div
                   className="absolute inset-x-3 bottom-10 z-20 flex min-h-[54px] items-center justify-between gap-4 rounded-[11px] border border-[#735c2c] bg-[rgb(36_28_13_/_94%)] px-[13px] py-2.5 shadow-[0_8px_24px_rgb(0_0_0_/_30%)] max-[620px]:items-start"
                   role="status"
