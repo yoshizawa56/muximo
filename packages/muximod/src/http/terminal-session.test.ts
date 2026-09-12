@@ -39,6 +39,8 @@ type SessionStep =
   | { type: "paste-image"; image?: string }
   | { type: "send-malformed"; socket: "first" | "second" | "third" }
   | { type: "reject-pending-claim" }
+  | { type: "resolve-pending-claim" }
+  | { type: "set-desktop-owner" }
   | { type: "release-resume-resize" }
   | { type: "advance"; milliseconds: number };
 type SessionContext = {
@@ -63,6 +65,7 @@ type SessionContext = {
   copyModeCalls: number;
   pasteTmuxBufferCalls: number;
   leaseClaimCalls: number;
+  ptyResizeCalls: readonly (readonly [number, number])[];
   events: readonly string[];
   leaseReturnToDesktopCalls: number;
   leaseResizeCalls: readonly (readonly [number | undefined, number | undefined])[];
@@ -423,6 +426,24 @@ const cases = [
     ],
   },
   {
+    name: "does not resize the PTY after a pending claim resolves on a replaced socket",
+    fixture: "staleOperation",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "set-desktop-owner" },
+      { type: "send-input", socket: "first", value: "ls" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+      { type: "resolve-pending-claim" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondResumed", true),
+      hasObserved<SessionContext, undefined>("secondErrors", []),
+      hasObserved<SessionContext, undefined>("writes", []),
+      hasObserved<SessionContext, undefined>("ptyResizeCalls", [[80, 24]]),
+    ],
+  },
+  {
     name: "does not attach a socket that closes during resume resize",
     fixture: "resumeBlocked",
     steps: [
@@ -557,6 +578,11 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
         fixture.rejectClaim(new Error("stale claim failed"));
         await flush();
       }
+      if (step.type === "resolve-pending-claim") {
+        fixture.resolveClaim();
+        await flush();
+      }
+      if (step.type === "set-desktop-owner") fixture.setDesktopOwner();
       if (step.type === "release-resume-resize") {
         fixture.releaseResumeResize();
         await flush();
@@ -610,6 +636,7 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
     copyModeCalls: fixture.lease.enterCopyMode.mock.calls.length,
     pasteTmuxBufferCalls: fixture.lease.pasteTmuxBuffer.mock.calls.length,
     leaseClaimCalls: fixture.lease.claimMobile.mock.calls.length,
+    ptyResizeCalls: fixture.pty.resizeCalls.map(([cols, rows]) => [cols, rows]),
     leaseReturnToDesktopCalls: fixture.lease.returnToDesktop.mock.calls.length,
     leaseResizeCalls: fixture.lease.resize.mock.calls.map(([cols, rows]) => [cols, rows]),
     leaseRefreshCalls: fixture.lease.refresh.mock.calls.length,
@@ -630,9 +657,11 @@ function createHarness(
   const pty = new FakePty(401);
   const events: string[] = [];
   let rejectClaim: (error: Error) => void = () => undefined;
+  let resolveClaim: () => void = () => undefined;
   let releaseResumeResize: () => void = () => undefined;
   const pendingClaim = claimPending
-    ? new Promise<void>((_resolve, reject) => {
+    ? new Promise<void>((resolve, reject) => {
+        resolveClaim = resolve;
         rejectClaim = reject;
       })
     : undefined;
@@ -641,13 +670,16 @@ function createHarness(
         releaseResumeResize = resolve;
       })
     : undefined;
+  let leaseOwner: "mobile" | "desktop" = "mobile";
   const lease = {
     id: "lease-1",
     target: "%0",
     paneId: "%0",
     windowId: "@0",
     sessionName: "muximod",
-    owner: "mobile" as const,
+    get owner() {
+      return leaseOwner;
+    },
     claimMobile: vi.fn(async () => {
       await pendingClaim;
     }),
@@ -700,7 +732,23 @@ function createHarness(
     imagePaster: paster,
     ...overrides,
   };
-  return { manager, prepared, lease, pty, spawn, registry, paster, options, events, rejectClaim, releaseResumeResize };
+  return {
+    manager,
+    prepared,
+    lease,
+    pty,
+    spawn,
+    registry,
+    paster,
+    options,
+    events,
+    rejectClaim,
+    resolveClaim,
+    releaseResumeResize,
+    setDesktopOwner: () => {
+      leaseOwner = "desktop";
+    },
+  };
 }
 
 function attachFrame(target: string, credentials: { sessionId?: string; resumeToken?: string } = {}): string {
@@ -766,6 +814,7 @@ class FakeSocket extends EventEmitter {
 
 class FakePty {
   public readonly writes: string[] = [];
+  public readonly resizeCalls: Array<[number, number]> = [];
   public killed = 0;
   private dataHandler: ((data: string) => void) | undefined;
   public constructor(public readonly pid: number) {}
@@ -779,7 +828,9 @@ class FakePty {
   public async write(data: string): Promise<void> {
     this.writes.push(data);
   }
-  public async resize(_cols: number, _rows: number): Promise<void> {}
+  public async resize(cols: number, rows: number): Promise<void> {
+    this.resizeCalls.push([cols, rows]);
+  }
   public async kill(): Promise<void> {
     this.killed += 1;
   }

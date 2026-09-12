@@ -193,6 +193,17 @@ const cases = [
     ],
   },
   {
+    name: "accepts an unchanged client-active hook after the suppression window",
+    steps: [prepare, attach, { type: "advance-clock", milliseconds: 250 }, { type: "hook", event: "client-active" }],
+    assert: [
+      hasObserved<ViewportContext, undefined>("zoomed", false),
+      hasObserved<ViewportContext, undefined>("events", [
+        { owner: "mobile", reason: "attached" },
+        { owner: "desktop", reason: "desktop_activity" },
+      ]),
+    ],
+  },
+  {
     name: "accepts genuine desktop activity during the synthetic settling window",
     steps: [prepare, attach, { type: "desktop-activity" }, { type: "hook", event: "client-active" }],
     assert: [
@@ -333,15 +344,9 @@ const cases = [
     assert: [hasObserved<ViewportContext, undefined>("zoomed", true)],
   },
   {
-    name: "treats a later desktop client identity change as activity",
+    name: "ignores a polling client reorder without focus or layout change",
     steps: [prepare, attach, { type: "advance-clock", milliseconds: 250 }, { type: "desktop-order" }, { type: "poll" }],
-    assert: [
-      hasObserved<ViewportContext, undefined>("zoomed", false),
-      hasObserved<ViewportContext, undefined>("events", [
-        { owner: "mobile", reason: "attached" },
-        { owner: "desktop", reason: "desktop_focus" },
-      ]),
-    ],
+    assert: [hasObserved<ViewportContext, undefined>("zoomed", true)],
   },
   {
     name: "treats an equal activity hook from a different desktop client as activity",

@@ -4,10 +4,14 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef } from "react";
 import { muximodErrorMessage } from "../../../../../app/api/muximod-error.js";
 import { fallbackSession, fallbackTerminal, useTerminalResources } from "../../../-terminal-resources";
-import { hasCompletePaneLayout } from "./-pane-layout-policy";
-
-const maxLayoutRefreshes = 3;
-const layoutRefreshDelayMs = 50;
+import {
+  hasCompletePaneLayout,
+  paneLayoutMaxRefreshes,
+  paneLayoutQueryRetryCount,
+  paneLayoutQueryRetryDelay,
+  paneLayoutQueryStatus,
+  paneLayoutRefreshDelayMs,
+} from "./-pane-layout-policy";
 
 export type SessionOverviewViewModel = {
   terminal: TerminalEndpoint;
@@ -33,8 +37,8 @@ export function useSessionViewModel(): SessionOverviewViewModel {
       enabled: Boolean(resources.connection) && Boolean(sessionName),
       staleTime: 1_000,
       refetchInterval: 3_000,
-      retry: 2,
-      retryDelay: (attempt) => Math.min(250, layoutRefreshDelayMs * 2 ** attempt),
+      retry: paneLayoutQueryRetryCount,
+      retryDelay: paneLayoutQueryRetryDelay,
     }),
   );
   const panes = panesQuery.data?.panes ?? [];
@@ -47,7 +51,7 @@ export function useSessionViewModel(): SessionOverviewViewModel {
       return;
     }
     if (layoutRefreshRef.current.marker === panesQuery.dataUpdatedAt) return;
-    if (layoutRefreshRef.current.attempts >= maxLayoutRefreshes) return;
+    if (layoutRefreshRef.current.attempts >= paneLayoutMaxRefreshes) return;
 
     layoutRefreshRef.current = {
       marker: panesQuery.dataUpdatedAt,
@@ -55,7 +59,7 @@ export function useSessionViewModel(): SessionOverviewViewModel {
     };
     const timer = globalThis.setTimeout(() => {
       void panesQuery.refetch();
-    }, layoutRefreshDelayMs);
+    }, paneLayoutRefreshDelayMs);
     return () => globalThis.clearTimeout(timer);
   }, [completeLayout, panes.length, panesQuery.dataUpdatedAt, panesQuery.isSuccess, panesQuery.refetch]);
 
@@ -63,31 +67,26 @@ export function useSessionViewModel(): SessionOverviewViewModel {
     layoutRefreshRef.current = { marker: -1, attempts: 0 };
     void panesQuery.refetch();
   }, [panesQuery.refetch]);
-  const layoutRefreshPending =
-    panes.length > 0 &&
-    !completeLayout &&
-    !panesQuery.isError &&
-    (panesQuery.isFetching || layoutRefreshRef.current.attempts < maxLayoutRefreshes);
-  const layoutUnavailable = panes.length > 0 && !completeLayout && !layoutRefreshPending;
+  const status = paneLayoutQueryStatus({
+    paneCount: panes.length,
+    completeLayout,
+    queryPending: panesQuery.isPending,
+    queryError: panesQuery.isError,
+    queryFetching: panesQuery.isFetching,
+    refreshAttempts: layoutRefreshRef.current.attempts,
+  });
+  const layoutUnavailable = status === "error" && !panesQuery.isError && panes.length > 0;
 
   return {
     terminal: resources.selectedTerminal ?? fallbackTerminal,
     session: resources.selectedSession ?? fallbackSession,
     panes,
-    status:
-      panesQuery.isPending || layoutRefreshPending
-        ? "loading"
-        : panesQuery.isError && panesQuery.data === undefined
-          ? "error"
-          : layoutUnavailable
-            ? "error"
-            : "ready",
-    errorMessage:
-      panesQuery.isError && panesQuery.data === undefined
-        ? muximodErrorMessage(panesQuery.error, "Unable to load panes")
-        : layoutUnavailable
-          ? "Unable to read a complete tmux layout"
-          : null,
+    status,
+    errorMessage: panesQuery.isError
+      ? muximodErrorMessage(panesQuery.error, "Unable to load panes")
+      : layoutUnavailable
+        ? "Unable to read a complete tmux layout"
+        : null,
     onSelectPane: (pane) => {
       void navigate({
         to: "/terminals/$terminalId/sessions/$sessionName/panes/$paneId",

@@ -1,5 +1,49 @@
 import type { PaneSummary } from "@muximo/contract/api";
 
+export const paneLayoutRefreshDelayMs = 50;
+export const paneLayoutMaxRefreshes = 3;
+export const paneLayoutQueryRetryCount = 2;
+
+export function paneLayoutQueryRetryDelay(attempt: number): number {
+  return Math.min(250, paneLayoutRefreshDelayMs * 2 ** attempt);
+}
+
+export type PaneLayoutQueryStatusInput = {
+  paneCount: number;
+  completeLayout: boolean;
+  queryPending: boolean;
+  queryError: boolean;
+  queryFetching: boolean;
+  refreshAttempts: number;
+};
+
+export function paneLayoutRefreshPending({
+  paneCount,
+  completeLayout,
+  queryError,
+  queryFetching,
+  refreshAttempts,
+}: Omit<PaneLayoutQueryStatusInput, "queryPending">): boolean {
+  return paneCount > 0 && !completeLayout && !queryError && (queryFetching || refreshAttempts < paneLayoutMaxRefreshes);
+}
+
+export function paneLayoutQueryStatus(input: PaneLayoutQueryStatusInput): "loading" | "ready" | "error" {
+  if (
+    input.queryPending ||
+    paneLayoutRefreshPending({
+      paneCount: input.paneCount,
+      completeLayout: input.completeLayout,
+      queryError: input.queryError,
+      queryFetching: input.queryFetching,
+      refreshAttempts: input.refreshAttempts,
+    })
+  ) {
+    return "loading";
+  }
+  if (input.queryError || (input.paneCount > 0 && !input.completeLayout)) return "error";
+  return "ready";
+}
+
 export type PaneLayoutWindow = {
   id: string;
   windowId: string;

@@ -1,9 +1,17 @@
 import type { PaneSummary as ProtocolPaneSummary } from "@muximo/contract/api";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { MuximodConnection } from "../../../../../../../../app/api/muximod-client.js";
 import { muximodErrorMessage } from "../../../../../../../../app/api/muximod-error.js";
 import type { MuximodQueryUtils } from "../../../../../../../../app/api/orpc-utils";
+import {
+  hasCompletePaneLayout,
+  paneLayoutMaxRefreshes,
+  paneLayoutQueryRetryCount,
+  paneLayoutQueryRetryDelay,
+  paneLayoutQueryStatus,
+  paneLayoutRefreshDelayMs,
+} from "../../../-pane-layout-policy";
 import { paneBoardQueryPolicy } from "./policy";
 
 export type PaneSummary = ProtocolPaneSummary;
@@ -101,10 +109,33 @@ export function usePaneBoardViewModel({
       enabled: queryPolicy.enabled,
       staleTime: 1_000,
       refetchInterval: queryPolicy.refetchInterval,
+      retry: paneLayoutQueryRetryCount,
+      retryDelay: paneLayoutQueryRetryDelay,
     }),
   );
 
   const panes = query.data?.panes ?? [];
+  const completeLayout = hasCompletePaneLayout(panes);
+  const layoutRefreshRef = useRef({ marker: -1, attempts: 0 });
+
+  useEffect(() => {
+    if (!query.isSuccess || panes.length === 0 || completeLayout) {
+      layoutRefreshRef.current = { marker: query.dataUpdatedAt, attempts: 0 };
+      return;
+    }
+    if (layoutRefreshRef.current.marker === query.dataUpdatedAt) return;
+    if (layoutRefreshRef.current.attempts >= paneLayoutMaxRefreshes) return;
+
+    layoutRefreshRef.current = {
+      marker: query.dataUpdatedAt,
+      attempts: layoutRefreshRef.current.attempts + 1,
+    };
+    const timer = globalThis.setTimeout(() => {
+      void query.refetch();
+    }, paneLayoutRefreshDelayMs);
+    return () => globalThis.clearTimeout(timer);
+  }, [completeLayout, panes.length, query.dataUpdatedAt, query.isSuccess, query.refetch]);
+
   // Pane inventory is eventually consistent with the terminal transport. A
   // refresh can briefly omit the selected stable pane while tmux is resizing
   // or the connection is recovering, so keep its last host target within the
@@ -153,17 +184,29 @@ export function usePaneBoardViewModel({
     sessionName,
     query.dataUpdatedAt,
   ]);
+  const status = paneLayoutQueryStatus({
+    paneCount: panes.length,
+    completeLayout,
+    queryPending: query.isPending,
+    queryError: query.isError,
+    queryFetching: query.isFetching,
+    refreshAttempts: layoutRefreshRef.current.attempts,
+  });
   const select = useCallback((pane: PaneSummary) => onSelect(pane.id), [onSelect]);
   const refresh = useCallback(() => {
+    layoutRefreshRef.current = { marker: -1, attempts: 0 };
     void query.refetch();
   }, [query]);
 
   return {
     selectedTarget,
     panes,
-    status: query.isPending ? "loading" : query.isError && query.data === undefined ? "error" : "ready",
-    errorMessage:
-      query.isError && query.data === undefined ? muximodErrorMessage(query.error, "Unable to load panes") : null,
+    status,
+    errorMessage: query.isError
+      ? muximodErrorMessage(query.error, "Unable to load panes")
+      : status === "error"
+        ? "Unable to read a complete tmux layout"
+        : null,
     select,
     refresh,
   };

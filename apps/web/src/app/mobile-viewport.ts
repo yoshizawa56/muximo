@@ -4,6 +4,7 @@ import { muximoBridge } from "../platform/muximo-bridge";
 const VIEWPORT_SETTLE_MAX_MS = 2_000;
 const VIEWPORT_SETTLE_STABLE_FRAMES = 4;
 const VIEWPORT_STALE_RESIZE_GUARD_MS = 2_000;
+const KEYBOARD_INPUT_TYPES = new Set(["text", "search", "email", "url", "tel", "password", "number"]);
 
 export type MobileViewportHeightInput = {
   visualViewportHeight?: number;
@@ -24,12 +25,20 @@ export type StaleResizeGuardState = {
  */
 export function isMobileViewportTextEntryElement(element: Element | null): boolean {
   if (!element) return false;
+  const contentEditable = element.getAttribute("contenteditable")?.trim().toLowerCase();
+  if (contentEditable === "" || contentEditable === "true" || contentEditable === "plaintext-only") return true;
+  if ((element as Element & { isContentEditable?: boolean }).isContentEditable === true) return true;
+
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === "textarea" || tagName === "select") return true;
+  if (tagName !== "input") return false;
+
+  const type = element.getAttribute("type")?.trim().toLowerCase() || "text";
   return (
-    (typeof HTMLInputElement !== "undefined" && element instanceof HTMLInputElement) ||
-    (typeof HTMLSelectElement !== "undefined" && element instanceof HTMLSelectElement) ||
-    (typeof HTMLTextAreaElement !== "undefined" && element instanceof HTMLTextAreaElement) ||
-    ["input", "select", "textarea"].includes(element.tagName.toLowerCase()) ||
-    element.getAttribute("contenteditable") === "true"
+    KEYBOARD_INPUT_TYPES.has(type) ||
+    (typeof HTMLInputElement !== "undefined" &&
+      element instanceof HTMLInputElement &&
+      KEYBOARD_INPUT_TYPES.has(element.type.toLowerCase()))
   );
 }
 
@@ -86,7 +95,11 @@ export function useMobileViewportHeight(): void {
   const recoveryFloorRef = useRef<number | null>(null);
   const staleResizeGuardUntilRef = useRef(0);
   const staleResizeExpiryTimerRef = useRef<number | null>(null);
-  const lastLayoutHeightRef = useRef<number | null>(null);
+  const lastLayoutViewportRef = useRef<{
+    height: number;
+    width: number;
+    orientation: "portrait" | "landscape";
+  } | null>(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -104,10 +117,19 @@ export function useMobileViewportHeight(): void {
       window.clearTimeout(staleResizeExpiryTimerRef.current);
       staleResizeExpiryTimerRef.current = null;
     };
-    const layoutHeight = () => Math.max(window.innerHeight, document.documentElement.clientHeight);
+    const layoutViewport = () => {
+      const height = Math.max(window.innerHeight, document.documentElement.clientHeight);
+      const width = Math.max(window.innerWidth, document.documentElement.clientWidth);
+      return {
+        height,
+        width,
+        orientation: width >= height ? ("landscape" as const) : ("portrait" as const),
+      };
+    };
+    const layoutHeight = () => layoutViewport().height;
     const isTextEntryActive = () => isMobileViewportTextEntryElement(document.activeElement);
     const update = () => {
-      const layout = layoutHeight();
+      const layout = layoutViewport();
       const staleResizeGuard = resolveStaleResizeGuard(
         performance.now(),
         staleResizeGuardUntilRef.current,
@@ -115,13 +137,13 @@ export function useMobileViewportHeight(): void {
       );
       const height = resolveMobileViewportHeight({
         visualViewportHeight: visualViewport?.height,
-        layoutViewportHeight: layout,
+        layoutViewportHeight: layout.height,
         recoveringFromKeyboard: recoveringFromKeyboardRef.current || staleResizeGuard.active,
         minimumHeight: staleResizeGuard.minimumHeight,
       });
       setHeight(height);
       if (!recoveringFromKeyboardRef.current && !staleResizeGuard.active && !isTextEntryActive()) {
-        lastLayoutHeightRef.current = layout;
+        lastLayoutViewportRef.current = layout;
       }
     };
     const scheduleStaleResizeExpiry = () => {
@@ -149,7 +171,13 @@ export function useMobileViewportHeight(): void {
       recoveringFromKeyboardRef.current = recoverFromKeyboard;
       staleResizeGuardUntilRef.current = 0;
       if (recoverFromKeyboard) {
-        recoveryFloorRef.current = Math.max(layoutHeight(), lastLayoutHeightRef.current ?? 0);
+        const layout = layoutViewport();
+        const previous = lastLayoutViewportRef.current;
+        const previousHeight =
+          previous && previous.width === layout.width && previous.orientation === layout.orientation
+            ? previous.height
+            : 0;
+        recoveryFloorRef.current = Math.max(layout.height, previousHeight);
       } else {
         recoveryFloorRef.current = null;
       }
@@ -196,8 +224,21 @@ export function useMobileViewportHeight(): void {
           stableFrames >= VIEWPORT_SETTLE_STABLE_FRAMES ||
           performance.now() - startedAt >= VIEWPORT_SETTLE_MAX_MS
         ) {
-          setHeight(Math.max(height, floor, recoveryFloorRef.current ?? 0));
+          const finalGuard = resolveStaleResizeGuard(
+            performance.now(),
+            staleResizeGuardUntilRef.current,
+            recoveryFloorRef.current,
+          );
+          setHeight(
+            resolveMobileViewportHeight({
+              visualViewportHeight: height,
+              layoutViewportHeight: floor,
+              recoveringFromKeyboard: recoveringFromKeyboardRef.current || finalGuard.active,
+              minimumHeight: finalGuard.minimumHeight,
+            }),
+          );
           recoveringFromKeyboardRef.current = false;
+          if (!isTextEntryActive()) lastLayoutViewportRef.current = layoutViewport();
           staleResizeGuardUntilRef.current =
             recoveryFloorRef.current === null ? 0 : performance.now() + VIEWPORT_STALE_RESIZE_GUARD_MS;
           if (staleResizeGuardUntilRef.current !== 0) scheduleStaleResizeExpiry();
@@ -221,7 +262,12 @@ export function useMobileViewportHeight(): void {
     };
     const handleVisibilityChange = () => settleAfterViewportTransition();
     const handlePageshow = () => settleAfterViewportTransition();
-    const handleOrientationChange = () => settleAfterViewportTransition();
+    const handleOrientationChange = () => {
+      // A keyboard recovery floor from the previous orientation must not
+      // enlarge the shell after a rotation.
+      lastLayoutViewportRef.current = null;
+      settleAfterViewportTransition();
+    };
 
     update();
     window.addEventListener("resize", update);
@@ -243,7 +289,7 @@ export function useMobileViewportHeight(): void {
       recoveringFromKeyboardRef.current = false;
       recoveryFloorRef.current = null;
       staleResizeGuardUntilRef.current = 0;
-      lastLayoutHeightRef.current = null;
+      lastLayoutViewportRef.current = null;
       window.removeEventListener("resize", update);
       visualViewport?.removeEventListener("resize", update);
       visualViewport?.removeEventListener("scroll", update);

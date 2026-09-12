@@ -236,7 +236,7 @@ export class TerminalSession {
       }
 
       try {
-        await this.claimMobileForInput(this.cols, this.rows);
+        await this.claimMobileForInput(this.cols, this.rows, isCurrentSocket);
         if (!isCurrentSocket()) return;
         await this.pty?.write(rawDataToBuffer(data).toString("utf8"));
       } catch (error) {
@@ -266,7 +266,7 @@ export class TerminalSession {
           return;
         }
         try {
-          await this.claimMobileForInput(message.cols, message.rows);
+          await this.claimMobileForInput(message.cols, message.rows, isCurrentSocket);
           if (!isCurrentSocket()) return;
           this.cols = message.cols;
           this.rows = message.rows;
@@ -280,7 +280,7 @@ export class TerminalSession {
           return;
         }
         try {
-          await this.claimMobileForInput(this.cols, this.rows);
+          await this.claimMobileForInput(this.cols, this.rows, isCurrentSocket);
           if (!isCurrentSocket()) return;
           await this.lease.enterCopyMode();
         } catch (error) {
@@ -293,7 +293,7 @@ export class TerminalSession {
           return;
         }
         try {
-          await this.claimMobileForInput(this.cols, this.rows);
+          await this.claimMobileForInput(this.cols, this.rows, isCurrentSocket);
           if (!isCurrentSocket()) return;
           await this.lease.pasteTmuxBuffer();
         } catch (error) {
@@ -605,7 +605,7 @@ export class TerminalSession {
       return;
     }
     try {
-      await this.claimMobileForInput(this.cols, this.rows);
+      await this.claimMobileForInput(this.cols, this.rows, isCurrentSocket);
       if (!isCurrentSocket()) return;
       await imagePaster({
         paneId: this.lease.paneId,
@@ -672,13 +672,16 @@ export class TerminalSession {
     closeSocket(socket, 1013, "terminal output backpressure");
   }
 
-  private async claimMobileForInput(cols: number, rows: number): Promise<void> {
+  private async claimMobileForInput(cols: number, rows: number, isCurrentSocket: () => boolean): Promise<void> {
     const lease = this.lease;
-    if (!lease) return;
+    if (!lease || !isCurrentSocket()) return;
     const shouldResizePty = lease.owner !== "mobile" || this.ptyCols !== cols || this.ptyRows !== rows;
     await lease.claimMobile(cols, rows);
-    if (!shouldResizePty) return;
-    await this.pty?.resize(cols, rows);
+    if (!isCurrentSocket() || !shouldResizePty) return;
+    const pty = this.pty;
+    if (!pty || !isCurrentSocket()) return;
+    await pty.resize(cols, rows);
+    if (!isCurrentSocket()) return;
     this.ptyCols = cols;
     this.ptyRows = rows;
   }

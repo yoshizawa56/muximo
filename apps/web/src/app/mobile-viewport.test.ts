@@ -93,10 +93,35 @@ const staleResizeGuardTable: OperationTable<
   observe: () => ({}),
 };
 
-type FocusOutTarget = { tagName: string; contenteditable?: string } | null;
+type FocusOutTarget = {
+  tagName: string;
+  type?: string;
+  contenteditable?: string;
+  isContentEditable?: boolean;
+} | null;
 const focusOutCases = [
   {
-    name: "recovers after an input loses focus",
+    name: "recovers after a text input loses focus",
+    input: { tagName: "INPUT", type: "text" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "recovers after a number input loses focus",
+    input: { tagName: "INPUT", type: "number" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "does not recover after a checkbox input loses focus",
+    input: { tagName: "INPUT", type: "checkbox" },
+    assert: [returns<Context, boolean>(false)],
+  },
+  {
+    name: "does not recover after a range input loses focus",
+    input: { tagName: "INPUT", type: "range" },
+    assert: [returns<Context, boolean>(false)],
+  },
+  {
+    name: "uses text as the default input type",
     input: { tagName: "INPUT" },
     assert: [returns<Context, boolean>(true)],
   },
@@ -111,8 +136,23 @@ const focusOutCases = [
     assert: [returns<Context, boolean>(true)],
   },
   {
-    name: "recovers after a contenteditable element loses focus",
+    name: "recovers after a true contenteditable element loses focus",
     input: { tagName: "DIV", contenteditable: "true" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "recovers after an empty contenteditable element loses focus",
+    input: { tagName: "DIV", contenteditable: "" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "recovers after a plaintext-only contenteditable element loses focus",
+    input: { tagName: "DIV", contenteditable: "plaintext-only" },
+    assert: [returns<Context, boolean>(true)],
+  },
+  {
+    name: "recovers after an inherited contenteditable element loses focus",
+    input: { tagName: "DIV", isContentEditable: true },
     assert: [returns<Context, boolean>(true)],
   },
   {
@@ -137,7 +177,13 @@ const focusOutTable: OperationTable<undefined, "default", FocusOutTarget, boolea
         ? null
         : ({
             tagName: input.tagName,
-            getAttribute: (name: string) => (name === "contenteditable" ? (input.contenteditable ?? null) : null),
+            getAttribute: (name: string) =>
+              name === "contenteditable"
+                ? (input.contenteditable ?? null)
+                : name === "type"
+                  ? (input.type ?? null)
+                  : null,
+            isContentEditable: input.isContentEditable ?? false,
           } as unknown as Element),
     ),
   observe: () => ({}),
