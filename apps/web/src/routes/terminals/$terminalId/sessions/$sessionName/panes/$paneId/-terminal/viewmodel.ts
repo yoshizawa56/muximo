@@ -604,6 +604,11 @@ export function usePaneViewModel({
       }
       keyboardViewportHeightRef.current = null;
       setNativeKeyboardVisibility(false);
+      // The keyboard toggle changes the viewport and the keyboard bar in the
+      // same interaction. Neither change is guaranteed to produce a terminal
+      // container ResizeObserver notification in an embedded WebView, so make
+      // the terminal fit explicit for this dismissal path.
+      sendResizeRef.current?.();
     };
     const resetNativeKeyboard = () => {
       nativeKeyboardPreserveRef.current = false;
@@ -719,6 +724,7 @@ export function usePaneViewModel({
       });
     };
     sendResizeRef.current = sendResize;
+    visualViewport?.addEventListener("resize", sendResize);
 
     const sendAttach = (socket: WebSocket) => {
       const resume = resumeRef.current?.target === target ? resumeRef.current : null;
@@ -1132,6 +1138,7 @@ export function usePaneViewModel({
         if (sendResizeRef.current === sendResize) sendResizeRef.current = null;
         resizeObserver.disconnect();
         window.removeEventListener("resize", sendResize);
+        visualViewport?.removeEventListener("resize", sendResize);
         window.removeEventListener("online", handleOnline);
         window.removeEventListener("resize", syncNativeKeyboardVisibility);
         visualViewport?.removeEventListener("resize", syncNativeKeyboardVisibility);
@@ -1193,6 +1200,7 @@ export function usePaneViewModel({
       if (sendResizeRef.current === sendResize) sendResizeRef.current = null;
       resizeObserver.disconnect();
       window.removeEventListener("resize", sendResize);
+      visualViewport?.removeEventListener("resize", sendResize);
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("resize", syncNativeKeyboardVisibility);
       visualViewport?.removeEventListener("resize", syncNativeKeyboardVisibility);
