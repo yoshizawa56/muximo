@@ -17,6 +17,7 @@ import type {
   TailscaleServeResult,
   TailscaleServeRouteStatus,
 } from "@muximo/infrastructure/cli-client";
+import type { WebProcessStatus } from "../adapters/web-process.js";
 import type { CliDaemonInput, CliDoctorInput, CliHandlers, CliIo, CliServeInput } from "../commands/types.js";
 import {
   presentDaemonError,
@@ -72,6 +73,7 @@ export type SystemHandlerDependencies = {
     log: AsyncService<DaemonLogRequest, DaemonLogResult>;
   };
   clientVersion: string;
+  readWebStatus?: AsyncService<void, WebProcessStatus | undefined>;
   serve: { execute(input: CliServeInput): Promise<ServeResult> };
   io: CliIo;
 };
@@ -87,13 +89,18 @@ export function createSystemHandlers(
         switch (input.command) {
           case "start":
             return presentDaemonStart(await dependencies.daemon.start.execute({ options }), dependencies.io);
-          case "status":
+          case "status": {
+            const daemonResult = await dependencies.daemon.status.execute(options);
+            const webStatus =
+              daemonResult.state === "running" ? await readWebStatus(dependencies.readWebStatus) : undefined;
             return presentDaemonStatus(
-              await dependencies.daemon.status.execute(options),
+              daemonResult,
               dependencies.io,
               dependencies.clientVersion,
               await readDaemonStatus(dependencies.daemon.readStatus),
+              webStatus,
             );
+          }
           case "stop":
             return presentDaemonStop(await dependencies.daemon.stop.execute(options), dependencies.io);
           case "restart":
@@ -142,6 +149,19 @@ async function readDaemonStatus(
   } catch {
     // Daemon lifecycle state remains useful when the diagnostic control
     // request is unavailable. Status diagnostics must never block the CLI.
+    return undefined;
+  }
+}
+
+async function readWebStatus(
+  service: AsyncService<void, WebProcessStatus | undefined> | undefined,
+): Promise<WebProcessStatus | undefined> {
+  if (!service) return undefined;
+  try {
+    return await service.execute(undefined);
+  } catch {
+    // Web status is host-side diagnostics; it must not make muximod status
+    // unavailable when the daemon control connection cannot be used.
     return undefined;
   }
 }

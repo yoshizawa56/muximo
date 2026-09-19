@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DaemonPidRecord } from "@muximo/application";
+import type { DaemonPidRecord, ProcessLaunchRecord } from "@muximo/application";
 import {
   hasError,
   hasObserved,
@@ -12,20 +12,31 @@ import {
   type TestRegistrar,
 } from "@muximo/test-support";
 import { describe, it } from "vitest";
-import { consumeMuximodRestartMarker, readMuximodPidRecord, writeMuximodPidRecord } from "./process-files.js";
+import {
+  consumeMuximodRestartMarker,
+  readMuximodLaunchRecord,
+  readMuximodPidRecord,
+  removeMuximodLaunchRecord,
+  writeMuximodLaunchRecord,
+  writeMuximodPidRecord,
+} from "./process-files.js";
 
-type ProcessFileInput = "write-pid" | "preserve-invalid-marker";
-type ProcessFileResult = DaemonPidRecord | boolean | undefined;
+type ProcessFileInput = "write-pid" | "write-launch" | "remove-launch" | "preserve-launch" | "preserve-invalid-marker";
+type ProcessFileResult = DaemonPidRecord | ProcessLaunchRecord | boolean | undefined;
 type ProcessFileFixture = {
   root: string;
   pidFile: string;
   markerFile: string;
   record?: DaemonPidRecord;
+  launchRecord?: ProcessLaunchRecord;
 };
 type ProcessFileContext = {
   record: DaemonPidRecord | undefined;
+  launch: ProcessLaunchRecord | undefined;
   mode: number | undefined;
+  launchMode: number | undefined;
   markerExists: boolean;
+  launchPresent: boolean;
 };
 
 const record: DaemonPidRecord = {
@@ -33,6 +44,16 @@ const record: DaemonPidRecord = {
   host: "127.0.0.1",
   port: 4317,
   startedAt: "2026-08-28T00:00:00.000Z",
+};
+
+const launchRecord: ProcessLaunchRecord = {
+  pid: 401,
+  startedAt: "2026-08-28T00:00:00.000Z",
+  origin: "source",
+  executable: "/opt/bun/bin/bun",
+  entrypoint: "/work/muximo/packages/muximod/src/process-entrypoint.ts",
+  args: ["/work/muximo/packages/muximod/src/process-entrypoint.ts"],
+  cwd: "/work/muximo",
 };
 
 const cases = [
@@ -45,6 +66,33 @@ const cases = [
         name: "uses a private file mode",
         check: (context: ProcessFileContext) => assert.equal(context.mode, 0o600),
       },
+    ],
+  },
+  {
+    name: "writes and reads launch metadata atomically",
+    input: "write-launch" as const,
+    assert: [
+      hasObserved<ProcessFileContext, ProcessFileResult>("launch", launchRecord),
+      {
+        name: "uses a private launch file mode",
+        check: (context: ProcessFileContext) => assert.equal(context.launchMode, 0o600),
+      },
+    ],
+  },
+  {
+    name: "removes launch metadata only for the recorded process",
+    input: "remove-launch" as const,
+    assert: [
+      hasObserved<ProcessFileContext, ProcessFileResult>("launch", undefined),
+      hasObserved<ProcessFileContext, ProcessFileResult>("launchPresent", false),
+    ],
+  },
+  {
+    name: "preserves launch metadata for a different process",
+    input: "preserve-launch" as const,
+    assert: [
+      hasObserved<ProcessFileContext, ProcessFileResult>("launch", launchRecord),
+      hasObserved<ProcessFileContext, ProcessFileResult>("launchPresent", true),
     ],
   },
   {
@@ -73,13 +121,31 @@ const table: OperationTable<ProcessFileFixture, "default", ProcessFileInput, Pro
       fixture.record = readMuximodPidRecord(fixture.pidFile);
       return fixture.record;
     }
+    if (input === "write-launch") {
+      writeMuximodLaunchRecord(fixture.pidFile, launchRecord);
+      fixture.launchRecord = readMuximodLaunchRecord(fixture.pidFile);
+      return fixture.launchRecord;
+    }
+    if (input === "remove-launch") {
+      writeMuximodLaunchRecord(fixture.pidFile, launchRecord);
+      removeMuximodLaunchRecord(fixture.pidFile, launchRecord.pid);
+      return readMuximodLaunchRecord(fixture.pidFile);
+    }
+    if (input === "preserve-launch") {
+      writeMuximodLaunchRecord(fixture.pidFile, launchRecord);
+      removeMuximodLaunchRecord(fixture.pidFile, launchRecord.pid + 1);
+      return readMuximodLaunchRecord(fixture.pidFile);
+    }
     writeFileSync(fixture.markerFile, "{invalid", { mode: 0o600 });
     return consumeMuximodRestartMarker(fixture.pidFile);
   },
   observe: (fixture) => ({
     record: fixture.record ?? readMuximodPidRecord(fixture.pidFile),
+    launch: fixture.launchRecord ?? readMuximodLaunchRecord(fixture.pidFile),
     mode: readMode(fixture.pidFile),
+    launchMode: readMode(`${fixture.pidFile}.launch.json`),
     markerExists: fileExists(fixture.markerFile),
+    launchPresent: fileExists(`${fixture.pidFile}.launch.json`),
   }),
 };
 

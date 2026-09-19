@@ -4,6 +4,7 @@ import type {
   DaemonStartResult,
   DaemonStatusResult,
   DaemonStopResult,
+  ProcessLaunchRecord,
 } from "@muximo/application";
 import type { MuximodDaemonStatus } from "@muximo/contract/control";
 import {
@@ -11,6 +12,7 @@ import {
   type MuximodLogFileLine,
   type MuximodLogFileReadResult,
 } from "@muximo/infrastructure/cli-client";
+import type { WebProcessStatus } from "../adapters/web-process.js";
 import type { CliIo } from "../commands/types.js";
 
 export function presentDaemonStart(result: DaemonStartResult, io: CliIo): number {
@@ -24,11 +26,14 @@ export function presentDaemonStatus(
   io: CliIo,
   clientVersion?: string,
   daemonStatus?: MuximodDaemonStatus,
+  webStatus?: WebProcessStatus,
 ): number {
   if (result.state === "running") {
     io.out.write(
       `[muximo-cli] muximod running${result.pid === undefined ? "" : ` (pid ${result.pid})`}${formatEndpoint(result.host, result.port)}\n`,
     );
+    presentLaunch("muximod", result.launch, io);
+    presentWebStatus(webStatus, io);
     presentDaemonDiagnostics(io, clientVersion, daemonStatus);
     return 0;
   }
@@ -39,10 +44,41 @@ export function presentDaemonStatus(
         result.logFile,
       )}\n`,
     );
+    presentLaunch("muximod", result.launch, io);
     return 1;
   }
   io.out.write("[muximo-cli] muximod stopped\n");
   return 1;
+}
+
+function presentLaunch(label: string, launch: ProcessLaunchRecord | undefined, io: CliIo): void {
+  if (!launch) return;
+  io.out.write(`[muximo-cli] ${label} launch origin: ${launch.origin}\n`);
+  io.out.write(`[muximo-cli] ${label} executable: ${launch.executable}\n`);
+  if (launch.entrypoint) io.out.write(`[muximo-cli] ${label} entrypoint: ${launch.entrypoint}\n`);
+  io.out.write(`[muximo-cli] ${label} arguments: ${JSON.stringify(launch.args)}\n`);
+  io.out.write(`[muximo-cli] ${label} working directory: ${launch.cwd}\n`);
+  io.out.write(`[muximo-cli] ${label} started at: ${launch.startedAt}\n`);
+}
+
+function presentWebStatus(status: WebProcessStatus | undefined, io: CliIo): void {
+  if (!status) return;
+  if (status.state === "running") {
+    io.out.write(
+      `[muximo-cli] Web proxy running${status.pid === undefined ? "" : ` (pid ${status.pid})`} at ${status.url}\n`,
+    );
+  } else if (status.state === "unmanaged") {
+    io.out.write(`[muximo-cli] Web proxy unmanaged at ${status.url}\n`);
+  } else if (status.state === "stale") {
+    io.out.write(
+      `[muximo-cli] Web proxy stale${status.pid === undefined ? "" : ` (pid ${status.pid})`} at ${status.url}\n`,
+    );
+  } else if (status.state === "disabled") {
+    io.out.write(`[muximo-cli] Web proxy disabled at ${status.url}\n`);
+  } else {
+    io.out.write(`[muximo-cli] Web proxy stopped at ${status.url}\n`);
+  }
+  presentLaunch("Web proxy", status.launch, io);
 }
 
 function presentDaemonDiagnostics(

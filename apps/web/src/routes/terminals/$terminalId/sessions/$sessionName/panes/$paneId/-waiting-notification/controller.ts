@@ -19,6 +19,50 @@ const NOTICE_DURATION_MS = 5_000;
 const NOTICE_CLEANUP_MS = NOTICE_DURATION_MS + 400;
 const MAX_NOTICES = 3;
 
+export type WaitingNoticeReconciliation = {
+  notices: WaitingNotice[];
+  waitingIds: Set<string>;
+};
+
+/** Reconciles transient notices with the latest pane projection. */
+export function reconcileWaitingNotices(
+  current: readonly WaitingNotice[],
+  panes: readonly PaneSummary[],
+  previousWaitingIds: ReadonlySet<string>,
+): WaitingNoticeReconciliation {
+  const waitingPanes = panes.filter(isWaitingPane);
+  const waitingIds = new Set(waitingPanes.map((pane) => pane.id));
+  const incoming = waitingPanes
+    .filter((pane) => !previousWaitingIds.has(pane.id))
+    .map(prepareNotice)
+    .filter((notice): notice is WaitingNotice => notice !== null);
+  const withoutResolved = current.filter((notice) => waitingIds.has(notice.id));
+  if (incoming.length === 0 && withoutResolved.length === current.length) {
+    return { notices: current as WaitingNotice[], waitingIds };
+  }
+  const byId = new Map(withoutResolved.map((notice) => [notice.id, notice]));
+  for (const notice of incoming) byId.set(notice.id, notice);
+  return { notices: [...byId.values()].slice(-MAX_NOTICES), waitingIds };
+}
+
+/** Returns the identity used by the cleanup effect for the current notice set. */
+export function waitingNoticeTimerKey(notices: readonly WaitingNotice[]): string {
+  return notices
+    .map((notice) =>
+      [
+        notice.id,
+        notice.target,
+        notice.name,
+        notice.kind,
+        notice.agentId ?? "",
+        notice.state,
+        notice.cwd,
+        notice.recentOutput,
+      ].join("\u0000"),
+    )
+    .join("\u0001");
+}
+
 export function useWaitingNotices(panes: PaneSummary[]): { notices: WaitingNotice[]; open: (id: string) => void } {
   const [notices, setNotices] = useState<WaitingNotice[]>([]);
   const previousWaitingIdsRef = useRef<Set<string>>(new Set());
@@ -31,39 +75,15 @@ export function useWaitingNotices(panes: PaneSummary[]): { notices: WaitingNotic
       // happen afterwards are announced.
       if (panes.length === 0) return;
       primedRef.current = true;
-      previousWaitingIdsRef.current = new Set(
-        panes
-          .filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval")
-          .map((pane) => pane.id),
-      );
+      previousWaitingIdsRef.current = waitingIdsForPanes(panes);
       return;
     }
 
     const previous = previousWaitingIdsRef.current;
-    const lateAdditions: PaneSummary[] = [];
-    const stillWaiting = new Set<string>();
-    for (const pane of panes) {
-      const isWaiting = pane.state === "waiting_input" || pane.state === "waiting_approval";
-      if (!isWaiting) continue;
-      stillWaiting.add(pane.id);
-      if (!previous.has(pane.id)) lateAdditions.push(pane);
-    }
-    previousWaitingIdsRef.current = new Set(
-      panes
-        .filter((pane) => pane.state === "waiting_input" || pane.state === "waiting_approval")
-        .map((pane) => pane.id),
-    );
-
-    if (!lateAdditions.length) return;
-    const incoming = lateAdditions.map(prepareNotice).filter((notice): notice is WaitingNotice => notice !== null);
-    if (!incoming.length) return;
+    const nextWaitingIds = waitingIdsForPanes(panes);
+    previousWaitingIdsRef.current = nextWaitingIds;
     setNotices((current) => {
-      const withoutResolved = current.filter((notice) => stillWaiting.has(notice.id));
-      const merged = [...withoutResolved, ...incoming];
-      const unique = merged.filter(
-        (notice, index) => merged.findIndex((candidate) => candidate.id === notice.id) === index,
-      );
-      return unique.slice(-MAX_NOTICES);
+      return reconcileWaitingNotices(current, panes, previous).notices;
     });
   }, [panes]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -73,7 +93,7 @@ export function useWaitingNotices(panes: PaneSummary[]): { notices: WaitingNotic
       setNotices([]);
     }, NOTICE_CLEANUP_MS);
     return () => window.clearTimeout(timer);
-  }, [notices.length]);
+  }, [notices]);
 
   const open = (id: string) => {
     setNotices((current) => current.filter((notice) => notice.id !== id));
@@ -96,6 +116,14 @@ function prepareNotice(pane: PaneSummary): WaitingNotice | null {
     cwd: pane.cwd,
     recentOutput: pane.recentOutput ?? "",
   };
+}
+
+function isWaitingPane(pane: PaneSummary): boolean {
+  return pane.state === "waiting_input" || pane.state === "waiting_approval";
+}
+
+function waitingIdsForPanes(panes: readonly PaneSummary[]): Set<string> {
+  return new Set(panes.filter(isWaitingPane).map((pane) => pane.id));
 }
 
 export function toToastAgent(notice: WaitingNotice): WaitingAgent {

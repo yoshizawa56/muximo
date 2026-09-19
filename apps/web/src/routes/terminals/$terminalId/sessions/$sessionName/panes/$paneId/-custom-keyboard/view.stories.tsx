@@ -273,6 +273,7 @@ function InteractiveShellStory({
   };
 
   const settingsViewModel: CustomKeyboardSettingsViewModel = {
+    hydrated: true,
     rows: editableRows,
     availableKeys,
     shortcutKeys,

@@ -23,20 +23,25 @@ import { describe, it, vi } from "vitest";
 import { TerminalSession, type TerminalSessionOptions, TerminalSessionRegistry } from "./terminal-session.js";
 
 type SessionStep =
-  | { type: "connect"; socket: "first" | "second"; target?: string; credentials?: "resume-first" }
-  | { type: "raw-connect"; socket: "first" | "second" }
-  | { type: "network-close"; socket: "first" | "second" }
-  | { type: "detach"; socket: "first" | "second" }
+  | { type: "connect"; socket: "first" | "second" | "third"; target?: string; credentials?: "resume-first" }
+  | { type: "raw-connect"; socket: "first" | "second" | "third" }
+  | { type: "network-close"; socket: "first" | "second" | "third" }
+  | { type: "detach"; socket: "first" | "second" | "third" }
   | { type: "resize"; cols: number; rows: number }
   | { type: "redraw" }
   | { type: "ping"; nonce: string }
   | { type: "backpressure"; socket: "first" | "second" }
   | { type: "emit-output"; value: string }
   | { type: "refresh-output"; value: string }
-  | { type: "send-input"; value: string }
+  | { type: "send-input"; socket?: "first" | "second" | "third"; value: string }
   | { type: "enter-copy-mode" }
   | { type: "paste-tmux-buffer" }
   | { type: "paste-image"; image?: string }
+  | { type: "send-malformed"; socket: "first" | "second" | "third" }
+  | { type: "reject-pending-claim" }
+  | { type: "resolve-pending-claim" }
+  | { type: "set-desktop-owner" }
+  | { type: "release-resume-resize" }
   | { type: "advance"; milliseconds: number };
 type SessionContext = {
   prepareCalls: number;
@@ -46,6 +51,7 @@ type SessionContext = {
   registrySize: number;
   secondResumed: boolean;
   secondReady: boolean;
+  thirdReadyCount: number;
   secondSyncModes: readonly string[];
   secondErrors: readonly string[];
   firstPongs: readonly string[];
@@ -58,13 +64,18 @@ type SessionContext = {
   pasteTargets: readonly string[];
   copyModeCalls: number;
   pasteTmuxBufferCalls: number;
+  leaseClaimCalls: number;
+  leaseOwner: "mobile" | "desktop";
+  ptyResizeCalls: readonly (readonly [number, number])[];
   events: readonly string[];
   leaseReturnToDesktopCalls: number;
   leaseResizeCalls: readonly (readonly [number | undefined, number | undefined])[];
   leaseRefreshCalls: number;
 };
-type SessionFixtureKey = "pasteFailure" | "sameDevice";
-type SessionFixture = ReturnType<typeof createHarness> & { sockets: Partial<Record<"first" | "second", FakeSocket>> };
+type SessionFixtureKey = "pasteFailure" | "sameDevice" | "staleOperation" | "resumeBlocked";
+type SessionFixture = ReturnType<typeof createHarness> & {
+  sockets: Partial<Record<"first" | "second" | "third", FakeSocket>>;
+};
 
 const sessionFixture = (): FixtureHandle<SessionFixture> => {
   vi.useFakeTimers();
@@ -93,6 +104,30 @@ const pasteFailureFixture = (): FixtureHandle<SessionFixture> => {
 const sameDeviceFixture = (): FixtureHandle<SessionFixture> => {
   vi.useFakeTimers();
   const harness = createHarness({ resumeGraceMs: 100, authDeviceId: "device-1" });
+  return {
+    fixture: { ...harness, sockets: {} },
+    cleanup: () => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    },
+  };
+};
+
+const staleOperationFixture = (): FixtureHandle<SessionFixture> => {
+  vi.useFakeTimers();
+  const harness = createHarness({ resumeGraceMs: 100 }, false, true);
+  return {
+    fixture: { ...harness, sockets: {} },
+    cleanup: () => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    },
+  };
+};
+
+const resumeBlockedFixture = (): FixtureHandle<SessionFixture> => {
+  vi.useFakeTimers();
+  const harness = createHarness({ resumeGraceMs: 100 }, false, false, true);
   return {
     fixture: { ...harness, sockets: {} },
     cleanup: () => {
@@ -373,11 +408,90 @@ const cases = [
       hasObserved<SessionContext, undefined>("leaseClaimCalls", 1),
     ],
   },
+  {
+    name: "does not deliver a stale operation error to a resumed socket",
+    fixture: "staleOperation",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "send-input", socket: "first", value: "ls" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+      { type: "send-malformed", socket: "first" },
+      { type: "send-input", socket: "first", value: "stale input" },
+      { type: "reject-pending-claim" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondResumed", true),
+      hasObserved<SessionContext, undefined>("secondErrors", []),
+      hasObserved<SessionContext, undefined>("writes", []),
+    ],
+  },
+  {
+    name: "does not resize the PTY after a pending claim resolves on a replaced socket",
+    fixture: "staleOperation",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "set-desktop-owner" },
+      { type: "send-input", socket: "first", value: "ls" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+      { type: "resolve-pending-claim" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondResumed", true),
+      hasObserved<SessionContext, undefined>("secondErrors", []),
+      hasObserved<SessionContext, undefined>("writes", []),
+      hasObserved<SessionContext, undefined>("leaseOwner", "desktop"),
+      hasObserved<SessionContext, undefined>("ptyResizeCalls", [[80, 24]]),
+    ],
+  },
+  {
+    name: "does not attach a socket that closes during resume resize",
+    fixture: "resumeBlocked",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+      { type: "network-close", socket: "second" },
+      { type: "release-resume-resize" },
+      { type: "advance", milliseconds: 100 },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondResumed", false),
+      hasObserved<SessionContext, undefined>("secondErrors", []),
+      hasObserved<SessionContext, undefined>("releaseCalls", 1),
+      hasObserved<SessionContext, undefined>("killed", 1),
+      hasObserved<SessionContext, undefined>("registrySize", 0),
+    ],
+  },
+  {
+    name: "does not let an older resume overwrite a replacement transport",
+    fixture: "resumeBlocked",
+    steps: [
+      { type: "connect", socket: "first" },
+      { type: "network-close", socket: "first" },
+      { type: "connect", socket: "second", credentials: "resume-first" },
+      { type: "network-close", socket: "second" },
+      { type: "connect", socket: "third", credentials: "resume-first" },
+      { type: "release-resume-resize" },
+    ],
+    assert: [
+      hasObserved<SessionContext, undefined>("secondResumed", false),
+      hasObserved<SessionContext, undefined>("thirdReadyCount", 1),
+      hasObserved<SessionContext, undefined>("registrySize", 1),
+      hasObserved<SessionContext, undefined>("releaseCalls", 0),
+    ],
+  },
 ] satisfies readonly ScenarioCase<SessionFixtureKey, SessionStep, undefined, SessionContext>[];
 
 const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undefined, SessionContext> = {
   defaultFixture: sessionFixture,
-  fixtures: { pasteFailure: pasteFailureFixture, sameDevice: sameDeviceFixture },
+  fixtures: {
+    pasteFailure: pasteFailureFixture,
+    sameDevice: sameDeviceFixture,
+    staleOperation: staleOperationFixture,
+    resumeBlocked: resumeBlockedFixture,
+  },
   cases,
   execute: async (fixture, steps) => {
     for (const step of steps) {
@@ -435,7 +549,7 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
         });
       }
       if (step.type === "send-input") {
-        fixture.sockets.second?.receive(Buffer.from(step.value), true);
+        fixture.sockets[step.socket ?? "second"]?.receive(Buffer.from(step.value), true);
         await flush();
       }
       if (step.type === "enter-copy-mode") {
@@ -458,6 +572,23 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
         );
         await flush();
       }
+      if (step.type === "send-malformed") {
+        fixture.sockets[step.socket]?.receive("not a terminal control frame");
+        await flush();
+      }
+      if (step.type === "reject-pending-claim") {
+        fixture.rejectClaim(new Error("stale claim failed"));
+        await flush();
+      }
+      if (step.type === "resolve-pending-claim") {
+        fixture.resolveClaim();
+        await flush();
+      }
+      if (step.type === "set-desktop-owner") fixture.setDesktopOwner();
+      if (step.type === "release-resume-resize") {
+        fixture.releaseResumeResize();
+        await flush();
+      }
       if (step.type === "advance") {
         vi.advanceTimersByTime(step.milliseconds);
         await flush();
@@ -473,6 +604,7 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
     secondResumed:
       fixture.sockets.second?.controls().some((message) => message.type === "ready" && message.resumed) ?? false,
     secondReady: fixture.sockets.second?.controls().some((message) => message.type === "ready") ?? false,
+    thirdReadyCount: fixture.sockets.third?.controls().filter((message) => message.type === "ready").length ?? 0,
     secondSyncModes:
       fixture.sockets.second
         ?.controls()
@@ -506,6 +638,8 @@ const table: ScenarioTable<SessionFixture, SessionFixtureKey, SessionStep, undef
     copyModeCalls: fixture.lease.enterCopyMode.mock.calls.length,
     pasteTmuxBufferCalls: fixture.lease.pasteTmuxBuffer.mock.calls.length,
     leaseClaimCalls: fixture.lease.claimMobile.mock.calls.length,
+    leaseOwner: fixture.lease.owner,
+    ptyResizeCalls: fixture.pty.resizeCalls.map(([cols, rows]) => [cols, rows]),
     leaseReturnToDesktopCalls: fixture.lease.returnToDesktop.mock.calls.length,
     leaseResizeCalls: fixture.lease.resize.mock.calls.map(([cols, rows]) => [cols, rows]),
     leaseRefreshCalls: fixture.lease.refresh.mock.calls.length,
@@ -517,19 +651,48 @@ describe("terminal session lifecycle", () => {
   runScenarioTable(it as unknown as TestRegistrar, table);
 });
 
-function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFails = false) {
+function createHarness(
+  overrides: Partial<TerminalSessionOptions> = {},
+  pasteFails = false,
+  claimPending = false,
+  resumeResizePending = false,
+) {
   const pty = new FakePty(401);
   const events: string[] = [];
+  let rejectClaim: (error: Error) => void = () => undefined;
+  let resolveClaim: () => void = () => undefined;
+  let releaseResumeResize: () => void = () => undefined;
+  const pendingClaim = claimPending
+    ? new Promise<void>((resolve, reject) => {
+        resolveClaim = resolve;
+        rejectClaim = reject;
+      })
+    : undefined;
+  const pendingResumeResize = resumeResizePending
+    ? new Promise<void>((resolve) => {
+        releaseResumeResize = resolve;
+      })
+    : undefined;
+  let leaseOwner: "mobile" | "desktop" = "mobile";
   const lease = {
     id: "lease-1",
     target: "%0",
     paneId: "%0",
     windowId: "@0",
     sessionName: "muximod",
-    owner: "mobile" as const,
-    claimMobile: vi.fn(async () => undefined),
-    returnToDesktop: vi.fn(async () => undefined),
-    resize: vi.fn(async (_cols?: number, _rows?: number) => undefined),
+    get owner() {
+      return leaseOwner;
+    },
+    claimMobile: vi.fn(async () => {
+      await pendingClaim;
+      leaseOwner = "mobile";
+    }),
+    returnToDesktop: vi.fn(async () => {
+      leaseOwner = "desktop";
+    }),
+    resize: vi.fn(async (_cols?: number, _rows?: number) => {
+      await pendingResumeResize;
+    }),
     refresh: vi.fn(async () => undefined),
     enterCopyMode: vi.fn(async () => undefined),
     pasteTmuxBuffer: vi.fn(async () => undefined),
@@ -575,7 +738,23 @@ function createHarness(overrides: Partial<TerminalSessionOptions> = {}, pasteFai
     imagePaster: paster,
     ...overrides,
   };
-  return { manager, prepared, lease, pty, spawn, registry, paster, options, events };
+  return {
+    manager,
+    prepared,
+    lease,
+    pty,
+    spawn,
+    registry,
+    paster,
+    options,
+    events,
+    rejectClaim,
+    resolveClaim,
+    releaseResumeResize,
+    setDesktopOwner: () => {
+      leaseOwner = "desktop";
+    },
+  };
 }
 
 function attachFrame(target: string, credentials: { sessionId?: string; resumeToken?: string } = {}): string {
@@ -641,6 +820,7 @@ class FakeSocket extends EventEmitter {
 
 class FakePty {
   public readonly writes: string[] = [];
+  public readonly resizeCalls: Array<[number, number]> = [];
   public killed = 0;
   private dataHandler: ((data: string) => void) | undefined;
   public constructor(public readonly pid: number) {}
@@ -654,7 +834,9 @@ class FakePty {
   public async write(data: string): Promise<void> {
     this.writes.push(data);
   }
-  public async resize(_cols: number, _rows: number): Promise<void> {}
+  public async resize(cols: number, rows: number): Promise<void> {
+    this.resizeCalls.push([cols, rows]);
+  }
   public async kill(): Promise<void> {
     this.killed += 1;
   }

@@ -18,7 +18,8 @@ export type { ImagePasteInput, ImagePaster } from "./contracts.js";
  * that behavior for a tmux pane:
  *
  * 1. The OSC 1337 sequence is stored in a tmux buffer and pasted into the
- *    pane. `tmux paste-buffer` writes raw bytes into the pane's PTY, so the
+ *    pane. `tmux paste-buffer -d` writes raw bytes into the pane's PTY and
+ *    deletes the staging buffer after the queued write completes, so the
  *    sequence reaches the foreground application unparsed by tmux.
  * 2. On macOS the image is staged immediately before it is written to the
  *    system pasteboard, which makes it available to clipboard-reading agent
@@ -65,16 +66,22 @@ export function createImagePaster(options: ImagePasterOptions): (input: ImagePas
     const sequence = inlineImageSequence(input.name, input.bytes);
 
     let bufferSet = false;
+    let pasteCompleted = false;
     try {
       options.tmux.setBuffer(bufferName, Buffer.from(sequence, "utf8"));
       bufferSet = true;
       options.tmux.pasteBuffer(bufferName, input.paneId);
+      pasteCompleted = true;
     } finally {
-      if (bufferSet) {
+      // Successful named pastes use tmux's `paste-buffer -d`, which removes
+      // the buffer after the queued PTY write. Only clean up explicitly when
+      // the paste command itself failed.
+      if (bufferSet && !pasteCompleted) {
         try {
           options.tmux.deleteBuffer(bufferName);
         } catch {
-          // The buffer is a best-effort staging area; the paste already ran.
+          // The staging buffer is best effort while reporting the original
+          // paste failure.
         }
       }
     }

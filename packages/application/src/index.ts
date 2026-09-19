@@ -120,6 +120,9 @@ export type {
   DaemonStartResult,
   DaemonStatusResult,
   DaemonStopResult,
+  ProcessLaunchMetadata,
+  ProcessLaunchOrigin,
+  ProcessLaunchRecord,
 } from "./ports/daemon.js";
 export { DaemonHealthError } from "./ports/daemon.js";
 export type {

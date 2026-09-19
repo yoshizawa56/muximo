@@ -522,7 +522,7 @@ const attachTable: OperationTable<RecordingFixture, "default", AttachInput, stri
   observe: () => ({}),
 };
 
-type TmuxAction = "copy-mode" | "paste-buffer";
+type TmuxAction = "copy-mode" | "paste-buffer" | "paste-named-buffer";
 const tmuxActionCases = [
   {
     name: "enters copy mode in the requested pane",
@@ -534,13 +534,19 @@ const tmuxActionCases = [
     input: "paste-buffer",
     assert: [returns<EmptyContext, string[]>(["paste-buffer", "-t", "%1"])],
   },
+  {
+    name: "lets tmux delete a named buffer after the queued paste completes",
+    input: "paste-named-buffer",
+    assert: [returns<EmptyContext, string[]>(["paste-buffer", "-d", "-b", "muximod-paste-test", "-t", "%1"])],
+  },
 ] satisfies readonly OperationCase<"default", TmuxAction, string[], EmptyContext>[];
 const tmuxActionTable: OperationTable<RecordingFixture, "default", TmuxAction, string[], EmptyContext> = {
   defaultFixture: recordingFixture,
   cases: tmuxActionCases,
   execute: (fixture, input) => {
     if (input === "copy-mode") fixture.adapter.enterCopyMode("%1");
-    else fixture.adapter.pasteCurrentBuffer("%1");
+    else if (input === "paste-buffer") fixture.adapter.pasteCurrentBuffer("%1");
+    else fixture.adapter.pasteBuffer("muximod-paste-test", "%1");
     return fixture.adapter.lastArgs;
   },
   observe: () => ({}),
@@ -646,42 +652,49 @@ const listTable: OperationTable<{ adapter: ListingTmuxAdapter }, ListKey, {}, Li
 };
 
 type SnapshotFixture = { adapter: SnapshotTmuxAdapter };
-type SnapshotKey = "available" | "missing";
+type SnapshotKey = "available" | "missing" | "retry";
+type SnapshotResult = { status: number; stdout: string; stderr: string };
+
+function snapshotRow(overrides: { left?: string; top?: string; width?: string; height?: string } = {}): string {
+  return [
+    "%1",
+    "@0",
+    "work",
+    "shell",
+    "0",
+    "0",
+    "/tmp",
+    "zsh",
+    "zsh",
+    "1",
+    overrides.left ?? "0",
+    overrides.top ?? "0",
+    overrides.width ?? "80",
+    overrides.height ?? "24",
+    "80",
+    "24",
+    "0",
+    "pane-1",
+    "",
+    "shell",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "1234",
+    "2026-08-14T12:00:00Z",
+    "/private/tmp/muximo-test.sock",
+    "",
+  ].join("\u001f");
+}
+
 const snapshotFixtures: Readonly<Record<SnapshotKey, () => FixtureHandle<SnapshotFixture>>> = {
   available: () => ({
     fixture: {
       adapter: new SnapshotTmuxAdapter({
         status: 0,
-        stdout: [
-          "%1",
-          "@0",
-          "work",
-          "shell",
-          "0",
-          "0",
-          "/tmp",
-          "zsh",
-          "zsh",
-          "1",
-          "0",
-          "0",
-          "80",
-          "24",
-          "80",
-          "24",
-          "pane-1",
-          "",
-          "shell",
-          "",
-          "",
-          "",
-          "",
-          "",
-          "1234",
-          "2026-08-14T12:00:00Z",
-          "/private/tmp/muximo-test.sock",
-          "",
-        ].join("\u001f"),
+        stdout: snapshotRow(),
         stderr: "",
       }),
     },
@@ -689,6 +702,14 @@ const snapshotFixtures: Readonly<Record<SnapshotKey, () => FixtureHandle<Snapsho
   missing: () => ({
     fixture: {
       adapter: new SnapshotTmuxAdapter({ status: 1, stdout: "", stderr: "no server running on /tmp/socket\n" }),
+    },
+  }),
+  retry: () => ({
+    fixture: {
+      adapter: new SnapshotTmuxAdapter([
+        { status: 0, stdout: snapshotRow({ left: "" }), stderr: "" },
+        { status: 0, stdout: snapshotRow(), stderr: "" },
+      ]),
     },
   }),
 };
@@ -719,13 +740,31 @@ const snapshotCases = [
     input: {},
     assert: [returns<{}, TmuxLiveSnapshot>({ panes: [], available: false, tmuxServerId: null, tmuxServerScope: null })],
   },
-] satisfies readonly OperationCase<SnapshotKey, {}, TmuxLiveSnapshot, {}>[];
-const snapshotTable: OperationTable<SnapshotFixture, SnapshotKey, {}, TmuxLiveSnapshot, {}> = {
+  {
+    name: "re-reads tmux after an incomplete geometry row",
+    fixture: "retry",
+    input: {},
+    assert: [
+      {
+        name: "returns the complete second snapshot",
+        check: (
+          ctx: { calls: number },
+          result: { ok: true; value: TmuxLiveSnapshot } | { ok: false; error: unknown },
+        ) => {
+          if (!result.ok) throw result.error;
+          expect(result.value.panes[0]).toMatchObject({ left: 0, width: 80, windowWidth: 80 });
+          expect(ctx.calls).toBe(2);
+        },
+      },
+    ],
+  },
+] satisfies readonly OperationCase<SnapshotKey, {}, TmuxLiveSnapshot, { calls: number }>[];
+const snapshotTable: OperationTable<SnapshotFixture, SnapshotKey, {}, TmuxLiveSnapshot, { calls: number }> = {
   defaultFixture: snapshotFixtures.available,
   fixtures: snapshotFixtures,
   cases: snapshotCases,
   execute: (fixture) => fixture.adapter.listPanesSnapshot(),
-  observe: () => ({}),
+  observe: (fixture) => ({ calls: fixture.adapter.calls }),
 };
 
 type MetadataFixture = { adapter: MetadataTmuxAdapter };
@@ -879,6 +918,7 @@ function listingPaneRow(sessionName: string, mobileViewport: string, separator: 
     "24",
     "120",
     "40",
+    "0",
     "",
     "",
     "",
@@ -895,11 +935,18 @@ function listingPaneRow(sessionName: string, mobileViewport: string, separator: 
 }
 
 class SnapshotTmuxAdapter extends TmuxAdapter {
-  public constructor(private readonly result: { status: number; stdout: string; stderr: string }) {
+  public calls = 0;
+  private readonly results: readonly SnapshotResult[];
+
+  public constructor(result: SnapshotResult | readonly SnapshotResult[]) {
     super("/private/tmp/muximo-test.sock");
+    this.results = Array.isArray(result) ? result : [result];
   }
-  public override command(_args: string[]): { status: number; stdout: string; stderr: string } {
-    return this.result;
+  public override command(_args: string[]): SnapshotResult {
+    const result = this.results[Math.min(this.calls, this.results.length - 1)];
+    this.calls += 1;
+    if (!result) throw new Error("Missing snapshot fixture result");
+    return result;
   }
 }
 

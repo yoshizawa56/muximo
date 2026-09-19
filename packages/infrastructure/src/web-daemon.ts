@@ -11,7 +11,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
+import type { ProcessLaunchOrigin, ProcessLaunchRecord } from "@muximo/application";
 import { errorMessage } from "./logging/index.js";
 
 const startLockTimeoutMs = 15_000;
@@ -20,10 +21,11 @@ const readinessTimeoutMs = 10_000;
 const readinessProbeTimeoutMs = 500;
 
 export type WebDaemonStatus = {
-  state: "running" | "stopped" | "stale";
+  state: "running" | "stopped" | "stale" | "unmanaged";
   pid?: number;
   url: string;
   logFile: string;
+  launch?: ProcessLaunchRecord;
 };
 
 export type WebDaemonManager = {
@@ -43,6 +45,7 @@ export type WebDaemonManagerOptions = {
   args: readonly string[];
   environment: NodeJS.ProcessEnv;
   logFile: string;
+  origin?: ProcessLaunchOrigin;
 };
 
 type WebPidRecord = {
@@ -76,11 +79,15 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
     validateOptions();
     const current = readPidRecord(pidFile);
     if (current) {
-      if (await isReady(current)) return present("running", current.pid);
-      if (isProcessAlive(current.pid)) {
+      if (!isOwnedRecord(current)) {
+        removePidRecord(current.pid);
+      } else if (await isReady(current)) {
+        return present("running", current.pid);
+      } else if (isProcessAlive(current.pid)) {
         throw new Error(`Web process ${current.pid} owns ${url} but is not ready; inspect ${logFile}`);
+      } else {
+        removePidRecord(current.pid);
       }
-      removePidRecord(current.pid);
     }
 
     if (await isEndpointReady()) {
@@ -117,7 +124,15 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
       args: [...options.args],
       startedAt: new Date().toISOString(),
     };
-    writePidRecord(record);
+    const launch = createLaunchRecord(record);
+    try {
+      writePidRecord(record);
+      writeLaunchRecord(launch);
+    } catch (error) {
+      terminate(record.pid);
+      removePidRecord(record.pid);
+      throw new Error(`could not persist Web launch metadata: ${pidFile}`, { cause: error });
+    }
     child.unref();
 
     try {
@@ -157,16 +172,48 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
 
   async function status(): Promise<WebDaemonStatus> {
     const current = readPidRecord(pidFile);
-    if (!current) return present("stopped");
+    if (!current) {
+      removeOrphanLaunchRecord();
+      return (await isEndpointReady()) ? present("unmanaged") : present("stopped");
+    }
+    if (!isOwnedRecord(current)) {
+      removePidRecord(current.pid);
+      return (await isEndpointReady()) ? present("unmanaged") : present("stale", current.pid);
+    }
     if (!isProcessAlive(current.pid)) {
       removePidRecord(current.pid);
-      return present("stale", current.pid);
+      return (await isEndpointReady()) ? present("unmanaged") : present("stale", current.pid);
     }
     return present((await isReady(current)) ? "running" : "stale", current.pid);
   }
 
   function present(state: WebDaemonStatus["state"], pid?: number): WebDaemonStatus {
-    return { state, ...(pid === undefined ? {} : { pid }), url, logFile };
+    const launch = readLaunchRecordSafe();
+    return {
+      state,
+      ...(pid === undefined ? {} : { pid }),
+      url,
+      logFile,
+      ...(launch !== undefined && pid !== undefined && launch.pid === pid ? { launch } : {}),
+    };
+  }
+
+  function createLaunchRecord(record: WebPidRecord): ProcessLaunchRecord {
+    const entrypointArgument = isEntrypointArgument(record.args[0])
+      ? record.args[0]
+      : isEntrypointArgument(record.command)
+        ? record.command
+        : undefined;
+    const entrypoint = isEntrypointArgument(entrypointArgument) ? resolve(options.cwd, entrypointArgument) : undefined;
+    return {
+      pid: record.pid,
+      startedAt: record.startedAt,
+      origin: options.origin ?? (entrypoint === undefined ? "binary" : "source"),
+      executable: record.command,
+      ...(entrypoint === undefined ? {} : { entrypoint }),
+      args: [...record.args],
+      cwd: resolve(options.cwd),
+    };
   }
 
   async function isReady(record: WebPidRecord): Promise<boolean> {
@@ -233,6 +280,55 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
     } catch (error) {
       if (!isErrorCode(error, "ENOENT")) throw error;
     }
+    removeLaunchRecord(expectedPid);
+  }
+
+  function writeLaunchRecord(record: ProcessLaunchRecord): void {
+    writePrivateJson(launchRecordPath(pidFile), record);
+  }
+
+  function readLaunchRecordSafe(): ProcessLaunchRecord | undefined {
+    try {
+      return readLaunchRecord();
+    } catch {
+      return undefined;
+    }
+  }
+
+  function readLaunchRecord(): ProcessLaunchRecord | undefined {
+    const path = launchRecordPath(pidFile);
+    let value: unknown;
+    try {
+      value = JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      if (isErrorCode(error, "ENOENT")) return undefined;
+      throw new Error(`Web launch record could not be read: ${path}`, { cause: error });
+    }
+    if (!isProcessLaunchRecord(value)) throw new Error(`Web launch record has an invalid format: ${path}`);
+    return value;
+  }
+
+  function removeLaunchRecord(expectedPid: number): void {
+    let current: ProcessLaunchRecord | undefined;
+    try {
+      current = readLaunchRecord();
+    } catch {
+      return;
+    }
+    if (current?.pid !== expectedPid) return;
+    try {
+      unlinkSync(launchRecordPath(pidFile));
+    } catch (error) {
+      if (!isErrorCode(error, "ENOENT")) throw error;
+    }
+  }
+
+  function removeOrphanLaunchRecord(): void {
+    try {
+      unlinkSync(launchRecordPath(pidFile));
+    } catch (error) {
+      if (!isErrorCode(error, "ENOENT")) throw error;
+    }
   }
 
   function validateOptions(): void {
@@ -249,6 +345,68 @@ export function createWebDaemonManager(options: WebDaemonManagerOptions): WebDae
       record.args.every((argument, index) => argument === options.args[index])
     );
   }
+}
+
+function launchRecordPath(pidFile: string): string {
+  return `${pidFile}.launch.json`;
+}
+
+function writePrivateJson(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  let operationError: unknown;
+  let operationFailed = false;
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    chmodSync(temporaryPath, 0o600);
+    renameSync(temporaryPath, path);
+    chmodSync(path, 0o600);
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+  }
+  let cleanupError: unknown;
+  try {
+    unlinkSync(temporaryPath);
+  } catch (error) {
+    if (!isErrorCode(error, "ENOENT")) cleanupError = error;
+  }
+  if (operationFailed) throw operationError;
+  if (cleanupError !== undefined) throw cleanupError;
+}
+
+function isProcessLaunchRecord(value: unknown): value is ProcessLaunchRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const expectedKeys = "args,cwd,entrypoint,executable,origin,pid,startedAt";
+  const expectedKeysWithoutEntrypoint = "args,cwd,executable,origin,pid,startedAt";
+  const hasEntrypoint = "entrypoint" in record;
+  return (
+    keys.join(",") === (hasEntrypoint ? expectedKeys : expectedKeysWithoutEntrypoint) &&
+    typeof record.pid === "number" &&
+    Number.isInteger(record.pid) &&
+    record.pid > 0 &&
+    typeof record.startedAt === "string" &&
+    isIsoTimestamp(record.startedAt) &&
+    (record.origin === "source" || record.origin === "binary") &&
+    typeof record.executable === "string" &&
+    record.executable.length > 0 &&
+    (record.entrypoint === undefined || (typeof record.entrypoint === "string" && record.entrypoint.length > 0)) &&
+    Array.isArray(record.args) &&
+    record.args.every((argument) => typeof argument === "string") &&
+    typeof record.cwd === "string" &&
+    record.cwd.length > 0
+  );
+}
+
+function isIsoTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+function isEntrypointArgument(argument: string | undefined): argument is string {
+  return argument !== undefined && !argument.startsWith("-") && /\.(?:cjs|js|mjs|ts)$/.test(argument);
 }
 
 async function withStartLock<Result>(operation: () => Promise<Result>, lockDirectory: string): Promise<Result> {

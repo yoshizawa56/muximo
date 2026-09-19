@@ -660,6 +660,7 @@ export function createCliComposition(options: CliCompositionOptions): CliComposi
         },
       },
     },
+    readWebStatus: { execute: () => webProcess.status() },
     clientVersion: muximoCliVersion,
     serve: {
       execute: async (value): Promise<ServeResult> => {

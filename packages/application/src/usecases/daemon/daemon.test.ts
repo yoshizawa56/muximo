@@ -6,7 +6,7 @@ import {
   runOperationTable,
   type TestRegistrar,
 } from "@muximo/test-support";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   type DaemonEnsureResult,
   DaemonHealthError,
@@ -17,6 +17,7 @@ import {
   type DaemonStatusResult,
   type DaemonStopResult,
   EnsureDaemon,
+  type ProcessLaunchRecord,
   type ProcessResult,
   RestartDaemon,
   StartDaemon,
@@ -55,6 +56,7 @@ type LifecycleFixture = {
   healthyAfterSpawn: boolean;
   alive: boolean;
   record?: { pid: number; host: string; port: number; startedAt: string };
+  launchRecord?: ProcessLaunchRecord;
   now: number;
   sleeps: number[];
   spawnCount: number;
@@ -75,6 +77,7 @@ type LifecycleContext = {
   outcomeState: string | undefined;
   outcomeKind: string | undefined;
   outcomeEndpoint: string | undefined;
+  launch: ProcessLaunchRecord | undefined;
   errorReason: string | undefined;
   spawnCount: number;
   signalCount: number;
@@ -173,6 +176,13 @@ const cases = [
     input: { operation: "status" },
     assert: [
       hasObserved<LifecycleContext, LifecycleResult>("outcomeState", "running"),
+      {
+        name: "includes the recorded launch metadata",
+        check: (context: LifecycleContext) => {
+          expect(context.launch?.origin).toBe("source");
+          expect(context.launch?.entrypoint).toBe("/work/muximo/packages/muximod/src/process-entrypoint.ts");
+        },
+      },
       hasObserved<LifecycleContext, LifecycleResult>("removePidCount", 0),
     ],
   },
@@ -283,6 +293,7 @@ const table: OperationTable<LifecycleFixture, LifecycleFixtureKey, LifecycleInpu
           value && "state" in value ? value.state : value && "result" in value ? value.result.state : undefined,
         outcomeKind: value && "kind" in value ? value.kind : undefined,
         outcomeEndpoint: readEndpoint(value),
+        launch: value && "launch" in value ? value.launch : undefined,
         errorReason: result.ok
           ? undefined
           : result.error instanceof DaemonHealthError
@@ -336,6 +347,18 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
             startedAt: "2026-08-23T00:00:00.000Z",
           }
         : undefined,
+    launchRecord:
+      key === "running"
+        ? {
+            pid: 401,
+            startedAt: "2026-08-23T00:00:00.000Z",
+            origin: "source",
+            executable: "/opt/bun/bin/bun",
+            entrypoint: "/work/muximo/packages/muximod/src/process-entrypoint.ts",
+            args: ["/work/muximo/packages/muximod/src/process-entrypoint.ts"],
+            cwd: "/work/muximo",
+          }
+        : undefined,
     now: 0,
     sleeps: [],
     spawnCount: 0,
@@ -374,6 +397,7 @@ function createFixture(key: LifecycleFixtureKey): LifecycleFixture {
       fixture.healthy = false;
     },
     readPidRecord: () => fixture.record,
+    readLaunchRecord: () => fixture.launchRecord,
     writePidRecord: () => undefined,
     removePidRecord: () => {
       fixture.removePidCount += 1;

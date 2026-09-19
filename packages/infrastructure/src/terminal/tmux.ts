@@ -17,6 +17,7 @@ const stableAgentExecutionMetadataKey = "@muximod.agent_execution_id";
 const stableMobileViewportMetadataKey = "@muximod.mobile_viewport";
 const mobileViewportSessionPrefix = "muximo-mobile-";
 const tmuxFormatSeparator = "\u001f";
+const maxPaneSnapshotAttempts = 3;
 
 type TmuxSessionOption = {
   name: string;
@@ -56,6 +57,8 @@ export type TmuxPane = TmuxPaneRef & {
   height: number;
   windowWidth: number;
   windowHeight: number;
+  /** True when tmux is intentionally presenting the window as one zoomed pane. */
+  windowZoomed?: boolean;
   muximodPaneId?: string;
   muximodName?: string;
   muximodKind?: string;
@@ -468,7 +471,8 @@ export class TmuxAdapter {
    * Stores raw bytes in a named tmux buffer. `pasteBuffer` later writes the
    * bytes straight into the pane's PTY without tmux interpreting them as
    * input, which is how terminal-emulator paste semantics are reproduced for
-   * sequences such as iTerm2 inline images.
+   * sequences such as iTerm2 inline images. Named image buffers are deleted
+   * by `paste-buffer -d` only after the queued PTY write completes.
    */
   public setBuffer(name: string, data: Buffer): void {
     const fullArgs = [...this.commandPrefix, "set-buffer", "-b", name, "-n", name];
@@ -488,7 +492,10 @@ export class TmuxAdapter {
   }
 
   public pasteBuffer(name: string, targetPaneId: string): void {
-    this.require(["paste-buffer", "-b", name, "-t", targetPaneId]);
+    // Let tmux delete the buffer after its queued paste completes. Deleting
+    // it from the caller immediately after this command can race with tmux's
+    // PTY write and make the paste fail with "unknown buffer".
+    this.require(["paste-buffer", "-d", "-b", name, "-t", targetPaneId]);
   }
 
   public enterCopyMode(paneId: string): void {
@@ -524,6 +531,20 @@ export class TmuxAdapter {
   }
 
   public listPanesSnapshot(): TmuxLiveSnapshot {
+    let lastError: unknown = new Error("Could not obtain a complete tmux pane geometry snapshot");
+    for (let attempt = 0; attempt < maxPaneSnapshotAttempts; attempt += 1) {
+      try {
+        const snapshot = this.readPanesSnapshot();
+        if (hasCompleteTmuxPaneGeometry(snapshot.panes)) return snapshot;
+        lastError = new Error("tmux returned an incomplete or inconsistent pane geometry snapshot");
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
+  private readPanesSnapshot(): TmuxLiveSnapshot {
     const separator = tmuxFormatSeparator;
     const args = [
       "list-panes",
@@ -546,6 +567,7 @@ export class TmuxAdapter {
         "#{pane_height}",
         "#{window_width}",
         "#{window_height}",
+        "#{window_zoomed_flag}",
         this.metadataFormat("pane_id"),
         this.metadataFormat("pane_name"),
         this.metadataFormat("kind"),
@@ -593,6 +615,7 @@ export class TmuxAdapter {
           height,
           windowWidth,
           windowHeight,
+          windowZoomed,
           muximodPaneId,
           muximodName,
           muximodKind,
@@ -639,6 +662,7 @@ export class TmuxAdapter {
           height: parseDimension(height, "pane height"),
           windowWidth: parseDimension(windowWidth, "window width"),
           windowHeight: parseDimension(windowHeight, "window height"),
+          ...(windowZoomed === "1" ? { windowZoomed: true } : {}),
           muximodPaneId: nonEmpty(muximodPaneId),
           muximodName: nonEmpty(muximodName),
           muximodKind: nonEmpty(muximodKind),
@@ -936,8 +960,66 @@ function sanitizeMetadataNamespace(value: string): string {
   return value.replaceAll(/[^A-Za-z0-9_-]/g, "_");
 }
 
+function hasCompleteTmuxPaneGeometry(panes: readonly TmuxPane[]): boolean {
+  const windows = new Map<string, { width: number; height: number; panes: TmuxPane[] }>();
+  for (const pane of panes) {
+    if (
+      !Number.isInteger(pane.left) ||
+      pane.left < 0 ||
+      !Number.isInteger(pane.top) ||
+      pane.top < 0 ||
+      !Number.isInteger(pane.width) ||
+      pane.width <= 0 ||
+      !Number.isInteger(pane.height) ||
+      pane.height <= 0 ||
+      !Number.isInteger(pane.windowWidth) ||
+      pane.windowWidth <= 0 ||
+      !Number.isInteger(pane.windowHeight) ||
+      pane.windowHeight <= 0 ||
+      pane.left + pane.width > pane.windowWidth ||
+      pane.top + pane.height > pane.windowHeight
+    ) {
+      return false;
+    }
+
+    const key = `${pane.sessionName}\u0000${pane.windowId}`;
+    const window = windows.get(key);
+    if (!window) {
+      windows.set(key, { width: pane.windowWidth, height: pane.windowHeight, panes: [pane] });
+      continue;
+    }
+    if (window.width !== pane.windowWidth || window.height !== pane.windowHeight) return false;
+    window.panes.push(pane);
+  }
+  for (const window of windows.values()) {
+    // A zoomed tmux window intentionally reports the selected pane's visible
+    // rectangle for every pane in the shared window. Those coordinates are
+    // authoritative, but they must not be mistaken for a corrupt desktop
+    // layout. The web layout policy still rejects overlapping panes for map
+    // rendering and uses the saved desktop geometry while a mobile lease is
+    // active.
+    if (window.panes.every((pane) => pane.windowZoomed === true)) continue;
+    for (let index = 0; index < window.panes.length; index += 1) {
+      const pane = window.panes[index];
+      if (!pane) continue;
+      if (window.panes.slice(index + 1).some((other) => panesOverlap(other, pane))) return false;
+    }
+  }
+  return true;
+}
+
+function panesOverlap(left: TmuxPane, right: TmuxPane): boolean {
+  return (
+    left.left < right.left + right.width &&
+    right.left < left.left + left.width &&
+    left.top < right.top + right.height &&
+    right.top < left.top + left.height
+  );
+}
+
 function parseDimension(value: string | undefined, name: string): number {
-  const parsed = Number(value);
+  const normalized = value?.trim();
+  const parsed = normalized === undefined || normalized === "" ? Number.NaN : Number(normalized);
   if (!Number.isInteger(parsed) || parsed < 0) {
     throw new Error(`Invalid ${name}: ${value ?? ""}`);
   }

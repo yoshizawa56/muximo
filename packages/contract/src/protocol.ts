@@ -1005,12 +1005,14 @@ export const paneSummarySchema = z
     // Pane indexes are scoped to a tmux window and are distinct from hostPaneId
     // (the server-wide target such as %32).
     paneIndex: Pane.schema.shape.paneIndex,
-    left: Pane.schema.shape.left,
-    top: Pane.schema.shape.top,
-    width: Pane.schema.shape.width,
-    height: Pane.schema.shape.height,
-    windowWidth: Pane.schema.shape.windowWidth,
-    windowHeight: Pane.schema.shape.windowHeight,
+    // A pane list is a live tmux projection. Layout consumers must never
+    // receive a pane with only partially populated geometry.
+    left: z.number().int().min(0),
+    top: z.number().int().min(0),
+    width: z.number().int().min(1),
+    height: z.number().int().min(1),
+    windowWidth: z.number().int().min(1),
+    windowHeight: z.number().int().min(1),
   })
   .strict();
 

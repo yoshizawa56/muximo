@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { DaemonPidRecord } from "@muximo/application";
+import type { DaemonPidRecord, ProcessLaunchRecord } from "@muximo/application";
+
+export function muximodLaunchRecordPath(pidFile: string): string {
+  return `${pidFile}.launch.json`;
+}
 
 export function writeMuximodPidRecord(path: string, record: DaemonPidRecord): void {
   writePrivateJson(path, record);
@@ -34,6 +38,45 @@ export function readMuximodPidRecord(path: string): DaemonPidRecord | undefined 
   }
   if (!isDaemonPidRecord(parsed)) throw new Error(`muximod pid file has an invalid format: ${path}`);
   return parsed;
+}
+
+export function writeMuximodLaunchRecord(pidFile: string, record: ProcessLaunchRecord): void {
+  writePrivateJson(muximodLaunchRecordPath(pidFile), record);
+}
+
+export function readMuximodLaunchRecord(pidFile: string): ProcessLaunchRecord | undefined {
+  const path = muximodLaunchRecordPath(pidFile);
+  let contents: string;
+  try {
+    contents = readFileSync(path, "utf8");
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return undefined;
+    throw new Error(`muximod launch record could not be read: ${path}`, { cause: error });
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch (error) {
+    throw new Error(`muximod launch record contains invalid JSON: ${path}`, { cause: error });
+  }
+  if (!isProcessLaunchRecord(parsed)) throw new Error(`muximod launch record has an invalid format: ${path}`);
+  return parsed;
+}
+
+export function removeMuximodLaunchRecord(pidFile: string, expectedPid: number): void {
+  let record: ProcessLaunchRecord | undefined;
+  try {
+    record = readMuximodLaunchRecord(pidFile);
+  } catch {
+    return;
+  }
+  if (record?.pid !== expectedPid) return;
+  try {
+    unlinkSync(muximodLaunchRecordPath(pidFile));
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error;
+  }
 }
 
 export function writeMuximodRestartMarker(path: string, refreshServers: boolean): void {
@@ -82,6 +125,29 @@ function isDaemonPidRecord(value: unknown): value is DaemonPidRecord {
     isPort(value.port) &&
     typeof value.startedAt === "string" &&
     isIsoTimestamp(value.startedAt)
+  );
+}
+
+function isProcessLaunchRecord(value: unknown): value is ProcessLaunchRecord {
+  if (!isRecord(value)) return false;
+  const keys = Object.keys(value).sort();
+  const hasEntrypoint = "entrypoint" in value;
+  const expectedKeys = hasEntrypoint
+    ? "args,cwd,entrypoint,executable,origin,pid,startedAt"
+    : "args,cwd,executable,origin,pid,startedAt";
+  return (
+    keys.join(",") === expectedKeys &&
+    isPositiveInteger(value.pid) &&
+    typeof value.startedAt === "string" &&
+    isIsoTimestamp(value.startedAt) &&
+    (value.origin === "source" || value.origin === "binary") &&
+    typeof value.executable === "string" &&
+    value.executable.length > 0 &&
+    (value.entrypoint === undefined || (typeof value.entrypoint === "string" && value.entrypoint.length > 0)) &&
+    Array.isArray(value.args) &&
+    value.args.every((argument) => typeof argument === "string") &&
+    typeof value.cwd === "string" &&
+    value.cwd.length > 0
   );
 }
 

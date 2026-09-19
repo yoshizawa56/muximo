@@ -87,6 +87,12 @@ Production releases contain one `muximo` binary. The daemon is an internal
 process mode started and managed by that binary; `muximod` is not a separate
 user-facing executable.
 
+`muximo daemon status` also reports the recorded launch origin, executable,
+entrypoint (when running from a script), arguments, working directory, and
+start time for `muximod`. In development, it reports the Web proxy launch
+metadata as well and identifies a listener that is not managed by this CLI as
+`unmanaged`.
+
 `muximo daemon log` reads the daemon's instance log file directly, so it works
 even while `muximod` is not running. It renders the structured log lines in a
 human-readable format by default; pass `--json` to print the raw JSON lines,

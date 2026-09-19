@@ -49,9 +49,11 @@ type LeaseRecord = {
   released: boolean;
   lastSeenLayout?: string;
   originalPanes: readonly TmuxPaneLayout[];
+  syntheticClientActiveUntil: number;
 };
 
 type TmuxHookEvent = "client-attached" | "client-active" | "client-resized" | "client-focus-in" | "client-detached";
+const syntheticClientActiveSuppressionMs = 250;
 
 /**
  * Coordinates the one shared tmux window viewport used by the mobile client.
@@ -70,7 +72,11 @@ export class TmuxViewportManager {
   private hookRegistration: { index: number; names: string[] } | undefined;
   private disposed = false;
 
-  public constructor(adapter = new TmuxAdapter()) {
+  public constructor(
+    adapter = new TmuxAdapter(),
+    private readonly now: () => number = () => Date.now(),
+    private readonly wait: (milliseconds: number) => Promise<void> = delay,
+  ) {
     this.adapter = adapter;
   }
 
@@ -128,7 +134,7 @@ export class TmuxViewportManager {
 
     const snapshot = this.adapter.snapshotWindow(pane);
     const originalPanes = this.capturePaneLayout(pane);
-    const id = createLeaseId();
+    const id = createLeaseId(this.now());
     const mobileSessionName = `muximo-mobile-${id}`;
     this.adapter.createGroupedSession(pane.sessionName, mobileSessionName);
     const record: LeaseRecord = {
@@ -144,6 +150,7 @@ export class TmuxViewportManager {
       desktopClientFlags: new Map(),
       released: false,
       originalPanes,
+      syntheticClientActiveUntil: 0,
     };
     this.leases.set(pane.windowId, record);
 
@@ -204,8 +211,11 @@ export class TmuxViewportManager {
     // tmux can emit client-active for a client while muximod is changing the
     // shared window (for example during switch-client/resize-window). That
     // does not mean the desktop terminal received focus. The focused flag is
-    // the stable signal for a real desktop takeover; resize hooks remain
-    // actionable even when the terminal does not report focus events.
+    // necessary but not sufficient: client-active means that this client
+    // became the latest active client, and can be emitted by tmux commands
+    // without user input. Internal viewport operations suppress unchanged
+    // active-client events briefly; an activity advance is still accepted
+    // immediately because tmux's activity timestamp has only second precision.
     if (event === "client-active" && !hasTmuxClientFlag(client, "focused")) return;
 
     // A client can move between windows in the same session. Only a hook for
@@ -219,6 +229,30 @@ export class TmuxViewportManager {
     // PTY has not necessarily appeared in tmux yet. Ignore desktop hooks in
     // that small interval; there is no mobile client to hand control back to.
     if (!candidate.mobileClient || candidate.ptyPid === client.pid) return;
+
+    if (event === "client-active") {
+      const previous = candidate.latestDesktop;
+      if (!previous) {
+        // Establish a baseline when the initial client inventory was
+        // temporarily unavailable. A later activity transition can then be
+        // evaluated normally; this event alone is not authoritative.
+        candidate.latestDesktop = client;
+        return;
+      }
+      const activityChanged = client.activity > previous.activity;
+      const clientChanged = client.name !== previous.name;
+      // The post-command desktop baseline makes an unchanged event synthetic
+      // only while the command-settling window is active. After that bounded
+      // window, the hook itself is the authoritative focus signal; tmux
+      // activity has only second-level precision and may legitimately remain
+      // unchanged for real input.
+      if (!activityChanged && !clientChanged && this.now() < candidate.syntheticClientActiveUntil) return;
+    }
+    if (
+      (event === "client-focus-in" || event === "client-resized") &&
+      this.now() < candidate.syntheticClientActiveUntil
+    )
+      return;
 
     const reason: ViewportReason =
       event === "client-resized"
@@ -363,6 +397,7 @@ export class TmuxViewportManager {
   }
 
   private reconcileMobileViewport(record: LeaseRecord, cols: number, rows: number, forceRefresh = false): void {
+    record.syntheticClientActiveUntil = this.now() + syntheticClientActiveSuppressionMs;
     const clamped = clampViewportSize(cols, rows);
     cols = clamped.cols;
     rows = clamped.rows;
@@ -418,6 +453,10 @@ export class TmuxViewportManager {
         this.adapter.refreshClient(record.mobileClient.name);
       }
     }
+    // Internal tmux commands can advance the desktop client's activity
+    // timestamp. Capture the post-command baseline so a follow-up hook for
+    // that command cannot be mistaken for user input.
+    this.rememberLatestDesktop(record);
   }
 
   private claimMobile(record: LeaseRecord, cols?: number, rows?: number): void {
@@ -639,12 +678,7 @@ export class TmuxViewportManager {
       const clients = this.adapter.listClients();
       for (const record of this.leases.values()) {
         if (!record.mobileClient || record.released) continue;
-        const desktop = clients.find(
-          (client) =>
-            client.name !== record.mobileClient?.name &&
-            client.windowId === record.pane.windowId &&
-            client.sessionName === record.pane.sessionName,
-        );
+        const desktop = findStableDesktopClient(record, clients);
         if (!desktop) continue;
 
         if (record.owner === "mobile") {
@@ -653,6 +687,7 @@ export class TmuxViewportManager {
           // viewport, which would immediately steal control back from the
           // phone after a successful attach. Explicit client hooks handle
           // desktop input; polling only covers focus and size changes.
+          if (this.now() < record.syntheticClientActiveUntil) continue;
           const focusChanged =
             !record.latestDesktop ||
             hasTmuxClientFlag(record.latestDesktop, "focused") !== hasTmuxClientFlag(desktop, "focused");
@@ -725,6 +760,7 @@ export class TmuxViewportManager {
   }
 
   private protectDesktopClients(record: LeaseRecord): void {
+    record.syntheticClientActiveUntil = this.now() + syntheticClientActiveSuppressionMs;
     try {
       const clients = this.adapter
         .listClients()
@@ -761,15 +797,15 @@ export class TmuxViewportManager {
   }
 
   private async waitForClient(pid: number): Promise<TmuxClient> {
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline) {
+    const deadline = this.now() + 2_000;
+    while (this.now() < deadline) {
       try {
         const client = this.adapter.findClientByPid(pid);
         if (client) return client;
       } catch {
         // The tmux server may need one tick to publish the newly attached client.
       }
-      await delay(50);
+      await this.wait(50);
     }
     throw new Error(`Could not identify tmux client for PTY process ${pid}`);
   }
@@ -801,8 +837,8 @@ function isDesktopOwner(record: { owner: ViewportOwner }): boolean {
   return record.owner === "desktop";
 }
 
-function createLeaseId(): string {
-  return `viewport-${Date.now().toString(36)}-${randomInt(100_000, 999_999).toString(36)}`;
+function createLeaseId(now: number): string {
+  return `viewport-${now.toString(36)}-${randomInt(100_000, 999_999).toString(36)}`;
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -824,6 +860,28 @@ function shellQuote(value: string): string {
 
 function hasTmuxClientFlag(client: TmuxClient, flag: string): boolean {
   return client.flags.split(",").includes(flag);
+}
+
+function findStableDesktopClient(
+  record: Pick<LeaseRecord, "pane" | "mobileClient" | "latestDesktop">,
+  clients: readonly TmuxClient[],
+): TmuxClient | undefined {
+  const candidates = clients.filter(
+    (client) =>
+      client.name !== record.mobileClient?.name &&
+      client.windowId === record.pane.windowId &&
+      client.sessionName === record.pane.sessionName,
+  );
+  if (candidates.length === 0) return undefined;
+
+  // listClients is ordered by activity, not focus. Keep polling anchored to
+  // the previously observed client, then prefer tmux's explicit focused flag,
+  // so background pane output cannot turn a list reorder into a takeover.
+  return (
+    candidates.find((client) => client.name === record.latestDesktop?.name) ??
+    candidates.find((client) => hasTmuxClientFlag(client, "focused")) ??
+    candidates[0]
+  );
 }
 
 function clampViewportSize(cols: number, rows: number): { cols: number; rows: number } {

@@ -34,6 +34,62 @@ import { installTerminalTouchInput, terminalMouseWheelInput } from "./touch";
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
 export type PanePasteState = "idle" | "pasting" | "pasted" | "failed";
 
+export type PasteLifecycleBinding = {
+  target: string;
+  terminal: Terminal;
+  socket: WebSocket;
+  paneGeneration: number;
+  socketGeneration: number;
+};
+
+export type PasteLifecycleSnapshot = {
+  target: string;
+  terminal: Terminal | null;
+  socket: WebSocket | null;
+  paneGeneration: number;
+  socketGeneration: number;
+  terminalReady: boolean;
+  terminalClosed: boolean;
+  appActive: boolean;
+};
+
+export type MockPasteLifecycleBinding = {
+  target: string;
+  terminal: Terminal;
+  paneGeneration: number;
+};
+
+export function isPasteLifecycleCurrent(binding: PasteLifecycleBinding, snapshot: PasteLifecycleSnapshot): boolean {
+  return (
+    binding.target === snapshot.target &&
+    binding.terminal === snapshot.terminal &&
+    binding.socket === snapshot.socket &&
+    binding.paneGeneration === snapshot.paneGeneration &&
+    binding.socketGeneration === snapshot.socketGeneration &&
+    snapshot.terminalReady &&
+    !snapshot.terminalClosed &&
+    snapshot.appActive &&
+    snapshot.socket?.readyState === 1
+  );
+}
+
+export function isMockPasteLifecycleCurrent(
+  binding: MockPasteLifecycleBinding,
+  snapshot: PasteLifecycleSnapshot,
+): boolean {
+  return (
+    binding.target === snapshot.target &&
+    binding.terminal === snapshot.terminal &&
+    binding.paneGeneration === snapshot.paneGeneration &&
+    !snapshot.terminalClosed &&
+    snapshot.appActive
+  );
+}
+
+export function isPasteOperationCurrent(operationGeneration: number, currentGeneration: number): boolean {
+  return operationGeneration === currentGeneration;
+}
+
 export type TerminalResumeStore = {
   read: (key: string, target: string) => PaneResumeState | null;
   write: (key: string, state: PaneResumeState) => void;
@@ -127,6 +183,8 @@ export function usePaneViewModel({
   const terminalClosedRef = useRef(false);
   const terminalReadyRef = useRef(false);
   const currentTargetRef = useRef(target);
+  const paneGenerationRef = useRef(0);
+  const socketGenerationRef = useRef(0);
   const pendingDetachRef = useRef<Promise<void> | null>(null);
   const appStateRef = useRef<MuximoAppState>(muximoBridge.getAppState());
   const pauseTransportRef = useRef<(() => void) | null>(null);
@@ -140,6 +198,7 @@ export function usePaneViewModel({
   const keyboardViewportHeightRef = useRef<number | null>(null);
   const resetNativeKeyboardRef = useRef<(() => void) | null>(null);
   const pasteResetTimerRef = useRef<number | null>(null);
+  const pasteOperationGenerationRef = useRef(0);
   useLayoutEffect(() => {
     suppressNativeTouchRef.current = suppressNativeTouch;
   }, [suppressNativeTouch]);
@@ -287,25 +346,81 @@ export function usePaneViewModel({
     reportActionError("Terminal is not connected");
   }, [clearActionError, reportActionError]);
 
+  const createPasteLifecycleSnapshot = useCallback(
+    () => ({
+      target: currentTargetRef.current,
+      terminal: terminalRef.current,
+      socket: socketRef.current,
+      paneGeneration: paneGenerationRef.current,
+      socketGeneration: socketGenerationRef.current,
+      terminalReady: terminalReadyRef.current,
+      terminalClosed: terminalClosedRef.current,
+      appActive: appStateRef.current === "active",
+    }),
+    [],
+  );
+  const isCurrentPaneForPaste = useCallback(
+    (binding: Pick<MockPasteLifecycleBinding, "target" | "terminal" | "paneGeneration">) =>
+      binding.target === currentTargetRef.current &&
+      binding.terminal === terminalRef.current &&
+      binding.paneGeneration === paneGenerationRef.current,
+    [],
+  );
+
   const pasteFromClipboard = useCallback(async (): Promise<void> => {
     clearActionError();
     if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
       reportActionError("Clipboard paste is unavailable in this browser");
       return;
     }
-    try {
-      const data = await navigator.clipboard.readText();
-      if (!data) return;
-      const terminal = terminalRef.current;
-      if (!terminal || terminalClosedRef.current) {
+    const terminal = terminalRef.current;
+    const mockBinding = terminal ? { target, terminal, paneGeneration: paneGenerationRef.current } : null;
+    if (isMockMode()) {
+      if (!mockBinding || !isMockPasteLifecycleCurrent(mockBinding, createPasteLifecycleSnapshot())) {
         reportActionError("Terminal is not connected");
         return;
       }
-      terminal.paste(data);
-    } catch {
-      reportActionError("Clipboard access was denied or failed");
+      try {
+        const data = await navigator.clipboard.readText();
+        if (!data) return;
+        if (!isMockPasteLifecycleCurrent(mockBinding, createPasteLifecycleSnapshot())) {
+          if (isCurrentPaneForPaste(mockBinding))
+            reportActionError("Terminal connection changed while reading clipboard");
+          return;
+        }
+        mockBinding.terminal.paste(data);
+      } catch {
+        if (isCurrentPaneForPaste(mockBinding)) reportActionError("Clipboard access was denied or failed");
+      }
+      return;
     }
-  }, [clearActionError, reportActionError]);
+    const socket = socketRef.current;
+    const binding =
+      terminal && socket
+        ? {
+            target,
+            terminal,
+            socket,
+            paneGeneration: paneGenerationRef.current,
+            socketGeneration: socketGenerationRef.current,
+          }
+        : null;
+    if (!binding || !isPasteLifecycleCurrent(binding, createPasteLifecycleSnapshot())) {
+      reportActionError("Terminal is not connected");
+      return;
+    }
+    try {
+      const data = await navigator.clipboard.readText();
+      if (!data) return;
+      if (!isPasteLifecycleCurrent(binding, createPasteLifecycleSnapshot())) {
+        if (isCurrentPaneForPaste(binding)) reportActionError("Terminal connection changed while reading clipboard");
+        return;
+      }
+      binding.terminal.paste(data);
+    } catch {
+      if (isCurrentPaneForPaste(binding)) reportActionError("Clipboard access was denied or failed");
+    }
+  }, [clearActionError, createPasteLifecycleSnapshot, isCurrentPaneForPaste, reportActionError, target]);
 
   const detach = useCallback(() => {
     terminalClosedRef.current = true;
@@ -313,10 +428,20 @@ export function usePaneViewModel({
     detachRef.current?.();
   }, [clearRetryTimer]);
 
-  const schedulePasteReset = useCallback(() => {
+  const resetPasteLifecycle = useCallback(() => {
+    pasteOperationGenerationRef.current += 1;
+    if (pasteResetTimerRef.current !== null) {
+      window.clearTimeout(pasteResetTimerRef.current);
+      pasteResetTimerRef.current = null;
+    }
+    setPasteState("idle");
+  }, []);
+
+  const schedulePasteReset = useCallback((operationGeneration: number) => {
     if (pasteResetTimerRef.current !== null) window.clearTimeout(pasteResetTimerRef.current);
     pasteResetTimerRef.current = window.setTimeout(() => {
       pasteResetTimerRef.current = null;
+      if (pasteOperationGenerationRef.current !== operationGeneration) return;
       setPasteState("idle");
     }, PASTE_NOTICE_DURATION_MS);
   }, []);
@@ -324,36 +449,64 @@ export function usePaneViewModel({
   const pasteImage = useCallback(
     (file: File) => {
       void (async () => {
+        const operationGeneration = ++pasteOperationGenerationRef.current;
+        const isLatestPasteOperation = () =>
+          isPasteOperationCurrent(operationGeneration, pasteOperationGenerationRef.current);
+        const terminal = terminalRef.current;
+        const socket = socketRef.current;
+        const binding =
+          terminal && socket
+            ? {
+                target,
+                terminal,
+                socket,
+                paneGeneration: paneGenerationRef.current,
+                socketGeneration: socketGenerationRef.current,
+              }
+            : null;
         if (isMockMode()) {
+          if (!terminal || currentTargetRef.current !== target || !isLatestPasteOperation()) return;
           setPasteState("pasted");
-          schedulePasteReset();
+          schedulePasteReset(operationGeneration);
           return;
         }
-        const socket = socketRef.current;
-        if (!socket || socket.readyState !== WebSocket.OPEN || !terminalReadyRef.current) {
+        if (!binding || !isPasteLifecycleCurrent(binding, createPasteLifecycleSnapshot())) {
+          if (!isLatestPasteOperation()) return;
           setPasteState("failed");
-          schedulePasteReset();
+          schedulePasteReset(operationGeneration);
           return;
         }
         try {
+          if (!isLatestPasteOperation()) return;
           setPasteState("pasting");
           const data = await fileToBase64(file);
-          sendControl(
-            socket,
-            createPasteImageMessage({
-              name: file.name || "image",
-              mimeType: file.type || undefined,
-              data,
-            }),
+          if (!isPasteLifecycleCurrent(binding, createPasteLifecycleSnapshot())) {
+            if (isLatestPasteOperation() && isCurrentPaneForPaste(binding)) {
+              setPasteState("failed");
+              schedulePasteReset(operationGeneration);
+            }
+            return;
+          }
+          const sent = sendControl(
+            binding.socket,
+            createPasteImageMessage({ name: file.name || "image", mimeType: file.type || undefined, data }),
           );
+          if (!sent) {
+            if (!isLatestPasteOperation() || !isCurrentPaneForPaste(binding)) return;
+            setPasteState("failed");
+            schedulePasteReset(operationGeneration);
+            return;
+          }
+          if (!isLatestPasteOperation() || !isCurrentPaneForPaste(binding)) return;
           setPasteState("pasted");
         } catch {
+          if (!isLatestPasteOperation() || !isCurrentPaneForPaste(binding)) return;
           setPasteState("failed");
         }
-        schedulePasteReset();
+        if (isLatestPasteOperation() && isCurrentPaneForPaste(binding)) schedulePasteReset(operationGeneration);
       })();
     },
-    [schedulePasteReset],
+    [createPasteLifecycleSnapshot, isCurrentPaneForPaste, schedulePasteReset, target],
   );
 
   useEffect(
@@ -383,6 +536,7 @@ export function usePaneViewModel({
     if (!target || !terminalContainer || (!connection && !isMockMode())) return;
 
     const container = terminalContainer;
+    const paneGeneration = ++paneGenerationRef.current;
     const fontSize = terminalFontSize();
     const terminal = new Terminal({
       cursorBlink: true,
@@ -450,6 +604,11 @@ export function usePaneViewModel({
       }
       keyboardViewportHeightRef.current = null;
       setNativeKeyboardVisibility(false);
+      // The keyboard toggle changes the viewport and the keyboard bar in the
+      // same interaction. Neither change is guaranteed to produce a terminal
+      // container ResizeObserver notification in an embedded WebView, so make
+      // the terminal fit explicit for this dismissal path.
+      sendResizeRef.current?.();
     };
     const resetNativeKeyboard = () => {
       nativeKeyboardPreserveRef.current = false;
@@ -565,6 +724,7 @@ export function usePaneViewModel({
       });
     };
     sendResizeRef.current = sendResize;
+    visualViewport?.addEventListener("resize", sendResize);
 
     const sendAttach = (socket: WebSocket) => {
       const resume = resumeRef.current?.target === target ? resumeRef.current : null;
@@ -642,6 +802,7 @@ export function usePaneViewModel({
           return;
         }
         const generation = ++socketGeneration;
+        ++socketGenerationRef.current;
         const isCurrentSocket = () => !disposed && socketRef.current === socket && generation === socketGeneration;
         const resumeAttempt = Boolean(resumeRef.current?.target === target);
         let fallbackAttachSent = false;
@@ -963,6 +1124,9 @@ export function usePaneViewModel({
 
       return () => {
         disposed = true;
+        resetPasteLifecycle();
+        if (paneGenerationRef.current === paneGeneration) paneGenerationRef.current += 1;
+        socketGenerationRef.current += 1;
         if (pauseTransportRef.current === pauseTransport) pauseTransportRef.current = null;
         connectRef.current = null;
         detachRef.current = null;
@@ -974,6 +1138,7 @@ export function usePaneViewModel({
         if (sendResizeRef.current === sendResize) sendResizeRef.current = null;
         resizeObserver.disconnect();
         window.removeEventListener("resize", sendResize);
+        visualViewport?.removeEventListener("resize", sendResize);
         window.removeEventListener("online", handleOnline);
         window.removeEventListener("resize", syncNativeKeyboardVisibility);
         visualViewport?.removeEventListener("resize", syncNativeKeyboardVisibility);
@@ -1020,6 +1185,9 @@ export function usePaneViewModel({
 
     return () => {
       disposed = true;
+      resetPasteLifecycle();
+      if (paneGenerationRef.current === paneGeneration) paneGenerationRef.current += 1;
+      socketGenerationRef.current += 1;
       if (pauseTransportRef.current === pauseTransport) pauseTransportRef.current = null;
       connectRef.current = null;
       detachRef.current = null;
@@ -1032,6 +1200,7 @@ export function usePaneViewModel({
       if (sendResizeRef.current === sendResize) sendResizeRef.current = null;
       resizeObserver.disconnect();
       window.removeEventListener("resize", sendResize);
+      visualViewport?.removeEventListener("resize", sendResize);
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("resize", syncNativeKeyboardVisibility);
       visualViewport?.removeEventListener("resize", syncNativeKeyboardVisibility);
@@ -1063,7 +1232,16 @@ export function usePaneViewModel({
       }
       terminal.dispose();
     };
-  }, [clearActionError, clearRetryTimer, connection, focus, reportActionError, target, terminalContainer]);
+  }, [
+    clearActionError,
+    clearRetryTimer,
+    connection,
+    focus,
+    reportActionError,
+    resetPasteLifecycle,
+    target,
+    terminalContainer,
+  ]);
 
   return {
     target,
