@@ -22,6 +22,8 @@ import type {
   DaemonStartResult,
   DaemonStatusResult,
   DaemonStopResult,
+  ProcessLaunchMetadata,
+  ProcessLaunchRecord,
   ProcessResult,
   StartDaemonInput,
 } from "@muximo/application";
@@ -43,9 +45,12 @@ import { z } from "zod";
 import {
   consumeMuximodRestartMarker,
   hasMuximodRestartMarker,
+  readMuximodLaunchRecord,
   readMuximodPidRecord,
+  removeMuximodLaunchRecord,
   removeMuximodPidRecord,
   removeMuximodRestartMarker,
+  writeMuximodLaunchRecord,
   writeMuximodPidRecord,
   writeMuximodRestartMarker,
 } from "./process-files.js";
@@ -200,7 +205,7 @@ export async function spawnMuximod(
     processCommand?: MuximodProcessCommand;
   } = {},
 ): Promise<MuximodProcessHandle> {
-  const processCommand = resolveMuximodProcess(processOptions.processCommand);
+  const processCommand = resolveMuximodProcess(processOptions.processCommand, options.workingDirectory).command;
   const bootstrap = createBootstrapFile(options);
   const stdio = processOptions.stdio ?? (processOptions.detached ? "ignore" : "inherit");
   const childEnvironment: NodeJS.ProcessEnv = { ...(processOptions.environment ?? process.env) };
@@ -436,19 +441,58 @@ function terminateSpawnedChild(child: ReturnType<typeof spawn>, detached: boolea
   }
 }
 
-function resolveMuximodProcess(explicitCommand?: MuximodProcessCommand): MuximodProcessCommand {
-  if (explicitCommand) return { executable: explicitCommand.executable, args: [...explicitCommand.args] };
+type ResolvedMuximodProcess = {
+  command: MuximodProcessCommand;
+  metadata: ProcessLaunchMetadata;
+};
+
+function resolveMuximodProcess(
+  explicitCommand?: MuximodProcessCommand,
+  workingDirectory = process.cwd(),
+): ResolvedMuximodProcess {
+  if (explicitCommand) {
+    const command = { executable: explicitCommand.executable, args: [...explicitCommand.args] };
+    return { command, metadata: createLaunchMetadata(command, workingDirectory) };
+  }
 
   // Development keeps the source process entrypoint for fast iteration. The
   // production launcher injects the current muximo binary explicitly, so a
   // second production executable is never an implicit fallback.
   const sourceEntry = fileURLToPath(new URL("./process-entrypoint.ts", import.meta.url));
-  if (existsSync(sourceEntry)) return { executable: process.execPath, args: [sourceEntry] };
+  if (existsSync(sourceEntry)) {
+    const command = { executable: process.execPath, args: [sourceEntry] };
+    return { command, metadata: createLaunchMetadata(command, workingDirectory) };
+  }
 
   const builtEntry = fileURLToPath(new URL("./process-entrypoint.js", import.meta.url));
-  if (existsSync(builtEntry)) return { executable: process.execPath, args: [builtEntry] };
+  if (existsSync(builtEntry)) {
+    const command = { executable: process.execPath, args: [builtEntry] };
+    return { command, metadata: createLaunchMetadata(command, workingDirectory) };
+  }
 
   throw new Error("muximod process entrypoint is unavailable; use the supported muximo launcher");
+}
+
+function createLaunchMetadata(command: MuximodProcessCommand, workingDirectory: string): ProcessLaunchMetadata {
+  const entrypointArgument = isEntrypointArgument(command.args[0])
+    ? command.args[0]
+    : isEntrypointArgument(command.executable)
+      ? command.executable
+      : undefined;
+  const entrypoint = isEntrypointArgument(entrypointArgument)
+    ? resolve(workingDirectory, entrypointArgument)
+    : undefined;
+  return {
+    origin: entrypoint === undefined ? "binary" : "source",
+    executable: command.executable,
+    ...(entrypoint === undefined ? {} : { entrypoint }),
+    args: [...command.args],
+    cwd: resolve(workingDirectory),
+  };
+}
+
+function isEntrypointArgument(argument: string | undefined): argument is string {
+  return argument !== undefined && !argument.startsWith("-") && /\.(?:cjs|js|mjs|ts)$/.test(argument);
 }
 
 class MuximodRuntime implements DaemonRuntimePort {
@@ -486,17 +530,36 @@ class MuximodRuntime implements DaemonRuntimePort {
     }
   }
 
-  public async spawn(_options: DaemonOptions): Promise<DaemonProcessHandle> {
+  public async spawn(options: DaemonOptions): Promise<DaemonProcessHandle> {
+    const resolvedProcess = resolveMuximodProcess(this.options.processCommand, this.options.workingDirectory);
     const handle = await spawnMuximod(this.launchOptions(), {
       detached: true,
       stdio: "ignore",
       environment: this.options.environment,
-      processCommand: this.options.processCommand,
+      processCommand: resolvedProcess.command,
     });
+    if (handle.pid !== undefined) {
+      try {
+        writeMuximodLaunchRecord(options.pidFile, {
+          ...resolvedProcess.metadata,
+          pid: handle.pid,
+          startedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        handle.terminate();
+        throw new Error(`could not persist muximod launch metadata: ${options.pidFile}`, { cause: error });
+      }
+    }
     let terminated = false;
     return {
       pid: handle.pid,
-      wait: () => handle.wait(),
+      wait: async () => {
+        try {
+          return await handle.wait();
+        } finally {
+          if (handle.pid !== undefined) removeMuximodLaunchRecord(options.pidFile, handle.pid);
+        }
+      },
       terminate: () => {
         if (terminated) return;
         terminated = true;
@@ -546,12 +609,23 @@ class MuximodRuntime implements DaemonRuntimePort {
     return readMuximodPidRecord(path);
   }
 
+  public readLaunchRecord(path: string): ProcessLaunchRecord | undefined {
+    try {
+      return readMuximodLaunchRecord(path);
+    } catch {
+      // Launch metadata is diagnostic only; malformed metadata must not make
+      // daemon health or lifecycle decisions fail closed.
+      return undefined;
+    }
+  }
+
   public writePidRecord(path: string, record: DaemonPidRecord): void {
     writeMuximodPidRecord(path, record);
   }
 
   public removePidRecord(path: string, expectedPid: number): void {
     removeMuximodPidRecord(path, expectedPid);
+    removeMuximodLaunchRecord(path, expectedPid);
   }
 
   public writeRestartMarker(pidFile: string, refreshServers: boolean): void {

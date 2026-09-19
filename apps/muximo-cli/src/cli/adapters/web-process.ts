@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { ProcessLaunchRecord } from "@muximo/application";
 import type { MuximodWebSettings } from "@muximo/contract/control";
 import { createWebDaemonManager, type WebDaemonManager, type WebDaemonStatus } from "@muximo/infrastructure/cli-client";
 
@@ -7,6 +8,7 @@ export type WebProcessStatus = {
   pid?: number;
   url: string;
   logFile: string;
+  launch?: ProcessLaunchRecord;
 };
 
 export type WebProcessManager = {
@@ -47,7 +49,6 @@ export function createWebProcessManager(options: WebProcessManagerOptions): WebP
     status: async () => {
       const settings = await options.resolveSettings();
       if (!settings.enabled) {
-        await createManager(defaultSettings()).stop();
         return presentDisabled(settings);
       }
       assertAvailable();

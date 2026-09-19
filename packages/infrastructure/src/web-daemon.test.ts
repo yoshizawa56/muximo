@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import { createWebDaemonManager, type WebDaemonManager, type WebDaemonStatus } from "./web-daemon.js";
 
 type WebInput = {
-  operation: "lifecycle" | "occupied" | "foreign-record";
+  operation: "lifecycle" | "occupied" | "status-unmanaged" | "foreign-record";
 };
 
 type WebFixture = {
@@ -22,13 +22,17 @@ type WebFixture = {
   port: number;
   root: string;
   pidFile: string;
+  launchFile: string;
   occupied?: Server;
 };
 
 type WebContext = {
+  root: string;
   states: WebDaemonStatus["state"][];
   pids: Array<number | undefined>;
   recordPresent: boolean;
+  launch?: WebDaemonStatus["launch"];
+  launchPresent: boolean;
 };
 
 const cases = [
@@ -44,6 +48,15 @@ const cases = [
           expect(context.pids[0]).toBe(context.pids[1]);
         },
       },
+      {
+        name: "records the source entrypoint and working directory",
+        check: (context: WebContext) => {
+          expect(context.launch?.origin).toBe("source");
+          expect(context.launch?.entrypoint).toBe(join(context.root, "web-server.mjs"));
+          expect(context.launch?.cwd).toBe(context.root);
+        },
+      },
+      hasObserved<WebContext, WebDaemonStatus[]>("launchPresent", false),
     ],
   },
   {
@@ -52,6 +65,17 @@ const cases = [
     assert: [
       hasError<WebContext, WebDaemonStatus[]>({ message: /already in use by an unmanaged process/ }),
       hasObserved<WebContext, WebDaemonStatus[]>("states", []),
+    ],
+  },
+  {
+    name: "reports a listener without a managed PID record as unmanaged",
+    input: { operation: "status-unmanaged" },
+    assert: [
+      hasObserved<WebContext, WebDaemonStatus[]>("states", ["unmanaged"]),
+      {
+        name: "does not assign a managed PID",
+        check: (context: WebContext) => expect(context.pids).toEqual([undefined]),
+      },
     ],
   },
   {
@@ -99,7 +123,8 @@ const table: OperationTable<WebFixture, "default", WebInput, WebDaemonStatus[], 
       environment: { ...process.env, MUXIMO_TEST_WEB_PORT: String(port) },
       logFile: join(root, "state", "web.log"),
     });
-    const fixture: WebFixture = { manager, port, root, pidFile: join(root, "state", "web.pid") };
+    const pidFile = join(root, "state", "web.pid");
+    const fixture: WebFixture = { manager, port, root, pidFile, launchFile: `${pidFile}.launch.json` };
     return {
       fixture,
       cleanup: async () => {
@@ -115,6 +140,10 @@ const table: OperationTable<WebFixture, "default", WebInput, WebDaemonStatus[], 
       fixture.occupied = await listenServer(fixture.port);
       await fixture.manager.start();
       return [];
+    }
+    if (input.operation === "status-unmanaged") {
+      fixture.occupied = await listenServer(fixture.port);
+      return [await fixture.manager.status()];
     }
     if (input.operation === "foreign-record") {
       mkdirSync(join(fixture.root, "state"), { recursive: true });
@@ -139,9 +168,12 @@ const table: OperationTable<WebFixture, "default", WebInput, WebDaemonStatus[], 
     return [started, reused, stopped];
   },
   observe: (fixture, result) => ({
+    root: fixture.root,
     states: result.ok ? result.value.map(({ state }) => state) : [],
     pids: result.ok ? result.value.map(({ pid }) => pid) : [],
     recordPresent: existsSync(fixture.pidFile),
+    launch: result.ok ? result.value[0]?.launch : undefined,
+    launchPresent: existsSync(fixture.launchFile),
   }),
 };
 

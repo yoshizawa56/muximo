@@ -15,6 +15,21 @@ export type DaemonPidRecord = {
   startedAt: string;
 };
 
+export type ProcessLaunchOrigin = "source" | "binary";
+
+export type ProcessLaunchMetadata = {
+  origin: ProcessLaunchOrigin;
+  executable: string;
+  entrypoint?: string;
+  args: readonly string[];
+  cwd: string;
+};
+
+export type ProcessLaunchRecord = ProcessLaunchMetadata & {
+  pid: number;
+  startedAt: string;
+};
+
 export type DaemonHealthFailureReason =
   | "healthy_without_pid"
   | "pid_unhealthy"
@@ -47,7 +62,7 @@ export class DaemonHealthError extends Error {
 }
 
 export type DaemonStatusResult =
-  | { state: "running"; host?: string; port?: number; pid?: number }
+  | { state: "running"; host?: string; port?: number; pid?: number; launch?: ProcessLaunchRecord }
   | {
       state: "unhealthy";
       host: string;
@@ -55,6 +70,7 @@ export type DaemonStatusResult =
       pid: number;
       logFile?: string;
       healthFailure: DaemonHealthFailureContext;
+      launch?: ProcessLaunchRecord;
     }
   | { state: "stopped" };
 
@@ -77,6 +93,7 @@ export interface DaemonRuntimePort {
   isAlive(pid: number): Promise<boolean>;
   signal(pid: number, signal: "SIGTERM"): void;
   readPidRecord(path: string): DaemonPidRecord | undefined;
+  readLaunchRecord(path: string): ProcessLaunchRecord | undefined;
   writePidRecord(path: string, record: DaemonPidRecord): void;
   removePidRecord(path: string, expectedPid: number): void;
   writeRestartMarker(path: string, refreshServers: boolean): void;

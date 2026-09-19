@@ -17,6 +17,7 @@ import type {
 } from "@muximo/infrastructure/cli-client";
 import { type OperationCase, type OperationTable, runOperationTable, type TestRegistrar } from "@muximo/test-support";
 import { describe, expect, it } from "vitest";
+import type { WebProcessStatus } from "../adapters/web-process.js";
 import type { CliDaemonInput, CliDoctorInput, CliIo, CliServeInput } from "../commands/types.js";
 import type { DaemonLogRequest, DaemonLogResult } from "./system.js";
 import { createSystemHandlers } from "./system.js";
@@ -33,11 +34,13 @@ type SystemFixtureKey =
   | "pid-unhealthy"
   | "config-changed"
   | "status-unavailable"
+  | "web-unmanaged"
   | "serve-mismatch";
 type SystemFixture = {
   out: string[];
   err: string[];
   calls: string[];
+  webStatus?: WebProcessStatus;
   handlers: ReturnType<typeof createSystemHandlers>;
 };
 
@@ -159,6 +162,15 @@ const cases = [
     ] as const,
   },
   {
+    name: "reports an unmanaged Web proxy with its configured URL",
+    fixture: "web-unmanaged" as const,
+    input: { kind: "daemon", input: { command: "status", refreshServers: false } },
+    assert: [
+      hasValue("returns a successful status", "status", 0),
+      containsText("reports the unmanaged Web proxy", "out", "Web proxy unmanaged at http://127.0.0.1:5227"),
+    ] as const,
+  },
+  {
     name: "presents serve stop",
     input: { kind: "serve", input: { provider: "tailscale", command: "stop" } },
     assert: [
@@ -269,6 +281,7 @@ const table: OperationTable<SystemFixture, SystemFixtureKey, SystemInput, System
     "pid-unhealthy": () => ({ fixture: createFixture("pid-unhealthy") }),
     "config-changed": () => ({ fixture: createFixture("config-changed") }),
     "status-unavailable": () => ({ fixture: createFixture("status-unavailable") }),
+    "web-unmanaged": () => ({ fixture: createFixture("web-unmanaged") }),
     "serve-mismatch": () => ({ fixture: createFixture("serve-mismatch") }),
   },
   cases: allCases,
@@ -312,6 +325,17 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
     controlSocket: "/tmp/muximod.sock",
     logFile: "/tmp/muximod.log",
   };
+  const launchRecord = {
+    pid: 402,
+    startedAt: "2026-08-30T00:00:00.000Z",
+    origin: "source" as const,
+    executable: "/opt/bun/bin/bun",
+    entrypoint: "/work/muximo/packages/muximod/src/process-entrypoint.ts",
+    args: ["/work/muximo/packages/muximod/src/process-entrypoint.ts"],
+    cwd: "/work/muximo",
+  };
+  const webStatus: WebProcessStatus | undefined =
+    key === "web-unmanaged" ? { state: "unmanaged", url: "http://127.0.0.1:5227", logFile: "/tmp/web.log" } : undefined;
   const daemon = {
     start: {
       execute: async (_input: StartDaemonInput): Promise<DaemonStartResult> => {
@@ -339,7 +363,7 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
     status: {
       execute: async (_input: DaemonOptions): Promise<DaemonStatusResult> => {
         calls.push("daemon:status");
-        return { state: "running", host: "127.0.0.1", port: 4317 };
+        return { state: "running", host: "127.0.0.1", port: 4317, launch: launchRecord };
       },
     },
     stop: {
@@ -408,6 +432,7 @@ function createFixture(key: SystemFixtureKey): SystemFixture {
       },
     },
     daemon: { defaults: daemonOptions, ...daemon },
+    readWebStatus: { execute: async () => webStatus },
     clientVersion: "0.1.0",
     serve: {
       execute: async (input) => {

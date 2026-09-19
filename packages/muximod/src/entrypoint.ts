@@ -15,7 +15,12 @@ import {
   resolveMuximodConfiguredPath,
 } from "./config-status.js";
 import type { MuximodConfig, MuximodLaunchOptions } from "./launch.js";
-import { consumeMuximodRestartMarker, removeMuximodPidRecord, writeMuximodPidRecord } from "./process-files.js";
+import {
+  consumeMuximodRestartMarker,
+  removeMuximodLaunchRecord,
+  removeMuximodPidRecord,
+  writeMuximodPidRecord,
+} from "./process-files.js";
 import { createMuximodServer, resolveMuximodEnvironment } from "./server.js";
 
 export type MuximodEntrypointOptions = MuximodLaunchOptions;
@@ -143,6 +148,11 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
       } catch (error) {
         cleanupErrors.push(error);
       }
+      try {
+        removeMuximodLaunchRecord(config?.pidFile ?? paths.pidFile, process.pid);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
       if (cleanupErrors.length > 0) throw cleanupErrors[0];
     })();
     shutdownPromise = promise;
@@ -204,6 +214,11 @@ export async function runMuximod(options: MuximodEntrypointOptions): Promise<voi
       if (config) removeMuximodPidRecord(config.pidFile, process.pid);
     } catch {
       // Preserve the startup error after attempting to remove the pid record.
+    }
+    try {
+      removeMuximodLaunchRecord(config?.pidFile ?? paths.pidFile, process.pid);
+    } catch {
+      // Preserve the startup error after attempting to remove launch metadata.
     }
     closeLogger();
     process.off("SIGINT", onSignal);
