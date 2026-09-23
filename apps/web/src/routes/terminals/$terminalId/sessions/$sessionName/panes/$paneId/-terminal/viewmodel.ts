@@ -29,6 +29,7 @@ import {
   createTerminalOutputScheduler,
   type TerminalInputQueue,
 } from "./scheduler";
+import { installTerminalTextareaResidueGuard } from "./textarea-residue";
 import { installTerminalTouchInput, terminalMouseWheelInput } from "./touch";
 
 export type PaneConnectionStatus = "connecting" | "connected" | "closed" | "error";
@@ -544,6 +545,7 @@ export function usePaneViewModel({
       fontSize,
       lineHeight: 1.05,
       letterSpacing: 0,
+      screenReaderMode: false,
       scrollback: 0,
       theme: {
         background: "#111318",
@@ -557,6 +559,7 @@ export function usePaneViewModel({
     terminalReadyRef.current = false;
     const helperInput = terminal.element?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
     if (helperInput) helperInput.inputMode = "none";
+    const textareaResidueGuard = helperInput ? installTerminalTextareaResidueGuard(helperInput) : null;
     const visualViewport = window.visualViewport;
     const setNativeKeyboardVisibility = (visible: boolean) => {
       nativeKeyboardVisibleRef.current = visible;
@@ -1119,6 +1122,7 @@ export function usePaneViewModel({
       sendResize();
       const touchCleanup = installTerminalTouchInput(container, touchOptions);
       const inputDisposable = terminal.onData(() => {
+        textareaResidueGuard?.acceptData("");
         // The mock is intentionally read-only.
       });
 
@@ -1149,6 +1153,7 @@ export function usePaneViewModel({
         scrollInputBatcher.dispose();
         terminalOutputScheduler.dispose();
         inputDisposable.dispose();
+        textareaResidueGuard?.dispose();
         terminalInputQueueRef.current.detach(true);
         socketInputQueueRef.current.detach(true);
         nativeKeyboardFocusPendingRef.current = false;
@@ -1162,6 +1167,7 @@ export function usePaneViewModel({
     window.addEventListener("resize", sendResize);
 
     const inputDisposable = terminal.onData((data) => {
+      if (textareaResidueGuard && !textareaResidueGuard.acceptData(data)) return;
       sendInteractiveTerminalInput(inputTransformRef.current(data));
     });
     const binaryInputDisposable = terminal.onBinary((data) => {
@@ -1211,6 +1217,7 @@ export function usePaneViewModel({
       touchCleanup();
       scrollInputBatcher.dispose();
       terminalOutputScheduler.dispose();
+      textareaResidueGuard?.dispose();
       const cleanupMode = terminalSessionCleanupMode(target, currentTargetRef.current);
       terminalInputQueueRef.current.detach(cleanupMode === "detach");
       socketInputQueueRef.current.detach(cleanupMode === "detach");
